@@ -30,11 +30,11 @@ function githubFixture({ privateRepo = false, overrideDigest, remaining = 990 } 
     assert.equal(parsed.origin, 'https://api.github.com');
     assert.equal(options.redirect, 'error');
     if (path === '/repos/' + repository) {
-      assert.equal(auth, undefined);
+      assert.equal(auth, 'Bearer ' + token);
       return Response.json({ private: privateRepo, full_name: repository });
     }
     if (path === '/repos/' + repository + '/releases/tags/' + tag) {
-      assert.equal(auth, undefined);
+      assert.equal(auth, 'Bearer ' + token);
       return Response.json({ draft: false, tag_name: tag, prerelease: false, assets: [{
         name: 'bayit-9.js', state: 'uploaded', size: Buffer.byteLength(bundle),
         digest: overrideDigest || digest, browser_download_url: assetUrl,
@@ -62,18 +62,18 @@ test('GitHub release preflight keeps the credential off anonymous downloads and 
   const { calls, request } = githubFixture();
   const receipt = await verifyPublishedRelease(repository, tag, { token, request });
   assert.deepEqual(receipt, published);
-  assert.equal(calls.filter(item => !item.auth).length, 3);
+  assert.deepEqual(calls.filter(item => !item.auth), [{ url: assetUrl, auth: undefined }]);
   for (const path of ['/git/trees/2.0.5', '/contents/custom_components/hacs/manifest.json?ref=2.0.5', '/releases/tags/2.0.5']) {
     assert.ok(calls.some(item => item.url === 'https://api.github.com/repos/hacs/integration' + path &&
       item.auth === 'token ' + token));
   }
 });
 
-test('HACS release preflight stops at a private repository before using any credential', async () => {
+test('HACS release preflight stops at private repository metadata before requesting assets', async () => {
   const { calls, request } = githubFixture({ privateRepo: true });
   await assert.rejects(verifyPublishedRelease(repository, tag, { token, request }), /public release repository/);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].auth, undefined);
+  assert.equal(calls[0].auth, 'Bearer ' + token);
 });
 
 test('HACS release preflight rejects incorrect release bytes and an exhausted credential', async () => {

@@ -107,12 +107,16 @@ try {
   await room.getByRole('button', { name: 'Close', exact: true }).click();
 
   await page.setViewportSize({ width: 1200, height: 900 });
+  await page.goto(target, { waitUntil: 'domcontentloaded' });
+  await card.getByRole('heading', { name: 'Bayit 9', exact: true, level: 1 }).waitFor();
   const dashboardHeader = page.locator('hui-root');
-  const edit = dashboardHeader.getByRole('button', { name: 'Edit dashboard', exact: true });
-  if (await edit.isVisible()) {
-    await edit.click();
-  } else {
-    await dashboardHeader.locator('#dashboardmenu').click();
+  const edit = page.getByRole('button', { name: 'Edit dashboard', exact: true });
+  try {
+    await edit.click({ timeout: 6000 });
+  } catch (error) {
+    const menu = dashboardHeader.locator('#dashboardmenu');
+    if (error.name !== 'TimeoutError' || !await menu.isVisible()) throw error;
+    await menu.click();
     await dashboardHeader.locator('ha-dropdown-item').filter({ hasText: /^\s*Edit dashboard\s*$/ }).click();
   }
   const editor = page.locator('dialog-dashboard-strategy-editor');

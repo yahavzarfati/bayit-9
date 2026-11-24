@@ -35,11 +35,11 @@ export async function verifyPublishedRelease(repository, tag, { token, request =
   const target = releaseTarget(repository, tag);
   assert.ok(typeof token === 'string' && token.length > 0,
     'Provide a read-only GitHub Actions or App installation token in BAYIT_QA_HACS_TOKEN');
-  const repo = await github('/repos/' + repository, 'Anonymous public repository lookup', request);
+  const repo = await github('/repos/' + repository, 'Public repository metadata lookup', request, token);
   assert.ok(repo.private === false && repo.full_name?.toLowerCase() === repository.toLowerCase(),
     'HACS acceptance requires a canonical public release repository');
   const release = await github('/repos/' + repository + '/releases/tags/' + encodeURIComponent(tag),
-    'Anonymous published release lookup', request);
+    'Published release metadata lookup', request, token);
   assert.ok(release.draft === false && release.tag_name === tag && typeof release.prerelease === 'boolean',
     'Select an already published release with the exact requested tag');
   const asset = release.assets?.find(item => item.name === FILE_NAME && item.state === 'uploaded');
