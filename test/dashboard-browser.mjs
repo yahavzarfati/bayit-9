@@ -15,6 +15,7 @@ const states = {
   'light.demo_lamp': { state: 'off', attributes: { friendly_name: 'Desk lamp', supported_color_modes: ['onoff'] } },
   'switch.demo_heater': { state: 'off', attributes: { friendly_name: 'Room heater' } },
   'script.demo_start': { state: 'off', attributes: { friendly_name: 'Demo start' } },
+  'number.demo_level': { state: '3', attributes: { friendly_name: 'Demo heater level', min: 1, max: 9, step: 1 } },
   'timer.demo_heater': { state: 'idle', attributes: { friendly_name: 'Demo timer' } },
 };
 const calls = [];
@@ -127,10 +128,12 @@ try {
       await editorPage.getByRole('button', { name: 'Add profile' }).click();
       await editorPage.getByLabel('Heating device').selectOption('switch.demo_heater');
       await editorPage.getByLabel('Scheduled start script').selectOption('script.demo_start');
+      await editorPage.getByLabel('Heating level entity').selectOption('number.demo_level');
       await editorPage.getByLabel('Timer', { exact: true }).selectOption('timer.demo_heater');
       await editorPage.getByRole('button', { name: 'Save profile' }).click();
       const profile = await editorPage.evaluate(() => window.latest.profiles[0]);
       assert.equal(profile.entity, 'switch.demo_heater');
+      assert.equal(profile.level_entity, 'number.demo_level');
       assert.equal(profile.timed.start_script, 'script.demo_start');
       assert.equal(profile.timed.timer_entity, 'timer.demo_heater');
       assert.equal(await editorPage.evaluate(() => window.bayitTest.calls.length), 0);
