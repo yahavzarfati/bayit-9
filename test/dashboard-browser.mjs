@@ -793,11 +793,11 @@ try {
       const roomGraph = panelsPage.locator('[data-native-type=sensor][data-graph-hours="24"]');
       assert.equal(await roomGraph.count(), 0);
       await panelsPage.getByRole('button', {name:'Studio',exact:true}).click();
-      const studio = panelsPage.getByRole('dialog',{name:'Studio',exact:true});
-      await studio.getByText('Studio temperature',{exact:true}).waitFor();
+      const graphRoom = panelsPage.getByRole('dialog',{name:'Studio',exact:true});
+      await graphRoom.getByText('Studio temperature',{exact:true}).waitFor();
       await roomGraph.waitFor();
       assert.equal(await roomGraph.getAttribute('data-during-opening'), 'false', 'The optional graph cannot preempt opening motion');
-      const material = await studio.evaluate(dialog => {
+      const material = await graphRoom.evaluate(dialog => {
         const reduced = matchMedia('(prefers-reduced-transparency: reduce), (prefers-contrast: more)').matches;
         const surface = getComputedStyle(dialog);
         return { reduced, fill: surface.backgroundColor, blur: surface.backdropFilter,
