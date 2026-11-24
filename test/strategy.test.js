@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { discoverRooms, generateDashboard, normalizeProfile, suggestedDashboard } from '../src/strategy-model.js';
+import {
+  CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, generateDashboard,
+  normalizeProfile, selectableRoomEntities, suggestedDashboard,
+} from '../src/strategy-model.js';
 
 function home() {
   return {
@@ -155,4 +158,160 @@ test('overview cannot surface hidden or excluded devices', () => {
     overview_entities: ['calendar.demo_schedule', 'light.demo_lamp', 'fan.demo_fan', 'calendar.demo_schedule'],
   }, home());
   assert.deepEqual(dashboard.views[0].cards[0].overview, ['calendar.demo_schedule']);
+});
+
+test('honors room names, icons and hand-picked device order across areas without moving HA entities', () => {
+  const hass = home();
+  const config = {
+    area_ids: ['lounge', 'porch', 'studio'],
+    show_unassigned: false,
+    room_overrides: {
+      lounge: { name: '  Main room  ', icon: ' mdi:star ', entities: [
+        'switch.demo_boiler', 'light.demo_lamp', 'fan.demo_fan', 'light.demo_lamp',
+      ], entity_icons: {
+        'switch.demo_boiler': ' mdi:radiator ',
+        'light.demo_lamp': '<img>',
+        'script.demo_start': 'mdi:star',
+      } },
+      porch: { entities: [] },
+      studio: { name: 'Workshop', icon: '<svg>', entities: 'invalid',
+        entity_icons: { 'fan.demo_fan': 'mdi:fan' } },
+      obsolete: { name: 'An area no longer present', entities: ['calendar.demo_schedule'] },
+    },
+    room_shortcuts: { lounge: ['fan.demo_fan', 'calendar.demo_schedule', 'switch.demo_boiler'] },
+    overview_entities: ['calendar.demo_schedule', 'fan.demo_fan'],
+  };
+  const original = structuredClone({ hass, config });
+  const card = generateDashboard(config, hass).views[0].cards[0];
+  assert.deepEqual(card.rooms.map(room => room.id), ['lounge', 'porch']);
+  assert.deepEqual(card.rooms[0], {
+    id: 'lounge', name: 'Main room', icon: 'mdi:star',
+    entities: [
+      { entity: 'switch.demo_boiler', name: 'דוד', icon: 'mdi:radiator' },
+      { entity: 'light.demo_lamp', name: 'מנורה' },
+      { entity: 'fan.demo_fan', name: 'מאוורר' },
+    ],
+    shortcuts: ['fan.demo_fan', 'switch.demo_boiler'],
+  });
+  assert.deepEqual(card.rooms[1].entities, []);
+  assert.deepEqual(card.overview, ['fan.demo_fan']);
+  assert.deepEqual({ hass, config }, original);
+
+  const studio = discoverRooms({ room_overrides: config.room_overrides, area_ids: ['studio'] }, hass, 'he')[0];
+  assert.equal(studio.name, 'Workshop');
+  assert.equal(studio.icon, 'mdi:desk');
+  assert.deepEqual(studio.entities[0], { entity: 'fan.demo_fan', name: 'מאוורר', icon: 'mdi:fan' });
+});
+
+test('shares room-picker exclusions with visible devices, including registry-less manual choices', () => {
+  const hass = home();
+  hass.entities['light.compact_hidden'] = { hidden: true };
+  hass.states['light.compact_hidden'] = { state: 'on', attributes: {} };
+  hass.states['switch.demo_missing'] = { state: 'off', attributes: {} };
+  hass.states['sensor.non_state'] = null;
+  const allowed = ['fan.demo_fan', 'sensor.test_template_without_registry', 'sensor.demo_rssi'];
+  const denied = [
+    'not.an entity', 'sensor.no_such_state', 'sensor.non_state', 'climate.demo_air',
+    'switch.demo_missing', 'light.compact_hidden', 'light.demo_lamp',
+  ];
+  const config = {
+    discovery_mode: 'controls',
+    hidden_entities: ['light.demo_lamp'],
+    area_ids: ['studio'],
+    show_unassigned: false,
+    room_overrides: { studio: { entities: [...allowed, ...denied] } },
+  };
+  assert.deepEqual(discoverRooms(config, hass, 'he')[0].entities.map(item => item.entity), allowed);
+  const selectable = new Set(selectableRoomEntities(config, hass).map(item => item.entity));
+  assert.ok(allowed.every(id => selectable.has(id)));
+  assert.ok(denied.every(id => !selectable.has(id)));
+});
+
+test('supports additional dashboard-only rooms in the room order and retains empty rooms', () => {
+  const hass = home();
+  const custom = CUSTOM_ROOM_PREFIX + 'washing-room';
+  const empty = CUSTOM_ROOM_PREFIX + 'empty';
+  const real = CUSTOM_ROOM_PREFIX + 'actual-area';
+  hass.areas[real] = { area_id: real, name: 'Existing HA area' };
+  hass.entities['calendar.demo_schedule'].area_id = real;
+  const config = {
+    area_ids: [empty, custom, real, 'studio'],
+    show_unassigned: false,
+    room_overrides: {
+      [custom]: { name: 'Laundry', icon: 'mdi:washing-machine', entities: ['fan.demo_fan', 'switch.demo_boiler'] },
+      [empty]: { name: 'Empty room' },
+      [real]: { name: 'Actual area', icon: 'unknown:icon' },
+      ['bayit_room_Forbidden']: { name: 'Invalid ID' },
+      ['bayit_room_nameless']: { entities: ['fan.demo_fan'] },
+      studio: { entities: ['fan.demo_fan'] },
+    },
+  };
+  const rooms = discoverRooms(config, hass, 'en');
+  assert.deepEqual(rooms.map(room => room.id), config.area_ids);
+  assert.deepEqual(rooms[0].entities, []);
+  assert.deepEqual(rooms[1].entities.map(item => item.entity), ['fan.demo_fan', 'switch.demo_boiler']);
+  assert.equal(rooms[2].entities[0].entity, 'calendar.demo_schedule');
+  assert.equal(rooms[3].entities[0].entity, 'fan.demo_fan');
+
+  const options = dashboardRoomOptions(config, hass);
+  assert.deepEqual(options.filter(option => option.custom).map(option => option.id), [custom, empty]);
+  assert.deepEqual(options.find(option => option.id === real), {
+    id: real, name: 'Actual area', icon: 'mdi:home-outline', custom: false,
+  });
+  assert.ok(options.some(option => option.id === 'lounge'));
+  const automatic = discoverRooms({ ...config, area_ids: [] }, hass, 'en');
+  assert.ok(automatic.some(room => room.id === empty));
+  assert.ok(automatic.some(room => room.id === custom));
+});
+
+test('keeps existing discovery behavior and limits explicit controls mode to directly controllable devices', () => {
+  const hass = home();
+  for (const entity of ['camera.demo', 'vacuum.demo', 'sensor.demo_temperature', 'water_heater.demo']) {
+    hass.entities[entity] = { area_id: 'porch' };
+    hass.states[entity] = { state: 'off', attributes: {} };
+  }
+  const collect = config => discoverRooms(config, hass, 'en').find(room => room.id === 'porch').entities.map(item => item.entity);
+  const legacy = ['water_heater.demo', 'vacuum.demo', 'camera.demo', 'sensor.demo_temperature', 'calendar.demo_schedule'];
+  assert.deepEqual(collect({}), legacy);
+  assert.deepEqual(collect({ discovery_mode: 'all' }), legacy);
+  assert.deepEqual(collect({ discovery_mode: 'bad' }), legacy);
+  assert.deepEqual(collect({ discovery_mode: 'controls' }), ['water_heater.demo']);
+  assert.deepEqual(collect({
+    discovery_mode: 'controls', included_entities: ['sensor.demo_temperature'],
+  }), ['water_heater.demo', 'sensor.demo_temperature']);
+});
+
+test('exposes curated household context independently of room filters without returning hidden entities', () => {
+  const hass = home();
+  const add = (entity, state, deviceClass, entry = {}) => {
+    hass.states[entity] = { state, attributes: { device_class: deviceClass } };
+    hass.entities[entity] = entry;
+  };
+  add('lock.entry', 'locked', undefined);
+  add('alarm_control_panel.home', 'disarmed', undefined);
+  add('person.friend', 'home', undefined);
+  add('person.hidden', 'home', undefined, { hidden_by: 'user' });
+  add('weather.local', 'sunny', undefined);
+  add('weather.disabled', 'sunny', undefined, { disabled_by: 'user' });
+  add('binary_sensor.entry', 'off', 'door');
+  add('binary_sensor.window', 'off', 'window');
+  add('binary_sensor.motion', 'off', 'motion');
+  add('sensor.energy', '1200', 'energy');
+  add('sensor.power', '215', 'power');
+  add('sensor.other', '20', 'temperature');
+  const config = {
+    area_ids: ['studio'], discovery_mode: 'controls', show_unassigned: false,
+    hidden_entities: ['binary_sensor.window'],
+    overview_entities: ['sensor.energy', 'sensor.other'],
+  };
+  const card = generateDashboard(config, hass).views[0].cards[0];
+  assert.deepEqual(card.rooms.map(room => room.id), ['studio']);
+  assert.deepEqual(card.context, {
+    security: [{ entity: 'alarm_control_panel.home' }, { entity: 'binary_sensor.entry' }, { entity: 'lock.entry' }],
+    presence: [{ entity: 'person.friend' }],
+    weather: [{ entity: 'weather.local' }],
+    energy: [{ entity: 'sensor.energy' }],
+  });
+  assert.equal(card.overview, undefined);
+  assert.equal(generateDashboard({}, { states: {} }).views[0].cards[0].context, undefined);
 });

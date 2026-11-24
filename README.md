@@ -1,6 +1,6 @@
 # Bayit 9
 
-A room-based Liquid Glass dashboard for Home Assistant. Bayit 9 groups the devices already in your Home Assistant by area and gives each room its own controls and live status.
+A room-based Liquid Glass dashboard for Home Assistant, with a compact home screen, device shortcuts and room controls. Start with your Home Assistant areas and customize which rooms and devices appear.
 
 [הוראות בעברית](docs/install.he.md) · [Heating profiles](docs/heating.md)
 
@@ -17,7 +17,9 @@ The **Community dashboards** picker requires Home Assistant 2026.5 or newer. Ass
 
 Reload Home Assistant after the download. In the Companion app, close and reopen the dashboard view. Then open **Settings → Dashboards → Add dashboard → Community dashboards → Bayit 9**.
 
-Choose **Edit dashboard** to pick rooms, arrange their shortcuts, include or hide specific entities, and map controls for a boiler or heater. Bayit 9 starts in the Home Assistant language and supports English and Hebrew.
+Open the gear in Bayit 9, choose **Customize home**, then open **Rooms**. A Home Assistant administrator can pick and reorder rooms, rename them, and choose their devices. Create a dashboard-only room to group devices from different areas. Select **Save dashboard** to apply the layout on every device that opens it.
+
+Use **Shortcuts** to choose up to six controls for a room’s home-screen card. For YAML-managed dashboards, use the [strategy options](docs/configuration.md). Bayit 9 starts in the Home Assistant language and supports English and Hebrew.
 
 ## Controls and preferences
 

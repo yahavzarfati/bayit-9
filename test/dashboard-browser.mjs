@@ -19,7 +19,12 @@ const states = {
   'timer.demo_heater': { state: 'idle', attributes: { friendly_name: 'Demo timer' } },
 };
 const calls = [];
+const query = new URL(location.href).searchParams;
+const storedKey = 'bayit9-browser-fixture';
+const stored = () => JSON.parse(sessionStorage.getItem(storedKey) ||
+  '{"strategy":{"type":"custom:bayit-9"}}');
 const hass = {
+  user: { is_admin: query.has('configuration') },
   locale: { language: new URL(location.href).searchParams.get('locale') || 'en' },
   states,
   entities: { 'light.demo_lamp': { area_id: 'studio' }, 'switch.demo_heater': { area_id: 'studio' } },
@@ -27,6 +32,14 @@ const hass = {
   devices: {},
   callWS(request) {
     calls.push(request);
+    if (request.type === 'lovelace/dashboards/list') {
+      return Promise.resolve([{ url_path: 'fixture-home', mode: 'storage' }]);
+    }
+    if (request.type === 'lovelace/config') return Promise.resolve(stored());
+    if (request.type === 'lovelace/config/save') {
+      sessionStorage.setItem(storedKey, JSON.stringify(request.config));
+      return Promise.resolve();
+    }
     if (request.domain === 'light') {
       states['light.demo_lamp'] = { ...states['light.demo_lamp'], state: 'on' };
       card.hass = { ...hass, states: { ...states } };
@@ -35,8 +48,7 @@ const hass = {
   },
 };
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
-const query = new URL(location.href).searchParams;
-const selected = query.has('curated') ? {
+const selected = query.has('configuration') ? stored().strategy : query.has('curated') ? {
   room_shortcuts: { studio: ['switch.demo_heater', 'light.demo_lamp'] },
   overview_entities: ['switch.demo_heater'],
 } : {};
@@ -63,7 +75,7 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/bayit-9.js') {
     res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
     res.end(bundle);
-  } else if (url.pathname === '/') {
+  } else if (['/', '/fixture-home/home'].includes(url.pathname)) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(fixture);
   } else {
@@ -155,6 +167,24 @@ try {
       await curatedPage.keyboard.press('Escape');
       await overview.waitFor({ state: 'hidden' });
       await curatedPage.close();
+
+      const setupPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      await setupPage.goto(base + '/fixture-home/home?configuration');
+      await setupPage.getByRole('button', { name: 'Appearance', exact: true }).click();
+      await setupPage.getByRole('button', { name: 'Customize home', exact: true }).click();
+      const setup = setupPage.getByRole('dialog', { name: 'Customize home', exact: true });
+      await setup.getByText('Rooms', { exact: true }).click();
+      await setup.getByText('New dashboard-only room', { exact: true }).click();
+      await setup.getByLabel('New room name', { exact: true }).fill('Reading nook');
+      await setup.getByRole('button', { name: 'Create room', exact: true }).click();
+      await setup.getByLabel('Available devices', { exact: true }).selectOption('light.demo_lamp');
+      await setup.getByRole('button', { name: 'Add device', exact: true }).click();
+      await setup.getByRole('button', { name: 'Save dashboard', exact: true }).click();
+      await setupPage.getByRole('button', { name: 'Reading nook', exact: true }).waitFor();
+      const persisted = await setupPage.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')));
+      assert.deepEqual(Object.values(persisted.strategy.room_overrides), [{ name: 'Reading nook', entities: ['light.demo_lamp'] }]);
+      assert.equal(await setupPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain).length), 0);
+      await setupPage.close();
 
       const emptyPage = await browser.newPage();
       await emptyPage.goto(base + '?empty');

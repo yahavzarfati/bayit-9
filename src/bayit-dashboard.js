@@ -1,6 +1,7 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
-import { MAX_ROOM_SHORTCUTS } from './strategy-model.js';
+import { MAX_ROOM_SHORTCUTS, STRATEGY_NAME } from './strategy-model.js';
+import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { createDeviceController, getDeviceModel } from './device-control.mjs';
 
 export const backgrounds = Object.freeze(['aurora', 'lagoon', 'dunes', 'graphite']);
@@ -21,6 +22,15 @@ const deviceIcons = {
   alarm_control_panel:'mdi:shield-home-outline', weather:'mdi:weather-partly-cloudy',
   person:'mdi:account-outline', vacuum:'mdi:robot-vacuum', camera:'mdi:cctv', media_player:'mdi:speaker',
 };
+const contextKeys = ['security', 'presence', 'weather', 'energy'];
+const quickDomains = new Set(['light', 'switch', 'fan', 'cover', 'lock', 'climate', 'water_heater']);
+const deviceGroups = {
+  light: 'room_lights', cover: 'room_covers', climate: 'room_climate',
+  fan: 'room_climate', water_heater: 'room_climate', lock: 'room_security',
+  alarm_control_panel: 'room_security', camera: 'room_security',
+  sensor: 'room_sensors', binary_sensor: 'room_sensors', weather: 'room_sensors',
+};
+const domainFor = config => config.entity.split('.')[0];
 const movement = new Set(['open','close','set_position']);
 const rangeActions = new Set(['set_position', 'set_brightness', 'set_percentage']);
 const stateKeys = {
@@ -91,6 +101,20 @@ function setIcon(el, value) {
   if (el.getAttribute('icon') !== name) el.setAttribute('icon', name);
 }
 
+function normalizeEntity(item) {
+  const entity = text(typeof item === 'string' ? item : item?.entity);
+  if (!entityPattern.test(entity)) throw new Error('Invalid Home Assistant entity in Bayit 9.');
+  const entry = { entity };
+  if (text(item.name)) entry.name = text(item.name);
+  if (iconPattern.test(text(item.icon))) entry.icon = item.icon;
+  if (['heater', 'boiler'].includes(item.kind)) entry.kind = item.kind;
+  if (entityPattern.test(text(item.level_entity)) && item.level_entity.startsWith('number.')) {
+    entry.level_entity = item.level_entity;
+  }
+  if (item.timed && typeof item.timed === 'object' && !Array.isArray(item.timed)) entry.timed = { ...item.timed };
+  return entry;
+}
+
 export function normalizeDashboardConfig(config = {}) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Invalid Bayit 9 configuration.');
   const locale = /^he(?:-|$)/i.test(text(config.locale)) ? 'he' : 'en';
@@ -108,18 +132,8 @@ export function normalizeDashboardConfig(config = {}) {
     const unique = new Map();
     if (!Array.isArray(rawEntities)) throw new Error('Bayit 9 room entities must be a list.');
     for (const item of rawEntities) {
-      const entity = text(typeof item === 'string' ? item : item?.entity);
-      if (!entityPattern.test(text(entity))) throw new Error('Invalid Home Assistant entity in Bayit 9.');
-      if (unique.has(entity)) continue;
-      const entry = { entity };
-      if (text(item.name)) entry.name = text(item.name);
-      if (iconPattern.test(text(item.icon))) entry.icon = item.icon;
-      if (['heater', 'boiler'].includes(item.kind)) entry.kind = item.kind;
-      if (entityPattern.test(text(item.level_entity)) && item.level_entity.startsWith('number.')) {
-        entry.level_entity = item.level_entity;
-      }
-      if (item.timed && typeof item.timed === 'object' && !Array.isArray(item.timed)) entry.timed = { ...item.timed };
-      unique.set(entity, entry);
+      const entry = normalizeEntity(item);
+      if (!unique.has(entry.entity)) unique.set(entry.entity, entry);
     }
     const parsed = { id, name, icon: validIcon(room.icon, 'mdi:door-open'), entities: [...unique.values()] };
     if (Array.isArray(room.shortcuts)) {
@@ -130,8 +144,13 @@ export function normalizeDashboardConfig(config = {}) {
   const entities = new Map(rooms.flatMap(room => room.entities.map(device => [device.entity, device])));
   const overview = Array.isArray(config.overview)
     ? [...new Set(config.overview)].filter(id => entities.has(id)).map(id => entities.get(id)) : [];
+  const context = Object.fromEntries(contextKeys.map(key => {
+    const configs = Array.isArray(config.context?.[key]) ? config.context[key].map(normalizeEntity) : [];
+    const unique = new Map(configs.map(entry => [entry.entity, entities.get(entry.entity) ?? entry]));
+    return [key, [...unique.values()]];
+  }));
   return {
-    locale, rooms, overview, title: text(config.title) || languages[locale].home,
+    locale, rooms, overview, context, title: text(config.title) || languages[locale].home,
     background: backgrounds.includes(config.background) ? config.background : 'aurora',
     layout: options.layout.includes(config.layout) ? config.layout : 'classic',
     shape: options.shape.includes(config.shape) ? config.shape : 'soft',
@@ -144,12 +163,25 @@ const layout = `
     <header class="toolbar">
       <div class="brand"><ha-icon icon="mdi:home-variant-outline" aria-hidden="true"></ha-icon><h1></h1></div>
       <div class="toolbar-actions">
+        <button type="button" class="chrome-button" data-role="activity" aria-haspopup="dialog">
+          <ha-icon icon="mdi:home-automation" aria-hidden="true"></ha-icon>
+          <span class="badge" hidden aria-hidden="true"></span>
+        </button>
+        <button type="button" class="chrome-button" data-role="security" aria-haspopup="dialog" hidden>
+          <ha-icon icon="mdi:shield-home-outline" aria-hidden="true"></ha-icon>
+        </button>
+        <button type="button" class="chrome-button" data-role="presence" aria-haspopup="dialog" hidden>
+          <ha-icon icon="mdi:account-group-outline" aria-hidden="true"></ha-icon>
+          <span class="badge" hidden aria-hidden="true"></span>
+        </button>
+        <button type="button" class="chrome-button" data-role="weather" aria-haspopup="dialog" hidden>
+          <ha-icon icon="mdi:weather-partly-cloudy" aria-hidden="true"></ha-icon>
+        </button>
+        <button type="button" class="chrome-button" data-role="energy" aria-haspopup="dialog" hidden>
+          <ha-icon icon="mdi:meter-electric-outline" aria-hidden="true"></ha-icon>
+        </button>
         <button type="button" class="chrome-button" data-role="overview" aria-haspopup="dialog" hidden>
           <ha-icon icon="mdi:view-dashboard-outline" aria-hidden="true"></ha-icon>
-        </button>
-        <button type="button" class="chrome-button" data-role="activity" aria-haspopup="dialog">
-          <ha-icon icon="mdi:chart-box-outline" aria-hidden="true"></ha-icon>
-          <span class="badge" hidden aria-hidden="true"></span>
         </button>
         <button type="button" class="chrome-button" data-role="settings" aria-haspopup="dialog">
           <ha-icon icon="mdi:cog-outline" aria-hidden="true"></ha-icon>
@@ -189,7 +221,10 @@ export class BayitDashboard extends HTMLElement {
     const role = name => get('[data-role="' + name + '"]');
     this.nodes = {
       shell: get('.shell'), rooms: get('.rooms'), empty: get('.empty'), title: get('h1'),
-      overview: role('overview'), activity: role('activity'), badge: get('.badge'), settings: role('settings'), close: role('close'),
+      overview: role('overview'), activity: role('activity'), badge: role('activity').querySelector('.badge'),
+      settings: role('settings'), close: role('close'),
+      context: Object.fromEntries(contextKeys.map(key => [key, role(key)])),
+      peopleBadge: role('presence').querySelector('.badge'),
       modal: get('dialog:not(.confirm)'), modalTitle: get('dialog:not(.confirm) h2'),
       modalBody: get('dialog:not(.confirm) .modal-body'), content: role('content'),
       confirm: get('.confirm'), confirmTitle: get('.confirm h2'), confirmText: get('.confirmation-text'),
@@ -206,6 +241,7 @@ export class BayitDashboard extends HTMLElement {
     n.overview.onclick = () => this.openPanel('overview', n.overview);
     n.settings.onclick = () => this.openPanel('settings', n.settings);
     n.activity.onclick = () => this.openPanel('activity', n.activity);
+    for (const key of contextKeys) n.context[key].onclick = () => this.openPanel(key, n.context[key]);
     n.close.onclick = () => n.modal.close();
     n.abort.onclick = () => n.confirm.close();
     n.accept.onclick = () => this.acceptAction();
@@ -253,6 +289,7 @@ export class BayitDashboard extends HTMLElement {
     label(n.activity, this.t('activity'));
     label(n.overview, this.t('overview'));
     n.overview.hidden = !next.overview.length;
+    for (const key of contextKeys) label(n.context[key], this.t(key));
     label(n.close, this.t('close'));
     n.rooms.setAttribute('aria-label', this.t('rooms'));
     setText(n.confirmTitle, this.t('confirm_title'));
@@ -266,6 +303,7 @@ export class BayitDashboard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    if (this.setup?.editor) this.setup.editor.hass = hass;
     if (!this.isConnected || this.frame || !this.config) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = 0;
@@ -342,7 +380,9 @@ export class BayitDashboard extends HTMLElement {
       heading.setAttribute('aria-haspopup', 'dialog');
       const chevron = icon(this.config.locale === 'he' ? 'mdi:chevron-left' : 'mdi:chevron-right');
       chevron.className = 'chevron';
-      heading.append(icon(room.icon), make('span', '', room.name), chevron);
+      const count = make('span', 'room-count');
+      count.setAttribute('aria-hidden', 'true');
+      heading.append(icon(room.icon), make('span', 'room-name', room.name), count, chevron);
       heading.onclick = () => this.openPanel('room', heading, room);
       const status = make('div', 'room-status');
       const statusIcon = icon('mdi:power-standby');
@@ -350,18 +390,17 @@ export class BayitDashboard extends HTMLElement {
       status.append(statusIcon, statusText);
       const quick = make('div', 'quick');
       const shortcut = new Map();
-      const weight = entry => +!['light','switch','fan','cover','lock','climate','water_heater'].includes(entry.entity.split('.')[0]);
       const byId = new Map(room.entities.map(config => [config.entity, config]));
       const chosen = room.shortcuts
         ? room.shortcuts.map(entity => byId.get(entity))
-        : [...room.entities].sort((a, b) => weight(a) - weight(b)).slice(0, 2);
+        : room.entities.filter(entry => quickDomains.has(domainFor(entry))).slice(0, MAX_ROOM_SHORTCUTS);
       for (const config of chosen) {
         const el = button('quick-button', config.name || config.entity, config.icon || 'mdi:information-outline', true);
         el.dataset.entity = config.entity;
         el.onclick = () => {
           const model = this.model(config);
           if (this.pending.has(config.entity) && model.domain !== 'cover') return;
-          const direct = ['light','switch','fan'].includes(model.domain) && !config.timed?.start_script && !config.timed?.stop_script;
+          const direct = ['light','switch','fan'].includes(model.domain) && !config.kind && !config.timed;
           const actionId = model.state === 'on' ? 'turn_off' : 'turn_on';
           if (direct && model.actions[actionId] && !model.actions[actionId].requiresConfirmation) {
             this.requestAction(config, actionId, undefined, el);
@@ -372,7 +411,7 @@ export class BayitDashboard extends HTMLElement {
       }
       article.append(status, quick, heading);
       n.rooms.append(article);
-      this.roomViews.set(room.id, { room, article, heading, status, statusIcon, statusText, shortcut });
+      this.roomViews.set(room.id, { room, article, heading, count, status, statusIcon, statusText, shortcut });
     }
     n.empty.hidden = this.roomViews.size > 0;
   }
@@ -411,18 +450,21 @@ export class BayitDashboard extends HTMLElement {
     const n = this.nodes;
     const active = new Map();
     for (const [id, view] of this.roomViews) {
-      let count = 0;
+      let lit = 0;
       let unavailable = false;
       let temperature;
+      let climateTemperature;
       for (const config of view.room.entities) {
         const model = this.model(config);
         const tone = this.tone(model);
         unavailable ||= !model.available;
-        if (tone !== 'quiet') {
-          count++;
-          if (!active.has(config.entity)) active.set(config.entity, { config, model, room: view.room });
+        if (model.domain === 'light' && model.state === 'on') lit++;
+        if (tone !== 'quiet' && !active.has(config.entity)) active.set(config.entity, { config, model, room: view.room });
+        if (!temperature && model.available && model.attributes?.device_class === 'temperature') temperature = this.stateLabel(model);
+        if (!climateTemperature && model.available && model.domain === 'climate') {
+          const value = number(model.attributes.current_temperature);
+          if (value !== null) climateTemperature = ltr(value + (this._hass?.config?.unit_system?.temperature || '°'));
         }
-        if (!temperature && model.available && model.attributes?.device_class === 'temperature') temperature = model;
         const shortcut = view.shortcut.get(config.entity);
         if (!shortcut) continue;
         setIcon(shortcut.firstElementChild, model.icon);
@@ -433,16 +475,26 @@ export class BayitDashboard extends HTMLElement {
         shortcut.disabled = busy && model.domain !== 'cover';
         shortcut.setAttribute('aria-busy', String(busy));
       }
-      setText(view.statusText, count ? count + ' ' + this.t('active') : temperature ? this.stateLabel(temperature) : this.t(unavailable ? 'unavailable' : 'quiet'));
-      setIcon(view.statusIcon, count ? 'mdi:lightning-bolt-outline' : temperature ? 'mdi:thermometer' : unavailable ? 'mdi:alert-circle-outline' : 'mdi:power-standby');
-      view.status.dataset.tone = count ? 'warm' : 'quiet';
+      const reading = temperature || climateTemperature;
+      view.status.hidden = !reading && !unavailable;
+      setText(view.statusText, reading || this.t('unavailable'));
+      setIcon(view.statusIcon, reading ? 'mdi:thermometer' : 'mdi:alert-circle-outline');
+      setText(view.count, lit || this.t('off'));
+      view.count.dataset.tone = lit ? 'warm' : 'quiet';
       view.article.toggleAttribute('data-current', this.panel?.room?.id === id);
     }
     this.activeDevices = active;
     n.badge.hidden = !active.size;
     setText(n.badge, active.size);
-    if (this.panel?.type === 'room' || this.panel?.type === 'overview') this.updateDevices();
-    if (this.panel?.type === 'activity') this.paintActivity();
+    const panel = this.panel?.type;
+    if (panel === 'room' || panel === 'overview' || contextKeys.includes(panel)) this.updateDevices();
+    if (panel === 'activity') this.paintActivity();
+    for (const key of contextKeys) {
+      n.context[key].hidden = !this.config.context[key].length && (key !== 'energy' || !this._hass?.panels?.energy);
+    }
+    const peopleHome = this.config.context.presence.filter(item => this._hass?.states?.[item.entity]?.state === 'home').length;
+    n.peopleBadge.hidden = !peopleHome;
+    setText(n.peopleBadge, peopleHome);
   }
 
   openPanel(type, source, room, entity) {
@@ -451,13 +503,18 @@ export class BayitDashboard extends HTMLElement {
     const origin = source.getBoundingClientRect();
     if (!n.modal.open) this.restoreFocus = source;
     this.panel = { type, room };
+    this.setup = null;
     this.deviceViews.clear();
     this.activitySignature = null;
     setText(n.modalNotice, '');
     const glyph = room?.icon || source.querySelector('ha-icon')?.getAttribute('icon');
     n.modalTitle.replaceChildren(icon(glyph), type === 'room' ? room.name : this.t(type));
-    if (type === 'room' || type === 'overview') this.buildDevices(room?.entities ?? this.config.overview);
+    if (type === 'room') this.buildDevices(room.entities, true);
+    if (type === 'overview') this.buildDevices(this.config.overview);
+    if (contextKeys.includes(type)) this.buildDevices(this.config.context[type]);
+    if (type === 'energy' && this._hass?.panels?.energy) this.appendEnergyLink();
     if (type === 'settings') this.paintSettings();
+    if (type === 'setup') void this.paintSetup();
     if (type === 'activity') this.paintActivity();
     if (!n.modal.open) n.modal.showModal();
     const bounds = n.modal.getBoundingClientRect();
@@ -476,6 +533,7 @@ export class BayitDashboard extends HTMLElement {
     if (n.modal.open) return;
     if (this.panel?.room) this.roomScroll.set(this.panel.room.id, n.modalBody.scrollTop);
     this.panel = null;
+    this.setup = null;
     this.deviceViews.clear();
     clearInterval(this.ticker);
     this.ticker = 0;
@@ -485,12 +543,26 @@ export class BayitDashboard extends HTMLElement {
     if (source?.isConnected) source.focus({ preventScroll: true });
   }
 
-  buildDevices(entities) {
+  buildDevices(entities, grouped = false) {
     const content = this.nodes.content;
     content.className = 'devices';
     content.replaceChildren();
     if (!entities.length) content.append(make('p', 'empty', this.t('empty_room')));
+    const groups = new Map();
     for (const config of entities) {
+      let parent = content;
+      if (grouped) {
+        const domain = domainFor(config);
+        const groupKey = config.kind === 'heater' || config.kind === 'boiler'
+          ? 'room_climate' : deviceGroups[domain] || 'room_devices';
+        if (!groups.has(groupKey)) {
+          const group = make('section', 'device-group');
+          group.append(make('p', 'device-group-title', this.t(groupKey)));
+          content.append(group);
+          groups.set(groupKey, group);
+        }
+        parent = groups.get(groupKey);
+      }
       const item = make('section', 'device');
       item.dataset.entity = config.entity;
       const head = make('header', 'device-head');
@@ -505,10 +577,18 @@ export class BayitDashboard extends HTMLElement {
       head.append(glyph, details, more);
       const group = make('div', 'action-list');
       item.append(head, group);
-      content.append(item);
+      parent.append(item);
       this.deviceViews.set(config.entity, { config, item, glyph, name, state, more, group, fields: [] });
     }
     this.updateDevices();
+  }
+
+  appendEnergyLink() {
+    const content = this.nodes.content;
+    if (!this.config.context.energy.length) content.replaceChildren();
+    const link = make('a', 'control-button', this.t('open_energy'));
+    link.href = '/energy';
+    content.prepend(link);
   }
 
   moreInfo(config) {
@@ -560,6 +640,11 @@ export class BayitDashboard extends HTMLElement {
     const content = this.nodes.content;
     content.className = 'settings';
     content.replaceChildren();
+    if (this._hass?.user?.is_admin) {
+      const setup = button('control-button setup-entry', this.t('setup'), 'mdi:tune-variant');
+      setup.onclick = () => this.openPanel('setup', setup);
+      content.append(setup);
+    }
     for (const [key, values] of Object.entries(options)) {
       const group = make('fieldset', 'prefs-group');
       group.append(make('legend', '', this.t(key)));
@@ -581,6 +666,52 @@ export class BayitDashboard extends HTMLElement {
       content.append(group);
     }
     this.applyPreferences();
+  }
+
+  async paintSetup() {
+    const page = this.panel;
+    const content = this.nodes.content;
+    const status = make('p', 'setup-status', this.t('setup_loading'));
+    status.setAttribute('role', 'status');
+    content.className = 'setup-page';
+    content.replaceChildren(status);
+    const errorText = error => this.t(['setup_storage', 'setup_conflict'].includes(error.code) ? error.code : 'setup_error');
+    try {
+      const current = await loadConfiguration(this._hass, location.pathname);
+      if (this.panel !== page) return;
+      const editor = customElements.get('ll-strategy-dashboard-' + STRATEGY_NAME).getConfigElement();
+      editor.classList.add('setup-editor');
+      editor.setConfig(structuredClone(current.strategy));
+      editor.hass = this._hass;
+      this.setup = { editor };
+      let draft = current.strategy;
+      const save = button('control-button', this.t('setup_save'), 'mdi:content-save-outline');
+      save.disabled = true;
+      editor.addEventListener('config-changed', event => {
+        draft = event.detail.config;
+        save.disabled = JSON.stringify(draft) === JSON.stringify(current.strategy);
+      });
+      save.onclick = async () => {
+        save.disabled = true;
+        editor.inert = true;
+        status.textContent = this.t('setup_saving');
+        try {
+          await saveConfiguration(this._hass, current, draft);
+          location.reload();
+        } catch (error) {
+          if (this.panel !== page) return;
+          status.textContent = errorText(error);
+          editor.inert = false;
+          save.disabled = error.code === 'setup_conflict';
+        }
+      };
+      const footer = make('div', 'setup-footer');
+      status.textContent = '';
+      footer.append(status, save);
+      content.replaceChildren(editor, footer);
+    } catch (error) {
+      if (this.panel === page) status.textContent = errorText(error);
+    }
   }
 
   paintActivity() {
