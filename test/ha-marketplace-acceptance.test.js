@@ -11,7 +11,7 @@ const testToken = 'synthetic-job-token';
 const bundle = 'export const synthetic = true;';
 const digest = 'sha256:' + createHash('sha256').update(bundle).digest('hex');
 const published = { repository, tag: 'v0.1.0', digest, prerelease: false };
-const readiness = { timeout: 60, interval: 0 };
+const fixtureReadiness = { timeout: 1000, interval: 0 };
 
 test('Marketplace preflight accepts the same-repository job credential without HACS upstream access', async () => {
   const visited = [];
@@ -42,7 +42,7 @@ test('Marketplace preflight accepts the same-repository job credential without H
   assert.equal(visited.some(url => url.includes('/repos/hacs/')), false);
 });
 
-function native({ release = published, override = {}, existing = [], actualBundle = bundle } = {}) {
+function native({ release = published, override = {}, existing = [], actualBundle = bundle, readiness = fixtureReadiness } = {}) {
   const calls = [];
   const repositoryId = '1234';
   const moduleUrl = '/local/community/bayit-9/bayit-9.js?v=' + repositoryId + '-' + release.tag;
@@ -139,6 +139,13 @@ test('Marketplace routes wait for the native entry and connected state before ac
   } });
   await run();
   assert.equal(attempt, 7);
+});
+
+test('Marketplace reports that it never registered when startup times out without a status', async () => {
+  const { run } = native({ readiness: { timeout: 0, interval: 0 }, override: {
+    'marketplace/info': () => { throw new Error('marketplace/info: unknown_command (Unknown command)'); },
+  } });
+  await assert.rejects(run(), /Timed out waiting.*\(stage unregistered, GitHub not connected\)/);
 });
 
 test('Marketplace acceptance rejects preloaded modules, disabled integration, wrong release and wrong bytes', async () => {

@@ -49,7 +49,8 @@ export async function installMarketplaceRelease(api, url, published, { request =
     }, readiness);
   } catch (error) {
     if (!error.message.startsWith('Timed out waiting')) throw error;
-    const stage = /^[a-z_]+$/.test(lastStatus?.stage) ? lastStatus.stage : 'unregistered';
+    const stage = typeof lastStatus?.stage === 'string' && /^[a-z_]+$/.test(lastStatus.stage)
+      ? lastStatus.stage : 'unregistered';
     throw new Error(error.message + ' (stage ' + stage + ', GitHub ' +
       (lastStatus?.github_connected === true ? 'connected' : 'not connected') + ')');
   }
