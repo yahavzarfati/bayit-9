@@ -619,7 +619,9 @@ export const styles = `
   @container (max-width: 346px) {
     .toolbar-actions { justify-content: center; }
     .room-status-strip { gap: 2px; }
-    .room-status { padding-inline: 3px; gap: 2px; }
+    .room-status { padding-inline: 2px; gap: 2px; font-size: 10px; }
+    .room-status-strip:has([data-badge=activity]:not([hidden])):has([data-badge=availability]:not([hidden]))
+      [data-badge=temperature] > ha-icon { display: none; }
     .shell[data-layout=header] .room-title {
       grid-template-areas: "label label label" "icon . count";
       grid-template-rows: auto 21px;
