@@ -165,6 +165,12 @@ export function buildPanelControls(model, { make, button, icon, label, t, reques
       used.add('set_heating_level');
       const section = make('section', 'heat-level');
       const caption = make('p', 'heat-level-title', t('set_heating_level'));
+      const changing = make('p', 'heat-level-title', t('heating_level_changing'));
+      changing.hidden = true;
+      changing.setAttribute('role', 'status');
+      updates.push((current, pending) => {
+        changing.hidden = pending?.id === 'set_heating_level' || !current.levelChanging;
+      });
       const choices = make('div', 'heat-level-options');
       for (let i = 0; i < count; i++) {
         const value = Number((level.min + i * level.step).toFixed(8));
@@ -181,7 +187,7 @@ export function buildPanelControls(model, { make, button, icon, label, t, reques
         });
         choices.append(choice);
       }
-      section.append(caption, choices);
+      section.append(caption, choices, changing);
       content.push(section);
     }
   }

@@ -40,7 +40,8 @@ const WORDS = {
     simpleTimer: 'Simple Timer', simpleTimerDevice: 'Simple Timer sensor', simpleTimerTarget: 'Device linked to Simple Timer',
     timerLinkError: 'Choose a Simple Timer sensor linked to this heating device or its supported proxy.',
     dailyUsage: 'Daily usage sensor', presets: 'Preset minutes', presetError: 'Use preset minutes within the selected range and step.',
-    levelSteps: 'Number of heating levels', levelRead: 'Heating level feedback',
+    levelSteps: 'Number of heating levels', levelRead: 'Heating level feedback', levelSelect: 'Level selection script',
+    levelSelectError: 'Set 2–12 heating levels and choose the level feedback helper for this script.',
     start: 'Scheduled start script', stop: 'Stop script', timer: 'Timer', none: 'None',
     level: 'Heating level entity', durationField: 'Duration field', min: 'Shortest run in minutes', max: 'Longest run in minutes',
     step: 'Step in minutes', add: 'Add profile', save: 'Save profile', edit: 'Edit',
@@ -86,7 +87,8 @@ const WORDS = {
     simpleTimer: 'Simple Timer', simpleTimerDevice: 'חיישן Simple Timer', simpleTimerTarget: 'המכשיר שמקושר ל־Simple Timer',
     timerLinkError: 'בחרו חיישן Simple Timer שמקושר למכשיר החימום הזה או לפקד שמפעיל אותו.',
     dailyUsage: 'חיישן שימוש יומי', presets: 'הגדרות דקות מהירות', presetError: 'בחרו דקות בטווח ובמרווח שנקבעו.',
-    levelSteps: 'מספר דרגות החימום', levelRead: 'משוב על דרגת החימום',
+    levelSteps: 'מספר דרגות החימום', levelRead: 'משוב על דרגת החימום', levelSelect: 'סקריפט לבחירת עוצמה',
+    levelSelectError: 'הגדירו 2–12 דרגות חימום ובחרו את העזר שמדווח על העוצמה עבור הסקריפט.',
     start: 'סקריפט הפעלה עם זמן', stop: 'סקריפט כיבוי', timer: 'טיימר', none: 'ללא',
     level: 'ישות עוצמת חימום', durationField: 'שדה משך', min: 'זמן מינימלי בדקות', max: 'זמן מקסימלי בדקות',
     step: 'מרווח בחירה בדקות', add: 'הוספת בקר', save: 'שמירת בקר', edit: 'עריכה',
@@ -818,7 +820,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const level = entityInput('number', current.level_entity);
     const levelSteps = node('input', { type: 'number', min: '2', max: '12', value: String(current.level_steps ?? '') });
     const levelRead = entityInput('input_number', current.level_read_entity);
-    const fanLevels = node('div', { className: 'grid' }, [field(words.levelSteps, levelSteps), field(words.levelRead, levelRead)]);
+    const levelSelect = entityInput('script', current.level_select_script);
+    const levelSelectField = field(words.levelSelect, levelSelect);
+    const fanLevels = node('div', { className: 'grid' }, [
+      field(words.levelSteps, levelSteps), field(words.levelRead, levelRead), levelSelectField,
+    ]);
 
     const timerSource = select([['server', words.serverTimer], ['simple', words.simpleTimer]], timed.simple_timer_entity ? 'simple' : 'server');
     const start = entityInput('script', timed.start_script);
@@ -858,6 +864,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const fanHeater = domain === 'fan' && kind.value === 'heater';
       fanLevels.hidden = !fanHeater || Boolean(level.value);
       const usingSimple = timerSource.value === 'simple';
+      levelSelectField.hidden = !usingSimple;
       serverFields.hidden = usingSimple;
       simpleFields.hidden = !usingSimple;
       schedule.hidden = kind.value !== 'boiler' || !usingSimple;
@@ -895,9 +902,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
           }
           const presetValues = presets.value.trim() ? presets.value.trim().split(/[,;\s]+/).map(Number)
             : Array.isArray(timed.presets) ? [] : undefined;
+          const levelSelectId = !fanLevels.hidden && usingSimple ? levelSelect.value : '';
           const profile = normalizeProfile({
             entity: entity.value, kind: kind.value, name: title.value, level_entity: level.value,
-            level_steps: levelSteps.valueAsNumber, level_read_entity: levelRead.value,
+            level_steps: levelSteps.valueAsNumber, level_read_entity: levelRead.value, level_select_script: levelSelectId,
             schedule: {save_script:scheduleSave.value,delete_script:scheduleDelete.value},
             timed: {
               ...(usingSimple
@@ -912,6 +920,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
             error.textContent = words.invalid;
             error.hidden = false;
             entity.focus();
+            return;
+          }
+          if (levelSelectId && profile.level_select_script !== levelSelectId) {
+            error.textContent = words.levelSelectError;
+            error.hidden = false;
+            levelRead.focus();
             return;
           }
           if (presetValues?.length && profile.timed?.presets?.length !== new Set(presetValues).size) {

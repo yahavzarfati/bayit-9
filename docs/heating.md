@@ -42,6 +42,10 @@ If the integration exposes a separate `number` entity for the heater's power lev
 
 A heater implemented as a fan can use `level_steps` for a fixed number of steps from 2 to 12. Bayit 9 sends the equivalent native fan percentage. If provided, `level_read_entity` reads the reported step from the heater’s `input_number` helper.
 
+For a heater fan with Simple Timer, an optional **Level selection script** (`level_select_script`) lets you choose a level before starting the heater or while it is already on. Select the same heater's **Heating level feedback** helper (`level_read_entity`) and set its step to 1, its minimum to 0 or 1, and its maximum to at least `level_steps`. If the timer monitors a separate switch, Bayit 9 requires that the linked switch and the fan report the same power state.
+
+The script must accept one integer field named `target_step` and own the update of the feedback helper. It should store the selection while the heater is off and change the level while the heater is already running. Its server-side checks must prevent any level selection from energizing or restarting the heater, including if heating ends during the request. It must leave the timer and cutoff in force and update feedback after it completes the selection. Verify that contract on your own script before mapping it. Bayit 9 confirms the observed level and power states after the script returns.
+
 ## Optional weekly schedule
 
 Requires Home Assistant 2026.11.2 or newer.

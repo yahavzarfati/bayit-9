@@ -495,6 +495,26 @@ test('allows explicit linked-switch and fan-level adapters only for a named heat
   assert.equal(withSwitch.timed.simple_timer_target, undefined);
 });
 
+test('projects a level selection script only through a timed heater fan and its feedback helper', () => {
+  const profile = { entity: 'fan.demo_step_heat', kind: 'heater', level_steps: 9,
+    level_read_entity: 'input_number.demo_feedback', level_select_script: 'script.demo_select_level',
+    timed: { simple_timer_entity: 'sensor.demo_heat_runtime', simple_timer_target: 'switch.demo_heat_relay' } };
+  assert.equal(normalizeProfile(profile).level_select_script, profile.level_select_script);
+  for (const invalid of [
+    { level_read_entity: undefined }, { level_steps: 13 }, { level_select_script: 'switch.some_device' },
+    { kind: 'boiler' }, { entity: 'switch.demo_heat_relay' }, { timed: { timer_entity: 'timer.demo_heating' } },
+  ]) assert.equal(normalizeProfile({ ...profile, ...invalid }).level_select_script, undefined);
+
+  const hass = home();
+  hass.states[profile.entity] = { state: 'off', attributes: {} };
+  hass.entities[profile.entity] = { area_id: 'studio' };
+  const generated = generateDashboard({ profiles: [profile] }, hass).views[0].cards[0];
+  const heater = generated.rooms.flatMap(room => room.entities).find(item => item.entity === profile.entity);
+  assert.equal(heater.level_select_script, profile.level_select_script);
+  assert.equal(heater.level_read_entity, profile.level_read_entity);
+  assert.equal(heater.timed.simple_timer_target, profile.timed.simple_timer_target);
+});
+
 test('limits optional dashboard destinations and excludes cameras from automatic context', () => {
   const hass = home();
   const contextRows = [

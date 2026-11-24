@@ -164,6 +164,11 @@ function normalizeEntity(item) {
     if (/^input_number\.[a-z0-9_]+$/.test(item.level_read_entity ?? '')) entry.level_read_entity = item.level_read_entity;
   }
   if (item.timed && typeof item.timed === 'object' && !Array.isArray(item.timed)) entry.timed = { ...item.timed };
+  if (entry.kind === 'heater' && entity.startsWith('fan.') && entry.level_read_entity &&
+      /^sensor\.[a-z0-9_]+$/.test(entry.timed?.simple_timer_entity ?? '') &&
+      /^script\.[a-z0-9_]+$/.test(item.level_select_script ?? '')) {
+    entry.level_select_script = item.level_select_script;
+  }
   if (entry.kind === 'boiler' && item.schedule && typeof item.schedule === 'object') {
     entry.schedule = Object.fromEntries(['save_script', 'delete_script'].flatMap(key =>
       /^script\.[a-z0-9_]+$/.test(item.schedule[key] ?? '') ? [[key, item.schedule[key]]] : []));

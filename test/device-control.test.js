@@ -195,6 +195,57 @@ test("a timed heater fan uses native speed to set a numbered level and only read
   assert.ok(getDeviceModel(c, idle).actions.turn_off);
 });
 
+const levelSelector = config("fan.fixture_step_heat", {
+  kind: "heater", level_steps: 9, level_read_entity: "input_number.fixture_step",
+  level_select_script: "script.fixture_select_step",
+  timed: { simple_timer_entity: "sensor.fixture_heat_runtime", simple_timer_target: "switch.fixture_heat_relay" },
+});
+const selectorLevel = level => entity(String(level), { min: 0, max: 9, step: 1 });
+const selectorTimer = (attrs = {}) => entity("0", { switch_entity_id: levelSelector.timed.simple_timer_target,
+  timer_state: "idle", ...attrs });
+function selectorStates(power = "off") {
+  return {
+    [levelSelector.entity]: entity(power, { supported_features: 49, percentage: 33 }),
+    [levelSelector.timed.simple_timer_target]: entity(power),
+    [levelSelector.timed.simple_timer_entity]: selectorTimer(),
+    [levelSelector.level_read_entity]: selectorLevel(3),
+    [levelSelector.level_select_script]: entity("off"),
+  };
+}
+
+test("explicit heater script changes bounded level with the heater off, manually on or running a valid timer", () => {
+  const c = levelSelector;
+  const idle = selectorStates();
+  const active = selectorStates("on");
+  active[c.timed.simple_timer_entity] = selectorTimer({ timer_state: "active",
+    timer_finishes_at: new Date(Date.now() + 300_000).toISOString() });
+  for (const states of [idle, selectorStates("on"), active]) {
+    const plan = planDeviceAction(c, states, "set_heating_level", 8);
+    assert.deepEqual([plan.domain, plan.service, plan.target, plan.data],
+      ["script", "fixture_select_step", null, { target_step: 8 }]);
+    assert.ok(plan.expected.all.some(item => item.entity === c.entity && item.state === states[c.entity].state));
+    assert.equal(getDeviceModel(c, states).actions.turn_on, undefined);
+    for (const value of [0, 10, 1.5, "2"]) {
+      assert.throws(() => planDeviceAction(c, states, "set_heating_level", value), code("invalid_value"));
+    }
+  }
+  for (const [key, value] of [
+    [c.timed.simple_timer_entity, selectorTimer({ switch_entity_id: "switch.foreign" })],
+    [c.timed.simple_timer_entity, selectorTimer({ timer_state: "active", timer_finishes_at: "bad" })],
+    [c.timed.simple_timer_target, entity("on")], [c.timed.simple_timer_target, entity("unavailable")],
+    [c.level_read_entity, entity("3", { min: 0, max: 8, step: 1 })],
+    [c.level_read_entity, entity("3", { min: 0, max: 9, step: 2 })],
+    [c.level_select_script, entity("on")], [c.level_select_script, entity("unavailable")],
+  ]) {
+    assert.throws(() => planDeviceAction(c, { ...idle, [key]: value }, "set_heating_level", 8), code("action_unavailable"));
+  }
+  assert.equal(getDeviceModel(c, { ...idle, [c.level_select_script]: entity("on") }).levelChanging, true);
+  assert.throws(() => planDeviceAction({ ...c, role: "status" }, idle, "set_heating_level", 8), code("action_unavailable"));
+  assert.throws(() => getDeviceModel({ ...c, level_read_entity: undefined }, idle), code("invalid_config"));
+  assert.throws(() => planDeviceAction(c, { ...active, [c.level_select_script]: entity("unavailable") },
+    "set_heating_level", 8), code("action_unavailable"));
+});
+
 test("lock unlock requires explicit confirmation and an optional PIN stays in its one request", () => {
   const c = config("lock.entry");
   const states = { [c.entity]: entity("locked", { supported_features: 1, code_format: "^\\d{4}$" }) };
@@ -297,6 +348,27 @@ function harness(states, setup = {}) {
   });
   return { controller, calls, setHass: next => { hass = next; } };
 }
+
+test("heater script feedback has to confirm both level and unchanged device linkage and power", async () => {
+  const c = levelSelector;
+  const afterFeedback = (alter = () => {}) => harness(selectorStates(), { onSleep: (elapsed, hass) => {
+    if (elapsed < 20) return;
+    hass.states = { ...hass.states, [c.level_read_entity]: selectorLevel(8) };
+    alter(hass.states);
+  } });
+  const good = afterFeedback();
+  assert.equal((await good.controller.execute(c, "set_heating_level", 8)).status, "confirmed");
+  assert.deepEqual(good.calls, [{ type: "call_service", domain: "script", service: "fixture_select_step",
+    service_data: { target_step: 8 } }]);
+  const powered = afterFeedback(states => { states[c.timed.simple_timer_target] = entity("on"); });
+  assert.equal((await powered.controller.execute(c, "set_heating_level", 8)).reason, "state_timeout");
+  const changedBinding = afterFeedback(states => {
+    states[c.timed.simple_timer_entity] = selectorTimer({ switch_entity_id: "switch.foreign" });
+  });
+  assert.equal((await changedBinding.controller.execute(c, "set_heating_level", 8)).reason, "state_timeout");
+  const noFeedback = harness(selectorStates());
+  assert.equal((await noFeedback.controller.execute(c, "set_heating_level", 8)).reason, "state_timeout");
+});
 
 test("controller uses exact websocket target, observes current state, and handles more-info without a call", async () => {
   const c = config("cover.awning");

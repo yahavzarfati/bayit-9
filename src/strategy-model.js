@@ -92,6 +92,8 @@ export function normalizeProfile(value) {
   const simpleTimer = startScript ? undefined : idForDomain(timed.simple_timer_entity, 'sensor');
   const targetDomain = value.kind === 'climate' ? 'input_boolean' : fanHeater ? 'switch' : undefined;
   const simpleTimerTarget = simpleTimer && targetDomain ? idForDomain(timed.simple_timer_target, targetDomain) : undefined;
+  const levelSelect = simpleTimer && profile.level_read_entity ? idForDomain(value.level_select_script, 'script') : undefined;
+  if (levelSelect) profile.level_select_script = levelSelect;
   const timer = simpleTimer ? undefined : idForDomain(timed.timer_entity, 'timer');
   const dailyUsage = idForDomain(timed.daily_usage_entity, 'sensor');
   if (!startScript && !simpleTimer && !timer && !stopScript) return profile;
@@ -204,6 +206,7 @@ function presentEntity(entity, state, registry, profile) {
     ...(profile?.level_entity && { level_entity: profile.level_entity }),
     ...(profile?.level_steps && { level_steps: profile.level_steps }),
     ...(profile?.level_read_entity && { level_read_entity: profile.level_read_entity }),
+    ...(profile?.level_select_script && { level_select_script: profile.level_select_script }),
     ...(profile?.timed && { timed: profile.timed }),
     ...(profile?.schedule && { schedule: profile.schedule }),
   };
@@ -242,7 +245,7 @@ export function discoverRooms(config, hass, locale) {
   const profiles = profilesOf(config.profiles);
   const adapterEntities = new Set([...profiles.values()].flatMap(profile => {
     const timed = profile.timed;
-    return [profile.level_entity, profile.level_read_entity, timed?.start_script, timed?.stop_script,
+    return [profile.level_entity, profile.level_read_entity, profile.level_select_script, timed?.start_script, timed?.stop_script,
       timed?.timer_entity, timed?.simple_timer_entity, timed?.simple_timer_target, timed?.daily_usage_entity].filter(Boolean);
   }));
   const states = hass.states ?? {};

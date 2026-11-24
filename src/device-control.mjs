@@ -105,11 +105,16 @@ function normalizedConfig(config) {
   if (config.level_read_entity !== undefined && (!config.level_steps || !isEntity(config.level_read_entity, "input_number"))) {
     throw new DeviceControlError("invalid_config", "Fan heating level feedback requires a numeric helper.");
   }
+  const timed = timedProfile(config.timed, domain, kind);
+  if (config.level_select_script !== undefined && (!isEntity(config.level_select_script, "script") ||
+      !config.level_steps || !config.level_read_entity || !timed?.simple_timer_entity)) {
+    throw new DeviceControlError("invalid_config", "Heater level selection requires a script, step feedback and Simple Timer.");
+  }
   if (config.confirmation_ms !== undefined &&
       (!Number.isSafeInteger(config.confirmation_ms) || config.confirmation_ms < 0)) {
     throw new DeviceControlError("invalid_config", "The confirmation time must be a nonnegative number of milliseconds.");
   }
-  return { ...config, kind, domain, timed: timedProfile(config.timed, domain, kind) };
+  return { ...config, kind, domain, timed };
 }
 
 function durationMs(value) {
@@ -156,6 +161,14 @@ function readSimpleTimer(entity, device, states, nowMs) {
     usedSeconds: Number.isFinite(seconds) && seconds >= 0 ? seconds : null,
     reverse: attrs.reverse_mode === true && attrs.timer_state === "active",
   };
+}
+
+function verifiedLevel(record, steps) {
+  if (!isAvailable(record) || !record.state.trim()) return null;
+  const value = Number(record.state);
+  const { min, max, step } = record.attributes ?? {};
+  return Number.isSafeInteger(value) && [0, 1].includes(min) && Number.isSafeInteger(max) &&
+    max >= steps && step === 1 && value >= min && value <= steps ? value : null;
 }
 
 function supportedActions(config, states, record, timer, nowMs) {
@@ -288,7 +301,17 @@ function supportedActions(config, states, record, timer, nowMs) {
       add("set_heating_level", { min, max, step });
     }
   }
-  if (config.level_steps && canSetLevel && supports(FAN.speed) && record.state === "on") {
+  if (config.level_select_script) {
+    const switchEntity = timing.simple_timer_target;
+    const powerMatches = ["on", "off"].includes(record.state) &&
+      (!switchEntity || states?.[switchEntity]?.state === record.state);
+    const timerReady = timer?.state === "idle" ||
+      (timer?.state === "active" && timer.deadlineMs > nowMs && record.state === "on" && !timer.reverse);
+    if (powerMatches && timerReady && states?.[config.level_select_script]?.state === "off" &&
+        verifiedLevel(states?.[config.level_read_entity], config.level_steps) !== null) {
+      add("set_heating_level", { min: 1, max: config.level_steps, step: 1 });
+    }
+  } else if (config.level_steps && canSetLevel && supports(FAN.speed) && record.state === "on") {
     add("set_heating_level", { min: 1, max: config.level_steps, step: 1 });
     delete actions.set_percentage;
   }
@@ -325,8 +348,12 @@ function deviceModel(config, states, nowMs) {
     available: isAvailable(record),
     attributes,
     actions: supportedActions(config, states, record, timer, nowMs),
-    level: Number.isFinite(explicitLevel) ? explicitLevel : percentageLevel,
-    ...(config.level_steps && { levelRange: { min: 1, max: config.level_steps, step: 1 } }),
+    level: config.level_select_script ? verifiedLevel(level, config.level_steps)
+      : Number.isFinite(explicitLevel) ? explicitLevel : percentageLevel,
+    ...(config.level_steps && !READ_ONLY_ROLES.has(config.role) && {
+      levelRange: { min: 1, max: config.level_steps, step: 1 },
+      levelChanging: !!config.level_select_script && states?.[config.level_select_script]?.state === "on",
+    }),
     timer,
   };
 }
@@ -426,6 +453,20 @@ export function planDeviceAction(config, states, actionId, value, { confirmed = 
   }
 
   if (actionId === "set_heating_level") {
+    if (config.level_select_script) {
+      const power = config.timed.simple_timer_target;
+      return {
+        kind: "service", domain: "script", service: config.level_select_script.slice("script.".length),
+        target: null, data: { target_step: value },
+        expected: { all: [
+          { entity: config.level_read_entity, numericState: value },
+          { entity: config.entity, state: model.state },
+          ...(power ? [{ entity: power, state: model.state }] : []),
+          { entity: config.timed.simple_timer_entity, attributes: { switch_entity_id: power ?? config.entity } },
+          { entity: config.level_select_script, state: "off" },
+        ] },
+      };
+    }
     if (config.level_steps) {
       const percentage = Math.round(value * 100 / config.level_steps);
       const expected = config.level_read_entity
