@@ -365,7 +365,13 @@ export const styles = `
     --panel-top: clamp(14px,var(--bayit-popup-area-top,142px),max(14px,calc(var(--panel-bottom) - 180px)));
   }
   .modal:is([data-kind=room],[data-kind=toolbar]) { width: min(860px,calc(100% - 2 * var(--edge))); }
-  .modal[data-kind=device] { width: min(520px,calc(100% - 2 * var(--edge))); }
+  .modal[data-kind=device] {
+    --device-bottom-gap: calc(16px + env(safe-area-inset-bottom,0px));
+    width: min(520px,calc(100% - 2 * var(--edge)));
+    bottom: max(var(--device-bottom-gap),calc(100dvh - var(--panel-bottom) + var(--device-bottom-gap)));
+    max-height: calc(var(--panel-bottom) - var(--panel-top) - var(--device-bottom-gap));
+    margin-block: auto;
+  }
   .modal[data-kind=toolbar] {
     --panel-top: clamp(14px,calc(var(--bayit-popup-area-top,142px) - 78px),max(14px,calc(var(--panel-bottom) - 180px)));
   }

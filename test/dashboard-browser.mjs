@@ -723,6 +723,49 @@ try {
       assert.equal(await roomGridPage.evaluate(() => window.bayitTest.calls.length), 3);
       await roomGridPage.close();
 
+      const geometryPage = await browser.newPage({
+        viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce',
+      });
+      await geometryPage.goto(base + '?device-panel&locale=he');
+      const geometryDialog = geometryPage.getByRole('dialog');
+      const modalGeometry = () => geometryDialog.evaluate(dialog => {
+        const root = dialog.getRootNode();
+        const rect = dialog.getBoundingClientRect();
+        const close = dialog.querySelector('[data-role="close"]').getBoundingClientRect();
+        const source = root.querySelector('[data-popup-origin]');
+        return {
+          top: rect.top, bottom: rect.bottom, height: rect.height,
+          gridTop: root.querySelector('.room-scroll').getBoundingClientRect().top,
+          closeX: close.left + close.width / 2,
+          closeOffset: close.top - rect.top,
+          sourceRing: getComputedStyle(source).boxShadow,
+        };
+      });
+      await geometryPage.getByRole('button', { name: 'Studio', exact: true }).tap();
+      const roomGeometry = await modalGeometry();
+      assert.ok(Math.abs(roomGeometry.top - roomGeometry.gridTop - 86) <= 1);
+      assert.match(roomGeometry.sourceRing, /2px inset/);
+      await geometryPage.keyboard.press('Escape');
+      await geometryDialog.waitFor({ state: 'hidden' });
+      const deskShortcut = geometryPage.locator('.quick-button[data-entity="light.demo_lamp"]');
+      await deskShortcut.press('Shift+Enter');
+      const deviceGeometry = await modalGeometry();
+      assert.ok(Math.abs(deviceGeometry.top - (roomGeometry.top + 844 - 16 - deviceGeometry.height) / 2) <= 1);
+      assert.ok(deviceGeometry.top > roomGeometry.top + 100);
+      assert.equal(deviceGeometry.closeX, roomGeometry.closeX);
+      assert.equal(deviceGeometry.closeOffset, roomGeometry.closeOffset);
+      assert.match(deviceGeometry.sourceRing, /2px inset/);
+
+      // Constrain the visual bottom inside the layout viewport, as a phone keyboard does.
+      await geometryDialog.evaluate(dialog => dialog.style.setProperty('--bayit-popup-view-bottom', '330px'));
+      const constrainedGeometry = await modalGeometry();
+      assert.ok(constrainedGeometry.bottom <= 315);
+      assert.ok(constrainedGeometry.top >= roomGeometry.top - 1);
+      await geometryPage.keyboard.press('Escape');
+      await geometryDialog.waitFor({ state: 'hidden' });
+      assert.equal(await deskShortcut.evaluate(button => button.getRootNode().activeElement === button), true);
+      await geometryPage.close();
+
       for (const [locale, width] of [['he', 320], ['en', 390]]) {
         const effectsPage = await browser.newPage({ viewport: { width, height: 760 }, hasTouch: true });
         const many = locale === 'en' ? '&many-effect-categories' : '';
