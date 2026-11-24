@@ -12,6 +12,7 @@ if [[ ! "$version" =~ ^20[0-9]{2}\.[0-9]{1,2}\.[0-9]+$ ]]; then
   exit 2
 fi
 : "${BAYIT_QA_HACS_TOKEN:?Supply a token for this disposable fixture}"
+log_token="$BAYIT_QA_HACS_TOKEN"
 for program in curl docker node sha256sum unzip; do
   command -v "$program" >/dev/null
 done
@@ -24,6 +25,16 @@ results="$root/test-results/ha-hacs-acceptance/$version"
 cleanup() {
   status=$?
   trap - EXIT
+  if (( status != 0 )); then
+    docker logs "$name" > "$stage/hacs-diagnostic.log" 2>&1 || true
+    BAYIT_QA_REDACT="$log_token" node --input-type=module - "$stage/hacs-diagnostic.log" <<'JS' || true
+import { readFileSync } from 'node:fs';
+const secret = process.env.BAYIT_QA_REDACT;
+const logs = readFileSync(process.argv[2], 'utf8').replaceAll(secret, '[redacted]');
+for (const line of logs.split('\n').filter(line =>
+  /hacs|bayit_acceptance|setup failed|Traceback|Error:/i.test(line)).slice(-70)) console.error(line);
+JS
+  fi
   docker rm -f "$name" >/dev/null 2>&1 || true
   docker volume rm "$name" >/dev/null 2>&1 || true
   rm -rf -- "$stage"

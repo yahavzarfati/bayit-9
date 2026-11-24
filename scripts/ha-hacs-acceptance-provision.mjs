@@ -111,13 +111,23 @@ export async function installPublishedRelease(api, url, verifiedRelease, { reque
     const path = new URL(item.url, origin).pathname;
     return path !== RESOURCE_URL && path !== resourcePath;
   }), 'This fixture already has a Bayit 9 dashboard module');
-  await poll('HACS startup', async () => {
-    const status = await hacsCommand(api, 'hacs/info', undefined, { allowNotReady: true });
-    if (!status) return false;
-    assert.equal(status.version, HACS_VERSION, 'Unexpected HACS version');
-    assertHacsEnabled(status);
-    return status.stage === 'running' && status.startup === false;
-  }, readiness);
+  let lastStage;
+  try {
+    await poll('HACS startup', async () => {
+      const status = await hacsCommand(api, 'hacs/info', undefined, { allowNotReady: true });
+      if (!status) return false;
+      lastStage = /^[a-z_]+$/.test(status.stage) ? status.stage : 'unrecognized';
+      assert.equal(status.version, HACS_VERSION, 'Unexpected HACS version');
+      assertHacsEnabled(status);
+      return status.stage === 'running' && status.startup === false;
+    }, readiness);
+  } catch (error) {
+    if (error.message !== 'Timed out waiting for HACS startup') throw error;
+    const entries = await api.command('config_entries/get', { domain: 'hacs' }).catch(() => []);
+    const state = entries.find(item => item.domain === 'hacs')?.state;
+    const entryState = /^[a-z_]+$/.test(state) ? state : 'missing';
+    throw new Error(error.message + ' (stage ' + (lastStage ?? 'unregistered') + ', entry ' + entryState + ')');
+  }
 
   await hacsCommand(api, 'hacs/repositories/add', {
     repository: 'https://github.com/' + repository, category: 'plugin',
