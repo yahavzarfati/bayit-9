@@ -864,6 +864,89 @@ try {
       await panelsPage.getByRole('dialog',{name:'Calendar',exact:true}).getByText('2 calendars',{exact:true}).waitFor();
       await panelsPage.close();
 
+      const effectEditorPage = await browser.newPage({ viewport: { width: 320, height: 760 } });
+      await effectEditorPage.addInitScript(() => {
+        const key = 'bayit9-browser-fixture';
+        if (sessionStorage.getItem(key)) return;
+        sessionStorage.setItem(key, JSON.stringify({ strategy: { type: 'custom:bayit-9',
+          room_overrides: { studio: { read_only_entities: ['light.demo_monitor'] } },
+          light_effect_groups: {
+            'light.demo_pendant': [{ title: 'Evening', effects: [
+              { effect: 'Slow pulse', name: 'Gentle glow', icon: 'mdi:weather-night' }, 'Retired preset',
+            ] }],
+            'light.other_saved': [{ title: 'Elsewhere', effects: ['Other effect'] }],
+          },
+        } }));
+      });
+      await effectEditorPage.goto(base + '/fixture-home/home?configuration&room-grid');
+      await effectEditorPage.getByRole('button', { name: 'Appearance', exact: true }).click();
+      await effectEditorPage.getByRole('button', { name: 'Customize home', exact: true }).click();
+      const effectSetup = effectEditorPage.getByRole('dialog', { name: 'Customize home', exact: true });
+      await effectSetup.getByText('Light effect categories', { exact: true }).click();
+      const effectLight = effectSetup.getByLabel('Light', { exact: true });
+      assert.deepEqual(await effectLight.locator('option').evaluateAll(options => options.map(option => option.value)),
+        ['', 'light.demo_pendant']);
+      await effectLight.selectOption('light.demo_pendant');
+      const groupName = effectSetup.getByLabel('Category name', { exact: true });
+      const groupPicker = effectSetup.getByLabel('Category', { exact: true });
+      const effectToAdd = effectSetup.getByLabel('Available effect', { exact: true });
+      const saveEffects = effectSetup.getByRole('button', { name: 'Save dashboard', exact: true });
+      assert.deepEqual(await effectToAdd.locator('option').evaluateAll(options => options.map(option => option.value)),
+        ['', 'Color loop']);
+      await effectEditorPage.evaluate(() => window.bayitTest.setRoomState('light.demo_pendant', 'unavailable'));
+      await effectSetup.getByText('This light is not reporting effects right now. Saved categories are kept.').waitFor();
+      assert.equal(await effectToAdd.count(), 0);
+      assert.equal(await saveEffects.isDisabled(), true);
+      await groupName.fill('After dark');
+      assert.equal(await saveEffects.isEnabled(), true);
+      await groupName.press('Tab');
+      assert.equal(await groupPicker.locator('option:checked').innerText(), 'After dark');
+      await effectEditorPage.evaluate(() => window.bayitTest.setRoomState('light.demo_pendant', 'on'));
+      await effectToAdd.selectOption('Color loop');
+      await effectSetup.getByRole('button', { name: 'Add effect', exact: true }).click();
+      await effectSetup.getByRole('button', { name: 'Move up · Color loop', exact: true }).click();
+      await groupPicker.selectOption('new');
+      await groupName.fill('Weekend');
+      await effectToAdd.selectOption('Slow pulse');
+      await effectSetup.getByRole('button', { name: 'Add category', exact: true }).click();
+      await effectSetup.getByRole('button', { name: 'Delete category', exact: true }).click();
+      await groupPicker.selectOption('new');
+      await groupName.fill('Morning');
+      await effectToAdd.selectOption('Color loop');
+      await effectSetup.getByRole('button', { name: 'Add category', exact: true }).click();
+      assert.equal(await effectEditorPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain).length), 0);
+      await saveEffects.click();
+      await effectSetup.waitFor({ state: 'hidden' });
+      assert.deepEqual(await effectEditorPage.evaluate(() =>
+        JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.light_effect_groups), {
+        'light.demo_pendant': [
+          { title: 'After dark', effects: [
+            { effect: 'Slow pulse', name: 'Gentle glow', icon: 'mdi:weather-night' },
+            { effect: 'Color loop' }, { effect: 'Retired preset' },
+          ] },
+          { title: 'Morning', effects: [{ effect: 'Color loop' }] },
+        ],
+        'light.other_saved': [{ title: 'Elsewhere', effects: ['Other effect'] }],
+      });
+      await effectEditorPage.getByRole('button', { name: 'Studio', exact: true }).click();
+      await effectEditorPage.getByRole('dialog').locator('[data-entity="light.demo_pendant"] .device-tile').press('Shift+Enter');
+      const savedGallery = effectEditorPage.getByRole('region', { name: 'Light effect', exact: true });
+      await savedGallery.getByRole('button', { name: 'After dark', exact: true }).waitFor();
+      await savedGallery.getByRole('button', { name: 'Morning', exact: true }).waitFor();
+      assert.equal(await savedGallery.getByText('Retired preset', { exact: true }).count(), 0);
+      await effectEditorPage.close();
+
+      const rtlEffects = await browser.newPage({ viewport: { width: 320, height: 760 }, hasTouch: true });
+      await rtlEffects.goto(base + '?editor&room-grid&locale=he');
+      await rtlEffects.getByText('קטגוריות אפקטים לתאורה', { exact: true }).tap();
+      await rtlEffects.getByLabel('תאורה', { exact: true }).selectOption('light.demo_pendant');
+      await rtlEffects.getByLabel('שם קטגוריה', { exact: true }).fill('ערב');
+      await rtlEffects.getByLabel('אפקט זמין', { exact: true }).selectOption('Slow pulse');
+      await rtlEffects.getByRole('button', { name: 'הוספת קטגוריה', exact: true }).tap();
+      assert.equal(await rtlEffects.getByLabel('קטגוריה', { exact: true }).locator('option:checked').innerText(), 'ערב');
+      assert.equal(await rtlEffects.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      await rtlEffects.close();
+
       const setupPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
       await setupPage.goto(base + '/fixture-home/home?configuration');
       await setupPage.getByRole('button', { name: 'Appearance', exact: true }).click();

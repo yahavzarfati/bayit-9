@@ -2,9 +2,17 @@ import { BACKGROUNDS, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, l
 import { languages } from './bayit-dashboard-i18n.js';
 import { buildToolbarEditor } from './toolbar-editor.js';
 import { activityKinds, activitySources, normalizeRoomActivities } from './room-appliance.mjs';
+import { getDeviceModel } from './device-control.mjs';
+import { normalizeLightEffectGroups } from './light-effects.js';
 
 const WORDS = {
   en: {
+    lightEffects: 'Light effect categories', effectLight: 'Light', effectGroup: 'Category',
+    newEffectGroup: 'New category', effectGroupName: 'Category name', addEffectGroup: 'Add category',
+    removeEffectGroup: 'Delete category', availableEffect: 'Available effect', chooseEffect: 'Select an effect',
+    addEffect: 'Add effect', removeEffect: 'Remove effect',
+    unavailableEffect: 'Currently unavailable', noEffectLights: 'No visible lights currently report effects.',
+    noEffectOptions: 'This light is not reporting effects right now. Saved categories are kept.',
     title: 'Dashboard title', language: 'Language', automatic: 'Home Assistant language',
     areas: 'Rooms', unassigned: 'Include devices without a room',
     roomSelection: 'Rooms on the dashboard', allRooms: 'Automatic', selectedRooms: 'Choose rooms and order',
@@ -57,6 +65,12 @@ const WORDS = {
     units: 'minutes', searchable: 'Filter entities',
   },
   he: {
+    lightEffects: 'קטגוריות אפקטים לתאורה', effectLight: 'תאורה', effectGroup: 'קטגוריה',
+    newEffectGroup: 'קטגוריה חדשה', effectGroupName: 'שם קטגוריה', addEffectGroup: 'הוספת קטגוריה',
+    removeEffectGroup: 'מחיקת קטגוריה', availableEffect: 'אפקט זמין', chooseEffect: 'בחירת אפקט',
+    addEffect: 'הוספת אפקט', removeEffect: 'הסרת אפקט',
+    unavailableEffect: 'לא זמין כרגע', noEffectLights: 'אין כרגע מנורות מוצגות שמדווחות על אפקטים.',
+    noEffectOptions: 'המנורה אינה מדווחת כרגע על אפקטים. הקטגוריות הקיימות נשמרות.',
     title: 'שם הדשבורד', language: 'שפה', automatic: 'שפת Home Assistant',
     areas: 'חדרים', unassigned: 'הצגת מכשירים ללא חדר',
     roomSelection: 'חדרים בדשבורד', allRooms: 'בחירה אוטומטית', selectedRooms: 'בחירת חדרים וסדר',
@@ -283,11 +297,18 @@ function disclosure(text, open, onToggle, children) {
   return details;
 }
 
+function nativeLightEffects(device, states) {
+  return [...new Set(getDeviceModel(device, states).actions.set_effect?.options)];
+}
+
 export class Bayit9StrategyEditor extends HTMLElement {
   #hass = {};
   #config = { type: 'custom:' + STRATEGY_NAME };
   #open = {};
   #toolbarView = {};
+  #lightEffectEntity = '';
+  #lightEffectGroup = 0;
+  #refreshLightEffects;
   #profileEditing;
   #shortcutRoom;
   #roomEditing;
@@ -310,7 +331,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         || (!hasStates(previous.states) && hasStates(this.#hass.states))
         || (previous.locale?.language ?? previous.language) !== (value?.locale?.language ?? value?.language)) {
       this.render();
-    }
+    } else this.#refreshLightEffects?.();
   }
 
   setConfig(config) {
@@ -332,6 +353,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     this.dispatchEvent(new CustomEvent('config-changed', {
       detail: { config: this.#config }, bubbles: true, composed: true,
     }));
+    if (Object.hasOwn(change, 'hidden_entities')) this.#refreshLightEffects?.(true);
   }
 
   #commitRooms(change, focusKey) {
@@ -1042,6 +1064,146 @@ export class Bayit9StrategyEditor extends HTMLElement {
     return children;
   }
 
+  #lightEffectPanel(rooms, words) {
+    const lights = new Map();
+    for (const { entities } of rooms) {
+      for (const device of entities) {
+        if (device.entity.startsWith('light.') && device.role !== 'status') lights.set(device.entity, device);
+      }
+    }
+    const panel = node('div', { className: 'stack' });
+    const configured = () => this.#config.light_effect_groups ?? {};
+    const hidden = id => Array.isArray(this.#config.hidden_entities) && this.#config.hidden_entities.includes(id);
+    const optionsFor = id => lights.has(id) && !hidden(id) ? nativeLightEffects(lights.get(id), this.#hass.states) : [];
+    const groupsFor = id => normalizeLightEffectGroups(Object.hasOwn(configured(), id) ? configured()[id] : []);
+    const selectedLight = () => this.#lightEffectEntity;
+    let signature;
+
+    const setGroups = groups => {
+      const next = { ...configured() };
+      const normalized = normalizeLightEffectGroups(groups);
+      if (normalized.length) next[selectedLight()] = normalized;
+      else delete next[selectedLight()];
+      this.#commit({ light_effect_groups: next });
+    };
+    const focus = key => {
+      if (!key) return;
+      const controls = [...panel.querySelectorAll('[data-effect-focus], [data-room-focus]')];
+      const control = controls.find(item =>
+        !item.disabled && (item.dataset.effectFocus === key || item.dataset.roomFocus === key));
+      control?.focus({ preventScroll: true });
+    };
+    const mark = (control, key) => {
+      control.dataset.effectFocus = key;
+      return control;
+    };
+
+    const refresh = (force = false, focusKey) => {
+      const eligible = [...lights.values()].flatMap(device => {
+        if (hidden(device.entity)) return [];
+        const options = optionsFor(device.entity);
+        const hasGroups = groupsFor(device.entity).length > 0;
+        return options.length || hasGroups ? [{ device, options }] : [];
+      });
+      const entity = selectedLight();
+      const source = eligible.find(item => item.device.entity === entity);
+      const nextSignature = JSON.stringify([eligible.map(({ device, options }) => [device.entity, !!options.length]), source?.options]);
+      if (!force && (signature === nextSignature || panel.contains(this.shadowRoot.activeElement) &&
+          this.shadowRoot.activeElement?.matches('input[type=text]'))) return;
+      signature = nextSignature;
+      if (!eligible.length) {
+        panel.replaceChildren(node('p', { textContent: words.noEffectLights }));
+        return;
+      }
+      const devicePicker = mark(select([['', words.choose], ...eligible.map(({ device, options }) => [
+        device.entity, (device.name || device.entity) + (options.length ? '' : ' · ' + words.unavailableEffect),
+      ])], source ? entity : ''), 'light');
+      devicePicker.addEventListener('change', () => {
+        this.#lightEffectEntity = devicePicker.value;
+        this.#lightEffectGroup = 0;
+        refresh(true, 'light');
+      });
+      const fields = [field(words.effectLight, devicePicker)];
+      if (!source) {
+        panel.replaceChildren(...fields);
+        focus(focusKey);
+        return;
+      }
+
+      const groups = groupsFor(entity);
+      const index = this.#lightEffectGroup;
+      const group = groups[index];
+      const reported = new Set(source.options);
+      const categoryPicker = mark(select([
+        ...groups.map(({ title }, index) => [String(index), title]),
+        ...(source.options.length ? [['new', words.newEffectGroup]] : []),
+      ], group ? String(index) : 'new'), 'category');
+      categoryPicker.addEventListener('change', () => {
+        this.#lightEffectGroup = categoryPicker.value === 'new' ? groups.length : Number(categoryPicker.value);
+        refresh(true, 'category');
+      });
+      if (groups.length) fields.push(field(words.effectGroup, categoryPicker));
+      if (!source.options.length) fields.push(node('p', { textContent: words.noEffectOptions }));
+
+      const name = mark(node('input', { type: 'text', value: group?.title ?? '', maxLength: 80 }), 'name');
+      const remaining = source.options.filter(effect => !group?.effects.some(item => item.effect === effect));
+      if (group || remaining.length) fields.push(field(words.effectGroupName, name));
+      if (group) {
+        const update = (next, target) => {
+          setGroups(groups.map((entry, i) => i === index ? next : entry));
+          if (target) refresh(true, target);
+        };
+        name.addEventListener('input', () => {
+          const liveGroup = groupsFor(entity)[index];
+          const title = name.value.trim();
+          if (!title || title === liveGroup.title) return;
+          update({ ...liveGroup, title });
+          if (categoryPicker.selectedOptions[0]) categoryPicker.selectedOptions[0].textContent = title;
+        });
+        name.addEventListener('change', () => { name.value = groupsFor(entity)[index].title; });
+        fields.push(orderedList(group.effects.map(item => ({
+          id: item.effect, name: item.name || item.effect, item,
+          secondary: [item.name && item.name !== item.effect ? item.effect : '', !reported.has(item.effect) ? words.unavailableEffect : '']
+            .filter(Boolean).join(' · '),
+        })), (items, target) => update({
+          ...groupsFor(entity)[index], effects: items.map(({ item }) => item),
+        }, target || 'category'), words, words.removeEffect, true, 'effect'));
+        fields.push(node('div', { className: 'actions' }, [button(words.removeEffectGroup, () => {
+          this.#lightEffectGroup = Math.max(0, index - 1);
+          setGroups(groups.filter((_, i) => i !== index));
+          refresh(true, groups.length > 1 ? 'category' : 'name');
+        })]));
+      }
+      if (remaining.length) {
+        const add = addPicker(words.availableEffect, remaining.map(effect => [effect, effect]),
+          group ? words.addEffect : words.addEffectGroup, words.chooseEffect, effect => {
+            if (!optionsFor(entity).includes(effect)) {
+              refresh(true, 'category');
+              return;
+            }
+            if (group) {
+              const liveGroup = groupsFor(entity)[index];
+              setGroups(groupsFor(entity).map((entry, i) => i === index
+                ? { ...liveGroup, effects: [...liveGroup.effects, { effect }] } : entry));
+            } else {
+              const title = name.value.trim();
+              if (!title) return name.focus();
+              this.#lightEffectGroup = groups.length;
+              setGroups([...groups, { title, effects: [{ effect }] }]);
+            }
+            refresh(true, 'add-effect');
+          });
+        mark(add.input, 'add-effect');
+        fields.push(add.wrapper);
+      }
+      panel.replaceChildren(...fields);
+      focus(focusKey);
+    };
+    this.#refreshLightEffects = refresh;
+    refresh(true);
+    return panel;
+  }
+
   render() {
     if (!this.isConnected) return;
     const language = languageFor(this.#config.locale, this.#hass);
@@ -1058,7 +1220,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
       return field(label, input);
     };
     const backgrounds = Object.entries(BACKGROUNDS).map(([id, names]) => [id, names[language]]);
-    const overviewOptions = discoverRooms(this.#config, this.#hass, language).flatMap(room =>
+    const rooms = discoverRooms(this.#config, this.#hass, language);
+    const overviewOptions = rooms.flatMap(room =>
       room.entities.map(device => [device.entity, (device.name || device.entity) + ' · ' + room.name]));
     const toolbar = node('div');
     const showToolbar = () => {
@@ -1067,6 +1230,14 @@ export class Bayit9StrategyEditor extends HTMLElement {
         onChange:value=>this.#commit({toolbar:value})}));
     };
     if (this.#open.toolbar) showToolbar();
+    const lightEffects = node('div');
+    this.#refreshLightEffects = undefined;
+    const showLightEffects = () => {
+      if (!lightEffects.childElementCount) {
+        lightEffects.append(this.#lightEffectPanel(discoverRooms(this.#config, this.#hass, language), words));
+      }
+    };
+    if (this.#open.lightEffects) showLightEffects();
     const form = node('form', { dir: language === 'he' ? 'rtl' : 'ltr' }, [
       field(words.title, title), field(words.language, locale),
       disclosure(words.areas, this.#open.rooms, open => { this.#open.rooms = open; }, this.#roomsPanel(words, language)),
@@ -1084,6 +1255,14 @@ export class Bayit9StrategyEditor extends HTMLElement {
         [node('p', { textContent: words.overviewHint }), this.#entityMulti(words.overviewDevices, 'overview_entities', words, overviewOptions)]),
       disclosure(words.shortcuts, this.#open.shortcuts, open => { this.#open.shortcuts = open; },
         [node('div', { className: 'stack' }, this.#shortcutPanel(words, language))]),
+      disclosure(words.lightEffects, this.#open.lightEffects, open => {
+        this.#open.lightEffects = open;
+        if (open) showLightEffects();
+        else {
+          lightEffects.replaceChildren();
+          this.#refreshLightEffects = undefined;
+        }
+      }, [lightEffects]),
       disclosure(words.profiles, this.#open.profiles, open => { this.#open.profiles = open; },
         [node('div', { className: 'stack' }, this.#profilePanel(words))]),
     ]);

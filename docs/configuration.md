@@ -35,7 +35,9 @@ A cover shortcut shows the requested direction while Home Assistant is respondin
 
 Open a light's device controls to pick a color when it advertises RGB, HS or XY support. Choose the color and press **Apply**. Applying a color turns on the light if it was off. Use the power control to turn it off. White temperature and named effects follow the light's reported capabilities.
 
-To show a grouped effect gallery, list the light's exact reported effect names in the strategy. Each category has a `title` and ordered `effects`. An effect entry can add an optional display `name` and MDI `icon`. Unlisted native effects appear in **Other effects**. Lights without a matching category use the default effect picker.
+In **Customize home**, open **Light effect categories** and pick a light. Name a category and choose its first effect, then add or reorder effects. Select **New category** in the category picker to add another. Press **Save dashboard** to share the gallery across devices. If the light temporarily stops reporting effects, its saved categories are kept.
+
+In YAML, use the light's exact reported effect names. Each category has a `title` and ordered `effects`. An effect entry can add an optional display `name` and MDI `icon`. Unlisted native effects appear in **Other effects**. Lights without a matching category use the default effect picker.
 
     strategy:
       type: custom:bayit-9
