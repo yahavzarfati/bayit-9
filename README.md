@@ -8,16 +8,14 @@ A room-based Liquid Glass dashboard for Home Assistant. Bayit 9 groups the devic
 
 [Room controls in the demo installation](docs/screenshots/room.png)
 
-## Install through HACS
+## Install Bayit 9
 
 The **Community dashboards** picker requires Home Assistant 2026.5 or newer. Assign devices to areas in Home Assistant to give them room cards. Devices without an area appear together by default.
 
-1. Open **HACS** and select **Custom repositories** from the menu.
-2. Add **yahavzarfati/bayit-9** as a **Dashboard** repository and download it.
-3. Reload the Home Assistant frontend. If you use the Companion app, close and reopen its dashboard view.
-4. Open **Settings → Dashboards → Add dashboard → Community dashboards → Bayit 9**.
+- **Home Assistant 2026.11 and newer.** Open **Settings → Marketplace → Add from link**, connect your GitHub account when prompted, and enter `yahavzarfati/bayit-9`. Open the repository and select **Install**. [Marketplace instructions](https://www.home-assistant.io/integrations/marketplace/#custom-repositories)
+- **Home Assistant 2026.5–2026.10 with HACS.** In **HACS → Custom repositories**, add `yahavzarfati/bayit-9` as a **Dashboard** repository and download it. For a preview release, enable **Show beta versions** in the Bayit 9 menu.
 
-When installing a preview version, enable **Show beta versions** in the Bayit 9 menu in HACS.
+Reload Home Assistant after the download. In the Companion app, close and reopen the dashboard view. Then open **Settings → Dashboards → Add dashboard → Community dashboards → Bayit 9**.
 
 Choose **Edit dashboard** to pick rooms, arrange their shortcuts, include or hide specific entities, and map controls for a boiler or heater. Bayit 9 starts in the Home Assistant language and supports English and Hebrew.
 
