@@ -1,5 +1,5 @@
 import {
-  generateDashboard, LOCAL_ROUTE, selectableRoomEntities,
+  generateDashboard, LOCAL_ROUTE, roomPanelOptions, selectableRoomEntities,
   TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
 } from './strategy-model.js';
 import { normalizeOrefMap, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
@@ -22,6 +22,7 @@ const WORDS = {
     deviceLabel: 'Device label', deviceRole: 'Display as', editDevice: 'Edit device display',
     ask: 'Ask before running', skip: 'Run immediately', askCustom: 'Custom confirmation',
     confirmation: 'Confirmation', confirmationText: 'Confirmation message', graphHours: 'History hours',
+    graphVacuum: 'Open Vacuum on graph tap', noGraphLink: 'No shortcut',
     runScript: 'Run script from this button',
     orefMapTitle: 'Regional alerts',
     orefMap: 'Show the Oref alert map',
@@ -59,6 +60,7 @@ const WORDS = {
     deviceLabel: 'תווית המכשיר', deviceRole: 'אופן התצוגה', editDevice: 'עריכת תצוגת המכשיר',
     ask: 'בקשת אישור לפני ההפעלה', skip: 'הפעלה מיידית', askCustom: 'הודעת אישור מותאמת',
     confirmation: 'אישור פעולה', confirmationText: 'הודעת אישור', graphHours: 'שעות היסטוריה',
+    graphVacuum: 'פתיחת חלונית השואב בלחיצה על הגרף', noGraphLink: 'ללא קיצור דרך',
     runScript: 'הפעלת התסריט מהכפתור',
     orefMapTitle: 'התראות אזוריות',
     orefMap: 'הצגת מפת התרעות פיקוד העורף',
@@ -318,7 +320,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     role.dataset.toolbarFocus = 'device-role';
     role.addEventListener('change', () => save({
       role: role.value || undefined,
-      ...(role.value !== 'graph' && { graph_hours: undefined }),
+      ...(role.value !== 'graph' && { graph_hours: undefined, vacuum_panel_id: undefined }),
       ...(role.value !== 'action' && { command: undefined,
         ...(toolbar[entryIndex].sections[sectionIndex].entities[index]?.confirmation === false && { confirmation: undefined }) }),
     }, true));
@@ -338,6 +340,15 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         if (hours.validity.valid) save({ graph_hours: hours.value === '' ? undefined : hours.valueAsNumber });
       });
       fields.push(field(words.graphHours, hours));
+      if (domain === 'sensor' && toolbar[entryIndex].kind === 'sensors' && section.kind !== 'series') {
+        const vacuumPanels = roomPanelOptions({ ...config, toolbar }, hass).filter(panel => panel.kind === 'vacuum');
+        if (vacuumPanels.length) {
+          const destination = select([['', words.noGraphLink], ...vacuumPanels.map(panel =>
+            [panel.id, panel.label || (vacuumPanels.length === 1 ? words.vacuum : panel.id)])], record.vacuum_panel_id ?? '');
+          destination.addEventListener('change', () => save({ vacuum_panel_id: destination.value || undefined }));
+          fields.push(field(words.graphVacuum, destination));
+        }
+      }
     }
     if (record.role === 'action' && domain === 'script') {
       const run = node('input', { type: 'checkbox', checked: record.command === 'run_script' });

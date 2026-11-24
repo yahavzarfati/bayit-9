@@ -657,3 +657,31 @@ test('keeps curated toolbar sections ordered, visibly scoped and restricted to s
   assert.deepEqual(toolbar[2].sections[0].entities, [{ entity: 'person.fixture', role: 'person' }]);
   assert.deepEqual(toolbar[3].sections.map(section => section.kind), ['electricity', 'water']);
 });
+
+test('only an individual Sensors history graph can link to an existing Vacuum panel', () => {
+  const hass = home();
+  hass.states['sensor.fixture'] = { state: '25', attributes: {} };
+  hass.entities['sensor.fixture'] = {};
+  const graph = { entity: 'sensor.fixture', role: 'graph', graph_hours: 168, vacuum_panel_id: 'robot' };
+  const config = {
+    toolbar: [
+      { kind: 'sensors', sections: [
+        { kind: 'readings', entities: [graph] },
+        { kind: 'readings', entities: [{ ...graph, vacuum_panel_id: 'media' }] },
+        { kind: 'series', entities: [graph] },
+        { kind: 'readings', entities: [{ ...graph, role: 'status' }] },
+      ] },
+      { kind: 'energy', sections: [{ kind: 'readings', entities: [graph] }] },
+      { kind: 'media', id: 'media' },
+      { kind: 'vacuum', id: 'robot' },
+    ],
+  };
+  const makeToolbar = () => generateDashboard(config, hass).views[0].cards[0].toolbar;
+  const toolbar = makeToolbar();
+  assert.deepEqual(toolbar[0].sections[0].entities[0], graph);
+  assert.deepEqual(toolbar[0].sections.slice(1).map(section => section.entities[0].vacuum_panel_id),
+    [undefined, undefined, undefined]);
+  assert.equal(toolbar[1].sections[0].entities[0].vacuum_panel_id, undefined);
+  config.toolbar.pop();
+  assert.equal(makeToolbar()[0].sections[0].entities[0].vacuum_panel_id, undefined);
+});

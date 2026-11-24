@@ -182,6 +182,7 @@ if (query.has('toolbar-panels')) {
     'person.demo_friend': {state:'home',attributes:{friendly_name:'Simona'}},
     'sensor.demo_meter': {state:'51',attributes:{friendly_name:'Energy meter',unit_of_measurement:'kWh'}},
     'sensor.demo_studio_temperature': {state:'22.5',attributes:{friendly_name:'Studio temperature',unit_of_measurement:'°C'}},
+    'sensor.demo_progress': {state:'40',attributes:{friendly_name:'Cleaning progress',unit_of_measurement:'%'}},
     'media_player.demo_speaker': {state:'playing',attributes:{friendly_name:'Speaker',supported_features:30781,volume_level:.24,
       is_volume_muted:false,source:'Radio',source_list:['Radio','Aux'],media_title:'Station',media_artist:'Fixture artist',
       media_position:12,media_duration:180,media_position_updated_at:new Date().toISOString(),
@@ -194,13 +195,25 @@ if (query.has('toolbar-panels')) {
   });
   hass.entities['sensor.demo_studio_temperature'] = { area_id: 'studio' };
   window.loadCardHelpers = async () => ({createCardElement(configuration) {
-    const card = document.createElement('div');
+    const graphAction = configuration.tap_action?.action === 'fire-dom-event' && configuration.tap_action;
+    const card = document.createElement(graphAction ? 'button' : 'div');
     const dialog = document.querySelector('bayit-dashboard')?.shadowRoot.querySelector('.modal[open]');
     card.dataset.duringOpening = String(!!dialog?.getAnimations().some(animation =>
       animation.playState === 'running' || animation.pending));
     card.dataset.nativeType = configuration.type;
     if (configuration.graph) card.dataset.graphHours = configuration.hours_to_show;
     card.textContent = configuration.type === 'calendar' ? configuration.entities.length + ' calendars' : configuration.name || configuration.entity;
+    if (graphAction) {
+      card.dataset.holdAction = configuration.hold_action?.action;
+      card.dataset.doubleTapAction = configuration.double_tap_action?.action;
+      card.onclick = () => card.dispatchEvent(new CustomEvent('ll-custom',
+        {bubbles:true,composed:true,detail:graphAction}));
+      const plot = document.createElement('span');
+      plot.dataset.historyPlot = '';
+      plot.textContent = 'Plot';
+      plot.onclick = event => event.stopPropagation();
+      card.append(plot);
+    }
     return card;
   }});
 }
@@ -251,6 +264,8 @@ const selected = query.has('configuration') ? stored().strategy : query.has('cur
     ]},
     {id:'vacuum-panel',kind:'vacuum',placement:'settings',sections:[{kind:'vacuum',entities:[{entity:'vacuum.demo_robot',role:'device'}]},
       {kind:'actions',entities:[{entity:'button.demo_filter',role:'action',confirmation:'Reset the filter?'}]}]},
+    {id:'sensors-panel',kind:'sensors',placement:'settings',sections:[{kind:'readings',entities:[
+      {entity:'sensor.demo_progress',role:'graph',graph_hours:168,vacuum_panel_id:'vacuum-panel'}]}]},
     {kind:'calendar',placement:'settings',entities:['calendar.demo_household','calendar.demo_birthdays']},
   ],
 } : {};
@@ -1036,6 +1051,23 @@ try {
       await confirm.getByText('Reset the filter?',{exact:true}).waitFor();
       await confirm.getByRole('button',{name:'Cancel'}).click();
       assert.equal(await panelsPage.evaluate(() => window.bayitTest.calls.length),0);
+      await panelsPage.keyboard.press('Escape');
+      await panels.waitFor({state:'hidden'});
+      await panelsPage.getByRole('button',{name:'Appearance',exact:true}).click();
+      await panelsPage.getByRole('dialog').getByRole('button',{name:'Sensors',exact:true}).click();
+      const sensors = panelsPage.getByRole('dialog',{name:'Sensors',exact:true});
+      const progressGraph = sensors.locator('[data-native-type="sensor"][data-graph-hours="168"]');
+      await progressGraph.waitFor();
+      assert.equal(await progressGraph.getAttribute('data-hold-action'), 'none');
+      assert.equal(await progressGraph.getAttribute('data-double-tap-action'), 'none');
+      await progressGraph.getByText('Plot',{exact:true}).click();
+      await progressGraph.dispatchEvent('ll-custom',{bubbles:true,composed:true,detail:{action:'fire-dom-event'}});
+      assert.equal(await sensors.isVisible(), true);
+      await progressGraph.press('Enter');
+      panels = panelsPage.getByRole('dialog',{name:'Robot vacuum',exact:true});
+      await panels.getByRole('button',{name:'Start cleaning',exact:true}).waitFor();
+      assert.equal(await panelsPage.evaluate(() => window.bayitTest.calls.length),0);
+      assert.equal(await panels.getByRole('button',{name:'Back to room',exact:true}).count(),0);
       await panelsPage.keyboard.press('Escape');
       await panels.waitFor({state:'hidden'});
       await panelsPage.getByRole('button',{name:'Appearance',exact:true}).click();

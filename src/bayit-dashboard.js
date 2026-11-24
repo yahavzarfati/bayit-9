@@ -189,7 +189,8 @@ function normalizeEntity(item) {
       /^script\.[a-z0-9_]+$/.test(item.schedule[key] ?? '') ? [[key, item.schedule[key]]] : []));
   }
   if (typeof item.role === 'string') entry.role = item.role;
-  const panelKind = ROOM_PANEL_KINDS.get(domainFor(entry));
+  const domain = domainFor(entry);
+  const panelKind = ROOM_PANEL_KINDS.get(domain) ?? (domain === 'sensor' && entry.role === 'graph' ? 'vacuum' : undefined);
   const panelId = item[panelKind + '_panel_id'];
   if (panelKind && typeof panelId === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(panelId)) {
     entry[panelKind + '_panel_id'] = panelId;
@@ -1028,6 +1029,13 @@ export class BayitDashboard extends HTMLElement {
       moreInfo: item => this.moreInfo(item), pending: entity => this.pending.has(entity),
       request: (item, action, value, source) => this.requestAction(item, action, value, source),
       buildDevice: (item, slot) => this.buildDevice(item, slot),
+      vacuumForGraph: id => type === 'sensors' && this.config.toolbar?.find(
+        entry => entry.kind === 'vacuum' && entry.id === id),
+      openGraphVacuum: (target, source) => {
+        if (this.panel?.type === 'sensors' && content.contains(source)) {
+          this.openPanel('vacuum', source, undefined, undefined, { ...target, name: target.label || this.t('vacuum') });
+        }
+      },
     });
   }
 

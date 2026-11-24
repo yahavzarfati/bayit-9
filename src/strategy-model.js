@@ -384,7 +384,7 @@ function dashboardContext(config, hass, locale) {
   return context;
 }
 
-function toolbarSections(value, describe) {
+function toolbarSections(value, describe, vacuumPanels) {
   if (!Array.isArray(value)) return undefined;
   const seenSections = new Set();
   return value.flatMap((section, index) => {
@@ -410,9 +410,12 @@ function toolbarSections(value, describe) {
         : item?.confirmation === true || (item?.confirmation === false && command) ? item.confirmation : undefined;
       const graphHours = item?.graph_hours;
       const hasGraphHours = role === 'graph' && Number.isInteger(graphHours) && graphHours >= 1 && graphHours <= 336;
+      const vacuumPanel = role === 'graph' && domain === 'sensor' && section.kind !== 'series' &&
+        vacuumPanels?.has(item.vacuum_panel_id) ? item.vacuum_panel_id : undefined;
       return [{ ...descriptor, ...(name && { name }), ...(ROOM_ICON.test(icon) && { icon }),
         ...(role && { role }), ...(command && { command }),
-        ...(confirmation !== undefined && { confirmation }), ...(hasGraphHours && { graph_hours: graphHours }) }];
+        ...(confirmation !== undefined && { confirmation }), ...(hasGraphHours && { graph_hours: graphHours }),
+        ...(vacuumPanel && { vacuum_panel_id: vacuumPanel }) }];
     });
     return [{ id, kind: section.kind, ...(title !== undefined && { title }),
       ...(section.filter === 'active' && { filter:'active' }), entities }];
@@ -428,22 +431,27 @@ function dashboardToolbar(config, hass) {
   const seen = new Set();
   const describe = entity => isVisibleEntity(entity, states, registry, hidden)
     ? presentEntity(entity, states[entity], registry?.[entity], profiles.get(entity)) : null;
-  return config.toolbar.flatMap((entry, index) => {
+  const entries = config.toolbar.flatMap((entry, index) => {
     if (!TOOLBAR_KINDS.has(entry?.kind)) return [];
     const path = entry.kind === 'link' && typeof entry.path === 'string' ? entry.path.trim() : '';
     if (entry.kind === 'link' && !LOCAL_ROUTE.test(path)) return [];
     const id = layoutId(entry.id, 'toolbar-' + (index + 1), seen);
+    return [{ entry, id, path }];
+  });
+  const vacuumPanels = new Set(entries.filter(({ entry }) => entry.kind === 'vacuum').map(({ id }) => id));
+  return entries.map(({ entry, id, path }) => {
     const label = typeof entry.label === 'string' ? entry.label.trim().slice(0, 80) : '';
     const icon = typeof entry.icon === 'string' ? entry.icon.trim() : '';
     const entities = Array.isArray(entry.entities) ? idList(entry.entities).map(describe).filter(Boolean) : undefined;
-    const sections = entry.kind !== 'link' ? toolbarSections(entry.sections, describe) : undefined;
+    const sections = entry.kind !== 'link'
+      ? toolbarSections(entry.sections, describe, entry.kind === 'sensors' ? vacuumPanels : undefined) : undefined;
     const orefMap = entry.kind === 'security' ? normalizeOrefMap(entry.oref_map) : undefined;
     const vacuumMap = entry.kind === 'vacuum'
       ? normalizeVacuumMap(entry.vacuum_map, entity => isVisibleEntity(entity, states, registry, hidden), registry) : undefined;
-    return [{ id, kind: entry.kind, ...(label && { label }), ...(ROOM_ICON.test(icon) && { icon }),
+    return { id, kind: entry.kind, ...(label && { label }), ...(ROOM_ICON.test(icon) && { icon }),
       ...(path && { path }), ...(entry.placement === 'settings' && entry.kind !== 'settings' && { placement:'settings' }),
       ...(entities !== undefined && { entities }), ...(sections !== undefined && { sections }),
-      ...(orefMap && { oref_map: orefMap }), ...(vacuumMap && { vacuum_map: vacuumMap }) }];
+      ...(orefMap && { oref_map: orefMap }), ...(vacuumMap && { vacuum_map: vacuumMap }) };
   });
 }
 
