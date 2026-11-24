@@ -2,6 +2,7 @@ import {
   generateDashboard, LOCAL_ROUTE, selectableRoomEntities,
   TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
 } from './strategy-model.js';
+import { normalizeOrefMap, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
 
 const WORDS = {
   en: {
@@ -21,6 +22,13 @@ const WORDS = {
     ask: 'Ask before running', skip: 'Run immediately', askCustom: 'Custom confirmation',
     confirmation: 'Confirmation', confirmationText: 'Confirmation message', graphHours: 'History hours',
     runScript: 'Run script from this button',
+    orefMapTitle: 'Regional alerts',
+    orefMap: 'Show the Oref alert map',
+    orefMapHint: 'Requires the Oref Alert integration in Home Assistant.',
+    auto_fit: 'Fit the map to active alerts',
+    hebrew_basemap: 'Hebrew basemap',
+    show_pre_alert: 'Show advance warnings',
+    show_end: 'Show end-of-alert notices',
     activity: 'Activity', automations: 'Automations', security: 'Security', presence: 'Presence',
     weather: 'Weather', energy: 'Energy', settings: 'Settings', overview: 'Overview',
     sensors: 'Sensors', media: 'Media', vacuum: 'Vacuum', calendar: 'Calendar', link: 'Local link',
@@ -46,6 +54,13 @@ const WORDS = {
     ask: 'בקשת אישור לפני ההפעלה', skip: 'הפעלה מיידית', askCustom: 'הודעת אישור מותאמת',
     confirmation: 'אישור פעולה', confirmationText: 'הודעת אישור', graphHours: 'שעות היסטוריה',
     runScript: 'הפעלת התסריט מהכפתור',
+    orefMapTitle: 'התראות אזוריות',
+    orefMap: 'הצגת מפת התרעות פיקוד העורף',
+    orefMapHint: 'נדרשת אינטגרציית פיקוד העורף ב־Home Assistant.',
+    auto_fit: 'התאמת המפה להתרעות פעילות',
+    hebrew_basemap: 'מפת בסיס בעברית',
+    show_pre_alert: 'הצגת הנחיות מקדימות',
+    show_end: 'הצגת הודעות סיום',
     activity: 'פעילות', automations: 'אוטומציות', security: 'אבטחה', presence: 'נוכחות',
     weather: 'מזג אוויר', energy: 'אנרגיה', settings: 'הגדרות', overview: 'סקירה',
     sensors: 'חיישנים', media: 'מדיה', vacuum: 'שואב רובוטי', calendar: 'יומן', link: 'קישור מקומי',
@@ -398,6 +413,30 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     return output;
   }
 
+  function editOrefMap(entry) {
+    let settings = normalizeOrefMap({ ...entry.oref_map, enabled: true });
+    const enabled = node('input', { type: 'checkbox', checked: entry.oref_map?.enabled === true });
+    const options = Object.keys(OREF_MAP_DEFAULTS).map(key => {
+      const input = node('input', { type: 'checkbox', checked: settings[key] });
+      input.addEventListener('change', () => {
+        settings = { ...settings, [key]: input.checked };
+        changeEntry({ oref_map: settings });
+      });
+      return node('label', { className: 'check' }, [input, words[key]]);
+    });
+    const controls = node('div', { className: 'toolbar-editor-stack', hidden: !enabled.checked }, options);
+    enabled.addEventListener('change', () => {
+      controls.hidden = !enabled.checked;
+      changeEntry({ oref_map: { ...settings, enabled: enabled.checked } });
+    });
+    return node('fieldset', { className: 'toolbar-editor-detail' }, [
+      node('legend', { textContent: words.orefMapTitle }),
+      node('label', { className: 'check' }, [enabled, words.orefMap]),
+      node('small', { textContent: words.orefMapHint }),
+      controls,
+    ]);
+  }
+
   function entryDetails(entry) {
     const fields = [node('h3', { textContent: words.editButton }),
       textField(words.label, entry.label, value => {
@@ -411,6 +450,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       placement.addEventListener('change', () => changeEntry({ placement: placement.value === 'settings' ? 'settings' : undefined }));
       fields.push(field(words.placement, placement));
     }
+    if (entry.kind === 'security') fields.push(editOrefMap(entry));
     if (entry.kind === 'link') {
       const path = textField(words.localPath, entry.path, value => {
         if (LOCAL_ROUTE.test(value)) changeEntry({ path: value });

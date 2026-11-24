@@ -6,6 +6,7 @@ import { createDeviceController, getDeviceModel } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { buildPanelControls, panelControlStyles } from './panel-controls.js';
 import { createToolbarPanel, toolbarPanelStyles } from './toolbar-panels.js';
+import { normalizeOrefMap } from './oref-alert-map.js';
 import { createWallpaperController, createWallpaperGallery, personalWallpaperId, wallpaperChoices, wallpaperStyles } from './wallpapers.js';
 import { createPageChrome } from './page-chrome.js';
 import { openBoilerHistory, boilerHistoryStyles } from './boiler-history.js';
@@ -217,8 +218,10 @@ export function normalizeDashboardConfig(config = {}) {
   }));
   const toolbar = Array.isArray(config.toolbar) ? config.toolbar.flatMap(item => {
     if (!Object.hasOwn(toolbarIcons, item?.kind) || (item.kind === 'link' && !localPath.test(item.path))) return [];
+    const orefMap = item.kind === 'security' ? normalizeOrefMap(item.oref_map) : undefined;
     return [{ kind: item.kind, id: text(item.id), label: text(item.label), path: item.path,
       ...(item.placement === 'settings' && item.kind !== 'settings' && {placement:'settings'}),
+      ...(orefMap && { oref_map: orefMap }),
       icon: validIcon(item.icon, toolbarIcons[item.kind]),
       ...(Array.isArray(item.entities) && { entities: item.entities.map(normalizeEntity) }),
       ...(Array.isArray(item.sections) && { sections: item.sections.filter(section => Array.isArray(section?.entities)).map(section => ({
@@ -514,7 +517,7 @@ export class BayitDashboard extends HTMLElement {
       }
       element.onclick = () => {
         if (kind === 'link') return location.assign(item.path);
-        this.openPanel(kind, element, undefined, undefined, { name, entities, sections: item.sections });
+        this.openPanel(kind, element, undefined, undefined, { ...item, name, entities });
       };
       const needsContent = !settings.toolbar && (kind === 'overview' || contextKeys.includes(kind));
       this.nodes.toolbarActions.append(element);
@@ -864,8 +867,9 @@ export class BayitDashboard extends HTMLElement {
     content.replaceChildren();
     this.toolbarPanel = createToolbarPanel(type, {
       sections: toolbar?.sections, entities: toolbar?.entities ?? this.config.context[type] ?? [],
+      orefMap: toolbar?.oref_map,
     }, {
-      host: content, hass: this._hass, locale: this.config.locale,
+      host: content, dialog: this.nodes.modal, hass: this._hass, locale: this.config.locale,
       make, button, icon, label, t: key => this.t(key),
       modelFor: item => this.model(item), stateLabel: model => this.stateLabel(model),
       moreInfo: item => this.moreInfo(item), pending: entity => this.pending.has(entity),

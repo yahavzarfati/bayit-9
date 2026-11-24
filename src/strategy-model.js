@@ -1,4 +1,5 @@
 import { HEATING_DOMAINS } from './device-control.mjs';
+import { normalizeOrefMap } from './oref-alert-map.js';
 import { wallpaperChoices } from './wallpapers.js';
 
 export const CARD_TYPE = 'custom:bayit-dashboard';
@@ -403,9 +404,11 @@ function dashboardToolbar(config, hass) {
     const icon = typeof entry.icon === 'string' ? entry.icon.trim() : '';
     const entities = Array.isArray(entry.entities) ? idList(entry.entities).map(describe).filter(Boolean) : undefined;
     const sections = entry.kind !== 'link' ? toolbarSections(entry.sections, describe) : undefined;
+    const orefMap = entry.kind === 'security' ? normalizeOrefMap(entry.oref_map) : undefined;
     return [{ id, kind: entry.kind, ...(label && { label }), ...(ROOM_ICON.test(icon) && { icon }),
       ...(path && { path }), ...(entry.placement === 'settings' && entry.kind !== 'settings' && { placement:'settings' }),
-      ...(entities !== undefined && { entities }), ...(sections !== undefined && { sections }) }];
+      ...(entities !== undefined && { entities }), ...(sections !== undefined && { sections }),
+      ...(orefMap && { oref_map: orefMap }) }];
   });
 }
 

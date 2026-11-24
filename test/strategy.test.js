@@ -6,6 +6,22 @@ import {
 } from '../src/strategy-model.js';
 import { getDeviceModel } from '../src/device-control.mjs';
 
+test('explicitly enables the Oref map on Security entries with only its typed options', () => {
+  const toolbar = generateDashboard({ toolbar: [
+    { kind: 'security' },
+    { kind: 'security', oref_map: { enabled: 'true' } },
+    { kind: 'security', oref_map: { enabled: false, auto_fit: false } },
+    { kind: 'weather', oref_map: { enabled: true } },
+    { kind: 'security', placement: 'settings', oref_map: { enabled: true, auto_fit: false, show_pre_alert: true,
+      show_end: 'false', show_home: true, show_location: true, tileLayer: 'https://fixture.invalid', entities: ['zone.home'] } },
+  ] }, {}).views[0].cards[0].toolbar;
+  assert.deepEqual(toolbar.slice(0, 4).map(entry => entry.oref_map), Array(4).fill(undefined));
+  assert.equal(toolbar[4].placement, 'settings');
+  assert.deepEqual(toolbar[4].oref_map, {
+    enabled: true, auto_fit: false, hebrew_basemap: true, show_pre_alert: true, show_end: true,
+  });
+});
+
 function home() {
   return {
     locale: { language: 'he-IL' },

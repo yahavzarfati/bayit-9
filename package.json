@@ -8,7 +8,7 @@
     "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.js",
     "check:dist": "node scripts/build.mjs --check",
-    "test:browser": "node test/dashboard-browser.mjs && node test/page-chrome-browser.mjs && node test/boiler-room-navigation-browser.mjs"
+    "test:browser": "node test/dashboard-browser.mjs && node test/page-chrome-browser.mjs && node test/boiler-room-navigation-browser.mjs && node test/oref-alert-map-browser.mjs"
   },
   "engines": {
     "node": ">=22"

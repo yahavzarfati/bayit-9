@@ -1,3 +1,5 @@
+import { createOrefMap } from './oref-alert-map.js';
+
 const sectionKeys = {
   actions: 'automations', locks: 'toolbar_locks', covers: 'room_covers', status: 'toolbar_status',
   people: 'presence', forecast: 'toolbar_forecast', sun: 'toolbar_sun', readings: 'toolbar_readings',
@@ -36,7 +38,7 @@ function localPortrait(path, origin) {
 
 export function createToolbarPanel(kind, configuration, context) {
   const { make, icon, button, label, t, modelFor, stateLabel, moreInfo, buildDevice,
-    request, pending, host } = context;
+    request, pending, host, dialog } = context;
   const connected = new Set();
   const handlers = [];
   let live = true;
@@ -251,6 +253,21 @@ export function createToolbarPanel(kind, configuration, context) {
     energy.href = '/energy';
     host.append(energy);
   }
+  let orefMap;
+  if (kind === 'security' && dialog && configuration.orefMap?.enabled === true) {
+    const panel = make('section', 'toolbar-section');
+    panel.dataset.section = 'oref-map';
+    panel.append(make('h3', 'toolbar-section-title', t('oref_map')));
+    const fallback = make('p', 'empty', t('oref_map_unavailable'));
+    fallback.setAttribute('role', 'status');
+    const slot = make('div', 'native-panel-card');
+    slot.append(fallback);
+    panel.append(slot);
+    host.append(panel);
+    orefMap = createOrefMap({
+      slot, dialog, fallback, loadingText: t('oref_map_loading'), options: configuration.orefMap,
+    });
+  }
   if (!host.childElementCount) host.append(make('p', 'empty', t('empty_room')));
   const quiet = sections.length && sections.every(section => section.filter === 'active') ? make('p','empty',t('quiet')) : null;
   if (quiet) host.append(quiet);
@@ -260,11 +277,13 @@ export function createToolbarPanel(kind, configuration, context) {
       if (!live || !hass) return;
       currentHass = hass;
       for (const card of connected) if (card.hass !== hass) card.hass = hass;
+      orefMap?.update(hass);
       for (const update of handlers) update();
       if (quiet) quiet.hidden = !!host.querySelector('.toolbar-section:not([hidden])');
     },
     dispose() {
       live = false;
+      orefMap?.dispose();
       if (clockTimer) view.clearInterval(clockTimer);
       for (const card of connected) card.remove();
       connected.clear();
