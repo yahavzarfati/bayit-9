@@ -299,9 +299,22 @@ function entityOptions(hass, domains) {
 
 function disclosure(text, open, onToggle, children) {
   const summary = node('summary', { textContent: text });
-  const details = node('details', { open }, [summary, ...children]);
-  summary.addEventListener('click', () => onToggle(!details.open));
-  details.addEventListener('toggle', () => { if (details.isConnected) onToggle(details.open); });
+  const lazy = typeof children === 'function';
+  let contents = lazy ? (open ? children() : undefined) : children;
+  const details = node('details', { open }, [summary, ...(contents ?? [])]);
+  const sync = expanded => {
+    onToggle(expanded);
+    if (!lazy) return;
+    if (expanded && details.childNodes.length === 1) {
+      contents ??= children();
+      details.append(...contents);
+    } else if (!expanded && contents) {
+      // Keep detached controls so their in-progress values survive reopening.
+      for (const child of contents) child.remove();
+    }
+  };
+  summary.addEventListener('click', () => sync(!details.open));
+  details.addEventListener('toggle', () => { if (details.isConnected) sync(details.open); });
   return details;
 }
 
@@ -318,6 +331,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #lightEffectGroup = 0;
   #refreshLightEffects;
   #profileEditing;
+  #profileDraftBody;
   #shortcutRoom;
   #roomEditing;
   #sectionEditing;
@@ -876,16 +890,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const current = this.#config.room_shortcuts ?? {};
     const chosen = Object.hasOwn(current, room.id) && Array.isArray(current[room.id]) ? current[room.id] : null;
     const roomInput = select(rooms.map(item => [item.id, item.name]), room.id);
-    const options = new Map(room.entities.map(item => [item.entity, item.name || item.entity]));
-    for (const id of chosen ?? []) {
-      if (typeof id === 'string' && !options.has(id)) options.set(id, id);
-    }
-    const inputs = Array.from({ length: MAX_ROOM_SHORTCUTS }, (_, index) => {
-      const value = chosen?.[index] ?? '';
-      return select([['', words.none], ...options], value);
-    });
-    const list = node('div', { className: 'grid', hidden: chosen == null },
-      inputs.map((input, index) => field(words.shortcut + ' ' + (index + 1), input)));
+    roomInput.dataset.shortcutRoom = '';
+    const list = node('div', { className: 'grid', hidden: true });
+    let inputs = [];
+    let fields;
     const refresh = () => {
       const selected = new Set(inputs.map(input => input.value).filter(Boolean));
       for (const input of inputs) {
@@ -899,16 +907,38 @@ export class Bayit9StrategyEditor extends HTMLElement {
         ...this.#config.room_shortcuts, [room.id]: inputs.map(input => input.value).filter(Boolean),
       } });
     };
-    refresh();
-    for (const input of inputs) input.addEventListener('change', () => { refresh(); save(); });
-    roomInput.addEventListener('change', () => { this.#shortcutRoom = roomInput.value; this.render(); });
+    const showManual = () => {
+      if (!fields) {
+        const options = new Map(room.entities.map(item => [item.entity, item.name || item.entity]));
+        for (const id of chosen ?? []) {
+          if (typeof id === 'string' && !options.has(id)) options.set(id, id);
+        }
+        const choices = [['', words.none], ...options];
+        inputs = Array.from({ length: MAX_ROOM_SHORTCUTS }, (_, index) => select(choices, chosen?.[index] ?? ''));
+        for (const input of inputs) input.addEventListener('change', () => { refresh(); save(); });
+        fields = inputs.map((input, index) => field(words.shortcut + ' ' + (index + 1), input));
+        refresh();
+      }
+      list.append(...fields);
+      list.hidden = false;
+    };
+    if (chosen != null) showManual();
+    roomInput.addEventListener('change', () => {
+      this.#shortcutRoom = roomInput.value;
+      this.render();
+      this.shadowRoot.querySelector('[data-shortcut-room]')?.focus({ preventScroll: true });
+    });
     const automatic = checkbox(words.automaticShortcuts, chosen == null, enabled => {
-      list.hidden = enabled;
       if (enabled) {
+        list.hidden = true;
+        list.replaceChildren();
         const next = { ...this.#config.room_shortcuts };
         delete next[room.id];
         this.#commit({ room_shortcuts: next });
-      } else save();
+      } else {
+        showManual();
+        save();
+      }
     });
     return [node('p', { textContent: words.shortcutHint }), field(words.shortcutRoom, roomInput), automatic, list];
   }
@@ -1093,6 +1123,18 @@ export class Bayit9StrategyEditor extends HTMLElement {
     return children;
   }
 
+  #profilePane(words) {
+    const editing = this.#profileEditing;
+    const profiles = this.#config.profiles;
+    const previous = this.#profileDraftBody;
+    if (editing && previous?.editing === editing && previous.words === words && previous.profiles === profiles) {
+      return [previous.body];
+    }
+    const body = node('div', { className: 'stack' }, this.#profilePanel(words));
+    this.#profileDraftBody = editing ? { editing, profiles, words, body } : undefined;
+    return [body];
+  }
+
   #lightEffectPanel(rooms, words) {
     const lights = new Map();
     for (const { entities } of rooms) {
@@ -1235,6 +1277,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
 
   render() {
     if (!this.isConnected) return;
+    const focused = this.shadowRoot.activeElement;
     const language = languageFor(this.#config.locale, this.#hass);
     const words = WORDS[language];
     const title = node('input', { value: this.#config.title ?? '', maxLength: 80 });
@@ -1248,17 +1291,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       input.addEventListener('change', () => this.#commit({ [key]: input.value }));
       return field(label, input);
     };
-    const backgrounds = Object.entries(BACKGROUNDS).map(([id, names]) => [id, names[language]]);
-    const rooms = discoverRooms(this.#config, this.#hass, language);
-    const overviewOptions = rooms.flatMap(room =>
-      room.entities.map(device => [device.entity, (device.name || device.entity) + ' · ' + room.name]));
-    const toolbar = node('div');
-    const showToolbar = () => {
-      if (toolbar.childElementCount) return;
-      toolbar.append(buildToolbarEditor({config:this.#config,hass:this.#hass,locale:language,viewState:this.#toolbarView,
-        onChange:value=>this.#commit({toolbar:value})}));
-    };
-    if (this.#open.toolbar) showToolbar();
+    const pane = (text, key, build) => disclosure(text, this.#open[key], open => { this.#open[key] = open; }, build);
     const lightEffects = node('div');
     this.#refreshLightEffects = undefined;
     const showLightEffects = () => {
@@ -1269,20 +1302,30 @@ export class Bayit9StrategyEditor extends HTMLElement {
     if (this.#open.lightEffects) showLightEffects();
     const form = node('form', { dir: language === 'he' ? 'rtl' : 'ltr' }, [
       field(words.title, title), field(words.language, locale),
-      disclosure(words.areas, this.#open.rooms, open => { this.#open.rooms = open; }, this.#roomsPanel(words, language)),
-      disclosure(words.appearance, this.#open.appearance, open => { this.#open.appearance = open; },
+      pane(words.areas, 'rooms', () => this.#roomsPanel(words, language)),
+      pane(words.appearance, 'appearance', () =>
         [node('div', { className: 'stack' }, [
-          appearance(words.background, 'background', backgrounds, 'aurora'),
+          appearance(words.background, 'background', Object.entries(BACKGROUNDS).map(([id, names]) => [id, names[language]]), 'aurora'),
           appearance(words.layout, 'layout', [['classic', words.classic], ['header', words.header]], 'classic'),
           appearance(words.shape, 'shape', [['soft', words.soft], ['circle', words.circle], ['square', words.square]], 'soft'),
           checkbox(words.fullscreen, this.#config.fullscreen === true, value => this.#commit({fullscreen:value})),
         ])]),
-      disclosure(words.toolbar, this.#open.toolbar, open => { this.#open.toolbar = open; if (open) showToolbar(); }, [toolbar]),
-      disclosure(words.devices, this.#open.devices, open => { this.#open.devices = open; },
-        [this.#entityMulti(words.hidden, 'hidden_entities', words), this.#entityMulti(words.included, 'included_entities', words)]),
-      disclosure(words.overview, this.#open.overview, open => { this.#open.overview = open; },
-        [node('p', { textContent: words.overviewHint }), this.#entityMulti(words.overviewDevices, 'overview_entities', words, overviewOptions)]),
-      disclosure(words.shortcuts, this.#open.shortcuts, open => { this.#open.shortcuts = open; },
+      pane(words.toolbar, 'toolbar', () => [node('div', {}, [buildToolbarEditor({
+        config:this.#config, hass:this.#hass, locale:language, viewState:this.#toolbarView,
+        onChange:value=>this.#commit({toolbar:value}),
+      })])]),
+      pane(words.devices, 'devices', () => {
+        const options = entityOptions(this.#hass);
+        return [this.#entityMulti(words.hidden, 'hidden_entities', words, options),
+          this.#entityMulti(words.included, 'included_entities', words, options)];
+      }),
+      pane(words.overview, 'overview', () => {
+        const rooms = discoverRooms(this.#config, this.#hass, language);
+        const options = rooms.flatMap(room =>
+          room.entities.map(device => [device.entity, (device.name || device.entity) + ' · ' + room.name]));
+        return [node('p', { textContent: words.overviewHint }), this.#entityMulti(words.overviewDevices, 'overview_entities', words, options)];
+      }),
+      pane(words.shortcuts, 'shortcuts', () =>
         [node('div', { className: 'stack' }, this.#shortcutPanel(words, language))]),
       disclosure(words.lightEffects, this.#open.lightEffects, open => {
         this.#open.lightEffects = open;
@@ -1292,10 +1335,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
           this.#refreshLightEffects = undefined;
         }
       }, [lightEffects]),
-      disclosure(words.profiles, this.#open.profiles, open => { this.#open.profiles = open; },
-        [node('div', { className: 'stack' }, this.#profilePanel(words))]),
+      pane(words.profiles, 'profiles', () => this.#profilePane(words)),
     ]);
     form.addEventListener('submit', event => event.preventDefault());
     this.shadowRoot.replaceChildren(node('style', { textContent: CSS + ROOM_CSS }), form);
+    if (focused && this.shadowRoot.contains(focused)) focused.focus({ preventScroll: true });
   }
 }

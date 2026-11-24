@@ -228,6 +228,19 @@ if (query.has('toolbar-panels')) {
     return card;
   }});
 }
+if (query.has('large-setup')) {
+  for (let area = 0; area < 6; area++) {
+    const id = 'scale_' + area;
+    hass.areas[id] = {area_id:id, name:'Scale area ' + area};
+  }
+  const domains = ['light', 'sensor', 'switch', 'fan', 'cover', 'number'];
+  for (let index = 0; index < 600; index++) {
+    const domain = domains[Math.floor(index / 6) % domains.length];
+    const id = domain + '.scale_entity_' + index;
+    hass.entities[id] = {area_id:'scale_' + index % 6};
+    states[id] = {state:'off', attributes:{friendly_name:'Scale entity ' + index}};
+  }
+}
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
 const selected = query.has('configuration') ? stored().strategy : query.has('curated') ? {
   room_shortcuts: { studio: ['switch.demo_heater', 'light.demo_lamp'] },
@@ -1170,10 +1183,52 @@ try {
       await rtlEffects.close();
 
       const setupPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
-      await setupPage.goto(base + '/fixture-home/home?configuration');
+      await setupPage.goto(base + '/fixture-home/home?configuration&large-setup');
       await setupPage.getByRole('button', { name: 'Appearance', exact: true }).click();
       await setupPage.getByRole('button', { name: 'Customize home', exact: true }).click();
       const setup = setupPage.getByRole('dialog', { name: 'Customize home', exact: true });
+      const setupEditor = setup.locator('.setup-editor');
+      await setupEditor.getByText('Device visibility', { exact: true }).waitFor();
+      assert.equal(await setupEditor.locator('option').count(), 3, 'Closed setup sections only mount their summaries');
+      const visibility = setupEditor.getByText('Device visibility', { exact: true });
+      const hideDevices = setupEditor.getByLabel('Hide devices', { exact: true });
+      await visibility.click();
+      assert.equal(await hideDevices.locator('option').count(), 605);
+      await hideDevices.selectOption(['sensor.scale_entity_6']);
+      await visibility.click();
+      assert.equal(await hideDevices.count(), 0);
+      await visibility.press('Enter');
+      assert.deepEqual(await hideDevices.locator('option:checked').evaluateAll(nodes => nodes.map(node => node.value)),
+        ['sensor.scale_entity_6']);
+      await visibility.click();
+
+      const profiles = setupEditor.getByText('Boiler and heater controls', { exact: true });
+      const profileName = setupEditor.getByLabel('Display name', { exact: true });
+      await profiles.click();
+      await setupEditor.getByRole('button', { name: 'Add profile', exact: true }).click();
+      await profileName.fill('Uncommitted heater name');
+      await profiles.click();
+      assert.equal(await profileName.count(), 0);
+
+      const shortcuts = setupEditor.getByText('Room shortcuts', { exact: true });
+      const shortcutRoom = setupEditor.getByLabel('Room', { exact: true });
+      const automaticShortcuts = setupEditor.getByLabel('Choose shortcuts automatically', { exact: true });
+      await shortcuts.click();
+      await automaticShortcuts.waitFor();
+      assert.equal(await setupEditor.getByLabel('Shortcut 1', { exact: true }).count(), 0);
+      await shortcutRoom.selectOption('studio');
+      assert.equal(await shortcutRoom.evaluate(input => input.getRootNode().activeElement === input), true);
+      assert.equal(await automaticShortcuts.isChecked(), true);
+      await automaticShortcuts.uncheck();
+      const firstShortcut = setupEditor.getByLabel('Shortcut 1', { exact: true });
+      await firstShortcut.selectOption('light.demo_lamp');
+      await automaticShortcuts.check();
+      assert.equal(await firstShortcut.count(), 0);
+      await automaticShortcuts.uncheck();
+      assert.equal(await firstShortcut.inputValue(), 'light.demo_lamp');
+      await shortcuts.click();
+      await profiles.click();
+
       await setup.getByText('Rooms', { exact: true }).click();
       await setup.getByText('New dashboard-only room', { exact: true }).click();
       await setup.getByLabel('New room name', { exact: true }).fill('Reading nook');
@@ -1181,11 +1236,15 @@ try {
       await setup.getByLabel('Available devices', { exact: true }).selectOption('light.demo_lamp');
       await setup.getByRole('button', { name: 'Add device', exact: true }).click();
       await setup.getByLabel('Show status only for selected room devices', { exact: true }).selectOption(['light.demo_lamp']);
+      assert.equal(await profileName.inputValue(), 'Uncommitted heater name');
       await setup.getByRole('button', { name: 'Save dashboard', exact: true }).click();
       await setupPage.getByRole('button', { name: 'Reading nook', exact: true }).waitFor();
       const persisted = await setupPage.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')));
       assert.deepEqual(Object.values(persisted.strategy.room_overrides), [{ name: 'Reading nook',
         entities: ['light.demo_lamp'], read_only_entities: ['light.demo_lamp'] }]);
+      assert.deepEqual(persisted.strategy.hidden_entities, ['sensor.scale_entity_6']);
+      assert.deepEqual(persisted.strategy.room_shortcuts.studio, ['light.demo_lamp']);
+      assert.equal(persisted.strategy.profiles, undefined);
       assert.equal(await setupPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain).length), 0);
       await setupPage.close();
 
