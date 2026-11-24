@@ -297,6 +297,14 @@ const server = http.createServer((req, res) => {
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 const base = 'http://127.0.0.1:' + server.address().port;
+async function assertDeviceHeading(dialog, name) {
+  assert.equal(await dialog.getByRole('heading', { name, exact: true }).count(), 1);
+  const status = dialog.locator('.device-state-head');
+  await status.locator('.current').waitFor();
+  await status.getByRole('button', { name: /^(More info|מידע נוסף)$/ }).waitFor();
+  assert.equal(await status.locator('.device-name, .device-icon').filter({ visible: true }).count(), 0);
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
@@ -613,12 +621,14 @@ try {
       assert.equal(firstTile[0], secondTile[0], 'Simple lights share one row');
       assert.notEqual(firstTile[1], secondTile[1]);
       const dimmable = lightGroup.locator('[data-entity="light.demo_pendant"] .device-tile');
+      await dimmable.getByText('Pendant lamp', { exact: true }).waitFor();
       assert.equal(await lightGroup.getByRole('slider').count(), 0);
       assert.equal(await lightGroup.locator('input[type="color"]').count(), 0);
       await dimmable.press('Shift+Enter');
       const pendant = roomGridPage.getByRole('dialog', { name: 'Pendant lamp', exact: true });
       const kelvin = pendant.getByRole('slider', { name: 'גוון לבן' });
       await kelvin.waitFor();
+      await assertDeviceHeading(pendant, 'Pendant lamp');
       assert.equal(await pendant.getByRole('slider').count(), 2);
       assert.equal(await kelvin.inputValue(), '3200');
       assert.equal(await kelvin.getAttribute('min'), '2200');
@@ -726,6 +736,8 @@ try {
       await quickAir.click({ delay: 600 });
       const air = detailPage.getByRole('dialog', { name: 'Studio air conditioner', exact: true });
       await air.getByRole('button', { name: rightToLeft ? 'העלאת טמפרטורת היעד' : 'Increase target temperature' }).waitFor();
+      await assertDeviceHeading(air, 'Studio air conditioner');
+      assert.equal(await quickAir.getAttribute('data-popup-origin'), '');
       const airBody = await air.locator('.modal-body').evaluate(body => {
         const styles = getComputedStyle(body);
         const padding = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
@@ -763,6 +775,7 @@ try {
         name: (rightToLeft ? 'עוצמת חימום ' : 'Heating level ') + step, exact: true,
       });
       await level(3).waitFor();
+      await assertDeviceHeading(heaterPanel, 'Fixture step heater');
       assert.equal(await level(3).getAttribute('aria-pressed'), 'true');
       await level(8).click();
       assert.equal(await level(8).getAttribute('data-changing'), '');

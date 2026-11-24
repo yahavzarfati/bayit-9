@@ -464,6 +464,8 @@ export const styles = `
     border-radius: 16px;
   }
   .device-head { display: grid; grid-template-columns: 32px minmax(0,1fr) 44px; align-items: center; gap: 8px; }
+  .device-head.device-state-head { grid-template-columns: minmax(0,1fr) 44px; }
+  .device-state-head .current { margin-block-start: 0; }
   .device-media-launch {
     width:100%; min-block-size:44px; border:0; background:transparent; color:inherit;
     font:inherit; text-align:start; padding:0; border-radius:10px;

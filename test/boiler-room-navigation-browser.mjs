@@ -77,7 +77,11 @@ try {
       assert.ok(before > 0, 'The kitchen fixture must start scrolled');
       await details.tap();
       await page.getByRole('dialog', { name: 'Fixture boiler', exact: true }).waitFor();
-      await dialog.getByRole('heading', { name: 'Fixture boiler', exact: true }).first().waitFor();
+      const title = dialog.getByRole('heading', { name: 'Fixture boiler', exact: true });
+      await title.waitFor();
+      assert.equal(await title.count(), 1);
+      await dialog.locator('.device-state-head .current').waitFor();
+      assert.ok((await dialog.getByRole('button', { name: words.close, exact: true }).boundingBox()).width >= 44);
       assert.equal(await back.locator('ha-icon').getAttribute('icon'), words.backIcon);
       await dialog.getByRole('button', { name: words.schedule, exact: true }).tap();
       await page.waitForFunction(() => window.fixture.requests.includes('scheduler'));

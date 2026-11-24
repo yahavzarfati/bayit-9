@@ -850,7 +850,8 @@ export class BayitDashboard extends HTMLElement {
     n.modalTitle.replaceChildren(icon(glyph), title);
     if (type === 'room') this.buildDevices(room.entities, room);
     if (selected) {
-      this.buildDevices([selected]);
+      const titleInDialog = ['light', 'climate'].includes(domainFor(selected)) || ['heater', 'boiler'].includes(selected.kind);
+      this.buildDevices([selected], undefined, { titleInDialog });
       if (boilerControls) this.buildBoilerView(selected);
     }
     if (type === 'overview') {
@@ -893,14 +894,14 @@ export class BayitDashboard extends HTMLElement {
     this.update();
   }
 
-  buildDevices(entities, room) {
+  buildDevices(entities, room, presentation) {
     const content = this.nodes.content;
     content.className = 'devices';
     if (room) content.dataset.room = 'true';
     else delete content.dataset.room;
     content.replaceChildren();
     if (!room) {
-      for (const config of entities) this.buildDevice(config, content);
+      for (const config of entities) this.buildDevice(config, content, undefined, undefined, presentation);
     } else {
       const explicit = room.sections?.map(section => ({ ...section, key: 'room_' + section.kind })) ?? [];
       const configured = new Set(explicit.flatMap(section => section.entities.map(device => device.entity)));
@@ -940,7 +941,7 @@ export class BayitDashboard extends HTMLElement {
     return groups.values();
   }
 
-  buildDevice(config, parent, room, groupKey) {
+  buildDevice(config, parent, room, groupKey, { titleInDialog = false } = {}) {
     const item = make('section', 'device');
     const domain = domainFor(config);
     const tileMode = groupKey === 'room_lights' && ['light', 'switch'].includes(domain) && !config.kind;
@@ -974,6 +975,11 @@ export class BayitDashboard extends HTMLElement {
       if (hasPanel) more.setAttribute('aria-haspopup', 'dialog');
       more.onclick = () => hasPanel ? this.openPanel('device', more, room, config.entity) : this.moreInfo(config);
       const head = mediaTarget ? more : make('header', 'device-head');
+      if (titleInDialog) {
+        head.classList.add('device-state-head');
+        glyph.hidden = true;
+        name.hidden = true;
+      }
       if (mediaTarget) {
         const targetName = mediaTarget.label || this.t('media');
         const hold = this.t('media_room_hold').replace('{name}', targetName);
