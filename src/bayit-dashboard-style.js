@@ -466,11 +466,11 @@ export const styles = `
   .device-head { display: grid; grid-template-columns: 32px minmax(0,1fr) 44px; align-items: center; gap: 8px; }
   .device-head.device-state-head { grid-template-columns: minmax(0,1fr) 44px; }
   .device-state-head .current { margin-block-start: 0; }
-  .device-media-launch {
+  .device-panel-launch {
     width:100%; min-block-size:44px; border:0; background:transparent; color:inherit;
     font:inherit; text-align:start; padding:0; border-radius:10px;
   }
-  .device-media-launch > ha-icon:last-child { place-self:center; color:var(--secondary); }
+  .device-panel-launch > ha-icon:last-child { place-self:center; color:var(--secondary); }
   .device-icon { color: var(--secondary); place-self: center; }
   .device-name { margin: 0; font-size: 14px; line-height: 1.2; overflow-wrap: anywhere; }
   .current { display: block; margin-block-start: 3px; color: var(--secondary); font-weight: 680; font-size: 12px; }

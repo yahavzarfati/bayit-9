@@ -1,4 +1,7 @@
-import { BACKGROUNDS, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, mediaPanelOptions, normalizeProfile, PROFILE_DOMAINS, roomSections, selectableRoomEntities, STRATEGY_NAME } from './strategy-model.js';
+import {
+  BACKGROUNDS, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
+  PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomPanelOptions, roomSections, selectableRoomEntities, STRATEGY_NAME,
+} from './strategy-model.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { buildToolbarEditor } from './toolbar-editor.js';
 import { activityKinds, activitySources, normalizeRoomActivities } from './room-appliance.mjs';
@@ -30,6 +33,7 @@ const WORDS = {
     applianceFields: { operation_entity: 'Operating state', finish_entity: 'Expected finish time',
       power_entity: 'Power state', done_entity: 'Completion sensor', progress_entity: 'Progress (%)' },
     roomMediaLink: 'Open on media press and hold', roomMediaNone: 'No panel', roomMediaDefault: 'Media',
+    roomVacuumLink: 'Open on vacuum tap', roomVacuumDefault: 'Robot vacuum',
     sections: 'Room sections', sectionMode: 'Section arrangement', automaticSections: 'Automatic grouping',
     manualSections: 'Arrange sections manually', automaticDevicesAndSections: 'Automatic devices and sections',
     editSection: 'Section to customize', addSection: 'Add section', removeSection: 'Delete section',
@@ -88,6 +92,7 @@ const WORDS = {
     applianceFields: { operation_entity: 'מצב פעולה', finish_entity: 'זמן סיום צפוי',
       power_entity: 'מצב הפעלה', done_entity: 'חיישן סיום', progress_entity: 'התקדמות (%)' },
     roomMediaLink: 'פתיחה בלחיצה ארוכה על מכשיר מדיה', roomMediaNone: 'ללא חלונית', roomMediaDefault: 'מדיה',
+    roomVacuumLink: 'פתיחה בלחיצה על השואב', roomVacuumDefault: 'שואב',
     sections: 'קבוצות בחדר', sectionMode: 'סידור הקבוצות', automaticSections: 'קיבוץ אוטומטי',
     manualSections: 'סידור ידני של הקבוצות', automaticDevicesAndSections: 'בחירה אוטומטית של מכשירים וקבוצות',
     editSection: 'קבוצה לעריכה', addSection: 'הוספת קבוצה', removeSection: 'מחיקת קבוצה',
@@ -540,28 +545,34 @@ export class Bayit9StrategyEditor extends HTMLElement {
       });
       children.push(field(words.readOnlyRoom, selected));
     }
-    const media = chosen.filter(id => id.startsWith('media_player.'));
-    const targets = media.length ? mediaPanelOptions(this.#config, this.#hass) : [];
-    if (targets.length) {
+    const linkedDevices = chosen.flatMap(id => {
+      const kind = ROOM_PANEL_KINDS.get(id.split('.')[0]);
+      return kind ? [{ id, kind }] : [];
+    });
+    const panels = linkedDevices.length ? roomPanelOptions(this.#config, this.#hass) : [];
+    for (const { id, kind } of linkedDevices) {
+      const targets = panels.filter(panel => panel.kind === kind);
+      if (!targets.length) continue;
+      const vacuum = kind === 'vacuum';
+      const defaultName = vacuum ? words.roomVacuumDefault : words.roomMediaDefault;
       const options = [['', words.roomMediaNone], ...targets.map(({ id, label }) =>
-        [id, label || (targets.length === 1 ? words.roomMediaDefault : id)])];
-      for (const id of media) {
-        const chosenPanel = override.media_panel_links?.[id];
-        const input = select(options, targets.some(target => target.id === chosenPanel) ? chosenPanel : '');
-        const focusKey = 'room-media-' + id;
-        input.dataset.roomFocus = focusKey;
-        input.addEventListener('change', () => {
-          const next = { ...override };
-          const links = { ...next.media_panel_links };
-          if (input.value) links[id] = input.value;
-          else delete links[id];
-          if (Object.keys(links).length) next.media_panel_links = links;
-          else delete next.media_panel_links;
-          this.#setRoomOverride(room.id, next, focusKey);
-        });
-        const name = this.#hass.states?.[id]?.attributes?.friendly_name ?? id;
-        children.push(field(words.roomMediaLink + ' · ' + name, input));
-      }
+        [id, label || (targets.length === 1 ? defaultName : id)])];
+      const key = kind + '_panel_links';
+      const chosenPanel = override[key]?.[id];
+      const input = select(options, targets.some(target => target.id === chosenPanel) ? chosenPanel : '');
+      const focusKey = 'room-panel-' + id;
+      input.dataset.roomFocus = focusKey;
+      input.addEventListener('change', () => {
+        const next = { ...override };
+        const links = { ...next[key] };
+        if (input.value) links[id] = input.value;
+        else delete links[id];
+        if (Object.keys(links).length) next[key] = links;
+        else delete next[key];
+        this.#setRoomOverride(room.id, next, focusKey);
+      });
+      const name = this.#hass.states?.[id]?.attributes?.friendly_name ?? id;
+      children.push(field((vacuum ? words.roomVacuumLink : words.roomMediaLink) + ' · ' + name, input));
     }
     if (!manual) return children;
 
@@ -579,10 +590,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
         next.read_only_entities = next.read_only_entities.filter(id => entities.includes(id));
         if (!next.read_only_entities.length) delete next.read_only_entities;
       }
-      if (next.media_panel_links) {
-        next.media_panel_links = Object.fromEntries(Object.entries(next.media_panel_links)
-          .filter(([id]) => entities.includes(id)));
-        if (!Object.keys(next.media_panel_links).length) delete next.media_panel_links;
+      for (const kind of ROOM_PANEL_KINDS.values()) {
+        const key = kind + '_panel_links';
+        if (!next[key]) continue;
+        next[key] = Object.fromEntries(Object.entries(next[key]).filter(([id]) => entities.includes(id)));
+        if (!Object.keys(next[key]).length) delete next[key];
       }
       if (sections && entities.length < chosen.length) {
         const kept = new Set(entities);

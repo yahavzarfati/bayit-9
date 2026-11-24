@@ -33,6 +33,7 @@ export const TOOLBAR_ROLE_DOMAINS = new Map([
   ['lock', 'lock'], ['cover', 'cover'], ['forecast', 'weather'], ['sun', 'sun'], ['person', 'person'],
   ['now_playing', 'media_player'],
 ]);
+export const ROOM_PANEL_KINDS = new Map([['media_player', 'media'], ['vacuum', 'vacuum']]);
 const ROOM_ICON = /^mdi:[a-z0-9-]+$/;
 const CONTROL_DOMAINS = new Set(['light', 'switch', 'cover', 'climate', 'fan', 'lock', 'water_heater']);
 const SECURITY_CLASSES = new Set(['door', 'window', 'garage_door', 'opening']);
@@ -177,8 +178,10 @@ function dashboardAreas(config, hass) {
       sections,
       readOnly: new Set(idList(override.read_only_entities)),
       activities: override.activities,
-      mediaPanelLinks: override.media_panel_links && typeof override.media_panel_links === 'object' &&
-        !Array.isArray(override.media_panel_links) ? override.media_panel_links : null,
+      panelLinks: Object.fromEntries([...ROOM_PANEL_KINDS.values()].flatMap(kind => {
+        const links = override[kind + '_panel_links'];
+        return links && typeof links === 'object' && !Array.isArray(links) ? [[kind, links]] : [];
+      })),
       entityIcons: entityIcons && typeof entityIcons === 'object' && !Array.isArray(entityIcons) ? entityIcons : null,
       custom: !area,
     });
@@ -244,8 +247,8 @@ function entityArea(info, hass) {
 
 export function discoverRooms(config, hass, locale) {
   const areas = dashboardAreas(config, hass);
-  const mediaPanels = new Set([...areas.values()].some(area => area.mediaPanelLinks)
-    ? mediaPanelOptions(config, hass).map(panel => panel.id) : []);
+  const panelKinds = new Map([...areas.values()].some(area => Object.keys(area.panelLinks ?? {}).length)
+    ? roomPanelOptions(config, hass).map(panel => [panel.id, panel.kind]) : []);
   const unassigned = pickUnassignedId(areas);
   const explicitOrder = new Map(idList(config.area_ids).map((id, index) => [id, index]));
   const isSelected = id => explicitOrder.size === 0 || explicitOrder.has(id);
@@ -317,9 +320,11 @@ export function discoverRooms(config, hass, locale) {
     if (activities.length) room.activities = activities;
     for (const device of entities) {
       if (area.readOnly?.has(device.entity)) device.role = 'status';
-      if (device.entity.startsWith('media_player.') && Object.hasOwn(area.mediaPanelLinks ?? {}, device.entity)) {
-        const target = area.mediaPanelLinks[device.entity];
-        if (mediaPanels.has(target)) device.media_panel_id = target;
+      const panelKind = ROOM_PANEL_KINDS.get(domainOf(device.entity));
+      const links = area.panelLinks?.[panelKind];
+      if (links && Object.hasOwn(links, device.entity)) {
+        const target = links[device.entity];
+        if (panelKinds.get(target) === panelKind) device[panelKind + '_panel_id'] = target;
       }
       if (device.role === 'status' || domainOf(device.entity) !== 'light' ||
           !Object.hasOwn(config.light_effect_groups ?? {}, device.entity)) continue;
@@ -438,9 +443,10 @@ function dashboardToolbar(config, hass) {
   });
 }
 
-export function mediaPanelOptions(config, hass) {
-  return (dashboardToolbar(config, hass) ?? []).filter(entry => entry.kind === 'media')
-    .map(({ id, label }) => ({ id, label }));
+export function roomPanelOptions(config, hass) {
+  const kinds = new Set(ROOM_PANEL_KINDS.values());
+  return (dashboardToolbar(config, hass) ?? []).filter(entry => kinds.has(entry.kind))
+    .map(({ id, label, kind }) => ({ id, label, kind }));
 }
 
 export function suggestedDashboard(hass) {

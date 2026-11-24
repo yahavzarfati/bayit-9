@@ -1,6 +1,6 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
-import { MAX_ROOM_SHORTCUTS, STRATEGY_NAME } from './strategy-model.js';
+import { MAX_ROOM_SHORTCUTS, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { createDeviceController, getDeviceModel } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
@@ -182,8 +182,10 @@ function normalizeEntity(item) {
       /^script\.[a-z0-9_]+$/.test(item.schedule[key] ?? '') ? [[key, item.schedule[key]]] : []));
   }
   if (typeof item.role === 'string') entry.role = item.role;
-  if (entity.startsWith('media_player.') && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(item.media_panel_id ?? '')) {
-    entry.media_panel_id = item.media_panel_id;
+  const panelKind = ROOM_PANEL_KINDS.get(domainFor(entry));
+  const panelId = item[panelKind + '_panel_id'];
+  if (panelKind && typeof panelId === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(panelId)) {
+    entry[panelKind + '_panel_id'] = panelId;
   }
   if (entity.startsWith('light.') && entry.role !== 'status') {
     const groups = normalizeLightEffectGroups(item.effect_groups);
@@ -830,9 +832,9 @@ export class BayitDashboard extends HTMLElement {
     const boilerControls = selected?.kind === 'boiler' && selected.role !== 'status';
     const fromBoilerRoom = boilerControls && this.panel?.type === 'room' &&
       this.panel.room === room && n.modal.open && n.content.contains(source);
-    const fromMediaRoom = type === 'media' && returnFromRoom && this.panel?.type === 'room' &&
+    const fromLinkedRoom = (type === 'media' || type === 'vacuum') && returnFromRoom && this.panel?.type === 'room' &&
       this.panel.room === returnFromRoom.room && n.modal.open && n.content.contains(source);
-    const returnTo = fromBoilerRoom ? { room, entity: selected.entity } : fromMediaRoom ? returnFromRoom : undefined;
+    const returnTo = fromBoilerRoom ? { room, entity: selected.entity } : fromLinkedRoom ? returnFromRoom : undefined;
     if (returnTo) this.roomScroll.set(returnTo.room.id, n.modalBody.scrollTop);
     this.panel = { type, room, returnTo };
     n.back.hidden = !returnTo;
@@ -945,13 +947,15 @@ export class BayitDashboard extends HTMLElement {
     const item = make('section', 'device');
     const domain = domainFor(config);
     const tileMode = groupKey === 'room_lights' && ['light', 'switch'].includes(domain) && !config.kind;
-    const mediaTarget = room && config.media_panel_id && this.config.toolbar?.find(
-      entry => entry.kind === 'media' && entry.id === config.media_panel_id);
+    const panelKind = ROOM_PANEL_KINDS.get(domain);
+    const panelId = config[panelKind + '_panel_id'];
+    const panelTarget = room && panelId && this.config.toolbar?.find(
+      entry => entry.kind === panelKind && entry.id === panelId);
     item.dataset.entity = config.entity;
     item.dataset.treatment = config.kind || domain;
     const glyph = icon(config.icon || 'mdi:information-outline');
     glyph.className = 'device-icon';
-    const name = make(tileMode || mediaTarget ? 'span' : room ? 'h4' : 'h3', 'device-name');
+    const name = make(tileMode || panelTarget ? 'span' : room ? 'h4' : 'h3', 'device-name');
     const state = make('span', 'current');
     const view = { config, item, glyph, name, state, fields: [], room };
     if (tileMode) {
@@ -964,31 +968,34 @@ export class BayitDashboard extends HTMLElement {
       view.tile = tile;
       item.append(tile);
     } else {
-      const details = make(mediaTarget ? 'span' : 'div', 'device-detail');
+      const details = make(panelTarget ? 'span' : 'div', 'device-detail');
       details.append(name, state);
       const cover = !!room && domain === 'cover';
       const hasPanel = !!room && (cover || (config.kind === 'boiler' && config.role !== 'status'));
       if (cover) item.dataset.compact = 'cover';
-      const more = mediaTarget ? button('device-head device-media-launch')
+      const more = panelTarget ? button('device-head device-panel-launch')
         : button('round-action', this.t(hasPanel ? 'device_controls' : 'more_info'),
           cover ? config.icon || deviceIcons.cover : 'mdi:information-outline', true);
       if (hasPanel) more.setAttribute('aria-haspopup', 'dialog');
       more.onclick = () => hasPanel ? this.openPanel('device', more, room, config.entity) : this.moreInfo(config);
-      const head = mediaTarget ? more : make('header', 'device-head');
+      const head = panelTarget ? more : make('header', 'device-head');
       if (titleInDialog) {
         head.classList.add('device-state-head');
         glyph.hidden = true;
         name.hidden = true;
       }
-      if (mediaTarget) {
-        const targetName = mediaTarget.label || this.t('media');
-        const hold = this.t('media_room_hold').replace('{name}', targetName);
-        more.title = hold;
-        more.setAttribute('aria-description', hold);
-        head.append(glyph, details, icon('mdi:information-outline'));
-        bindDeviceDetails(more, () => this.openPanel('media', more, undefined, undefined,
-          { ...mediaTarget, name: targetName }, { room, entity: config.entity }));
-        view.mediaLaunch = true;
+      if (panelTarget) {
+        const vacuum = panelKind === 'vacuum';
+        const targetName = panelTarget.label || this.t(panelKind);
+        const hint = vacuum ? this.t('vacuum_room_hold') : this.t('media_room_hold').replace('{name}', targetName);
+        const open = () => this.openPanel(panelKind, more, undefined, undefined,
+          { ...panelTarget, name: targetName }, { room, entity: config.entity });
+        if (vacuum) more.onclick = open;
+        more.setAttribute('aria-description', hint);
+        head.append(glyph, details, icon(vacuum ? 'mdi:arrow-top-right' : 'mdi:information-outline'));
+        bindDeviceDetails(more, vacuum ? () => this.moreInfo(config) : open);
+        view.panelLaunch = { action: vacuum ? this.t('vacuum_room_open').replace('{name}', targetName)
+          : this.t('more_info'), hint };
       } else head.append(glyph, details, more);
       const group = make('div', 'action-list');
       item.append(head, group);
@@ -1099,8 +1106,10 @@ export class BayitDashboard extends HTMLElement {
         view.tile.setAttribute('aria-busy', String(!!pending));
         continue;
       }
-      if (view.mediaLaunch) label(view.more, model.name + ' · ' + this.t('more_info'));
-      else view.more.hidden = !model.actions.more_info;
+      if (view.panelLaunch) {
+        label(view.more, model.name + ' · ' + view.panelLaunch.action);
+        if (view.more.title !== view.panelLaunch.hint) view.more.title = view.panelLaunch.hint;
+      } else view.more.hidden = !model.actions.more_info;
       const timerLayout = model.timer ? [model.timer.state, Number.isFinite(model.timer.usedSeconds), model.state === 'on'] : null;
       const signature = JSON.stringify([actionsInOrder.map(id => model.actions[id] || null), timerLayout]);
       if (signature !== view.signature) {

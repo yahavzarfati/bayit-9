@@ -56,3 +56,19 @@ test('room media links require a selected media player and an existing Media pan
   config.room_overrides.bayit_room_fixture.media_panel_links[entity] = 'security-one';
   assert.deepEqual(room().entities.map(item => item.media_panel_id), [undefined, undefined]);
 });
+
+test('room vacuum links only address a configured Vacuum panel from a visible vacuum', () => {
+  const robot = 'vacuum.fixture';
+  const states = { [robot]: { state:'docked', attributes:{} }, [entity]: { state:'idle', attributes:{} } };
+  const config = {
+    toolbar: [{ id:'media-one', kind:'media' }, { id:'vacuum-one', kind:'vacuum' }],
+    room_overrides: { bayit_room_fixture: { name:'Fixture', entities:[robot,entity],
+      vacuum_panel_links: { [robot]:'vacuum-one', [entity]:'vacuum-one' } } },
+  };
+  const room = hass => generateDashboard(config,hass).views[0].cards[0].rooms.find(item => item.id === 'bayit_room_fixture');
+  assert.deepEqual(room({states}).entities.map(item => item.vacuum_panel_id), ['vacuum-one',undefined]);
+  config.room_overrides.bayit_room_fixture.vacuum_panel_links[robot] = 'media-one';
+  assert.equal(room({states}).entities[0].vacuum_panel_id, undefined);
+  config.room_overrides.bayit_room_fixture.vacuum_panel_links[robot] = 'vacuum-one';
+  assert.equal(room({states,entities:{[robot]:{hidden:true}}}).entities.some(item => item.entity === robot),false);
+});
