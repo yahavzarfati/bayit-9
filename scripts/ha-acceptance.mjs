@@ -114,10 +114,17 @@ try {
   try {
     await edit.click({ timeout: 6000 });
   } catch (error) {
-    const menu = dashboardHeader.locator('#dashboardmenu');
-    if (error.name !== 'TimeoutError' || !await menu.isVisible()) throw error;
-    await menu.click();
-    await dashboardHeader.locator('ha-dropdown-item').filter({ hasText: /^\s*Edit dashboard\s*$/ }).click();
+    if (error.name !== 'TimeoutError') throw error;
+    const labelText = /^\s*Edit dashboard\s*$/;
+    const tooltip = dashboardHeader.locator('ha-tooltip').filter({ hasText: labelText });
+    if (await tooltip.count() === 1) {
+      const anchorId = await tooltip.evaluate(element => element.for);
+      assert.match(anchorId ?? '', /^button-\d+$/);
+      await dashboardHeader.locator('#' + anchorId).click();
+    } else {
+      await dashboardHeader.locator('#dashboardmenu').click();
+      await dashboardHeader.locator('ha-dropdown-item').filter({ hasText: labelText }).click();
+    }
   }
   const editor = page.locator('dialog-dashboard-strategy-editor');
   const editorTitle = editor.getByLabel('Dashboard title', { exact: true });
