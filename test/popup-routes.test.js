@@ -12,6 +12,8 @@ const aliases = new Map([['#legacy-light', deviceHash], ['#legacy-weather', pane
 
 class Browser extends EventTarget {
   CustomEvent = CustomEvent;
+  setTimeout = setTimeout;
+  clearTimeout = clearTimeout;
   entries;
   index = 0;
 
@@ -28,6 +30,7 @@ class Browser extends EventTarget {
       replaceState(state, _, url) {
         view.entries[view.index] = { state, url: new URL(url, view.location) };
       },
+      back() { view.move(-1); },
     };
   }
 
@@ -139,4 +142,57 @@ test('takes late configuration into account and stops listening on teardown', ()
   assert.equal(observations.length, 2);
   navigation.start();
   assert.deepEqual(observations[2].route, panel);
+});
+
+test('returns once to the exact preceding room entry and retains the original browser history', () => {
+  const { view, observations, navigation } = fixture('/dashboard/home?kiosk=1');
+  navigation.start();
+  navigation.open(room);
+  navigation.open(device, { fromRoom: room.room });
+  assert.equal(navigation.backToRoom(room.room, { source: device.entity, fallback: assert.fail }), true);
+  assert.equal(view.location.hash, roomHash);
+  assert.equal(observations.at(-1).reason, 'room-return');
+  assert.equal(observations.at(-1).source, device.entity);
+  assert.equal(navigation.backToRoom(room.room, { fallback: assert.fail }), false);
+  view.move(-1);
+  assert.equal(view.location.hash, '');
+  view.move(2);
+  assert.equal(view.location.hash, deviceHash);
+  assert.equal(navigation.backToRoom(room.room, { fallback: assert.fail }), false);
+});
+
+test('skips unlinked entries and fallbacks immediately if the browser refuses to traverse', () => {
+  const { view, navigation } = fixture('/dashboard/home' + deviceHash);
+  navigation.start();
+  assert.equal(navigation.backToRoom(room.room, { fallback: assert.fail }), false);
+  navigation.open(room);
+  navigation.open(device, { fromRoom: room.room });
+  view.history.replaceState(null, '', view.location.href);
+  assert.equal(navigation.backToRoom(room.room, { fallback: assert.fail }), false);
+  navigation.open(room);
+  navigation.open(device, { fromRoom: room.room });
+  view.history.back = () => { throw new Error('History is unavailable'); };
+  assert.equal(navigation.backToRoom(room.room, { fallback: assert.fail }), false);
+});
+
+test('uses the replacement fallback at most once if the linked entry does not move', () => {
+  const { view, navigation } = fixture('/dashboard/home' + roomHash);
+  navigation.start();
+  navigation.open(device, { fromRoom: room.room });
+  let timeout;
+  view.setTimeout = callback => { timeout = callback; return 1; };
+  view.clearTimeout = () => {};
+  view.history.back = () => {};
+  let fallbacks = 0;
+  const options = { fallback: () => {
+    fallbacks++;
+    navigation.open(room, { replace: true });
+  } };
+  assert.equal(navigation.backToRoom(room.room, options), true);
+  assert.equal(navigation.backToRoom(room.room, options), true);
+  assert.equal(fallbacks, 0);
+  timeout();
+  assert.equal(fallbacks, 1);
+  assert.equal(view.location.hash, roomHash);
+  assert.equal(navigation.backToRoom(room.room, options), false);
 });

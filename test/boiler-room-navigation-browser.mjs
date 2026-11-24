@@ -8,7 +8,8 @@ const bundle = await readFile(new URL('../dist/bayit-9.js', import.meta.url));
 
 const fixture = '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">' +
   '<script type="module">import "/dashboard.js";(' + function () {
-    const locale = new URL(location.href).searchParams.get('locale');
+    const params = new URL(location.href).searchParams;
+    const locale = params.get('locale');
     const boiler = { entity: 'switch.fixture_boiler', name: 'Fixture boiler', kind: 'boiler',
       timed: { simple_timer_entity: 'sensor.fixture_runtime', min_minutes: 15, max_minutes: 60, step_minutes: 15 } };
     const sensors = Array.from({ length: 12 }, (_, index) => ({
@@ -24,7 +25,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     const requests = [];
     const moreInfo = [];
     const card = document.createElement('bayit-dashboard');
-    card.setConfig({ locale, rooms: [
+    card.setConfig({ locale, page: params.has('routed'), rooms: [
       { id: 'kitchen', name: 'Kitchen', entities: [...sensors, boiler], shortcuts: [] },
       { id: 'bath', name: 'Bath', entities: [boiler], shortcuts: [boiler.entity] },
       { id: 'monitor', name: 'Monitor', entities: [{ ...boiler, role: 'status' }], shortcuts: [boiler.entity] },
@@ -54,6 +55,36 @@ try {
   for (const [launcher, locale] of [[chromium, 'en'], [webkit, 'he']]) {
     const browser = await launcher.launch();
     try {
+      const routed = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true });
+      await routed.goto('http://127.0.0.1:' + server.address().port + '?routed&locale=' + locale);
+      const routedRoom = routed.getByRole('dialog', { name: 'Kitchen', exact: true });
+      const routedDetails = routedRoom.locator('[data-entity="switch.fixture_boiler"] .round-action');
+      const routedBody = routedRoom.locator('.modal-body');
+      await routed.getByRole('button', { name: 'Kitchen', exact: true }).tap();
+      await routedDetails.scrollIntoViewIfNeeded();
+      const previousScroll = await routedBody.evaluate(element => element.scrollTop);
+      assert.ok(previousScroll > 0);
+      await routedDetails.tap();
+      await routed.waitForFunction(() => location.hash === '#device/kitchen/switch.fixture_boiler');
+      await routed.getByRole('dialog', { name: 'Fixture boiler', exact: true }).locator('[data-role=back]').tap();
+      await routedRoom.waitFor();
+      await routed.waitForFunction(() => location.hash === '#room-kitchen');
+      assert.ok(Math.abs(await routedBody.evaluate(element => element.scrollTop) - previousScroll) < 2);
+      assert.equal(await routedDetails.evaluate(button => button.getRootNode().activeElement === button), true);
+      const nextHash = await routed.evaluate(() => new Promise(resolve => {
+        window.addEventListener('popstate', () => resolve(location.hash), { once: true });
+        history.back();
+      }));
+      assert.equal(nextHash, '', 'The browser Back button must leave the room in one step');
+      await routedRoom.waitFor({ state: 'hidden' });
+      await routed.evaluate(() => history.forward());
+      await routedRoom.waitFor();
+      await routed.evaluate(() => history.forward());
+      const reopenedBoiler = routed.getByRole('dialog', { name: 'Fixture boiler', exact: true });
+      await reopenedBoiler.waitFor();
+      await reopenedBoiler.locator('[data-role=back]').waitFor({ state: 'hidden' });
+      await routed.close();
+
       const page = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true });
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));

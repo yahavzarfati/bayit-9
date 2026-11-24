@@ -506,7 +506,7 @@ export class BayitDashboard extends HTMLElement {
     return matches.length === 1 || !this.config.toolbar ? matches[0] : undefined;
   }
 
-  showPopupRoute({ route, hash, reason }) {
+  showPopupRoute({ route, hash, reason, source }) {
     if (reason === 'open' || reason === 'close') return;
     if (this.nodes.confirm.open) {
       this.confirming = null;
@@ -521,7 +521,8 @@ export class BayitDashboard extends HTMLElement {
       this.openPanel(panel.kind, null, undefined, undefined, panel, undefined, { hash });
     } else {
       const room = this.roomViews.get(route.room)?.room;
-      this.openPanel(route.kind, null, room, route.entity, undefined, undefined, { hash });
+      if (reason === 'room-return') this.restoreRoomFromPanel(room, source, { hash });
+      else this.openPanel(route.kind, null, room, route.entity, undefined, undefined, { hash });
     }
   }
 
@@ -942,7 +943,7 @@ export class BayitDashboard extends HTMLElement {
         : toolbar ? { kind: 'panel', panel: toolbar.id || type } : null;
       const hash = popupRouteFragment(route);
       if (hash) {
-        this.popupHistory.open(route, { source, replace: navigation.replace });
+        this.popupHistory.open(route, { source, replace: navigation.replace, fromRoom: returnTo?.room.id });
         const location = this.ownerDocument.defaultView.location;
         if (location.pathname === this.popupHistoryPath && popupRouteFragment(this.resolvePopup(location.hash)) === hash) {
           panel.routeHash = location.hash;
@@ -952,10 +953,19 @@ export class BayitDashboard extends HTMLElement {
   }
 
   backToRoom() {
-    const { room, entity } = this.panel?.returnTo ?? {};
+    const panel = this.panel;
+    const { room, entity } = panel?.returnTo ?? {};
+    if (!entity || !room || !this.nodes.modal.open) return;
+    const fallback = () => {
+      if (this.panel === panel && this.nodes.modal.open) this.restoreRoomFromPanel(room, entity, { replace: true });
+    };
+    if (!this.popupHistory?.backToRoom(room.id, { source: entity, fallback })) fallback();
+  }
+
+  restoreRoomFromPanel(room, entity, navigation) {
     const source = room && this.roomViews.get(room.id)?.heading;
-    if (!entity || !source || !this.nodes.modal.open) return;
-    this.openPanel('room', source, room, undefined, undefined, undefined, { replace: true });
+    if (!source) return;
+    this.openPanel('room', source, room, undefined, undefined, undefined, navigation);
     const view = Array.from(this.deviceViews).find(item => item.config.entity === entity);
     view?.more?.focus({ preventScroll: true });
   }
