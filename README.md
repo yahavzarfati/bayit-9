@@ -13,7 +13,7 @@ The **Community dashboards** picker requires Home Assistant 2026.5 or newer. Ass
 3. Reload the Home Assistant frontend. If you use the Companion app, close and reopen its dashboard view.
 4. Open **Settings → Dashboards → Add dashboard → Community dashboards → Bayit 9**.
 
-Choose **Edit dashboard** to pick rooms, include or hide specific entities, and map controls for a boiler or heater. Bayit 9 starts in the Home Assistant language and supports English and Hebrew.
+Choose **Edit dashboard** to pick rooms, arrange their shortcuts, include or hide specific entities, and map controls for a boiler or heater. Bayit 9 starts in the Home Assistant language and supports English and Hebrew.
 
 ## Controls and preferences
 

@@ -91,6 +91,13 @@ try {
   assert.ok(moduleResponses.includes(200) || moduleResponses.includes(304),
     'The browser did not fetch the registered Bayit 9 bundle');
   console.log('Mobile-width appearance setting saved and survived reload');
+
+  await appearance.getByRole('button', { name: 'Close', exact: true }).click();
+  await mkdir(artifacts, { recursive: true });
+  await card.screenshot({ path: resolve(artifacts, 'dashboard.png'), animations: 'disabled' });
+  await roomButton.click();
+  await room.waitFor();
+  await card.screenshot({ path: resolve(artifacts, 'room.png'), animations: 'disabled' });
 } catch (error) {
   await mkdir(artifacts, { recursive: true });
   if (page && !page.isClosed()) {

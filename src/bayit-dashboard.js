@@ -1,5 +1,6 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
+import { MAX_ROOM_SHORTCUTS } from './strategy-model.js';
 import { createDeviceController, getDeviceModel } from './device-control.mjs';
 
 export const backgrounds = Object.freeze(['aurora', 'lagoon', 'dunes', 'graphite']);
@@ -116,7 +117,11 @@ export function normalizeDashboardConfig(config = {}) {
       if (item.timed && typeof item.timed === 'object' && !Array.isArray(item.timed)) entry.timed = { ...item.timed };
       unique.set(entity, entry);
     }
-    return { id, name, icon: validIcon(room.icon, 'mdi:door-open'), entities: [...unique.values()] };
+    const parsed = { id, name, icon: validIcon(room.icon, 'mdi:door-open'), entities: [...unique.values()] };
+    if (Array.isArray(room.shortcuts)) {
+      parsed.shortcuts = [...new Set(room.shortcuts)].filter(entity => unique.has(entity)).slice(0, MAX_ROOM_SHORTCUTS);
+    }
+    return parsed;
   });
   return {
     locale, rooms, title: text(config.title) || languages[locale].home,
@@ -333,7 +338,11 @@ export class BayitDashboard extends HTMLElement {
       const quick = make('div', 'quick');
       const shortcut = new Map();
       const weight = entry => +!['light','switch','fan','cover','lock','climate','water_heater'].includes(entry.entity.split('.')[0]);
-      for (const config of [...room.entities].sort((a,b) => weight(a)-weight(b)).slice(0,2)) {
+      const byId = new Map(room.entities.map(config => [config.entity, config]));
+      const chosen = room.shortcuts
+        ? room.shortcuts.map(entity => byId.get(entity))
+        : [...room.entities].sort((a, b) => weight(a) - weight(b)).slice(0, 2);
+      for (const config of chosen) {
         const el = button('quick-button', config.name || config.entity, config.icon || 'mdi:information-outline', true);
         el.dataset.entity = config.entity;
         el.onclick = () => {

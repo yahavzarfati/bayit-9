@@ -204,7 +204,11 @@ export async function seedLovelace(api) {
     return candidates.find(item => states.some(state =>
       state.entity_id === item.entity_id && ['on', 'off'].includes(state.state)));
   }, { timeout: 90000 });
-  await api.command('config/entity_registry/update', { entity_id: demo.entity_id, area_id: area.area_id });
+  if (demo.device_id) {
+    await api.command('config/device_registry/update', { device_id: demo.device_id, area_id: area.area_id });
+  } else {
+    await api.command('config/entity_registry/update', { entity_id: demo.entity_id, area_id: area.area_id });
+  }
   const resources = await api.command('lovelace/resources');
   assert.ok(!resources.some(resource => resource.url === RESOURCE_URL), 'The temporary resource already exists');
   await api.command('lovelace/resources/create', { res_type: 'module', url: RESOURCE_URL });

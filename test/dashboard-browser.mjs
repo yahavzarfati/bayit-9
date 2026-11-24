@@ -35,7 +35,8 @@ const hass = {
 };
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
 const query = new URL(location.href).searchParams;
-const config = Strategy.generate({}, query.has('empty') ? { ...hass, states: {} } : hass);
+const selected = query.has('curated') ? { room_shortcuts: { studio: ['switch.demo_heater', 'light.demo_lamp'] } } : {};
+const config = Strategy.generate(selected, query.has('empty') ? { ...hass, states: {} } : hass);
 const cardConfig = config.views[0].cards[0];
 const card = document.createElement('bayit-dashboard');
 card.setConfig(cardConfig);
@@ -107,6 +108,15 @@ try {
       await title.fill('Demo Home');
       await title.blur();
       await editorPage.waitForFunction(() => window.latest?.title === 'Demo Home');
+      await editorPage.getByText('Room shortcuts', { exact: true }).click();
+      const automatic = editorPage.getByRole('checkbox', { name: 'Choose shortcuts automatically' });
+      await automatic.uncheck();
+      await editorPage.getByLabel('Shortcut 1', { exact: true }).selectOption('switch.demo_heater');
+      await editorPage.getByLabel('Shortcut 2', { exact: true }).selectOption('light.demo_lamp');
+      assert.deepEqual(await editorPage.evaluate(() => window.latest.room_shortcuts.studio),
+        ['switch.demo_heater', 'light.demo_lamp']);
+      await automatic.check();
+      assert.deepEqual(await editorPage.evaluate(() => window.latest.room_shortcuts), {});
       await editorPage.getByText('Boiler and heater controls', { exact: true }).click();
       await editorPage.getByRole('button', { name: 'Add profile' }).click();
       await editorPage.getByLabel('Heating device').selectOption('switch.demo_heater');
@@ -121,6 +131,14 @@ try {
       await editorPage.getByLabel('Language').selectOption('he');
       await editorPage.getByLabel('שם הדשבורד').waitFor();
       await editorPage.close();
+
+      const curatedPage = await browser.newPage({ viewport: {width: 320, height: 660} });
+      await curatedPage.goto(base + '?curated');
+      const controls = curatedPage.locator('.quick-button');
+      await controls.first().waitFor();
+      assert.deepEqual(await controls.evaluateAll(items => items.map(item => item.dataset.entity)),
+        ['switch.demo_heater', 'light.demo_lamp']);
+      await curatedPage.close();
 
       const emptyPage = await browser.newPage();
       await emptyPage.goto(base + '?empty');

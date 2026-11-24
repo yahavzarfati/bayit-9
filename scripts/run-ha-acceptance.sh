@@ -16,6 +16,7 @@ npm run build
 stage="$(mktemp -d)"
 marker="$(node -p "require('node:crypto').randomBytes(16).toString('hex')")"
 name="bayit-acceptance-${marker:0:12}"
+image="ghcr.io/home-assistant/home-assistant:$version"
 results="$root/test-results/ha-acceptance/$version"
 mkdir -p -- "$results" "$stage/www"
 cleanup() {
@@ -26,6 +27,7 @@ cleanup() {
     tail -n 70 "$results/home-assistant.log" >&2 || true
   fi
   docker rm -f "$name" >/dev/null 2>&1 || true
+  docker volume rm "$name" >/dev/null 2>&1 || true
   rm -rf -- "$stage"
   exit "$status"
 }
@@ -49,8 +51,10 @@ lovelace:
   resource_mode: storage
 YAML
 
-docker run -d --name "$name" --publish 127.0.0.1::8123 --volume "$stage:/config" \
-  "ghcr.io/home-assistant/home-assistant:$version" >/dev/null
+docker volume create "$name" >/dev/null
+docker run --rm --network none --volume "$name:/config" --volume "$stage:/fixture:ro" \
+  --entrypoint /bin/sh "$image" -c 'cp -R /fixture/. /config/'
+docker run -d --name "$name" --publish 127.0.0.1::8123 --volume "$name:/config" "$image" >/dev/null
 binding="$(docker port "$name" 8123/tcp)"
 if [[ ! "$binding" =~ ^127\.0\.0\.1:[0-9]+$ ]]; then
   echo "Unexpected Home Assistant fixture port: $binding" >&2

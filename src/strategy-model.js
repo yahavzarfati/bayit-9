@@ -2,6 +2,7 @@ import { HEATING_DOMAINS } from './device-control.mjs';
 
 export const CARD_TYPE = 'custom:bayit-dashboard';
 export const STRATEGY_NAME = 'bayit-9';
+export const MAX_ROOM_SHORTCUTS = 6;
 export const BACKGROUNDS = {
   aurora: { en: 'Aurora', he: 'זוהר צפוני' },
   lagoon: { en: 'Lagoon', he: 'לגונה' },
@@ -166,7 +167,13 @@ export function discoverRooms(config, hass, locale) {
       const rank = (DEFAULT_RANK.get(domainOf(a.entity)) ?? 100) - (DEFAULT_RANK.get(domainOf(b.entity)) ?? 100);
       return rank || compareText(a.name ?? a.entity, b.name ?? b.entity, locale);
     });
-    return { id, name: area.name, icon: area.icon, entities };
+    const room = { id, name: area.name, icon: area.icon, entities };
+    const shortcuts = Object.hasOwn(config.room_shortcuts ?? {}, id) ? config.room_shortcuts[id] : null;
+    if (Array.isArray(shortcuts)) {
+      const visible = new Set(entities.map(device => device.entity));
+      room.shortcuts = idList(shortcuts).filter(entity => visible.has(entity)).slice(0, MAX_ROOM_SHORTCUTS);
+    }
+    return room;
   });
 }
 

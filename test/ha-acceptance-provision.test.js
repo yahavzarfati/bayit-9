@@ -112,7 +112,7 @@ test('seeding chooses only a registered demo light and registers a native module
       case 'config/area_registry/create': return { area_id: 'acceptance_area' };
       case 'config/entity_registry/list': return [
         { entity_id: 'light.aaa', platform: 'non_demo' },
-        { entity_id: 'light.demo', platform: 'demo' },
+        { entity_id: 'light.demo', platform: 'demo', device_id: 'fake_demo_device' },
       ];
       case 'get_states': return [{ entity_id: 'light.aaa', state: 'on' }, { entity_id: 'light.demo', state: 'off' }];
       case 'lovelace/resources': return commands.some(([command]) => command === 'lovelace/resources/create')
@@ -121,8 +121,8 @@ test('seeding chooses only a registered demo light and registers a native module
     }
   } });
   assert.deepEqual(response, { room: ROOM_NAME, area: 'acceptance_area', entity: 'light.demo' });
-  assert.ok(commands.some(([type, data]) => type === 'config/entity_registry/update' &&
-    data.entity_id === 'light.demo' && data.area_id === 'acceptance_area'));
+  assert.ok(commands.some(([type, data]) => type === 'config/device_registry/update' &&
+    data.device_id === 'fake_demo_device' && data.area_id === 'acceptance_area'));
   assert.ok(commands.some(([type, data]) => type === 'lovelace/resources/create' &&
     data.res_type === 'module' && data.url === RESOURCE_URL));
 });

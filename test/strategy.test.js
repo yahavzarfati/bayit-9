@@ -130,3 +130,20 @@ test('chooses valid unique IDs for unassigned devices even if a room uses the re
   assert.ok(normalizeProfile({ entity: 'fan.demo_heater', kind: 'heater' }));
   assert.equal(normalizeProfile({ entity: 'input_boolean.demo_heater', kind: 'heater' }), null);
 });
+
+test('keeps curated shortcuts in order, limits them to visible room members, and honors an empty list', () => {
+  const hass = home();
+  const ids = Array.from({ length: 8 }, (_, index) => 'switch.demo_' + index);
+  for (const entity of ids) {
+    hass.states[entity] = { state: 'off', attributes: {} };
+    hass.entities[entity] = { area_id: 'lounge' };
+  }
+  const rooms = discoverRooms({
+    hidden_entities: [ids[0]],
+    room_shortcuts: { lounge: [ids[0], ids[4], 'fan.demo_fan', ...ids], studio: [] },
+  }, hass, 'en');
+  assert.deepEqual(rooms.find(room => room.id === 'lounge').shortcuts,
+    [ids[4], ids[1], ids[2], ids[3], ids[5], ids[6]]);
+  assert.deepEqual(rooms.find(room => room.id === 'studio').shortcuts, []);
+  assert.equal(rooms.find(room => room.id === 'porch').shortcuts, undefined);
+});

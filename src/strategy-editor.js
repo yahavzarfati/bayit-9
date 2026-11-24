@@ -1,4 +1,4 @@
-import { BACKGROUNDS, languageFor, normalizeProfile, PROFILE_DOMAINS, STRATEGY_NAME } from './strategy-model.js';
+import { BACKGROUNDS, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile, PROFILE_DOMAINS, STRATEGY_NAME } from './strategy-model.js';
 
 const WORDS = {
   en: {
@@ -7,6 +7,9 @@ const WORDS = {
     appearance: 'Appearance', background: 'Wallpaper', layout: 'Room titles', shape: 'Button shape',
     classic: 'Alongside the controls', header: 'At the top', soft: 'Rounded', circle: 'Circle', square: 'Square',
     devices: 'Device visibility', hidden: 'Hide devices', included: 'Add other entities',
+    shortcuts: 'Room shortcuts', shortcutRoom: 'Room', automaticShortcuts: 'Choose shortcuts automatically',
+    shortcut: 'Shortcut', shortcutHint: 'Pick up to six devices in display order. All devices remain available inside the room.',
+    noShortcutRooms: 'Add a device to a visible room to set its shortcuts.',
     profiles: 'Boiler and heater controls', entity: 'Heating device', kind: 'Control profile',
     heater: 'Room heater', boiler: 'Water heater or boiler', displayName: 'Display name',
     start: 'Scheduled start script', stop: 'Stop script', timer: 'Timer', none: 'None',
@@ -23,6 +26,9 @@ const WORDS = {
     appearance: 'מראה', background: 'רקע', layout: 'שמות חדרים', shape: 'צורת כפתורים',
     classic: 'לצד הכפתורים', header: 'בראש הכרטיס', soft: 'מעוגל', circle: 'עיגול', square: 'ריבוע',
     devices: 'הצגת מכשירים', hidden: 'הסתרת מכשירים', included: 'הוספת ישויות נוספות',
+    shortcuts: 'קיצורים בחדרים', shortcutRoom: 'חדר', automaticShortcuts: 'בחירת קיצורים אוטומטית',
+    shortcut: 'קיצור', shortcutHint: 'אפשר לבחור עד שישה מכשירים לפי סדר התצוגה. כל המכשירים נשארים זמינים בתוך החדר.',
+    noShortcutRooms: 'הוסיפו מכשיר לחדר שמוצג בדשבורד כדי לבחור קיצורים.',
     profiles: 'שליטה בדוד ובתנורים', entity: 'מכשיר חימום', kind: 'סוג בקר',
     heater: 'תנור חימום', boiler: 'דוד או מחמם מים', displayName: 'שם לתצוגה',
     start: 'סקריפט הפעלה עם זמן', stop: 'סקריפט כיבוי', timer: 'טיימר', none: 'ללא',
@@ -52,6 +58,7 @@ summary { padding-block: 8px; min-block-size: 24px; font-weight: 650; cursor: po
 .record { padding-block: 5px; border-block-end: 1px solid var(--divider-color,#999); }\
 .record span { flex: 1; overflow-wrap: anywhere; }\
 button { min-height: 42px; border-radius: 8px; border: 1px solid var(--primary-color,#0277bd); color: var(--primary-text-color); background: var(--card-background-color,#fff); cursor: pointer; padding: 6px 10px; font: inherit; }\
+[hidden] { display: none !important; }\
 p { margin: 0; color: var(--secondary-text-color); font-size: .95em; }\
 .error { color: var(--error-color,#b00020); }\
 :focus-visible { outline: 2px solid var(--primary-color,#03a9f4); outline-offset: 2px; }\
@@ -113,6 +120,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #config = { type: 'custom:' + STRATEGY_NAME };
   #open = {};
   #profileEditing;
+  #shortcutRoom;
   #lastConfig;
 
   constructor() {
@@ -167,6 +175,50 @@ export class Bayit9StrategyEditor extends HTMLElement {
     picker.addEventListener('change', () => this.#commit({ [key]: [...picker.selectedOptions].map(item => item.value) }));
     refresh();
     return node('div', { className: 'stack' }, [filter, field(label, picker)]);
+  }
+
+  #shortcutPanel(words, language) {
+    const rooms = discoverRooms(this.#config, this.#hass, language);
+    if (!rooms.length) return [node('p', { textContent: words.noShortcutRooms })];
+    const room = rooms.find(item => item.id === this.#shortcutRoom) ?? rooms[0];
+    const current = this.#config.room_shortcuts ?? {};
+    const chosen = Object.hasOwn(current, room.id) && Array.isArray(current[room.id]) ? current[room.id] : null;
+    const roomInput = select(rooms.map(item => [item.id, item.name]), room.id);
+    const options = new Map(room.entities.map(item => [item.entity, item.name || item.entity]));
+    for (const id of chosen ?? []) {
+      if (typeof id === 'string' && !options.has(id)) options.set(id, id);
+    }
+    const inputs = Array.from({ length: MAX_ROOM_SHORTCUTS }, (_, index) => {
+      const value = chosen?.[index] ?? '';
+      return select([['', words.none], ...options], value);
+    });
+    const list = node('div', { className: 'grid', hidden: chosen == null },
+      inputs.map((input, index) => field(words.shortcut + ' ' + (index + 1), input)));
+    const refresh = () => {
+      const selected = new Set(inputs.map(input => input.value).filter(Boolean));
+      for (const input of inputs) {
+        for (const item of input.options) {
+          item.disabled = item.value !== input.value && selected.has(item.value);
+        }
+      }
+    };
+    const save = () => {
+      this.#commit({ room_shortcuts: {
+        ...this.#config.room_shortcuts, [room.id]: inputs.map(input => input.value).filter(Boolean),
+      } });
+    };
+    refresh();
+    for (const input of inputs) input.addEventListener('change', () => { refresh(); save(); });
+    roomInput.addEventListener('change', () => { this.#shortcutRoom = roomInput.value; this.render(); });
+    const automatic = checkbox(words.automaticShortcuts, chosen == null, enabled => {
+      list.hidden = enabled;
+      if (enabled) {
+        const next = { ...this.#config.room_shortcuts };
+        delete next[room.id];
+        this.#commit({ room_shortcuts: next });
+      } else save();
+    });
+    return [node('p', { textContent: words.shortcutHint }), field(words.shortcutRoom, roomInput), automatic, list];
   }
 
   #profilePanel(words) {
@@ -283,6 +335,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
         ])]),
       disclosure(words.devices, this.#open.devices, open => { this.#open.devices = open; },
         [this.#entityMulti(words.hidden, 'hidden_entities', words), this.#entityMulti(words.included, 'included_entities', words)]),
+      disclosure(words.shortcuts, this.#open.shortcuts, open => { this.#open.shortcuts = open; },
+        [node('div', { className: 'stack' }, this.#shortcutPanel(words, language))]),
       disclosure(words.profiles, this.#open.profiles, open => { this.#open.profiles = open; },
         [node('div', { className: 'stack' }, this.#profilePanel(words))]),
     ]);
