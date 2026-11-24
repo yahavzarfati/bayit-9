@@ -26,10 +26,15 @@ let finishLevel;
 let finishPreselect;
 const query = new URL(location.href).searchParams;
 const storedKey = 'bayit9-browser-fixture';
+const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection') && { show_unassigned: false }),
+  ...(query.has('legacy-room-order') && { area_ids: ['lounge', 'studio'] }),
+  ...(query.has('sole-room') && { area_ids: ['bayit_room_only'],
+    room_overrides: { bayit_room_only: { name: 'Reading nook', entities: [] } } }),
+};
 const stored = () => JSON.parse(sessionStorage.getItem(storedKey) ||
-  '{"strategy":{"type":"custom:bayit-9"}}');
+  JSON.stringify({ strategy: initialStrategy }));
 const hass = {
-  user: { is_admin: query.has('configuration') },
+  user: { is_admin: query.has('configuration') && !query.has('member') },
   locale: { language: new URL(location.href).searchParams.get('locale') || 'en' },
   states,
   entities: { 'light.demo_lamp': { area_id: 'studio' }, 'switch.demo_heater': { area_id: 'studio' } },
@@ -97,6 +102,12 @@ const hass = {
     return Promise.resolve({});
   },
 };
+if (query.has('room-selection')) {
+  hass.areas.spare = { area_id: 'spare', name: 'Spare room' };
+  hass.areas.lounge = { area_id: 'lounge', name: 'Lounge' };
+  hass.entities['light.demo_lounge'] = { area_id: 'lounge' };
+  states['light.demo_lounge'] = { state: 'off', attributes: { friendly_name: 'Lounge lamp', supported_color_modes: ['onoff'] } };
+}
 if (query.has('room-grid')) {
   for (const [entity, name, colorMode] of [
     ['light.demo_wall', 'Wall lamp', 'onoff'], ['light.demo_pendant', 'Pendant lamp', 'color_temp'],
@@ -1177,6 +1188,75 @@ try {
         entities: ['light.demo_lamp'], read_only_entities: ['light.demo_lamp'] }]);
       assert.equal(await setupPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain).length), 0);
       await setupPage.close();
+
+      const roomConfigUrl = base + '/fixture-home/home?configuration&room-selection';
+      const openRoomEditor = async page => {
+        await page.getByRole('button', { name: 'Appearance', exact: true }).tap();
+        await page.getByRole('button', { name: 'Customize home', exact: true }).tap();
+        const setup = page.getByRole('dialog', { name: 'Customize home', exact: true });
+        await setup.getByText('Rooms', { exact: true }).tap();
+        return setup;
+      };
+      const newRoomConfigPage = () => browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true });
+      const roomOrder = page => page.locator('.room').evaluateAll(rooms => rooms.map(room => room.dataset.room));
+      const selectionSettings = page => page.evaluate(() => {
+        const { area_ids, room_selection } = JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy;
+        return { area_ids, room_selection };
+      });
+      const roomMode = setup => setup.getByLabel('Rooms on the dashboard', { exact: true });
+      const saveRoomConfig = async setup => {
+        await setup.getByRole('button', { name: 'Save dashboard', exact: true }).tap();
+        await setup.waitFor({ state: 'hidden' });
+      };
+
+      const selectedRoomsPage = await newRoomConfigPage();
+      await selectedRoomsPage.goto(roomConfigUrl + '&legacy-room-order');
+      let roomSetup = await openRoomEditor(selectedRoomsPage);
+      assert.equal(await roomMode(roomSetup).inputValue(), 'custom');
+      await roomSetup.getByLabel('Available rooms', { exact: true }).selectOption('spare');
+      await roomSetup.getByRole('button', { name: 'Show room', exact: true }).tap();
+      const roomName = roomSetup.getByLabel('Room display name', { exact: true });
+      await roomName.fill('Guest room');
+      await roomName.press('Enter');
+      const moveUp = roomSetup.getByRole('button', { name: 'Move up · Guest room', exact: true });
+      await moveUp.press('Enter');
+      assert.equal(await moveUp.evaluate(control => control.getRootNode().activeElement === control), true);
+      await saveRoomConfig(roomSetup);
+      await selectedRoomsPage.getByRole('button', { name: 'Guest room', exact: true }).waitFor();
+      assert.deepEqual(await roomOrder(selectedRoomsPage), ['lounge', 'spare', 'studio']);
+      assert.deepEqual(await selectionSettings(selectedRoomsPage), {
+        area_ids: ['lounge', 'spare', 'studio'], room_selection: 'manual',
+      });
+      await selectedRoomsPage.getByRole('button', { name: 'Guest room', exact: true }).tap();
+      await selectedRoomsPage.getByText('No devices in this room.', { exact: true }).waitFor();
+      await selectedRoomsPage.goto(roomConfigUrl + '&member');
+      await selectedRoomsPage.getByRole('button', { name: 'Guest room', exact: true }).waitFor();
+      await selectedRoomsPage.getByRole('button', { name: 'Appearance', exact: true }).tap();
+      assert.equal(await selectedRoomsPage.getByRole('button', { name: 'Customize home', exact: true }).count(), 0);
+      assert.equal(await selectedRoomsPage.evaluate(() => window.bayitTest.calls.length), 0);
+      await selectedRoomsPage.close();
+
+      const lastRoomPage = await newRoomConfigPage();
+      await lastRoomPage.goto(roomConfigUrl + '&sole-room');
+      await lastRoomPage.getByRole('button', { name: 'Reading nook', exact: true }).waitFor();
+      assert.deepEqual(await roomOrder(lastRoomPage), ['bayit_room_only']);
+      roomSetup = await openRoomEditor(lastRoomPage);
+      await roomSetup.getByRole('button', { name: 'Delete dashboard room', exact: true }).tap();
+      assert.equal(await roomMode(roomSetup).inputValue(), 'custom');
+      await saveRoomConfig(roomSetup);
+      await lastRoomPage.getByText('No rooms have been added.', { exact: true }).waitFor();
+      assert.deepEqual(await selectionSettings(lastRoomPage), { area_ids: [], room_selection: 'manual' });
+      roomSetup = await openRoomEditor(lastRoomPage);
+      await roomSetup.getByLabel('Available rooms', { exact: true }).selectOption('studio');
+      await roomSetup.getByRole('button', { name: 'Show room', exact: true }).tap();
+      await roomSetup.getByRole('button', { name: 'Hide room · Studio', exact: true }).press('Enter');
+      assert.equal(await roomMode(roomSetup).evaluate(control => control.getRootNode().activeElement === control), true);
+      await roomMode(roomSetup).selectOption('auto');
+      await saveRoomConfig(roomSetup);
+      await lastRoomPage.getByRole('button', { name: 'Studio', exact: true }).waitFor();
+      assert.deepEqual(await roomOrder(lastRoomPage), ['lounge', 'studio']);
+      await lastRoomPage.close();
+      console.log(engine + ' 320: explicit empty room selection, keyboard order, and member behavior');
 
       const emptyPage = await browser.newPage();
       await emptyPage.goto(base + '?empty');

@@ -6,7 +6,8 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 | --- | --- |
 | `locale` | `auto`, `en` or `he`. The default uses the Home Assistant language. |
 | `title` | Override the screen title. |
-| `area_ids` | Area or dashboard-only room IDs to show in the listed order. An empty list displays all discovered rooms. |
+| `room_selection` | `auto` displays discovered rooms. `manual` uses exactly the rooms listed in `area_ids`, including selected Areas with no devices. An empty manual list keeps those rooms hidden. The setting for devices without a room remains separate. |
+| `area_ids` | Area or dashboard-only room IDs to show in the listed order. Without `room_selection`, existing lists filter discovered rooms and an empty list uses automatic discovery. |
 | `room_overrides` | Room IDs mapped to objects with optional `name`, `icon`, `entities`, `entity_icons`, `sections`, `read_only_entities`, `activities`, `media_panel_links` and `vacuum_panel_links`. Use an ID starting with `bayit_room_` to add a dashboard-only room. |
 | `discovery_mode` | `all` includes device controls and readable entities. `controls` discovers only directly controllable domains. You can still add a readable entity to a room manually. |
 | `show_unassigned` | Show unassigned devices in their own room. Default `true`. |

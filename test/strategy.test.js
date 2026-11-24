@@ -306,6 +306,31 @@ test('shares room-picker exclusions with visible devices, including registry-les
   assert.ok(denied.every(id => !selectable.has(id)));
 });
 
+test('keeps selected native rooms even without eligible devices and distinguishes empty selection from automatic', () => {
+  const hass = home();
+  hass.areas.spare = { area_id: 'spare', name: 'Spare' };
+  hass.areas.readings = { area_id: 'readings', name: 'Readings' };
+  hass.entities['sensor.demo_reading'] = { area_id: 'readings' };
+  hass.states['sensor.demo_reading'] = { state: '19', attributes: {} };
+  const config = { show_unassigned: false, discovery_mode: 'controls' };
+  const rooms = selection => discoverRooms({ ...config, ...selection }, hass, 'en');
+  assert.ok(!rooms({ area_ids: [] }).some(room => ['spare', 'readings'].includes(room.id)));
+  assert.deepEqual(rooms({ area_ids: ['readings', 'spare', 'studio'] }).map(room => room.id), ['studio']);
+  assert.deepEqual(rooms({ room_selection: 'manual', area_ids: ['readings', 'spare', 'studio'] }).map(room => room.id),
+    ['readings', 'spare', 'studio']);
+  assert.deepEqual(rooms({ room_selection: 'manual', area_ids: ['readings', 'spare'] }).map(room => room.entities), [[], []]);
+  assert.ok(rooms({ area_ids: [] }).some(room => room.id === 'studio'));
+  assert.deepEqual(rooms({ room_selection: 'manual', area_ids: [] }), []);
+  assert.deepEqual(rooms({ room_selection: 'auto', area_ids: ['spare'] }), rooms({ area_ids: [] }));
+  assert.deepEqual(rooms({ room_selection: 'manual', area_ids: [], show_unassigned: true }).map(room => room.id),
+    ['bayit9_unassigned']);
+  const moved = rooms({ room_selection: 'manual', area_ids: ['studio', 'bayit_room_moved'],
+    room_overrides: { studio: { name: 'Workshop' }, bayit_room_moved: { name: 'Elsewhere', entities: ['fan.demo_fan'] } } });
+  assert.equal(moved[0].name, 'Workshop');
+  assert.deepEqual(moved[0].entities, []);
+  assert.ok(moved[1].entities.some(entity => entity.entity === 'fan.demo_fan'));
+});
+
 test('supports additional dashboard-only rooms in the room order and retains empty rooms', () => {
   const hass = home();
   const custom = CUSTOM_ROOM_PREFIX + 'washing-room';

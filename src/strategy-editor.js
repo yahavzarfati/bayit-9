@@ -1,6 +1,6 @@
 import {
   BACKGROUNDS, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
-  PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomPanelOptions, roomSections, selectableRoomEntities, STRATEGY_NAME,
+  PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomPanelOptions, roomSections, selectableRoomEntities, selectedRoomIds, STRATEGY_NAME,
 } from './strategy-model.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { buildToolbarEditor } from './toolbar-editor.js';
@@ -40,7 +40,6 @@ const WORDS = {
     sectionType: 'Section type', sectionTitle: 'Section heading', sectionDevice: 'Room device',
     addToSection: 'Move to this section', removeFromSection: 'Remove from section', sectionEmpty: 'No devices in this section.',
     noDevices: 'No devices selected.', noMatches: 'No matching devices', missing: 'Unavailable',
-    atLeastOneRoom: 'Keep one room selected, or switch back to automatic.',
     discovery: 'Automatic device selection', controls: 'Controls only', allDevices: 'All supported devices',
     appearance: 'Appearance', background: 'Wallpaper', layout: 'Room titles', shape: 'Button shape',
     toolbar: 'Toolbar and extra screens', fullscreen: 'Hide Home Assistant chrome on this dashboard',
@@ -102,7 +101,6 @@ const WORDS = {
     sectionType: 'סוג הקבוצה', sectionTitle: 'כותרת הקבוצה', sectionDevice: 'מכשיר בחדר',
     addToSection: 'העברה לקבוצה זו', removeFromSection: 'הסרה מהקבוצה', sectionEmpty: 'אין מכשירים בקבוצה זו.',
     noDevices: 'לא נבחרו מכשירים.', noMatches: 'לא נמצאו מכשירים מתאימים', missing: 'לא זמין',
-    atLeastOneRoom: 'השאירו חדר אחד לפחות, או חזרו לבחירה אוטומטית.',
     discovery: 'בחירת מכשירים אוטומטית', controls: 'מכשירים נשלטים בלבד', allDevices: 'כל המכשירים הנתמכים',
     appearance: 'מראה', background: 'רקע', layout: 'שמות חדרים', shape: 'צורת כפתורים',
     toolbar: 'סרגל ומסכים נוספים', fullscreen: 'הסתרת סרגל Home Assistant בדשבורד הזה',
@@ -188,7 +186,6 @@ const ROOM_CSS = `
 .room-add { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; align-items: end; }
 .room-add button { min-block-size: 44px; }
 .room-choice-heading { margin: 3px 0 0; font-size: 1em; }
-.room-picker-hint { margin-block-start: -5px; }
 .room-icon-field { display: grid; grid-template-columns: minmax(0,1fr) 44px; gap: 8px; align-items: end; }
 .room-icon-preview { box-sizing: border-box; inline-size: 44px; block-size: 44px; display: grid; place-items: center; border: 1px solid var(--divider-color,#999); border-radius: 8px; }
 .room-danger { justify-self: start; color: var(--error-color,#b00020); border-color: currentColor; }
@@ -327,7 +324,6 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #applianceRooms = new Map();
   #roomDeviceQuery = '';
   #newRoomName = '';
-  #emptyRoomSelection = false;
   #lastConfig;
 
   constructor() {
@@ -410,7 +406,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
   }
 
   #resolvedRoom(room, language) {
-    return discoverRooms({ ...this.#config, area_ids: [room.id] }, this.#hass, language).find(item => item.id === room.id);
+    return discoverRooms({ ...this.#config, room_selection: 'manual', area_ids: [room.id] }, this.#hass, language)
+      .find(item => item.id === room.id);
   }
 
   #roomMembership(room, override, sections, language) {
@@ -647,7 +644,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     return children;
   }
 
-  #customRoomForm(rooms, selected, words) {
+  #customRoomForm(rooms, selection, words) {
     const name = node('input', { maxLength: 80, value: this.#newRoomName });
     name.dataset.roomFocus = 'new-room-name';
     const add = button(words.newRoom, () => {
@@ -659,8 +656,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
       while (used.has(CUSTOM_ROOM_PREFIX + serial)) serial++;
       const id = CUSTOM_ROOM_PREFIX + serial;
       const change = { room_overrides: { ...this.#config.room_overrides, [id]: { name: text, entities: [] } } };
-      if (selected.length || this.#emptyRoomSelection) change.area_ids = [...selected, id];
-      this.#emptyRoomSelection = false;
+      if (selection !== null) {
+        change.room_selection = 'manual';
+        change.area_ids = [...selection, id];
+      }
       this.#newRoomName = '';
       this.#open.newRoom = false;
       this.#roomEditing = id;
@@ -745,23 +744,18 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #roomsPanel(words, language) {
     const rooms = dashboardRoomOptions(this.#config, this.#hass).sort((a, b) => a.name.localeCompare(b.name, language));
     const byId = new Map(rooms.map(room => [room.id, room]));
-    const selected = configuredIds(this.#config.area_ids);
-    const customSelection = selected.length > 0 || this.#emptyRoomSelection;
+    const selection = selectedRoomIds(this.#config);
+    const selected = selection ?? [];
+    const customSelection = selection !== null;
     const mode = select([['auto', words.allRooms], ['custom', words.selectedRooms]], customSelection ? 'custom' : 'auto');
     mode.dataset.roomFocus = 'room-mode';
     mode.addEventListener('change', () => {
       if (mode.value === 'auto') {
-        this.#emptyRoomSelection = false;
-        this.#commitRooms({ area_ids: [] }, 'room-mode');
+        this.#commitRooms({ room_selection: 'auto', area_ids: [] }, 'room-mode');
         return;
       }
       const visible = discoverRooms(this.#config, this.#hass, language).map(room => room.id).filter(id => byId.has(id));
-      if (visible.length) this.#commitRooms({ area_ids: visible }, 'room-mode');
-      else {
-        this.#emptyRoomSelection = true;
-        this.render();
-        this.shadowRoot.querySelector('[data-room-focus="room-mode"]')?.focus({ preventScroll: true });
-      }
+      this.#commitRooms({ room_selection: 'manual', area_ids: visible }, 'room-mode');
     });
     const discovery = select([['all', words.allDevices], ['controls', words.controls]],
       this.#config.discovery_mode === 'controls' ? 'controls' : 'all');
@@ -778,18 +772,17 @@ export class Bayit9StrategyEditor extends HTMLElement {
         secondary: byId.get(id)?.custom ? words.customRoom : byId.has(id) ? '' : words.missing,
       }));
       if (ordered.length) children.push(
-        orderedList(ordered, (items, focusKey) => this.#commitRooms({ area_ids: items.map(item => item.id) }, focusKey),
-          words, words.hideRoom, true, 'rooms'),
+        orderedList(ordered, (items, focusKey) => this.#commitRooms({
+          room_selection: 'manual', area_ids: items.map(item => item.id),
+        }, focusKey ?? 'room-mode'), words, words.hideRoom, false, 'rooms'),
       );
-      if (ordered.length <= 1) children.push(node('p', { className: 'room-picker-hint', textContent: words.atLeastOneRoom }));
       const shown = new Set(selected);
       const available = rooms.filter(room => !shown.has(room.id));
       if (available.length) {
         const picker = addPicker(words.roomToAdd, available.map(room => [room.id, room.name]), words.addRoom, words.none, id => {
-          this.#emptyRoomSelection = false;
           this.#roomEditing = id;
           this.#roomDeviceQuery = '';
-          this.#commitRooms({ area_ids: [...selected, id] }, 'room-edit');
+          this.#commitRooms({ room_selection: 'manual', area_ids: [...selected, id] }, 'room-edit');
         });
         children.push(picker.wrapper);
       }
@@ -844,7 +837,9 @@ export class Bayit9StrategyEditor extends HTMLElement {
           this.#roomEditing = undefined;
           this.#roomDeviceQuery = '';
           this.#commitRooms({
-            room_overrides: after, area_ids: selected.filter(id => id !== active.id), room_shortcuts: shortcuts,
+            room_overrides: after,
+            ...(customSelection && { room_selection: 'manual', area_ids: selected.filter(id => id !== active.id) }),
+            room_shortcuts: shortcuts,
           }, 'room-mode');
         });
         remove.className = 'room-danger';
@@ -853,7 +848,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       children.push(...fields);
     } else children.push(node('p', { textContent: words.noRooms }));
 
-    children.push(this.#customRoomForm(rooms, selected, words));
+    children.push(this.#customRoomForm(rooms, selection, words));
     return [node('div', { className: 'stack' }, children)];
   }
 

@@ -248,13 +248,20 @@ function entityArea(info, hass) {
   return info?.area_id ?? info?.ai ?? device?.area_id;
 }
 
+export function selectedRoomIds(config) {
+  if (config.room_selection === 'auto') return null;
+  const ids = idList(config.area_ids);
+  return ids.length || config.room_selection === 'manual' ? ids : null;
+}
+
 export function discoverRooms(config, hass, locale) {
   const areas = dashboardAreas(config, hass);
   const panelKinds = new Map([...areas.values()].some(area => Object.keys(area.panelLinks ?? {}).length)
     ? roomPanelOptions(config, hass).map(panel => [panel.id, panel.kind]) : []);
   const unassigned = pickUnassignedId(areas);
-  const explicitOrder = new Map(idList(config.area_ids).map((id, index) => [id, index]));
-  const isSelected = id => explicitOrder.size === 0 || explicitOrder.has(id);
+  const selection = selectedRoomIds(config);
+  const explicitOrder = new Map((selection ?? []).map((id, index) => [id, index]));
+  const isSelected = id => selection === null || explicitOrder.has(id);
   const hidden = new Set(idList(config.hidden_entities));
   const extra = new Set(idList(config.included_entities));
   const profiles = profilesOf(config.profiles);
@@ -273,8 +280,8 @@ export function discoverRooms(config, hass, locale) {
 
   const manuallyPlaced = new Set();
   for (const [id, room] of areas) {
-    if (!room.entityIds || !isSelected(id)) continue;
-    const ids = room.entityIds.filter(visible);
+    if (!isSelected(id) || (!room.entityIds && config.room_selection !== 'manual')) continue;
+    const ids = (room.entityIds ?? []).filter(visible);
     grouped.set(id, ids.map(present));
     for (const entity of ids) manuallyPlaced.add(entity);
   }
@@ -355,11 +362,12 @@ function dashboardContext(config, hass, locale) {
   const registry = hass.entities;
   const hidden = new Set(idList(config.hidden_entities));
   const selectedEnergy = new Set(idList(config.overview_entities));
-  const selectedAreas = new Set(idList(config.area_ids));
+  const selection = selectedRoomIds(config);
+  const selectedAreas = selection === null ? null : new Set(selection);
   const nativeAreas = new Set(Object.entries(hass.areas ?? {}).map(([id, area]) => area.area_id ?? id));
   const areaInScope = entity => {
     const id = entityArea(registry?.[entity], hass);
-    return nativeAreas.has(id) ? selectedAreas.size === 0 || selectedAreas.has(id) : config.show_unassigned !== false;
+    return nativeAreas.has(id) ? selectedAreas === null || selectedAreas.has(id) : config.show_unassigned !== false;
   };
   const context = {};
   for (const [entity, state] of Object.entries(states)) {
