@@ -195,7 +195,7 @@ export function buildPanelControls(model, { make, button, icon, label, t, reques
 }
 
 export const panelControlStyles = `
-  .climate-controls { display: flex; gap: 5px; flex-wrap: wrap; }
+  .climate-controls { display: flex; gap: 5px; flex-wrap: wrap; direction: ltr; }
   .climate-controls > * { flex: 1 1 76px; min-width: 0; }
   .climate-controls > .temperature-stepper { flex-basis: 90px; }
   .temperature-stepper, .climate-selector {
@@ -211,16 +211,17 @@ export const panelControlStyles = `
   .climate-selector > ha-icon { width: 15px; height: 15px; --mdc-icon-size: 15px; }
   .climate-selector select { color: inherit; width: 100%; min-width: 0; min-height: 44px; border: 0;
     padding: 0 4px; background: transparent; font-size: 13px; font-weight: 730; }
+  .shell[dir=rtl] .climate-selector select { direction: rtl; }
   .climate-selector option { background: #262626; color: white; }
   .device-timer, .heat-level { min-width: 0; text-align: center; border-top: 1px solid var(--soft-line); padding-top: 6px; }
   .timer-clock { margin: 1px 0 0; font-size: 18px; font-weight: 780; font-variant-numeric: tabular-nums; }
   .timer-today, .heat-level-title { margin: 0; font-size: 12px; font-weight: 740; color: var(--secondary); }
-  .timer-tools { display: flex; align-items: center; justify-content: center; gap: 8px; margin-block: 2px 5px; }
+  .timer-tools { display: flex; align-items: center; justify-content: center; gap: 8px; margin-block: 2px 5px; direction: ltr; }
   .timer-range { flex: 1; width: 0; min-width: 50px; min-height: 44px; margin: 0;
     direction: ltr; accent-color: var(--moving); }
   .timer-amount { white-space: nowrap; font-size: 12px; }
   .timer-command { min-width: 44px; padding-inline: 8px; }
-  .timer-presets, .heat-level-options { display: grid; gap: 4px; grid-template-columns: repeat(auto-fit,minmax(48px,1fr)); }
+  .timer-presets, .heat-level-options { display: grid; gap: 4px; direction: ltr; grid-template-columns: repeat(auto-fit,minmax(48px,1fr)); }
   .timer-preset, .heat-level-choice { padding-inline: 3px; }
   .heat-level-options { margin-top: 5px; }
   .heat-level-choice[data-changing] { outline: 1px dashed currentColor; outline-offset: -4px; }

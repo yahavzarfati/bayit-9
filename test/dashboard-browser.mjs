@@ -226,16 +226,21 @@ try {
       await roomGridPage.close();
 
       const detailPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
-      await detailPage.goto(base + '?device-panel');
+      const rightToLeft = engine === 'WebKit';
+      await detailPage.goto(base + '?device-panel&locale=' + (rightToLeft ? 'he' : 'en'));
       const quickAir = detailPage.locator('.quick-button[data-entity="climate.demo_air"]');
       await quickAir.click({ delay: 600 });
       const air = detailPage.getByRole('dialog', { name: 'Studio air conditioner', exact: true });
-      await air.getByRole('button', { name: 'Increase target temperature' }).waitFor();
-      assert.equal(await air.getByRole('combobox', { name: 'Swing' }).inputValue(), 'off');
-      assert.equal(await air.getByText('Used today 10:00', { exact: true }).count(), 1);
+      await air.getByRole('button', { name: rightToLeft ? 'העלאת טמפרטורת היעד' : 'Increase target temperature' }).waitFor();
+      assert.equal(await air.getByRole('combobox', { name: rightToLeft ? 'נדנוד' : 'Swing' }).inputValue(), 'off');
+      assert.equal(await air.getByText(rightToLeft ? 'שימוש היום 10:00' : 'Used today 10:00', { exact: true }).count(), 1);
+      const presetPositions = await air.locator('.timer-preset').evaluateAll(presets =>
+        presets.map(item => item.getBoundingClientRect().left));
+      assert.equal(presetPositions.length, 4);
+      assert.ok(presetPositions.every((left, index) => index === 0 || left > presetPositions[index - 1]));
       assert.equal(await detailPage.evaluate(() => window.bayitTest.calls.length), 0);
-      await air.getByRole('button', { name: 'Start timer · 60 Minutes', exact: true }).click();
-      await air.getByRole('button', { name: 'Extend timer', exact: true }).waitFor();
+      await air.getByRole('button', { name: rightToLeft ? 'הפעלת טיימר · 60 דקות' : 'Start timer · 60 Minutes', exact: true }).click();
+      await air.getByRole('button', { name: rightToLeft ? 'הארכת טיימר' : 'Extend timer', exact: true }).waitFor();
       assert.deepEqual(await detailPage.evaluate(() => window.bayitTest.calls[0]), {
         type: 'call_service', domain: 'simple_timer', service: 'start_timer',
         service_data: {entity_id: 'sensor.demo_air_usage', duration: 60, unit: 'min', reverse_mode: false},
