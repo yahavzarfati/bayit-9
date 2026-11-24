@@ -3,6 +3,7 @@ import {
   TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
 } from './strategy-model.js';
 import { normalizeOrefMap, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
+import { sameVacuumDevice } from './vacuum-map.js';
 
 const WORDS = {
   en: {
@@ -29,6 +30,11 @@ const WORDS = {
     hebrew_basemap: 'Hebrew basemap',
     show_pre_alert: 'Show advance warnings',
     show_end: 'Show end-of-alert notices',
+    vacuumMapTitle: 'Roborock floor maps', vacuumMap: 'Show calibrated floor maps',
+    vacuumMapHint: 'Requires the Xiaomi Vacuum Map Card and calibrated Roborock image entities.',
+    vacuumDevice: 'Roborock vacuum', vacuumSelector: 'Selected-map entity',
+    floorOption: 'Map option', floorImage: 'Calibrated map image', floorName: 'Display name',
+    addFloor: 'Add floor', removeFloor: 'Remove floor',
     activity: 'Activity', automations: 'Automations', security: 'Security', presence: 'Presence',
     weather: 'Weather', energy: 'Energy', settings: 'Settings', overview: 'Overview',
     sensors: 'Sensors', media: 'Media', vacuum: 'Vacuum', calendar: 'Calendar', link: 'Local link',
@@ -61,6 +67,11 @@ const WORDS = {
     hebrew_basemap: 'מפת בסיס בעברית',
     show_pre_alert: 'הצגת הנחיות מקדימות',
     show_end: 'הצגת הודעות סיום',
+    vacuumMapTitle: 'מפות קומות של Roborock', vacuumMap: 'הצגת מפות קומות מכוילות',
+    vacuumMapHint: 'נדרשים כרטיס Xiaomi Vacuum Map וישויות מפה מכוילות של Roborock.',
+    vacuumDevice: 'שואב Roborock', vacuumSelector: 'ישות לבחירת מפה',
+    floorOption: 'אפשרות מפה', floorImage: 'תמונת מפה מכוילת', floorName: 'שם לתצוגה',
+    addFloor: 'הוספת קומה', removeFloor: 'הסרת קומה',
     activity: 'פעילות', automations: 'אוטומציות', security: 'אבטחה', presence: 'נוכחות',
     weather: 'מזג אוויר', energy: 'אנרגיה', settings: 'הגדרות', overview: 'סקירה',
     sensors: 'חיישנים', media: 'מדיה', vacuum: 'שואב רובוטי', calendar: 'יומן', link: 'קישור מקומי',
@@ -437,6 +448,73 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     ]);
   }
 
+  function editVacuumMap(entry) {
+    const current = entry.vacuum_map ?? {};
+    let settings = {
+      enabled: current.enabled === true,
+      vacuum: typeof current.vacuum === 'string' ? current.vacuum : '',
+      selector: typeof current.selector === 'string' ? current.selector : '',
+      floors: Array.isArray(current.floors) ? current.floors.filter(floor => typeof floor?.option === 'string')
+        .map(floor => ({ option: floor.option, image: floor.image, name: floor.name })) : [],
+    };
+    const enabled = node('input', { type: 'checkbox', checked: settings.enabled });
+    enabled.dataset.toolbarFocus = 'vacuum-map-enabled';
+    const save = (edits, focus) => {
+      settings = { ...settings, ...edits };
+      changeEntry({ vacuum_map: settings }, Boolean(focus), focus);
+    };
+    enabled.addEventListener('change', () => save({ enabled: enabled.checked }, 'vacuum-map-enabled'));
+    const output = [
+      node('legend', { textContent: words.vacuumMapTitle }),
+      node('label', { className: 'check' }, [enabled, words.vacuumMap]),
+      node('small', { textContent: words.vacuumMapHint }),
+    ];
+    if (!settings.enabled) return node('fieldset', { className: 'toolbar-editor-detail' }, output);
+
+    const entityChoices = domains => candidates.filter(item => domains.includes(item.entity.split('.')[0]))
+      .map(item => [item.entity, item.name || item.entity]);
+    function pick(label, key, value, options, change) {
+      const list = [['', words.choose], ...options];
+      if (value && !list.some(([id]) => id === value)) list.push([value, value + ' · ' + words.unavailable]);
+      const input = select(list, value || '');
+      input.dataset.toolbarFocus = key;
+      input.addEventListener('change', () => change(input.value));
+      return field(label, input);
+    }
+    output.push(pick(words.vacuumDevice, 'vacuum-map-device', settings.vacuum, entityChoices(['vacuum']), value => {
+      const keep = sameVacuumDevice(value, settings.selector, hass.entities);
+      save({ vacuum: value, ...(!keep && { selector: '', floors: [] }) }, 'vacuum-map-device');
+    }));
+    const selectors = entityChoices(['select']).filter(([id]) => sameVacuumDevice(settings.vacuum, id, hass.entities));
+    output.push(pick(words.vacuumSelector, 'vacuum-map-selector', settings.selector, selectors, value =>
+      save({ selector: value, floors: [] }, 'vacuum-map-selector')));
+
+    const imageChoices = entityChoices(['image', 'camera']);
+    const options = hass.states?.[settings.selector]?.attributes?.options;
+    const mapOptions = Array.isArray(options) ? [...new Set(options.filter(option => typeof option === 'string' && option.trim()))] : [];
+    for (const [index, floor] of settings.floors.entries()) {
+      const editFloor = (edits, focus) => save({
+        floors: settings.floors.map((item, position) => position === index ? { ...item, ...edits } : item),
+      }, focus);
+      const focusKey = 'vacuum-map-image-' + index;
+      const images = imageChoices.filter(([id]) => id === floor.image || !settings.floors.some(item => item.image === id));
+      const remove = button(words.removeFloor, () => save({
+        floors: settings.floors.filter((_, position) => index !== position),
+      }, words.addFloor));
+      output.push(node('fieldset', { className: 'toolbar-editor-detail' }, [
+        node('legend', { textContent: floor.option }),
+        pick(words.floorImage, focusKey, floor.image, images, image => editFloor({ image }, focusKey)),
+        textField(words.floorName, floor.name, name => editFloor({ name }), { placeholder: floor.option }).field,
+        remove,
+      ]));
+    }
+    const availableOptions = mapOptions.filter(option => !settings.floors.some(floor => floor.option === option));
+    if (availableOptions.length) output.push(addPicker(words.floorOption, availableOptions.map(option => [option, option]),
+      words.addFloor, option => save({ floors: [...settings.floors, { option, image: '' }] },
+        'vacuum-map-image-' + settings.floors.length)));
+    return node('fieldset', { className: 'toolbar-editor-detail' }, output);
+  }
+
   function entryDetails(entry) {
     const fields = [node('h3', { textContent: words.editButton }),
       textField(words.label, entry.label, value => {
@@ -451,6 +529,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       fields.push(field(words.placement, placement));
     }
     if (entry.kind === 'security') fields.push(editOrefMap(entry));
+    if (entry.kind === 'vacuum') fields.push(editVacuumMap(entry));
     if (entry.kind === 'link') {
       const path = textField(words.localPath, entry.path, value => {
         if (LOCAL_ROUTE.test(value)) changeEntry({ path: value });

@@ -7,6 +7,7 @@ import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { buildPanelControls, panelControlStyles } from './panel-controls.js';
 import { createNativeCards, createToolbarPanel, sensorGraphConfig, toolbarPanelStyles } from './toolbar-panels.js';
 import { normalizeOrefMap } from './oref-alert-map.js';
+import { normalizeVacuumMap } from './vacuum-map.js';
 import { createWallpaperController, createWallpaperGallery, personalWallpaperId, wallpaperChoices, wallpaperStyles } from './wallpapers.js';
 import { createPageChrome } from './page-chrome.js';
 import { openBoilerHistory, boilerHistoryStyles } from './boiler-history.js';
@@ -226,9 +227,11 @@ export function normalizeDashboardConfig(config = {}) {
   const toolbar = Array.isArray(config.toolbar) ? config.toolbar.flatMap(item => {
     if (!Object.hasOwn(toolbarIcons, item?.kind) || (item.kind === 'link' && !localPath.test(item.path))) return [];
     const orefMap = item.kind === 'security' ? normalizeOrefMap(item.oref_map) : undefined;
+    const vacuumMap = item.kind === 'vacuum' ? normalizeVacuumMap(item.vacuum_map) : undefined;
     return [{ kind: item.kind, id: text(item.id), label: text(item.label), path: item.path,
       ...(item.placement === 'settings' && item.kind !== 'settings' && {placement:'settings'}),
       ...(orefMap && { oref_map: orefMap }),
+      ...(vacuumMap && { vacuum_map: vacuumMap }),
       icon: validIcon(item.icon, toolbarIcons[item.kind]),
       ...(Array.isArray(item.entities) && { entities: item.entities.map(normalizeEntity) }),
       ...(Array.isArray(item.sections) && { sections: item.sections.filter(section => Array.isArray(section?.entities)).map(section => ({
@@ -891,6 +894,7 @@ export class BayitDashboard extends HTMLElement {
     this.toolbarPanel = createToolbarPanel(type, {
       sections: toolbar?.sections, entities: toolbar?.entities ?? this.config.context[type] ?? [],
       orefMap: toolbar?.oref_map,
+      vacuumMap: toolbar?.vacuum_map,
     }, {
       host: content, dialog: this.nodes.modal, hass: this._hass, locale: this.config.locale,
       make, button, icon, label, t: key => this.t(key),

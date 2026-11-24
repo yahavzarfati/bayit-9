@@ -1,4 +1,5 @@
 import { createOrefMap } from './oref-alert-map.js';
+import { createVacuumMap } from './vacuum-map.js';
 
 const sectionKeys = {
   actions: 'automations', locks: 'toolbar_locks', covers: 'room_covers', status: 'toolbar_status',
@@ -291,6 +292,16 @@ export function createToolbarPanel(kind, configuration, context) {
       slot, dialog, fallback, loadingText: t('oref_map_loading'), options: configuration.orefMap,
     });
   }
+  let vacuumMap;
+  if (kind === 'vacuum' && dialog && configuration.vacuumMap) {
+    const panel = make('section', 'toolbar-section');
+    panel.dataset.section = 'vacuum-map';
+    panel.append(make('h3', 'toolbar-section-title', t('vacuum_map')));
+    const body = make('div', 'toolbar-section-items');
+    panel.append(body);
+    host.append(panel);
+    vacuumMap = createVacuumMap({ host: body, dialog, config: configuration.vacuumMap, context });
+  }
   if (!host.childElementCount) host.append(make('p', 'empty', t('empty_room')));
   const quiet = sections.length && sections.every(section => section.filter === 'active') ? make('p','empty',t('quiet')) : null;
   if (quiet) host.append(quiet);
@@ -301,12 +312,14 @@ export function createToolbarPanel(kind, configuration, context) {
       currentHass = hass;
       native.update(hass);
       orefMap?.update(hass);
+      vacuumMap?.update(hass);
       for (const update of handlers) update();
       if (quiet) quiet.hidden = !!host.querySelector('.toolbar-section:not([hidden])');
     },
     dispose() {
       live = false;
       orefMap?.dispose();
+      vacuumMap?.dispose();
       if (clockTimer) view.clearInterval(clockTimer);
       native.dispose();
     },

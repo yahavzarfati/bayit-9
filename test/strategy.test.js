@@ -6,6 +6,29 @@ import {
 } from '../src/strategy-model.js';
 import { getDeviceModel } from '../src/device-control.mjs';
 
+test('keeps explicit vacuum floor bindings and excludes card config and geometry', () => {
+  const states = Object.fromEntries(['vacuum.robot', 'select.map', 'select.other', 'image.first', 'image.second']
+    .map(entity => [entity, { state: 'on', attributes: {} }]));
+  const hass = { states, entities: {
+    'vacuum.robot': { di: 'robot' }, 'select.map': { di: 'robot' }, 'select.other': { di: 'other' },
+  } };
+  const map = { enabled: true, vacuum: 'vacuum.robot', selector: 'select.map', activate: 'select.select_option',
+    floors: [
+      { option: 'First', image: 'image.first', outline: [[1, 2]] },
+      { option: 'First', image: 'image.second' },
+      { option: 'Hidden', image: 'image.second' },
+    ] };
+  const toolbar = generateDashboard({ hidden_entities: ['image.second'], toolbar: [
+    { kind: 'vacuum', vacuum_map: map },
+    { kind: 'vacuum', vacuum_map: { ...map, selector: 'select.other' } },
+    { kind: 'vacuum', vacuum_map: { ...map, enabled: false } },
+    { kind: 'security', vacuum_map: map },
+  ] }, hass).views[0].cards[0].toolbar;
+  assert.deepEqual(toolbar[0].vacuum_map, { enabled: true, vacuum: 'vacuum.robot', selector: 'select.map',
+    floors: [{ option: 'First', image: 'image.first' }] });
+  assert.deepEqual(toolbar.slice(1).map(button => button.vacuum_map), [undefined, undefined, undefined]);
+});
+
 test('explicitly enables the Oref map on Security entries with only its typed options', () => {
   const toolbar = generateDashboard({ toolbar: [
     { kind: 'security' },
