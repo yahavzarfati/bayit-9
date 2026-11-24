@@ -115,6 +115,7 @@ if (query.has('toolbar-panels')) {
     'sun.sun': {state:'above_horizon', attributes:{friendly_name:'Sun', next_rising:'2026-11-25T04:00:00Z',elevation:15,azimuth:270}},
     'person.demo_friend': {state:'home',attributes:{friendly_name:'Simona'}},
     'sensor.demo_meter': {state:'51',attributes:{friendly_name:'Energy meter',unit_of_measurement:'kWh'}},
+    'sensor.demo_studio_temperature': {state:'22.5',attributes:{friendly_name:'Studio temperature',device_class:'temperature',unit_of_measurement:'°C'}},
     'media_player.demo_speaker': {state:'playing',attributes:{friendly_name:'Speaker',supported_features:30749,volume_level:.24,
       is_volume_muted:false,source:'Radio',source_list:['Radio','Aux'],media_title:'Station'}},
     'vacuum.demo_robot': {state:'idle',attributes:{friendly_name:'Robot',supported_features:8244,fan_speed_list:['silent','normal']}},
@@ -122,9 +123,11 @@ if (query.has('toolbar-panels')) {
     'calendar.demo_household': {state:'off',attributes:{friendly_name:'Household'}},
     'calendar.demo_birthdays': {state:'off',attributes:{friendly_name:'Birthdays'}},
   });
+  hass.entities['sensor.demo_studio_temperature'] = { area_id: 'studio' };
   window.loadCardHelpers = async () => ({createCardElement(configuration) {
     const card = document.createElement('div');
     card.dataset.nativeType = configuration.type;
+    if (configuration.graph) card.dataset.graphHours = configuration.hours_to_show;
     card.textContent = configuration.type === 'calendar' ? configuration.entities.length + ' calendars' : configuration.name || configuration.entity;
     return card;
   }});
@@ -426,6 +429,13 @@ try {
 
       const panelsPage = await browser.newPage({ viewport: { width:390,height:844 } });
       await panelsPage.goto(base + '?toolbar-panels');
+      const roomGraph = panelsPage.locator('[data-native-type=sensor][data-graph-hours="24"]');
+      assert.equal(await roomGraph.count(), 0);
+      await panelsPage.getByRole('button', {name:'Studio',exact:true}).click();
+      await panelsPage.getByRole('dialog',{name:'Studio',exact:true}).getByText('Studio temperature',{exact:true}).waitFor();
+      await roomGraph.waitFor();
+      await panelsPage.keyboard.press('Escape');
+      await roomGraph.waitFor({state:'detached'});
       await panelsPage.getByRole('button',{name:'Weather',exact:true}).click();
       let panels = panelsPage.getByRole('dialog',{name:'Weather',exact:true});
       await panels.locator('[data-native-type=weather-forecast]').waitFor();

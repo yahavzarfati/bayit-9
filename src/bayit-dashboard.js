@@ -5,7 +5,7 @@ import { loadConfiguration, saveConfiguration } from './dashboard-configuration.
 import { createDeviceController, getDeviceModel } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { buildPanelControls, panelControlStyles } from './panel-controls.js';
-import { createToolbarPanel, toolbarPanelStyles } from './toolbar-panels.js';
+import { createNativeCards, createToolbarPanel, sensorGraphConfig, toolbarPanelStyles } from './toolbar-panels.js';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { createWallpaperController, createWallpaperGallery, personalWallpaperId, wallpaperChoices, wallpaperStyles } from './wallpapers.js';
 import { createPageChrome } from './page-chrome.js';
@@ -341,6 +341,7 @@ export class BayitDashboard extends HTMLElement {
     if (this.nodes.confirm.open) this.nodes.confirm.close();
     this.popupMotion.reset();
     this.toolbarPanel?.dispose();
+    this.roomGraphs?.dispose();
     this.boilerView?.dispose();
     this.config = next;
     this.words = languages[next.locale];
@@ -399,6 +400,7 @@ export class BayitDashboard extends HTMLElement {
     if (this.nodes.confirm.open) this.nodes.confirm.close();
     this.popupMotion.reset();
     this.toolbarPanel?.dispose();
+    this.roomGraphs?.dispose();
     this.boilerView?.dispose();
     this.pageChrome.dispose();
     this.wallpaper?.destroy();
@@ -702,6 +704,7 @@ export class BayitDashboard extends HTMLElement {
       countdown ||= activeTimer;
     }
     this.toolbarPanel?.update(this._hass);
+    this.roomGraphs?.update(this._hass);
     this.boilerView?.update(this._hass);
     if (panel === 'activity') this.paintActivity();
     for (const { kind, element, badge, entities, needsContent } of this.toolbarViews) {
@@ -731,8 +734,9 @@ export class BayitDashboard extends HTMLElement {
     n.back.hidden = !fromBoilerRoom;
     this.setup = null;
     this.toolbarPanel?.dispose();
+    this.roomGraphs?.dispose();
     this.boilerView?.dispose();
-    this.toolbarPanel = this.wallpaperGallery = this.boilerView = undefined;
+    this.toolbarPanel = this.wallpaperGallery = this.roomGraphs = this.boilerView = undefined;
     this.deviceViews.clear();
     this.activitySignature = null;
     setText(n.modalNotice, '');
@@ -776,8 +780,9 @@ export class BayitDashboard extends HTMLElement {
     this.panel = null;
     this.setup = null;
     this.toolbarPanel?.dispose();
+    this.roomGraphs?.dispose();
     this.boilerView?.dispose();
-    this.toolbarPanel = this.wallpaperGallery = this.boilerView = undefined;
+    this.toolbarPanel = this.wallpaperGallery = this.roomGraphs = this.boilerView = undefined;
     this.deviceViews.clear();
     clearInterval(this.ticker);
     this.ticker = 0;
@@ -801,7 +806,18 @@ export class BayitDashboard extends HTMLElement {
         const group = make('section', 'device-group');
         group.dataset.group = key;
         if (title !== '') group.append(make('h3', 'device-group-title', title ?? this.t(key)));
-        for (const config of members) this.buildDevice(config, group, room, key);
+        for (const config of members) {
+          const temperature = (key === 'room_sensors' || key === 'room_weather') && domainFor(config) === 'sensor' &&
+            this._hass?.states?.[config.entity]?.attributes?.device_class === 'temperature';
+          if (!temperature) {
+            this.buildDevice(config, group, room, key);
+            continue;
+          }
+          this.roomGraphs ??= createNativeCards(content, this._hass, make);
+          const fallback = content.ownerDocument.createDocumentFragment();
+          this.buildDevice(config, fallback, room, key);
+          group.append(this.roomGraphs.mount(sensorGraphConfig(config), fallback.firstElementChild));
+        }
         content.append(group);
       }
     }
@@ -889,7 +905,7 @@ export class BayitDashboard extends HTMLElement {
     const choices = [
       {label:'timed', icon:'mdi:timer-outline', element:controls},
       {label:'boiler_history', icon:'mdi:history', element:host,
-        open:() => openBoilerHistory({host, entity:config.entity, locale:this.config.locale, hass:this._hass, t:key=>this.t(key)})},
+        open:() => openBoilerHistory({host, config, locale:this.config.locale, hass:this._hass, t:key=>this.t(key)})},
     ];
     if (isBoilerScheduleProfile(config) && (config.schedule || this._hass?.services?.scheduler)) {
       const scheduleHost = make('div','boiler-pane boiler-schedule-host');

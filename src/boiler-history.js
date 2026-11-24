@@ -1,22 +1,41 @@
+import { createBoilerScheduler, isBoilerScheduleProfile } from './boiler-schedule.js';
+
 const DAY = 86400000;
 const conditions = new Set(['on','off','unknown','unavailable']);
 const timestamp = value => typeof value === 'number' && Number.isFinite(value) ? value * 1000
   : typeof value === 'string' ? Date.parse(value) : NaN;
 
-function sourceOf(record) {
+function sourceOf(record, matchesSchedule) {
   const domain = record?.context_domain;
   if (domain === 'homekit') return 'boiler_homekit';
   if (domain === 'scheduler' || record?.context_event_type === 'automation_triggered') return 'boiler_automation';
+  if (domain === 'simple_timer' && !record.context_user_id && matchesSchedule) return 'boiler_schedule_match';
   if (domain === 'simple_timer' || (domain === 'switcher_kis' && record?.context_service === 'turn_on_with_timer')) return 'timed';
   if (record?.context_user_id || domain === 'switch' || domain === 'homeassistant') return 'boiler_manual';
   return 'unknown';
 }
 
-export function buildBoilerSessions({entity, history = [], logbook = [], device, start, end, minimum = 120000}) {
+function scheduleMatcher(rows, timeZone) {
+  if (typeof timeZone !== 'string' || !timeZone) return () => false;
+  const recurring = new Set(rows.filter(row => row.editable && row.enabled === true)
+    .flatMap(row => row.weekdays.map(day => `${day}:${row.time}`)));
+  if (!recurring.size) return () => false;
+  let formatter;
+  try {
+    formatter = new Intl.DateTimeFormat('en-US', {timeZone, weekday:'short', hour:'2-digit', minute:'2-digit', hourCycle:'h23'});
+  } catch { return () => false; }
+  return time => {
+    const parts = Object.fromEntries(formatter.formatToParts(time).map(part => [part.type, part.value]));
+    return recurring.has(`${parts.weekday.toLowerCase()}:${parts.hour}:${parts.minute}`);
+  };
+}
+
+export function buildBoilerSessions({entity, history = [], logbook = [], schedules = [], timeZone, device, start, end, minimum = 120000}) {
+  const matchesSchedule = scheduleMatcher(schedules, timeZone);
   const logEvents = logbook.flatMap(item => {
     const time = timestamp(item?.when);
     return item?.entity_id === entity && conditions.has(item.state) && time >= start && time <= end ?
-      [{ time, state: item.state, source: sourceOf(item) }] : [];
+      [{ time, state: item.state, source: sourceOf(item, item.state === 'on' && matchesSchedule(time)) }] : [];
   });
   const toEvent = item => ({ state: item?.s ?? item?.state, time: timestamp(item?.lc ?? item?.last_changed ?? item?.lu) });
   const events = [...history.map(toEvent), ...logEvents].filter(event => conditions.has(event.state) &&
@@ -56,7 +75,8 @@ function readWindow(hass, entity, end, start) {
   ].map(request => Promise.resolve().then(() => hass.callWS(request))));
 }
 
-export function openBoilerHistory({host, entity, locale, hass, t}) {
+export function openBoilerHistory({host, config, locale, hass, t}) {
+  const {entity} = config;
   const document = host.ownerDocument;
   const view = document.defaultView;
   let currentHass = hass;
@@ -72,6 +92,12 @@ export function openBoilerHistory({host, entity, locale, hass, t}) {
   };
   const message = key => node('p', 'boiler-history-message', t(key));
   host.replaceChildren(message('boiler_history_loading'));
+
+  async function readSchedules() {
+    if (!currentHass?.services?.scheduler || !isBoilerScheduleProfile(config)) return [];
+    try { return await createBoilerScheduler(config, () => currentHass, {locale}).list(); }
+    catch { return []; }
+  }
 
   function format(options) {
     try { return new Intl.DateTimeFormat(locale, { ...options, timeZone: currentHass?.config?.time_zone }); }
@@ -115,7 +141,7 @@ export function openBoilerHistory({host, entity, locale, hass, t}) {
     const end = Date.now(), start = end - 7 * DAY;
     reading = true;
     try {
-      const [states, logbook] = await readWindow(currentHass, entity, end, start);
+      const [[states, logbook], schedules] = await Promise.all([readWindow(currentHass, entity, end, start), readSchedules()]);
       if (closed) return;
       if (states.status !== 'fulfilled' && logbook.status !== 'fulfilled') {
         host.replaceChildren(message('boiler_history_error'));
@@ -123,7 +149,8 @@ export function openBoilerHistory({host, entity, locale, hass, t}) {
       }
       const history = Array.isArray(states.value?.[entity]) ? states.value[entity] : [];
       const log = Array.isArray(logbook.value) ? logbook.value : [];
-      draw(buildBoilerSessions({entity, history, logbook:log, device:currentHass.states?.[entity], start, end}));
+      draw(buildBoilerSessions({entity, history, logbook:log, schedules, timeZone:currentHass.config?.time_zone,
+        device:currentHass.states?.[entity], start, end}));
     } finally {
       reading = false;
       if (!closed && shouldRefresh) { shouldRefresh = false; void refresh(); }

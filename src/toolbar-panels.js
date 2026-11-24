@@ -36,13 +36,53 @@ function localPortrait(path, origin) {
   } catch { return ''; }
 }
 
+export function createNativeCards(host, hass, make) {
+  const cards = new Set();
+  const view = host.ownerDocument.defaultView;
+  let live = true;
+  return {
+    mount(config, fallback) {
+      const slot = make('div', 'native-panel-card');
+      slot.append(fallback);
+      void (async () => {
+        try {
+          const helpers = await view.loadCardHelpers?.();
+          if (!live) return;
+          const card = await helpers?.createCardElement(config);
+          if (!live || !card || card.localName === 'hui-error-card') return;
+          card.hass = hass;
+          cards.add(card);
+          slot.replaceChildren(card);
+        } catch { /* Keep the fallback if the native card cannot load. */ }
+      })();
+      return slot;
+    },
+    update(next) {
+      if (!live || !next) return;
+      hass = next;
+      for (const card of cards) if (card.hass !== hass) card.hass = hass;
+    },
+    dispose() {
+      live = false;
+      for (const card of cards) card.remove();
+      cards.clear();
+    },
+  };
+}
+
+export function sensorGraphConfig(item) {
+  return { type:'sensor', entity:item.entity, name:item.name, graph:'line', detail:2,
+    hours_to_show:item.graph_hours || 24, tap_action:{action:'none'} };
+}
+
 export function createToolbarPanel(kind, configuration, context) {
   const { make, icon, button, label, t, modelFor, stateLabel, moreInfo, buildDevice,
     request, pending, host, dialog } = context;
-  const connected = new Set();
   const handlers = [];
   let live = true;
   let currentHass = context.hass;
+  const native = createNativeCards(host, currentHass, make);
+  const nativeCard = native.mount;
   const view = host.ownerDocument.defaultView;
   const format = settings => {
     try { return new Intl.DateTimeFormat(context.locale, { ...settings, timeZone:currentHass?.config?.time_zone }); }
@@ -106,22 +146,6 @@ export function createToolbarPanel(kind, configuration, context) {
     return tile;
   }
 
-  function nativeCard(config, fallback) {
-    const slot = make('div', 'native-panel-card');
-    slot.append(fallback);
-    void (async () => {
-      try {
-        const helpers = await view.loadCardHelpers?.();
-        const card = await helpers?.createCardElement(config);
-        if (!live || !card || card.localName === 'hui-error-card') return;
-        card.hass = currentHass;
-        connected.add(card);
-        slot.replaceChildren(card);
-      } catch { /* The normal status tile remains available if the native card fails. */ }
-    })();
-    return slot;
-  }
-
   function renderSun(item) {
     const card = make('div', 'sun-panel');
     const arc = make('div', 'sun-arc');
@@ -167,8 +191,7 @@ export function createToolbarPanel(kind, configuration, context) {
       return nativeCard({ type: 'calendar', entities: [item.entity], initial_view: 'listWeek' }, renderTile(item, 'status'));
     }
     if (domain(item) === 'sensor' && (item.graph_hours || itemKind === 'graph')) {
-      return nativeCard({ type: 'sensor', entity: item.entity, name: item.name, graph: 'line', detail: 2,
-        hours_to_show: item.graph_hours || 24, tap_action: { action: 'none' } }, renderTile(item, 'status'));
+      return nativeCard(sensorGraphConfig(item), renderTile(item, 'status'));
     }
     if (['locks','covers','devices'].includes(section) && itemKind !== 'status') {
       const row = make('div', 'toolbar-device');
@@ -276,7 +299,7 @@ export function createToolbarPanel(kind, configuration, context) {
     update(hass) {
       if (!live || !hass) return;
       currentHass = hass;
-      for (const card of connected) if (card.hass !== hass) card.hass = hass;
+      native.update(hass);
       orefMap?.update(hass);
       for (const update of handlers) update();
       if (quiet) quiet.hidden = !!host.querySelector('.toolbar-section:not([hidden])');
@@ -285,8 +308,7 @@ export function createToolbarPanel(kind, configuration, context) {
       live = false;
       orefMap?.dispose();
       if (clockTimer) view.clearInterval(clockTimer);
-      for (const card of connected) card.remove();
-      connected.clear();
+      native.dispose();
     },
   };
 }

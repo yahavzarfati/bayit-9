@@ -12,6 +12,8 @@ Open the dedicated boiler panel to see the last seven days of usage. Home Assist
 
 When Scheduler is installed, a bound Simple Timer boiler profile can list and manage simple schedules that belong to that boiler. Complex schedules can be viewed in Scheduler. Optional `schedule.save_script` and `schedule.delete_script` enable server-side revision checks for existing schedules. Choose those scripts only when they are configured for this boiler’s scheduler records and return a success response.
 
+The usage history keeps the source recorded by Home Assistant when it is available. A timer run without a recorded user is marked **Matches schedule** when it started on the same local weekday and minute as a currently enabled recurring schedule for that boiler. The label describes a time match. A past schedule may have changed since the run.
+
 ## Using native Home Assistant timers
 
 The optional blueprints control a single dedicated heater switch using Home Assistant's built-in Timer. The dashboard calls the scripts and reads the timer state. The cutoff automation runs on Home Assistant while the dashboard is closed.

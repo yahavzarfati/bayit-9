@@ -31,3 +31,20 @@ test('runs are clipped to seven-day window start and only shown running when the
     {start,end:at(20),running:false,partial:true,source:'unknown'},
   ]);
 });
+
+test('recognizes a matching local schedule without attributing explicit user or unrelated runs to it', () => {
+  const schedules = [
+    { editable:true, enabled:true, weekdays:['sun'], time:'06:08' },
+    { editable:true, enabled:false, weekdays:['sun'], time:'06:30' },
+    { editable:false, enabled:true, weekdays:['sun'], time:'06:40' },
+    { editable:true, enabled:true, weekdays:['sun'], time:'06:50' },
+    { editable:true, enabled:true, weekdays:['mon'], time:'07:00' },
+  ];
+  const logbook = [event(8,'on','simple_timer'), event(30,'on','simple_timer'), event(40,'on','simple_timer'),
+    {...event(50,'on','simple_timer'), context_user_id:'fixture-user'}, event(60,'on','simple_timer')];
+  const records = [8,30,40,50,60].flatMap(minute => [history(minute,'on'), history(minute + 5,'off')]);
+  const period = { entity,start,end:at(80),history:records,logbook,schedules };
+  const sources = timeZone => buildBoilerSessions({...period,timeZone}).map(run => run.source).reverse();
+  assert.deepEqual(sources('Asia/Jerusalem'), ['boiler_schedule_match','timed','timed','timed','timed']);
+  assert.deepEqual(sources('invalid-timezone'), ['timed','timed','timed','timed','timed']);
+});
