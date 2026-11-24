@@ -973,7 +973,8 @@ export class BayitDashboard extends HTMLElement {
       setText(view.name, model.name);
       setIcon(view.glyph, model.icon);
       if (model.timer?.state === 'active') countdown = true;
-      const media = model.domain === 'media_player' && typeof model.attributes.media_title === 'string'
+      const media = model.domain === 'media_player' && view.config.role !== 'now_playing' &&
+        typeof model.attributes.media_title === 'string'
         ? model.attributes.media_title.trim().slice(0, 160) : '';
       setText(view.state, this.stateLabel(model) + (media ? ' · ' + media : ''));
       view.state.dataset.tone = this.tone(model);

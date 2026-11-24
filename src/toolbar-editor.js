@@ -41,7 +41,7 @@ const WORDS = {
     actions: 'Actions', locks: 'Locks', covers: 'Covers', status: 'Status', devices: 'Devices',
     people: 'People', forecast: 'Forecast', sun: 'Sun', readings: 'Readings',
     electricity: 'Electricity', water: 'Water', action: 'Action', lock: 'Lock', cover: 'Cover',
-    device: 'Device controls', graph: 'History graph', person: 'Person',
+    device: 'Device controls', graph: 'History graph', person: 'Person', now_playing: 'Now Playing',
   },
   he: {
     layout: 'פריסת הסרגל', automatic: 'אוטומטית', custom: 'התאמה אישית',
@@ -78,7 +78,7 @@ const WORDS = {
     actions: 'פעולות', locks: 'מנעולים', covers: 'תריסים', status: 'מצב', devices: 'מכשירים',
     people: 'אנשים', forecast: 'תחזית', sun: 'שמש', readings: 'מדדים',
     electricity: 'חשמל', water: 'מים', action: 'פעולה', lock: 'מנעול', cover: 'תריס',
-    device: 'פקדי המכשיר', graph: 'גרף היסטוריה', person: 'אדם',
+    device: 'פקדי המכשיר', graph: 'גרף היסטוריה', person: 'אדם', now_playing: 'מתנגן עכשיו',
   },
 };
 
@@ -350,7 +350,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       fields.push(node('label', { className: 'check' }, [run, words.runScript]));
     }
     const effectiveRole = record.role ?? (section.kind === 'actions' ? 'action' : undefined);
-    if (['action', 'lock', 'cover', 'device'].includes(effectiveRole)
+    if (['action', 'lock', 'cover', 'device', 'now_playing'].includes(effectiveRole)
         || ['locks', 'covers', 'devices'].includes(section.kind) && !['status', 'graph'].includes(effectiveRole)) {
       const current = record.confirmation === true ? 'ask' : record.confirmation === false ? 'skip'
         : typeof record.confirmation === 'string' ? 'custom' : '';

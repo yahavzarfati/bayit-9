@@ -1,10 +1,11 @@
 import { createOrefMap } from './oref-alert-map.js';
 import { createVacuumMap } from './vacuum-map.js';
+import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
 
 const sectionKeys = {
   actions: 'automations', locks: 'toolbar_locks', covers: 'room_covers', status: 'toolbar_status',
   people: 'presence', forecast: 'toolbar_forecast', sun: 'toolbar_sun', readings: 'toolbar_readings',
-  electricity: 'toolbar_electricity', water: 'toolbar_water', devices: 'room_devices',
+  electricity: 'toolbar_electricity', water: 'toolbar_water', devices: 'room_devices', media: 'media', vacuum: 'vacuum',
 };
 
 const domain = item => item.entity.split('.')[0];
@@ -99,6 +100,7 @@ export function createToolbarPanel(kind, configuration, context) {
   const { make, icon, button, label, t, modelFor, stateLabel, moreInfo, buildDevice,
     request, pending, host, dialog } = context;
   const handlers = [];
+  const mediaViews = [];
   let live = true;
   let currentHass = context.hass;
   const native = createNativeCards(host, currentHass, make);
@@ -213,8 +215,14 @@ export function createToolbarPanel(kind, configuration, context) {
     if (domain(item) === 'sensor' && (item.graph_hours || itemKind === 'graph')) {
       return nativeCard(sensorGraphConfig(item), renderTile(item, 'status'));
     }
-    if (['locks','covers','devices'].includes(section) && itemKind !== 'status') {
+    const nowPlaying = itemKind === 'now_playing' && domain(item) === 'media_player';
+    if (nowPlaying || itemKind === 'device' || (['locks','covers','devices','media','vacuum'].includes(section) && itemKind !== 'status')) {
       const row = make('div', 'toolbar-device');
+      if (nowPlaying) {
+        const player = createNowPlaying({ host: row, dialog, make, icon, t });
+        mediaViews.push(player);
+        handlers.push(() => player.update(modelFor(item)));
+      }
       buildDevice(item, row, section);
       return row;
     }
@@ -339,13 +347,14 @@ export function createToolbarPanel(kind, configuration, context) {
       live = false;
       orefMap?.dispose();
       vacuumMap?.dispose();
+      for (const player of mediaViews) player.dispose();
       if (clockTimer) view.clearInterval(clockTimer);
       native.dispose();
     },
   };
 }
 
-export const toolbarPanelStyles = `
+export const toolbarPanelStyles = nowPlayingStyles + `
   .toolbar-panes, .toolbar-section-items { display: grid; gap: 8px; min-width: 0; }
   .toolbar-section { min-width: 0; border: 1px solid var(--soft-line); border-radius: 13px; padding: 8px; }
   .toolbar-section-title { margin: 0 0 8px; text-align: center; font-size: 14px; }

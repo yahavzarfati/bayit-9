@@ -26,9 +26,10 @@ export const TOOLBAR_KINDS = new Set(['automations', 'activity', 'security', 'pr
   'settings', 'overview', 'sensors', 'media', 'vacuum', 'calendar', 'devices', 'link']);
 export const TOOLBAR_SECTION_KINDS = new Set(['actions', 'locks', 'covers', 'status', 'devices',
   'people', 'forecast', 'sun', 'readings', 'electricity', 'water', 'media', 'vacuum', 'series']);
-export const TOOLBAR_ROLES = new Set(['action', 'lock', 'cover', 'status', 'device', 'forecast', 'sun', 'graph', 'person']);
+export const TOOLBAR_ROLES = new Set(['action', 'lock', 'cover', 'status', 'device', 'forecast', 'sun', 'graph', 'person', 'now_playing']);
 export const TOOLBAR_ROLE_DOMAINS = new Map([
   ['lock', 'lock'], ['cover', 'cover'], ['forecast', 'weather'], ['sun', 'sun'], ['person', 'person'],
+  ['now_playing', 'media_player'],
 ]);
 const ROOM_ICON = /^mdi:[a-z0-9-]+$/;
 const CONTROL_DOMAINS = new Set(['light', 'switch', 'cover', 'climate', 'fan', 'lock', 'water_heater']);

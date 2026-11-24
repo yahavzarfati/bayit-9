@@ -71,6 +71,11 @@ const hass = {
       states['climate.demo_air'] = { ...states['climate.demo_air'], state: 'cool' };
       card.hass = { ...hass, states: { ...states } };
     }
+    if (request.domain === 'media_player' && request.service === 'media_pause') {
+      const id = request.target.entity_id;
+      states[id] = { ...states[id], state: 'paused' };
+      card.hass = { ...hass, states: { ...states } };
+    }
     return Promise.resolve({});
   },
 };
@@ -150,8 +155,11 @@ if (query.has('toolbar-panels')) {
     'person.demo_friend': {state:'home',attributes:{friendly_name:'Simona'}},
     'sensor.demo_meter': {state:'51',attributes:{friendly_name:'Energy meter',unit_of_measurement:'kWh'}},
     'sensor.demo_studio_temperature': {state:'22.5',attributes:{friendly_name:'Studio temperature',unit_of_measurement:'°C'}},
-    'media_player.demo_speaker': {state:'playing',attributes:{friendly_name:'Speaker',supported_features:30749,volume_level:.24,
-      is_volume_muted:false,source:'Radio',source_list:['Radio','Aux'],media_title:'Station'}},
+    'media_player.demo_speaker': {state:'playing',attributes:{friendly_name:'Speaker',supported_features:30781,volume_level:.24,
+      is_volume_muted:false,source:'Radio',source_list:['Radio','Aux'],media_title:'Station',media_artist:'Fixture artist',
+      media_position:12,media_duration:180,media_position_updated_at:new Date().toISOString(),
+      entity_picture:'/api/media_player_proxy/media_player.demo_speaker?token=fixture'}},
+    'media_player.demo_tv': {state:'on',attributes:{friendly_name:'Television',supported_features:1416,is_volume_muted:false}},
     'vacuum.demo_robot': {state:'idle',attributes:{friendly_name:'Robot',supported_features:8244,fan_speed_list:['silent','normal']}},
     'button.demo_filter': {state:'unknown',attributes:{friendly_name:'Reset filter'}},
     'calendar.demo_household': {state:'off',attributes:{friendly_name:'Household'}},
@@ -195,8 +203,11 @@ const selected = query.has('configuration') ? stored().strategy : query.has('cur
     {kind:'weather',sections:[{kind:'forecast',entities:['weather.demo_home']},{kind:'sun',entities:['sun.sun']}]},
     {kind:'energy',sections:[{kind:'electricity',entities:[{entity:'sensor.demo_meter',role:'graph',graph_hours:168}]}]},
     {kind:'settings'},
-    {kind:'media',placement:'settings',entities:['media_player.demo_speaker']},
-    {kind:'vacuum',placement:'settings',sections:[{kind:'devices',entities:['vacuum.demo_robot']},
+    {kind:'media',placement:'settings',sections:[
+      {kind:'media',title:'Speaker',entities:[{entity:'media_player.demo_speaker',role:'now_playing'}]},
+      {kind:'media',title:'TV',entities:[{entity:'media_player.demo_tv',role:'device'}]},
+    ]},
+    {kind:'vacuum',placement:'settings',sections:[{kind:'vacuum',entities:[{entity:'vacuum.demo_robot',role:'device'}]},
       {kind:'actions',entities:[{entity:'button.demo_filter',role:'action',confirmation:'Reset the filter?'}]}]},
     {kind:'calendar',placement:'settings',entities:['calendar.demo_household','calendar.demo_birthdays']},
   ],
@@ -211,7 +222,7 @@ document.querySelector('#surface').append(card);
 if (query.has('editor')) {
   document.querySelector('#surface').hidden = true;
   const editor = Strategy.getConfigElement();
-  editor.setConfig({ type: 'custom:bayit-9' });
+  editor.setConfig({ type: 'custom:bayit-9', ...(query.has('toolbar-panels') && selected) });
   editor.hass = hass;
   editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
   document.querySelector('#editor').append(editor);
@@ -223,6 +234,10 @@ window.bayitTest = {
     card.hass = { ...hass, states: { ...states } };
   },
   setRoomLayout(layout) { card.setConfig({ ...cardConfig, layout }); },
+  setMediaArt(entity_picture) {
+    states['media_player.demo_speaker'].attributes.entity_picture = entity_picture;
+    card.hass = { ...hass, states: { ...states } };
+  },
   finishLevel: () => finishLevel(),
   setHeaterPower: state => {
     states[heaterFan].state = states[heaterRelay].state = state;
@@ -240,6 +255,9 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/bayit-9.js') {
     res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
     res.end(bundle);
+  } else if (url.pathname === '/api/media_player_proxy/media_player.demo_speaker') {
+    res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
+    res.end('<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60"><rect width="60" height="60" fill="teal"/></svg>');
   } else if (['/', '/fixture-home/home'].includes(url.pathname)) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(fixture);
@@ -353,6 +371,51 @@ try {
         assert.equal(await statusPage.evaluate(() => window.bayitTest.calls.length), 0);
         await statusPage.close();
       }
+
+      const mediaPage = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+      mediaPage.setDefaultTimeout(8000);
+      const mediaErrors = [];
+      mediaPage.on('pageerror', error => mediaErrors.push(error.message));
+      await mediaPage.goto(base + '?toolbar-panels');
+      await mediaPage.getByRole('button', { name: 'Appearance', exact: true }).click();
+      await mediaPage.getByRole('button', { name: 'Media', exact: true }).click();
+      const media = mediaPage.getByRole('dialog');
+      await media.getByText('Fixture artist', { exact: true }).waitFor();
+      const cover = media.locator('.now-playing img');
+      await cover.waitFor();
+      const progress = media.getByRole('progressbar', { name: 'Playback progress' });
+      const first = await progress.evaluate(meter => meter.value);
+      await mediaPage.waitForFunction(second =>
+        document.querySelector('bayit-dashboard').shadowRoot.querySelector('.now-playing progress').value > second, first);
+      await media.getByRole('button', { name: 'Next', exact: true }).click();
+      await media.getByRole('button', { name: 'Pause playback', exact: true }).click();
+      await media.getByRole('button', { name: 'Play', exact: true }).waitFor();
+      const paused = await progress.evaluate(meter => meter.value);
+      await mediaPage.evaluate(() => window.bayitTest.setMediaArt('https://fixture.invalid/art'));
+      await cover.waitFor({ state: 'hidden' });
+      assert.equal(await cover.getAttribute('src'), null);
+      await media.getByText('Station', { exact: true }).waitFor();
+      assert.equal(await progress.evaluate(meter => meter.value), paused);
+      await media.getByRole('button', { name:'Volume up', exact:true }).last().click();
+      const calls = await mediaPage.evaluate(() => window.bayitTest.calls.map(request => [request.service,request.target.entity_id]));
+      assert.deepEqual(calls,[['media_next_track','media_player.demo_speaker'],['media_pause','media_player.demo_speaker'],
+        ['volume_up','media_player.demo_tv']]);
+      await media.getByRole('button', { name:'Close', exact:true }).click();
+      await media.waitFor({ state:'hidden' });
+      await mediaPage.getByRole('button', { name:'Appearance', exact:true }).click();
+      await mediaPage.getByRole('button', { name:'Robot vacuum', exact:true }).click();
+      await mediaPage.getByRole('button', { name:'Start cleaning', exact:true }).waitFor();
+      await mediaPage.goto(base + '?toolbar-panels&editor');
+      await mediaPage.getByText('Toolbar and extra screens', { exact:true }).click();
+      await mediaPage.getByRole('button', {name:'Media',exact:true}).click();
+      await mediaPage.getByRole('button', {name:'TV',exact:true}).click();
+      await mediaPage.getByRole('button', {name:'Television',exact:true}).click();
+      await mediaPage.getByLabel('Display as', { exact:true }).selectOption('now_playing');
+      assert.equal(await mediaPage.evaluate(() => window.latest.toolbar.find(item => item.kind === 'media')
+        .sections[1].entities[0].role), 'now_playing');
+      assert.deepEqual(mediaErrors, []);
+      await mediaPage.close();
+      console.log(engine + ': curated media and vacuum controls, local artwork and playback progress');
 
       const editorPage = await browser.newPage({ viewport: {width: 390, height: 844} });
       await editorPage.goto(base + '?editor&heater-level');
