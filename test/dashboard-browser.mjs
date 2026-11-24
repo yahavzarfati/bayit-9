@@ -809,8 +809,8 @@ try {
         assert.equal(material.blur, 'blur(14px)');
       }
       await panelsPage.emulateMedia({ contrast: 'more' });
-      assert.equal(await studio.evaluate(dialog => getComputedStyle(dialog).backdropFilter), 'none');
-      assert.equal(await studio.evaluate(dialog => getComputedStyle(dialog).backgroundColor), 'rgb(40, 40, 40)');
+      assert.equal(await graphRoom.evaluate(dialog => getComputedStyle(dialog).backdropFilter), 'none');
+      assert.equal(await graphRoom.evaluate(dialog => getComputedStyle(dialog).backgroundColor), 'rgb(40, 40, 40)');
       await panelsPage.emulateMedia({ contrast: 'no-preference' });
       await panelsPage.keyboard.press('Escape');
       await roomGraph.waitFor({state:'detached'});
