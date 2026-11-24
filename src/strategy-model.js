@@ -20,10 +20,16 @@ export const DEFAULT_DOMAINS = [
 
 const ENTITY_ID = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 const CUSTOM_ROOM_ID = /^bayit_room_[a-z0-9][a-z0-9_-]{0,63}$/;
+const LAYOUT_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const LOCAL_ROUTE = /^\/[a-z0-9_-]+(?:\/[a-z0-9_-]+)*\/?(?:#[a-z0-9_-]+)?$/i;
+const SECTION_KINDS = new Set(['lights', 'covers', 'climate', 'heating', 'sensors',
+  'devices', 'garage', 'weather', 'security', 'media', 'vacuum', 'laundry']);
+const TOOLBAR_KINDS = new Set(['automations', 'security', 'presence', 'weather', 'energy',
+  'settings', 'overview', 'link']);
 const ROOM_ICON = /^mdi:[a-z0-9-]+$/;
 const CONTROL_DOMAINS = new Set(['light', 'switch', 'cover', 'climate', 'fan', 'lock', 'water_heater']);
 const SECURITY_CLASSES = new Set(['door', 'window', 'garage_door', 'opening']);
-const PROFILE_KINDS = new Set(['heater', 'boiler']);
+const PROFILE_KINDS = new Set(['heater', 'boiler', 'climate']);
 const DEFAULT_RANK = new Map(DEFAULT_DOMAINS.map((domain, index) => [domain, index]));
 const ARMING_DOMAIN = 'script';
 
@@ -57,27 +63,44 @@ function numberOr(value, fallback) {
 
 export function normalizeProfile(value) {
   if (!value || typeof value.entity !== 'string' || !ENTITY_ID.test(value.entity)
-      || !PROFILE_DOMAINS.includes(domainOf(value.entity)) || !PROFILE_KINDS.has(value.kind)) {
-    return null;
-  }
+      || !PROFILE_KINDS.has(value.kind)) return null;
+  const domain = domainOf(value.entity);
+  if (!PROFILE_DOMAINS.includes(domain) || (value.kind === 'climate' && domain !== 'climate')) return null;
   const profile = { entity: value.entity, kind: value.kind };
   if (typeof value.name === 'string' && value.name.trim()) profile.name = value.name.trim().slice(0, 80);
   const level = idForDomain(value.level_entity, 'number');
   if (level) profile.level_entity = level;
+  const fanHeater = value.kind === 'heater' && domain === 'fan';
+  if (!level && fanHeater && Number.isInteger(value.level_steps) && value.level_steps >= 2 && value.level_steps <= 12) {
+    profile.level_steps = value.level_steps;
+    const levelRead = idForDomain(value.level_read_entity, 'input_number');
+    if (levelRead) profile.level_read_entity = levelRead;
+  }
   const timed = value.timed;
   if (!timed || typeof timed !== 'object') return profile;
 
   const startScript = idForDomain(timed.start_script, ARMING_DOMAIN);
   const stopScript = idForDomain(timed.stop_script, ARMING_DOMAIN);
-  const timer = idForDomain(timed.timer_entity, 'timer');
-  if (!startScript && !timer && !stopScript) return profile;
+  const simpleTimer = startScript ? undefined : idForDomain(timed.simple_timer_entity, 'sensor');
+  const targetDomain = value.kind === 'climate' ? 'input_boolean' : fanHeater ? 'switch' : undefined;
+  const simpleTimerTarget = simpleTimer && targetDomain ? idForDomain(timed.simple_timer_target, targetDomain) : undefined;
+  const timer = simpleTimer ? undefined : idForDomain(timed.timer_entity, 'timer');
+  const dailyUsage = idForDomain(timed.daily_usage_entity, 'sensor');
+  if (!startScript && !simpleTimer && !timer && !stopScript) return profile;
   const min = numberOr(timed.min_minutes, 15);
   const max = Math.max(min, numberOr(timed.max_minutes, 60));
   const step = Math.min(max - min || 1, numberOr(timed.step_minutes, 15));
+  const presets = Array.isArray(timed.presets) ? [...new Set(timed.presets.filter(minutes =>
+    Number.isInteger(minutes) && minutes >= min && minutes <= max && (minutes - min) % step === 0,
+  ))].slice(0, 8) : [];
   profile.timed = {
     ...(startScript && { start_script: startScript }),
     ...(stopScript && { stop_script: stopScript }),
     ...(timer && { timer_entity: timer }),
+    ...(simpleTimer && { simple_timer_entity: simpleTimer }),
+    ...(simpleTimerTarget && { simple_timer_target: simpleTimerTarget }),
+    ...(dailyUsage && { daily_usage_entity: dailyUsage }),
+    ...(Array.isArray(timed.presets) && { presets }),
     duration_field: typeof timed.duration_field === 'string' && /^[a-z][a-z0-9_]{0,39}$/.test(timed.duration_field)
       ? timed.duration_field : 'duration',
     min_minutes: min,
@@ -96,6 +119,28 @@ function profilesOf(items) {
   return profiles;
 }
 
+function layoutId(value, fallback, seen) {
+  if (typeof value === 'string' && LAYOUT_ID.test(value) && !seen.has(value)) {
+    seen.add(value);
+    return value;
+  }
+  let id = fallback;
+  for (let suffix = 2; seen.has(id); suffix++) id = fallback + '-' + suffix;
+  seen.add(id);
+  return id;
+}
+
+export function roomSections(value) {
+  if (!Array.isArray(value)) return undefined;
+  const seen = new Set();
+  return value.flatMap((section, index) => {
+    if (!SECTION_KINDS.has(section?.kind) || !Array.isArray(section.entities)) return [];
+    const id = layoutId(section.id, 'section-' + (index + 1), seen);
+    const title = typeof section.title === 'string' ? section.title.trim().slice(0, 80) : undefined;
+    return [{ id, kind: section.kind, ...(title !== undefined && { title }), entities: idList(section.entities) }];
+  });
+}
+
 function dashboardAreas(config, hass) {
   const areas = new Map(Object.entries(hass.areas ?? {}).map(([id, area]) => [
     area.area_id ?? id,
@@ -108,10 +153,14 @@ function dashboardAreas(config, hass) {
     if (!area && (!CUSTOM_ROOM_ID.test(id) || !name)) continue;
     const icon = typeof override.icon === 'string' ? override.icon.trim() : '';
     const entityIcons = override.entity_icons;
+    const sections = roomSections(override.sections);
+    const entityIds = Array.isArray(override.entities) ? idList(override.entities)
+      : sections?.length ? idList(sections.flatMap(section => section.entities)) : area ? undefined : [];
     areas.set(id, {
       name: name || area?.name,
       icon: ROOM_ICON.test(icon) ? icon : area?.icon ?? 'mdi:home-outline',
-      entityIds: Array.isArray(override.entities) ? idList(override.entities) : area ? undefined : [],
+      entityIds,
+      sections,
       entityIcons: entityIcons && typeof entityIcons === 'object' && !Array.isArray(entityIcons) ? entityIcons : null,
       custom: !area,
     });
@@ -144,6 +193,8 @@ function presentEntity(entity, state, registry, profile) {
     ...(typeof icon === 'string' && icon && { icon }),
     ...(profile && { kind: profile.kind }),
     ...(profile?.level_entity && { level_entity: profile.level_entity }),
+    ...(profile?.level_steps && { level_steps: profile.level_steps }),
+    ...(profile?.level_read_entity && { level_read_entity: profile.level_read_entity }),
     ...(profile?.timed && { timed: profile.timed }),
   };
 }
@@ -165,6 +216,12 @@ export function selectableRoomEntities(config = {}, hass = {}) {
     .map(entity => presentEntity(entity, states[entity], registry?.[entity]));
 }
 
+function entityArea(info, hass) {
+  const deviceId = info?.device_id ?? info?.di;
+  const device = deviceId && hass.devices?.[deviceId];
+  return info?.area_id ?? info?.ai ?? device?.area_id;
+}
+
 export function discoverRooms(config, hass, locale) {
   const areas = dashboardAreas(config, hass);
   const unassigned = pickUnassignedId(areas);
@@ -175,7 +232,8 @@ export function discoverRooms(config, hass, locale) {
   const profiles = profilesOf(config.profiles);
   const adapterEntities = new Set([...profiles.values()].flatMap(profile => {
     const timed = profile.timed;
-    return [profile.level_entity, timed?.start_script, timed?.stop_script, timed?.timer_entity].filter(Boolean);
+    return [profile.level_entity, profile.level_read_entity, timed?.start_script, timed?.stop_script,
+      timed?.timer_entity, timed?.simple_timer_entity, timed?.simple_timer_target, timed?.daily_usage_entity].filter(Boolean);
   }));
   const states = hass.states ?? {};
   const registry = hass.entities ?? null;
@@ -201,9 +259,7 @@ export function discoverRooms(config, hass, locale) {
     const isDiagnostic = info?.entity_category != null || info?.ec != null;
     if (!isExplicit && (!discoverableDomains.has(domainOf(entity)) || isDiagnostic || adapterEntities.has(entity))) continue;
 
-    const deviceId = info?.device_id ?? info?.di;
-    const device = deviceId && hass.devices?.[deviceId];
-    const assigned = info?.area_id ?? info?.ai ?? device?.area_id;
+    const assigned = entityArea(info, hass);
     const area = areas.get(assigned);
     const areaId = area && !area.custom ? assigned : unassigned;
     if (areaId === unassigned ? config.show_unassigned === false : !isSelected(areaId) || area.entityIds) continue;
@@ -235,6 +291,12 @@ export function discoverRooms(config, hass, locale) {
       }
     }
     const room = { id, name: area.name, icon: area.icon, entities };
+    if (area.sections !== undefined) {
+      const byId = new Map(entities.map(entity => [entity.entity, entity]));
+      room.sections = area.sections.map(section => ({
+        ...section, entities: section.entities.map(entity => byId.get(entity)).filter(Boolean),
+      }));
+    }
     const shortcuts = Object.hasOwn(config.room_shortcuts ?? {}, id) ? config.room_shortcuts[id] : null;
     if (Array.isArray(shortcuts)) {
       const visible = new Set(entities.map(device => device.entity));
@@ -249,6 +311,12 @@ function dashboardContext(config, hass, locale) {
   const registry = hass.entities;
   const hidden = new Set(idList(config.hidden_entities));
   const selectedEnergy = new Set(idList(config.overview_entities));
+  const selectedAreas = new Set(idList(config.area_ids));
+  const nativeAreas = new Set(Object.entries(hass.areas ?? {}).map(([id, area]) => area.area_id ?? id));
+  const automationInScope = entity => {
+    const id = entityArea(registry?.[entity], hass);
+    return nativeAreas.has(id) ? selectedAreas.size === 0 || selectedAreas.has(id) : config.show_unassigned !== false;
+  };
   const context = {};
   for (const [entity, state] of Object.entries(states)) {
     const domain = domainOf(entity);
@@ -258,6 +326,7 @@ function dashboardContext(config, hass, locale) {
         (domain === 'binary_sensor' && SECURITY_CLASSES.has(deviceClass))) category = 'security';
     else if (domain === 'person') category = 'presence';
     else if (domain === 'weather') category = 'weather';
+    else if (domain === 'automation' && automationInScope(entity)) category = 'automations';
     else if (domain === 'sensor' && selectedEnergy.has(entity) && ['energy', 'power'].includes(deviceClass)) category = 'energy';
     if (!category || !isVisibleEntity(entity, states, registry, hidden)) continue;
     (context[category] ??= []).push(presentEntity(entity, state, registry?.[entity]));
@@ -266,6 +335,28 @@ function dashboardContext(config, hass, locale) {
     entities.sort((a, b) => compareText(a.name ?? a.entity, b.name ?? b.entity, locale));
   }
   return context;
+}
+
+function dashboardToolbar(config, hass) {
+  if (!Array.isArray(config.toolbar)) return undefined;
+  const states = hass.states ?? {};
+  const registry = hass.entities;
+  const hidden = new Set(idList(config.hidden_entities));
+  const profiles = profilesOf(config.profiles);
+  const seen = new Set();
+  return config.toolbar.flatMap((entry, index) => {
+    if (!TOOLBAR_KINDS.has(entry?.kind)) return [];
+    const path = entry.kind === 'link' && typeof entry.path === 'string' ? entry.path.trim() : '';
+    if (entry.kind === 'link' && !LOCAL_ROUTE.test(path)) return [];
+    const id = layoutId(entry.id, 'toolbar-' + (index + 1), seen);
+    const label = typeof entry.label === 'string' ? entry.label.trim().slice(0, 80) : '';
+    const icon = typeof entry.icon === 'string' ? entry.icon.trim() : '';
+    const entities = Array.isArray(entry.entities) ? idList(entry.entities)
+      .filter(entity => isVisibleEntity(entity, states, registry, hidden))
+      .map(entity => presentEntity(entity, states[entity], registry?.[entity], profiles.get(entity))) : undefined;
+    return [{ id, kind: entry.kind, ...(label && { label }), ...(ROOM_ICON.test(icon) && { icon }),
+      ...(path && { path }), ...(entities !== undefined && { entities }) }];
+  });
 }
 
 export function suggestedDashboard(hass) {
@@ -278,6 +369,7 @@ export function generateDashboard(config = {}, hass = {}) {
     ? config.title.trim() : labels[locale].title;
   const card = {
     type: CARD_TYPE,
+    page: true,
     locale,
     title,
     rooms: discoverRooms(config, hass, locale),
@@ -287,6 +379,8 @@ export function generateDashboard(config = {}, hass = {}) {
   if (overview.length) card.overview = overview;
   const context = dashboardContext(config, hass, locale);
   if (Object.keys(context).length) card.context = context;
+  const toolbar = dashboardToolbar(config, hass);
+  if (toolbar !== undefined) card.toolbar = toolbar;
   if (Object.hasOwn(BACKGROUNDS, config.background)) card.background = config.background;
   if (['soft', 'circle', 'square'].includes(config.shape)) card.shape = config.shape;
   if (['classic', 'header'].includes(config.layout)) card.layout = config.layout;

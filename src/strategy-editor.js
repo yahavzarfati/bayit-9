@@ -1,4 +1,5 @@
-import { BACKGROUNDS, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile, PROFILE_DOMAINS, selectableRoomEntities, STRATEGY_NAME } from './strategy-model.js';
+import { BACKGROUNDS, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile, PROFILE_DOMAINS, roomSections, selectableRoomEntities, STRATEGY_NAME } from './strategy-model.js';
+import { languages } from './bayit-dashboard-i18n.js';
 
 const WORDS = {
   en: {
@@ -13,6 +14,11 @@ const WORDS = {
     moveUp: 'Move up', moveDown: 'Move down', hideRoom: 'Hide room',
     automaticDevices: 'Automatic', manualDevices: 'Choose devices and order',
     roomDevices: 'Devices in this room', deviceToAdd: 'Available devices', addDevice: 'Add device',
+    sections: 'Room sections', sectionMode: 'Section arrangement', automaticSections: 'Automatic grouping',
+    manualSections: 'Arrange sections manually', automaticDevicesAndSections: 'Automatic devices and sections',
+    editSection: 'Section to customize', addSection: 'Add section', removeSection: 'Delete section',
+    sectionType: 'Section type', sectionTitle: 'Section heading', sectionDevice: 'Room device',
+    addToSection: 'Move to this section', removeFromSection: 'Remove from section', sectionEmpty: 'No devices in this section.',
     noDevices: 'No devices selected.', noMatches: 'No matching devices', missing: 'Unavailable',
     atLeastOneRoom: 'Keep one room selected, or switch back to automatic.',
     discovery: 'Automatic device selection', controls: 'Controls only', allDevices: 'All supported devices',
@@ -26,6 +32,11 @@ const WORDS = {
     noShortcutRooms: 'Add a device to a visible room to set its shortcuts.',
     profiles: 'Boiler and heater controls', entity: 'Heating device', kind: 'Control profile',
     heater: 'Room heater', boiler: 'Water heater or boiler', displayName: 'Display name',
+    climate: 'Air conditioner or thermostat', timerSource: 'Timer source', serverTimer: 'Home Assistant timer or script',
+    simpleTimer: 'Simple Timer', simpleTimerDevice: 'Simple Timer sensor', simpleTimerTarget: 'Device linked to Simple Timer',
+    timerLinkError: 'Choose a Simple Timer sensor linked to this heating device or its supported proxy.',
+    dailyUsage: 'Daily usage sensor', presets: 'Preset minutes', presetError: 'Use preset minutes within the selected range and step.',
+    levelSteps: 'Number of heating levels', levelRead: 'Heating level feedback',
     start: 'Scheduled start script', stop: 'Stop script', timer: 'Timer', none: 'None',
     level: 'Heating level entity', durationField: 'Duration field', min: 'Shortest run in minutes', max: 'Longest run in minutes',
     step: 'Step in minutes', add: 'Add profile', save: 'Save profile', edit: 'Edit',
@@ -46,6 +57,11 @@ const WORDS = {
     moveUp: 'העברה למעלה', moveDown: 'העברה למטה', hideRoom: 'הסתרת חדר',
     automaticDevices: 'בחירה אוטומטית', manualDevices: 'בחירת מכשירים וסדר',
     roomDevices: 'מכשירים בחדר', deviceToAdd: 'מכשירים זמינים', addDevice: 'הוספת מכשיר',
+    sections: 'קבוצות בחדר', sectionMode: 'סידור הקבוצות', automaticSections: 'קיבוץ אוטומטי',
+    manualSections: 'סידור ידני של הקבוצות', automaticDevicesAndSections: 'בחירה אוטומטית של מכשירים וקבוצות',
+    editSection: 'קבוצה לעריכה', addSection: 'הוספת קבוצה', removeSection: 'מחיקת קבוצה',
+    sectionType: 'סוג הקבוצה', sectionTitle: 'כותרת הקבוצה', sectionDevice: 'מכשיר בחדר',
+    addToSection: 'העברה לקבוצה זו', removeFromSection: 'הסרה מהקבוצה', sectionEmpty: 'אין מכשירים בקבוצה זו.',
     noDevices: 'לא נבחרו מכשירים.', noMatches: 'לא נמצאו מכשירים מתאימים', missing: 'לא זמין',
     atLeastOneRoom: 'השאירו חדר אחד לפחות, או חזרו לבחירה אוטומטית.',
     discovery: 'בחירת מכשירים אוטומטית', controls: 'מכשירים נשלטים בלבד', allDevices: 'כל המכשירים הנתמכים',
@@ -59,6 +75,11 @@ const WORDS = {
     noShortcutRooms: 'הוסיפו מכשיר לחדר שמוצג בדשבורד כדי לבחור קיצורים.',
     profiles: 'שליטה בדוד ובתנורים', entity: 'מכשיר חימום', kind: 'סוג בקר',
     heater: 'תנור חימום', boiler: 'דוד או מחמם מים', displayName: 'שם לתצוגה',
+    climate: 'מזגן או תרמוסטט', timerSource: 'מקור הטיימר', serverTimer: 'טיימר או סקריפט של Home Assistant',
+    simpleTimer: 'Simple Timer', simpleTimerDevice: 'חיישן Simple Timer', simpleTimerTarget: 'המכשיר שמקושר ל־Simple Timer',
+    timerLinkError: 'בחרו חיישן Simple Timer שמקושר למכשיר החימום הזה או לפקד שמפעיל אותו.',
+    dailyUsage: 'חיישן שימוש יומי', presets: 'הגדרות דקות מהירות', presetError: 'בחרו דקות בטווח ובמרווח שנקבעו.',
+    levelSteps: 'מספר דרגות החימום', levelRead: 'משוב על דרגת החימום',
     start: 'סקריפט הפעלה עם זמן', stop: 'סקריפט כיבוי', timer: 'טיימר', none: 'ללא',
     level: 'ישות עוצמת חימום', durationField: 'שדה משך', min: 'זמן מינימלי בדקות', max: 'זמן מקסימלי בדקות',
     step: 'מרווח בחירה בדקות', add: 'הוספת בקר', save: 'שמירת בקר', edit: 'עריכה',
@@ -68,6 +89,9 @@ const WORDS = {
     units: 'דקות', searchable: 'סינון ישויות',
   },
 };
+
+const ROOM_SECTION_TYPES = ['lights', 'covers', 'climate', 'heating', 'sensors', 'devices',
+  'garage', 'weather', 'security', 'media', 'vacuum', 'laundry'];
 
 const ROOM_ICONS = {
   'mdi:home-outline': { en: 'Home', he: 'בית' },
@@ -246,6 +270,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #profileEditing;
   #shortcutRoom;
   #roomEditing;
+  #sectionEditing;
   #roomDeviceQuery = '';
   #newRoomName = '';
   #emptyRoomSelection = false;
@@ -329,18 +354,124 @@ export class Bayit9StrategyEditor extends HTMLElement {
     ]);
   }
 
+  #resolvedRoom(room, language) {
+    return discoverRooms({ ...this.#config, area_ids: [room.id] }, this.#hass, language).find(item => item.id === room.id);
+  }
+
+  #roomMembership(room, override, sections, language) {
+    if (Array.isArray(override.entities)) return configuredIds(override.entities);
+    if (sections?.length) return configuredIds(sections.flatMap(section => section.entities));
+    return this.#resolvedRoom(room, language)?.entities.map(item => item.entity) ?? [];
+  }
+
+  #roomSectionsPanel(room, override, words, language) {
+    const sections = roomSections(override.sections);
+    const mode = select([['auto', words.automaticSections], ['manual', words.manualSections]], sections ? 'manual' : 'auto');
+    mode.dataset.roomFocus = 'room-section-mode';
+    const children = [field(words.sectionMode, mode)];
+    mode.addEventListener('change', () => {
+      const next = { ...override };
+      if (mode.value === 'auto') {
+        if (sections?.length && !Array.isArray(override.entities)) {
+          next.entities = this.#roomMembership(room, override, sections, language);
+        }
+        delete next.sections;
+      } else next.sections = [];
+      this.#setRoomOverride(room.id, next, 'room-section-mode');
+    });
+    const body = () => disclosure(words.sections, this.#open.sections, open => { this.#open.sections = open; },
+      [node('div', { className: 'stack' }, children)]);
+    if (!sections) return body();
+
+    const chosen = this.#roomMembership(room, override, sections, language);
+    const apply = (items, focusKey) => this.#setRoomOverride(room.id, { ...override, entities: chosen, sections: items }, focusKey);
+    const dictionary = languages[language];
+    const typeTitle = kind => dictionary['room_' + kind];
+    const sectionName = section => section.title || typeTitle(section.kind);
+    const sectionRecords = sections.map(section => ({
+      id: section.id, name: sectionName(section),
+      secondary: section.title ? typeTitle(section.kind) : '',
+    }));
+    const sectionById = new Map(sections.map(section => [section.id, section]));
+    if (sections.length) {
+      children.push(orderedList(sectionRecords, (items, focusKey) => apply(items.map(item => sectionById.get(item.id)), focusKey),
+        words, words.removeSection, false, 'sections'));
+    }
+
+    const add = button(words.addSection, () => {
+      let serial = 1;
+      while (sectionById.has('section-' + serial)) serial++;
+      const id = 'section-' + serial;
+      this.#sectionEditing = { roomId: room.id, id };
+      apply([...sections, { id, kind: 'devices', entities: [] }], 'room-section-title');
+    });
+    add.dataset.roomFocus = 'room-section-add';
+    children.push(node('div', { className: 'actions' }, [add]));
+
+    const active = (this.#sectionEditing?.roomId === room.id && sectionById.get(this.#sectionEditing.id)) || sections[0];
+    if (!active) return body();
+    const sectionPicker = select(sectionRecords.map(item => [item.id, item.name]), active.id);
+    sectionPicker.dataset.roomFocus = 'room-section-edit';
+    sectionPicker.addEventListener('change', () => {
+      this.#sectionEditing = { roomId: room.id, id: sectionPicker.value };
+      this.render();
+      this.shadowRoot.querySelector('[data-room-focus="room-section-edit"]')?.focus({ preventScroll: true });
+    });
+    const update = (section, focusKey) => apply(sections.map(item => item.id === active.id ? section : item), focusKey);
+    const kind = select(ROOM_SECTION_TYPES.map(type => [type, typeTitle(type)]), active.kind);
+    kind.dataset.roomFocus = 'room-section-kind';
+    kind.addEventListener('change', () => update({ ...active, kind: kind.value }, 'room-section-kind'));
+    const title = node('input', { value: active.title ?? '', placeholder: typeTitle(active.kind), maxLength: 80 });
+    title.dataset.roomFocus = 'room-section-title';
+    const saveTitle = () => {
+      const text = title.value.trim();
+      if (text === (active.title ?? '')) return;
+      const next = { ...active };
+      if (text) next.title = text;
+      else delete next.title;
+      update(next, 'room-section-title');
+    };
+    title.addEventListener('change', saveTitle);
+    title.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' || event.isComposing) return;
+      event.preventDefault();
+      saveTitle();
+    });
+    children.push(field(words.editSection, sectionPicker), field(words.sectionType, kind), field(words.sectionTitle, title));
+
+    const entityName = entity => this.#hass.states?.[entity]?.attributes?.friendly_name || entity;
+    const members = active.entities.map(id => ({ id, name: entityName(id) }));
+    children.push(members.length ? orderedList(members, (items, focusKey) =>
+      update({ ...active, entities: items.map(item => item.id) }, focusKey),
+      words, words.removeFromSection, false, 'section-devices') : node('p', { textContent: words.sectionEmpty }));
+
+    const activeMembers = new Set(active.entities);
+    const candidates = chosen.filter(entity => !activeMembers.has(entity));
+    if (candidates.length) {
+      const picker = addPicker(words.sectionDevice, candidates.map(entity => [entity, entityName(entity)]), words.addToSection, words.choose, entity => {
+        apply(sections.map(section => section.id === active.id
+          ? { ...section, entities: [...section.entities, entity] }
+          : { ...section, entities: section.entities.filter(id => id !== entity) }), 'room-section-device');
+      });
+      picker.input.dataset.roomFocus = 'room-section-device';
+      children.push(picker.wrapper);
+    }
+    return body();
+  }
+
   #roomDevicePanel(room, words, language, areas) {
     const override = this.#roomOverride(room.id);
-    const manual = room.custom || Array.isArray(override.entities);
-    const choice = select([['auto', words.automaticDevices], ['manual', words.manualDevices]], manual ? 'manual' : 'auto');
+    const sections = roomSections(override.sections);
+    const manual = room.custom || Array.isArray(override.entities) || Boolean(sections?.length);
+    const choice = select([['auto', sections?.length ? words.automaticDevicesAndSections : words.automaticDevices],
+      ['manual', words.manualDevices]], manual ? 'manual' : 'auto');
     choice.dataset.roomFocus = 'room-device-mode';
     choice.addEventListener('change', () => {
       const next = { ...override };
-      if (choice.value === 'auto') delete next.entities;
-      else {
-        next.entities = discoverRooms({ ...this.#config, area_ids: [room.id] }, this.#hass, language)
-          .find(item => item.id === room.id)?.entities.map(item => item.entity) ?? [];
-      }
+      if (choice.value === 'auto') {
+        delete next.entities;
+        delete next.sections;
+      } else next.entities = this.#roomMembership(room, override, sections, language);
       this.#setRoomOverride(room.id, next, 'room-device-mode');
     });
     const children = room.custom
@@ -350,13 +481,22 @@ export class Bayit9StrategyEditor extends HTMLElement {
 
     const areaNames = new Map(areas.map(area => [area.id, area.name]));
     const available = new Map(selectableRoomEntities(this.#config, this.#hass).map(entry => [entry.entity, entry]));
-    const chosen = configuredIds(override.entities);
+    const chosen = this.#roomMembership(room, override, sections, language);
     const records = chosen.map(id => {
       const device = available.get(id);
       const previousName = this.#hass.states?.[id]?.attributes?.friendly_name;
       return { id, name: device?.name || previousName || id, secondary: device ? '' : words.missing };
     });
-    const change = (items, focusKey) => this.#setRoomOverride(room.id, { ...override, entities: items.map(item => item.id) }, focusKey);
+    const change = (items, focusKey) => {
+      const entities = items.map(item => item.id);
+      const next = { ...override, entities };
+      if (sections && entities.length < chosen.length) {
+        const kept = new Set(entities);
+        const removed = new Set(chosen.filter(entity => !kept.has(entity)));
+        next.sections = sections.map(section => ({ ...section, entities: section.entities.filter(entity => !removed.has(entity)) }));
+      }
+      this.#setRoomOverride(room.id, next, focusKey);
+    };
     children.push(records.length ? orderedList(records, change, words, words.remove, false, 'devices')
       : node('p', { textContent: words.noDevices }));
 
@@ -523,6 +663,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         field(words.roomToEdit, picker), field(words.roomName, input),
         this.#roomIconPicker(active, override, words, language),
         ...this.#roomDevicePanel(active, words, language, rooms),
+        this.#roomSectionsPanel(active, override, words, language),
       ];
       if (active.custom) {
         const remove = button(words.deleteRoom, () => {
@@ -637,18 +778,39 @@ export class Bayit9StrategyEditor extends HTMLElement {
       entity.append(option(current.entity, current.entity));
       entity.value = current.entity;
     }
-    const kind = select([['heater', words.heater], ['boiler', words.boiler]], current.kind || 'heater');
+    const kind = select([['heater', words.heater], ['boiler', words.boiler], ['climate', words.climate]], current.kind || 'heater');
     const title = node('input', { value: current.name ?? '', maxLength: 80 });
-    const entityInput = (domain, value) => {
-      const choices = entityOptions(this.#hass, new Set([domain]));
+    const entityInput = (domain, value, filter = () => true) => {
+      const choices = entityOptions(this.#hass, new Set([domain])).filter(([id]) => filter(id));
       if (value && !choices.some(([id]) => id === value)) choices.unshift([value, value]);
       return select([['', words.none], ...choices], value || '');
     };
     const level = entityInput('number', current.level_entity);
+    const levelSteps = node('input', { type: 'number', min: '2', max: '12', value: String(current.level_steps ?? '') });
+    const levelRead = entityInput('input_number', current.level_read_entity);
+    const fanLevels = node('div', { className: 'grid' }, [field(words.levelSteps, levelSteps), field(words.levelRead, levelRead)]);
+
+    const timerSource = select([['server', words.serverTimer], ['simple', words.simpleTimer]], timed.simple_timer_entity ? 'simple' : 'server');
     const start = entityInput('script', timed.start_script);
     const stop = entityInput('script', timed.stop_script);
     const timer = entityInput('timer', timed.timer_entity);
     const durationField = node('input', { value: timed.duration_field || 'duration', maxLength: 40 });
+    const serverFields = node('div', { className: 'stack' }, [
+      field(words.start, start), field(words.stop, stop), field(words.timer, timer), field(words.durationField, durationField),
+    ]);
+    const attributesFor = id => this.#hass.states?.[id]?.attributes;
+    const simple = entityInput('sensor', timed.simple_timer_entity, id => {
+      const attributes = attributesFor(id);
+      return typeof attributes?.switch_entity_id === 'string' && typeof attributes.timer_state === 'string';
+    });
+    const target = select([['', words.none]], '');
+    const targetField = field(words.simpleTimerTarget, target);
+    const simpleFields = node('div', { className: 'stack' }, [field(words.simpleTimerDevice, simple), targetField]);
+    const usage = entityInput('sensor', timed.daily_usage_entity);
+    const presets = node('input', {
+      value: Array.isArray(timed.presets) ? timed.presets.join(', ') : '',
+      placeholder: '15, 30, 45', maxLength: 50,
+    });
     const minutes = value => node('input', { type: 'number', min: '1', max: '360', value: String(value) });
     const min = minutes(timed.min_minutes ?? 15);
     const max = minutes(timed.max_minutes ?? 60);
@@ -656,24 +818,73 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const error = node('p', { className: 'error', hidden: true, textContent: words.invalid });
     error.setAttribute('role', 'alert');
 
+    const sync = () => {
+      const domain = entity.value.split('.')[0];
+      kind.querySelector('[value="climate"]').disabled = domain !== 'climate';
+      if (domain !== 'climate' && kind.value === 'climate') kind.value = 'heater';
+      const fanHeater = domain === 'fan' && kind.value === 'heater';
+      fanLevels.hidden = !fanHeater || Boolean(level.value);
+      const usingSimple = timerSource.value === 'simple';
+      serverFields.hidden = usingSimple;
+      simpleFields.hidden = !usingSimple;
+      const prefix = kind.value === 'climate' && domain === 'climate' ? 'input_boolean.' : fanHeater ? 'switch.' : '';
+      const linked = attributesFor(simple.value)?.switch_entity_id ?? (simple.value === timed.simple_timer_entity ? timed.simple_timer_target : undefined);
+      const compatible = prefix && typeof linked === 'string' && linked.startsWith(prefix) && linked !== entity.value;
+      const name = compatible ? this.#hass.states?.[linked]?.attributes?.friendly_name || linked : '';
+      target.replaceChildren(option('', words.none), ...(compatible ? [option(linked, name)] : []));
+      targetField.hidden = !compatible;
+      if (compatible) target.value = linked;
+    };
+    entity.addEventListener('change', () => {
+      if (entity.value.split('.')[0] === 'climate' && entity.value !== current.entity) kind.value = 'climate';
+      sync();
+    });
+    for (const control of [kind, level, timerSource, simple]) control.addEventListener('change', sync);
+    sync();
+
     children.push(
       field(words.entity, entity), field(words.kind, kind), field(words.displayName, title),
-      field(words.level, level),
-      field(words.start, start), field(words.stop, stop), field(words.timer, timer),
-      field(words.durationField, durationField),
+      field(words.level, level), fanLevels,
+      field(words.timerSource, timerSource), serverFields, simpleFields,
+      field(words.dailyUsage, usage), field(words.presets, presets),
       node('div', { className: 'grid' }, [field(words.min, min), field(words.max, max), field(words.step, step)]),
       error,
       node('div', { className: 'actions' }, [
         button(words.save, () => {
+          const usingSimple = timerSource.value === 'simple';
+          const linked = attributesFor(simple.value)?.switch_entity_id;
+          if (usingSimple && !simple.value || usingSimple && linked && linked !== (target.value || entity.value)) {
+            error.textContent = words.timerLinkError;
+            error.hidden = false;
+            simple.focus();
+            return;
+          }
+          const presetValues = presets.value.trim() ? presets.value.trim().split(/[,;\s]+/).map(Number)
+            : Array.isArray(timed.presets) ? [] : undefined;
           const profile = normalizeProfile({
             entity: entity.value, kind: kind.value, name: title.value, level_entity: level.value,
+            level_steps: levelSteps.valueAsNumber, level_read_entity: levelRead.value,
             timed: {
-              start_script: start.value, stop_script: stop.value, timer_entity: timer.value,
+              ...(usingSimple
+                ? { simple_timer_entity: simple.value, simple_timer_target: target.value }
+                : { start_script: start.value, stop_script: stop.value, timer_entity: timer.value }),
+              daily_usage_entity: usage.value, presets: presetValues,
               duration_field: durationField.value, min_minutes: min.valueAsNumber,
               max_minutes: max.valueAsNumber, step_minutes: step.valueAsNumber,
             },
           });
-          if (!profile) { error.hidden = false; entity.focus(); return; }
+          if (!profile) {
+            error.textContent = words.invalid;
+            error.hidden = false;
+            entity.focus();
+            return;
+          }
+          if (presetValues?.length && profile.timed?.presets?.length !== new Set(presetValues).size) {
+            error.textContent = words.presetError;
+            error.hidden = false;
+            presets.focus();
+            return;
+          }
           this.#profileEditing = undefined;
           this.#commit({ profiles: [...profiles.filter(item => item.entity !== current.entity && item.entity !== profile.entity), profile] });
           this.render();

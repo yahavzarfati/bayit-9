@@ -79,6 +79,61 @@ test("water heater exposes supported native power, operation and temperature", (
   assert.deepEqual(planDeviceAction(c, states, "set_operation_mode", "eco").data, { operation_mode: "eco" });
 });
 
+test("a linked climate timer has a compact timer model and uses exactly the verified Simple Timer target", () => {
+  const c = config("climate.fixture", { timed: { simple_timer_entity: "sensor.runtime", simple_timer_target: "input_boolean.fixture_timer",
+    min_minutes: 15, max_minutes: 120, step_minutes: 15, presets: [30, 60, 90, 120] } });
+  const states = {
+    [c.entity]: entity("off", { supported_features: 425, hvac_modes: ["off", "cool"], swing_modes: ["off", "vertical"],
+      fan_modes: ["auto", "low"], min_temp: 15, max_temp: 30, target_temp_step: 1 }),
+    "sensor.runtime": entity("600", { switch_entity_id: "input_boolean.fixture_timer", timer_state: "idle", device_active: false }),
+  };
+  const m = getDeviceModel(c, states);
+  assert.equal(m.timer.usedSeconds, 600);
+  assert.deepEqual(m.actions.start_timed.presets, [30, 60, 90, 120]);
+  assert.ok(m.actions.turn_on && m.actions.set_temperature);
+  assert.deepEqual(planDeviceAction(c, states, "set_swing_mode", "vertical").data, { swing_mode: "vertical" });
+  const start = planDeviceAction(c, states, "start_timed", 60);
+  assert.equal(start.domain + "." + start.service, "simple_timer.start_timer");
+  assert.deepEqual(start.data, { entity_id: "sensor.runtime", duration: 60, unit: "min", reverse_mode: false });
+  assert.deepEqual(start.expected.all[1].anyState.includes("off"), false);
+
+  const updated = { ...states, "sensor.runtime": entity("615", {
+    ...states["sensor.runtime"].attributes, timer_state: "active", device_active: true,
+    timer_finishes_at: new Date(Date.now() + 300_000).toISOString(),
+  }) };
+  assert.equal(getDeviceModel(c, updated).actions.start_timed, undefined);
+  assert.equal(planDeviceAction(c, updated, "extend_timed", 30).service, "add_timer");
+  const stop = planDeviceAction(c, updated, "stop_timed");
+  assert.deepEqual(stop.data, { entity_id: "sensor.runtime", turn_off_entity: true });
+  assert.deepEqual(stop.expected.all[1], { entity: c.entity, state: "off" });
+
+  const mismatch = { ...states, "sensor.runtime": entity("600", { switch_entity_id: "input_boolean.another_device", timer_state: "idle" }) };
+  assert.equal(getDeviceModel(c, mismatch).timer.state, "unavailable");
+  assert.throws(() => planDeviceAction(c, mismatch, "start_timed", 60), code("action_unavailable"));
+});
+
+test("a timed heater fan uses native speed to set a numbered level and only reads the helper", () => {
+  const c = config("fan.heater_fixture", { kind: "heater", level_steps: 9, level_read_entity: "input_number.heater_level",
+    timed: { simple_timer_entity: "sensor.heater_usage", simple_timer_target: "switch.heater_relay" } });
+  const states = {
+    [c.entity]: entity("on", { supported_features: 49, percentage: 33 }),
+    "sensor.heater_usage": entity("300", { switch_entity_id: "switch.heater_relay", timer_state: "active", device_active: true,
+      timer_finishes_at: new Date(Date.now() + 300_000).toISOString() }),
+    "input_number.heater_level": entity("3"),
+  };
+  const level = planDeviceAction(c, states, "set_heating_level", 8);
+  assert.equal(level.domain + "." + level.service, "fan.set_percentage");
+  assert.deepEqual(level.target, { entity_id: c.entity });
+  assert.deepEqual(level.data, { percentage: 89 });
+  assert.deepEqual(level.expected, { entity: "input_number.heater_level", numericState: 8 });
+  assert.equal(getDeviceModel(c, states).level, 3);
+  assert.throws(() => planDeviceAction(c, states, "set_heating_level", 0), code("invalid_value"));
+  const idle = { ...states, "sensor.heater_usage": entity("300", { switch_entity_id: "switch.heater_relay", timer_state: "idle" }) };
+  assert.equal(getDeviceModel(c, idle).actions.set_heating_level, undefined);
+  assert.equal(getDeviceModel(c, idle).actions.turn_on, undefined);
+  assert.ok(getDeviceModel(c, idle).actions.turn_off);
+});
+
 test("lock unlock requires explicit confirmation and an optional PIN stays in its one request", () => {
   const c = config("lock.entry");
   const states = { [c.entity]: entity("locked", { supported_features: 1, code_format: "^\\d{4}$" }) };

@@ -45,6 +45,7 @@ test('installs as a native panel dashboard from a Hebrew Home Assistant', () => 
   assert.equal(view.type, 'panel');
   assert.equal(view.path, 'home');
   assert.equal(view.cards[0].type, 'custom:bayit-dashboard');
+  assert.equal(view.cards[0].page, true);
   assert.equal(view.cards[0].locale, 'he');
   assert.equal(view.cards[0].rooms.at(-1).name, 'ללא חדר');
 });
@@ -314,4 +315,147 @@ test('exposes curated household context independently of room filters without re
   });
   assert.equal(card.overview, undefined);
   assert.equal(generateDashboard({}, { states: {} }).views[0].cards[0].context, undefined);
+});
+
+test('keeps configured room section order, roles and empty headings without changing area or shortcut order', () => {
+  const hass = home();
+  hass.states['climate.demo_visible'] = { state: 'cool', attributes: {} };
+  hass.entities['climate.demo_visible'] = { area_id: 'porch' };
+  const config = {
+    area_ids: ['lounge'], show_unassigned: false,
+    room_overrides: {
+      lounge: {
+        entities: ['light.demo_lamp', 'switch.demo_boiler', 'climate.demo_visible'],
+        entity_icons: { 'switch.demo_boiler': 'mdi:radiator' },
+        sections: [
+          { id: 'section-2', kind: 'climate', title: '', entities: ['climate.demo_visible'] },
+          { kind: 'lights', title: '  Lighting  ', entities: ['light.demo_lamp', 'light.demo_lamp', 'fan.demo_fan'] },
+          { id: 'bogus', kind: 'browser-script', entities: ['switch.demo_boiler'] },
+          { kind: 'heating', entities: ['switch.demo_boiler', 'climate.demo_air'] },
+          { kind: 'garage', entities: [] },
+        ],
+      },
+    },
+    room_shortcuts: { lounge: ['switch.demo_boiler', 'light.demo_lamp'] },
+  };
+  const previous = structuredClone({ config, hass });
+  const room = discoverRooms(config, hass, 'en')[0];
+  assert.deepEqual(room.entities.map(item => item.entity),
+    ['light.demo_lamp', 'switch.demo_boiler', 'climate.demo_visible']);
+  assert.deepEqual(room.sections.map(({ id, kind, title, entities }) => [id, kind, title, entities.map(item => item.entity)]), [
+    ['section-2', 'climate', '', ['climate.demo_visible']],
+    ['section-2-2', 'lights', 'Lighting', ['light.demo_lamp']],
+    ['section-4', 'heating', undefined, ['switch.demo_boiler']],
+    ['section-5', 'garage', undefined, []],
+  ]);
+  assert.equal(room.sections[2].entities[0].icon, 'mdi:radiator');
+  assert.deepEqual(room.shortcuts, ['switch.demo_boiler', 'light.demo_lamp']);
+  assert.deepEqual({ config, hass }, previous);
+});
+
+test('derives room membership from sections when flat membership is omitted', () => {
+  const hass = home();
+  const custom = CUSTOM_ROOM_PREFIX + 'controlled';
+  const config = {
+    area_ids: [custom, 'lounge'], show_unassigned: false,
+    room_overrides: {
+      [custom]: {
+        name: 'Controls',
+        sections: [
+          { kind: 'lights', entities: ['light.demo_lamp', 'climate.demo_air'] },
+          { kind: 'sensors', entities: ['sensor.demo_rssi'] },
+          { kind: 'sensors', title: 'Another sensor group', entities: ['sensor.test_template_without_registry'] },
+        ],
+      },
+    },
+  };
+  const rooms = discoverRooms(config, hass, 'en');
+  assert.deepEqual(rooms.map(item => item.id), [custom]);
+  assert.deepEqual(rooms[0].entities.map(item => item.entity),
+    ['light.demo_lamp', 'sensor.demo_rssi', 'sensor.test_template_without_registry']);
+  assert.deepEqual(rooms[0].sections.map(section => section.kind), ['lights', 'sensors', 'sensors']);
+  assert.equal(discoverRooms({}, hass, 'en')[0].sections, undefined);
+});
+
+test('emits ordered toolbar entries, protects visibility, and limits navigation to local rooted paths', () => {
+  const hass = home();
+  for (const [entity, area_id] of [['automation.visible', 'studio'], ['automation.excluded', 'lounge'],
+    ['automation.unassigned', undefined], ['automation.hidden', 'studio']]) {
+    hass.states[entity] = { state: 'on', attributes: {} };
+    hass.entities[entity] = { area_id, ...(entity.endsWith('.hidden') && { hidden_by: 'user' }) };
+  }
+  const config = {
+    area_ids: ['studio'], show_unassigned: false,
+    hidden_entities: ['light.demo_lamp'],
+    toolbar: [
+      { kind: 'automations', label: '  Simulated actions  ', icon: ' mdi:home-automation ',
+        entities: ['automation.visible', 'automation.visible', 'automation.hidden', 'script.demo_start', 'light.demo_lamp'] },
+      { kind: 'link', path: '/config/automation/dashboard#main', icon: '<svg>', execute: 'unsafe-test-field' },
+      { kind: 'link', path: '//elsewhere.invalid' },
+      { kind: 'link', path: 'https://elsewhere.invalid' },
+      { kind: 'link', path: '/config/%2e%2e' },
+      { kind: 'link', path: '/config/../energy' },
+      { kind: 'security', path: 'https://elsewhere.invalid', entities: [] },
+      { kind: 'settings' },
+    ],
+  };
+  const card = generateDashboard(config, hass).views[0].cards[0];
+  assert.deepEqual(card.context.automations, [{ entity: 'automation.visible' }]);
+  assert.deepEqual(card.toolbar, [
+    { id: 'toolbar-1', kind: 'automations', label: 'Simulated actions', icon: 'mdi:home-automation',
+      entities: [{ entity: 'automation.visible' }, { entity: 'script.demo_start' }] },
+    { id: 'toolbar-2', kind: 'link', path: '/config/automation/dashboard#main' },
+    { id: 'toolbar-7', kind: 'security', entities: [] },
+    { id: 'toolbar-8', kind: 'settings' },
+  ]);
+  assert.deepEqual(generateDashboard({ toolbar: [] }, hass).views[0].cards[0].toolbar, []);
+  assert.equal(generateDashboard({}, hass).views[0].cards[0].toolbar, undefined);
+});
+
+test('supports explicit native climate timer profiles and never generates two start adapters', () => {
+  const timer = {
+    simple_timer_entity: 'sensor.test_timer', simple_timer_target: 'input_boolean.test_timer_link',
+    daily_usage_entity: 'sensor.test_usage',
+    timer_entity: 'timer.demo_boiler', min_minutes: 10, max_minutes: 45, step_minutes: 5,
+    presets: [45, 10, 10, 12, 50, '15'],
+  };
+  const climate = { entity: 'climate.test', kind: 'climate', timed: timer };
+  assert.deepEqual(normalizeProfile(climate), {
+    entity: 'climate.test', kind: 'climate',
+    timed: { simple_timer_entity: 'sensor.test_timer', simple_timer_target: 'input_boolean.test_timer_link',
+      daily_usage_entity: 'sensor.test_usage',
+      presets: [45, 10], duration_field: 'duration', min_minutes: 10, max_minutes: 45, step_minutes: 5 },
+  });
+  const native = normalizeProfile({ ...climate, timed: { ...timer, start_script: 'script.demo_start' } });
+  assert.equal(native.timed.start_script, 'script.demo_start');
+  assert.equal(native.timed.timer_entity, 'timer.demo_boiler');
+  assert.equal(native.timed.simple_timer_entity, undefined);
+  assert.equal(native.timed.simple_timer_target, undefined);
+  assert.equal(normalizeProfile({ ...climate, timed: { ...timer, simple_timer_target: 'switch.demo_boiler' } })
+    .timed.simple_timer_target, undefined);
+  assert.equal(normalizeProfile({ entity: 'switch.demo_boiler', kind: 'boiler', timed: timer })
+    .timed.simple_timer_target, undefined);
+  assert.deepEqual(normalizeProfile({ ...climate, timed: { ...timer, presets: [] } }).timed.presets, []);
+  assert.equal(normalizeProfile({ ...climate, entity: 'switch.demo_boiler' }), null);
+  assert.equal(normalizeProfile({ ...climate, timed: { simple_timer_entity: 'timer.wrong' } }).timed, undefined);
+});
+
+
+test('allows explicit linked-switch and fan-level adapters only for a named heater fan', () => {
+  const profile = {
+    entity: 'fan.demo_heater', kind: 'heater', level_steps: 9, level_read_entity: 'input_number.demo_level',
+    timed: { simple_timer_entity: 'sensor.demo_timer', simple_timer_target: 'switch.demo_power' },
+  };
+  const heater = normalizeProfile(profile);
+  assert.equal(heater.level_steps, 9);
+  assert.equal(heater.level_read_entity, 'input_number.demo_level');
+  assert.equal(heater.timed.simple_timer_target, 'switch.demo_power');
+  assert.equal(normalizeProfile({ ...profile, level_steps: 13 }).level_steps, undefined);
+  const withNumber = normalizeProfile({ ...profile, level_entity: 'number.demo_favorite' });
+  assert.equal(withNumber.level_entity, 'number.demo_favorite');
+  assert.equal(withNumber.level_steps, undefined);
+  assert.equal(withNumber.level_read_entity, undefined);
+  const withSwitch = normalizeProfile({ ...profile, entity: 'switch.demo_power' });
+  assert.equal(withSwitch.level_steps, undefined);
+  assert.equal(withSwitch.timed.simple_timer_target, undefined);
 });

@@ -41,7 +41,16 @@ const hass = {
       return Promise.resolve();
     }
     if (request.domain === 'light') {
-      states['light.demo_lamp'] = { ...states['light.demo_lamp'], state: 'on' };
+      const id = request.target.entity_id;
+      states[id] = { ...states[id], state: request.service === 'turn_off' ? 'off' : 'on' };
+      card.hass = { ...hass, states: { ...states } };
+    }
+    if (request.domain === 'simple_timer' && request.service === 'start_timer') {
+      const id = request.service_data.entity_id;
+      const attrs = states[id].attributes;
+      states[id] = { ...states[id], attributes: { ...attrs, timer_state: 'active', device_active: true,
+        timer_finishes_at: new Date(Date.now() + request.service_data.duration * 60000).toISOString() } };
+      states['climate.demo_air'] = { ...states['climate.demo_air'], state: 'cool' };
       card.hass = { ...hass, states: { ...states } };
     }
     return Promise.resolve({});
@@ -55,12 +64,29 @@ if (query.has('room-grid')) {
     hass.entities[entity] = { area_id: 'studio' };
   }
 }
+if (query.has('device-panel')) {
+  states['climate.demo_air'] = { state: 'off', attributes: {
+    friendly_name: 'Studio air conditioner', supported_features: 425, hvac_modes: ['off','cool','heat'],
+    fan_modes: ['low','auto'], swing_modes: ['off','vertical'], temperature: 23, current_temperature: 25,
+    min_temp: 15, max_temp: 30, target_temp_step: 1, fan_mode: 'auto', swing_mode: 'off',
+  } };
+  states['sensor.demo_air_usage'] = { state: '600', attributes: {
+    switch_entity_id: 'input_boolean.demo_air_timer', timer_state: 'idle', device_active: false,
+  } };
+  hass.entities['climate.demo_air'] = { area_id: 'studio' };
+}
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
 const selected = query.has('configuration') ? stored().strategy : query.has('curated') ? {
   room_shortcuts: { studio: ['switch.demo_heater', 'light.demo_lamp'] },
   overview_entities: ['switch.demo_heater'],
 } : query.has('room-grid') ? {
   room_overrides: { studio: { entities: ['light.demo_lamp', 'light.demo_wall', 'light.demo_pendant'] } },
+} : query.has('device-panel') ? {
+  room_shortcuts: { studio: ['light.demo_lamp', 'climate.demo_air'] },
+  profiles: [{ entity: 'climate.demo_air', kind: 'climate', timed: {
+    simple_timer_entity: 'sensor.demo_air_usage', simple_timer_target: 'input_boolean.demo_air_timer',
+    min_minutes: 15, max_minutes: 120, step_minutes: 15, presets: [30,60,90,120],
+  } }],
 } : {};
 const config = Strategy.generate(selected, query.has('empty') ? { ...hass, states: {} } : hass);
 const cardConfig = config.views[0].cards[0];
@@ -182,7 +208,7 @@ try {
       await roomGridPage.goto(base + '?room-grid&locale=he');
       await roomGridPage.getByRole('button', { name: 'Studio', exact: true }).click();
       const lightGroup = roomGridPage.getByRole('dialog').locator('[data-group="room_lights"]');
-      const compactLights = lightGroup.locator('[data-compact="true"]');
+      const compactLights = lightGroup.locator('[data-compact="tile"]');
       await compactLights.nth(1).waitFor();
       const [firstTile, secondTile] = await compactLights.evaluateAll(tiles => tiles.map(tile => {
         const rect = tile.getBoundingClientRect();
@@ -190,10 +216,34 @@ try {
       }));
       assert.equal(firstTile[0], secondTile[0], 'Simple lights share one row');
       assert.notEqual(firstTile[1], secondTile[1]);
-      const dimmable = lightGroup.locator('[data-entity="light.demo_pendant"]');
-      assert.ok(await dimmable.evaluate(tile => tile.getBoundingClientRect().width) > firstTile[2] * 1.9);
-      assert.ok(await dimmable.getByRole('slider').isVisible());
+      const dimmable = lightGroup.locator('[data-entity="light.demo_pendant"] .device-tile');
+      assert.equal(await lightGroup.getByRole('slider').count(), 0);
+      await dimmable.press('Shift+Enter');
+      const pendant = roomGridPage.getByRole('dialog', { name: 'Pendant lamp', exact: true });
+      await pendant.getByRole('slider').waitFor();
+      assert.equal(await pendant.locator('.device').count(), 1);
+      assert.equal(await roomGridPage.evaluate(() => window.bayitTest.calls.length), 0);
       await roomGridPage.close();
+
+      const detailPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      await detailPage.goto(base + '?device-panel');
+      const quickAir = detailPage.locator('.quick-button[data-entity="climate.demo_air"]');
+      await quickAir.click({ delay: 600 });
+      const air = detailPage.getByRole('dialog', { name: 'Studio air conditioner', exact: true });
+      await air.getByRole('button', { name: 'Increase target temperature' }).waitFor();
+      assert.equal(await air.getByRole('combobox', { name: 'Swing' }).inputValue(), 'off');
+      assert.equal(await air.getByText('Used today 10:00', { exact: true }).count(), 1);
+      assert.equal(await detailPage.evaluate(() => window.bayitTest.calls.length), 0);
+      await air.getByRole('button', { name: 'Start timer · 60 Minutes', exact: true }).click();
+      await air.getByRole('button', { name: 'Extend timer', exact: true }).waitFor();
+      assert.deepEqual(await detailPage.evaluate(() => window.bayitTest.calls[0]), {
+        type: 'call_service', domain: 'simple_timer', service: 'start_timer',
+        service_data: {entity_id: 'sensor.demo_air_usage', duration: 60, unit: 'min', reverse_mode: false},
+      });
+      await detailPage.keyboard.press('Escape');
+      await air.waitFor({ state: 'hidden' });
+      assert.equal(await quickAir.evaluate(control => control.getRootNode().activeElement === control), true);
+      await detailPage.close();
 
       const setupPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
       await setupPage.goto(base + '/fixture-home/home?configuration');

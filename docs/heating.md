@@ -1,5 +1,13 @@
 # Bayit 9 timed heating
 
+## Already using Simple Timer
+
+An existing Simple Timer instance can supply the countdown, preset durations and daily usage for its device. Set `timed.simple_timer_entity` to the integration's runtime sensor for that device. Bayit 9 checks the sensor's linked device before offering start, extend or stop. For a climate device controlled by an existing automation through an `input_boolean`, set `timed.simple_timer_target` to that specific helper. The configured automation must turn the same climate entity on and off as the helper changes. For a heater controlled by a template fan, the optional timer target can be the exact switch used by both the fan and the timer.
+
+Set `timed.min_minutes`, `timed.max_minutes`, and `timed.step_minutes` to match the limits for the installation. `timed.presets` lists the durations shown on the panel. `timed.daily_usage_entity` can read a separate duration sensor that reports seconds, minutes or hours. A profile uses either Simple Timer or the native timer and scripts below.
+
+## Using native Home Assistant timers
+
 The optional blueprints control a single dedicated heater switch using Home Assistant's built-in Timer. The dashboard calls the scripts and reads the timer state. The cutoff automation runs on Home Assistant while the dashboard is closed.
 
 ## Set up one heater
@@ -23,6 +31,8 @@ Home Assistant can send the off command only while it is running and the switch 
 ## Optional heating level
 
 If the integration exposes a separate `number` entity for the heater's power level, select it as **Heating level entity** in the profile. Bayit 9 uses the minimum, maximum, and step of the entity, then checks its reported value after a change. Select a number that only adjusts the level. A timed profile exposes this adjustment while its dedicated timer is active.
+
+A heater implemented as a fan can use `level_steps` for a fixed number of steps from 2 to 12. Bayit 9 sends the equivalent native fan percentage. If provided, `level_read_entity` reads the reported step from the heater’s `input_number` helper.
 
 ## Optional weekly schedule
 

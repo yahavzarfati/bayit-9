@@ -6,7 +6,7 @@ const HVAC_MODES = ["off", "heat", "cool", "heat_cool", "auto", "dry", "fan_only
 
 const COVER = { open: 1, close: 2, position: 4, stop: 8 };
 const FAN = { speed: 1, preset: 8, off: 16, on: 32 };
-const CLIMATE = { temperature: 1, range: 2, fan: 8, preset: 16, off: 128, on: 256 };
+const CLIMATE = { temperature: 1, range: 2, fan: 8, preset: 16, swing: 32, off: 128, on: 256 };
 const WATER_HEATER = { temperature: 1, operation: 2, power: 8 };
 
 const SERVICES = {
@@ -16,6 +16,7 @@ const SERVICES = {
   set_position: "set_cover_position",
   set_brightness: "turn_on",
   set_temperature_range: "set_temperature",
+  run_script: "turn_on",
 };
 
 const PARAMETER = {
@@ -24,6 +25,7 @@ const PARAMETER = {
   set_percentage: "percentage",
   set_hvac_mode: "hvac_mode",
   set_fan_mode: "fan_mode",
+  set_swing_mode: "swing_mode",
   set_preset_mode: "preset_mode",
   set_operation_mode: "operation_mode",
   set_temperature: "temperature",
@@ -48,24 +50,31 @@ function isAvailable(record) {
     !["unavailable", "unknown"].includes(record.state);
 }
 
-function timedProfile(profile, domain) {
+function timedProfile(profile, domain, kind) {
   if (profile === undefined) return null;
   if (!profile || typeof profile !== "object" || Array.isArray(profile) || !HEATING_DOMAINS.includes(domain)) {
     throw new DeviceControlError("invalid_config", "A timed profile requires a heating-capable entity.");
   }
-  const { start_script, stop_script, timer_entity, duration_field = "duration",
-    min_minutes = 1, max_minutes = 60, step_minutes = 1 } = profile;
+  const { start_script, stop_script, timer_entity, simple_timer_entity, simple_timer_target, duration_field = "duration",
+    min_minutes = 1, max_minutes = 60, step_minutes = 1, presets, daily_usage_entity } = profile;
   if (
     (start_script !== undefined && !isEntity(start_script, "script")) ||
     (stop_script !== undefined && !isEntity(stop_script, "script")) ||
     (timer_entity !== undefined && !isEntity(timer_entity, "timer")) ||
+    (simple_timer_entity !== undefined && (!isEntity(simple_timer_entity, "sensor") || start_script || stop_script || timer_entity)) ||
+    (simple_timer_target !== undefined && (!simple_timer_entity || !(
+      domain === "climate" && isEntity(simple_timer_target, "input_boolean") ||
+      domain === "fan" && kind === "heater" && isEntity(simple_timer_target, "switch")
+    ))) ||
+    (daily_usage_entity !== undefined && !isEntity(daily_usage_entity, "sensor")) ||
     typeof duration_field !== "string" || !VARIABLE.test(duration_field) ||
     ![min_minutes, max_minutes, step_minutes].every(Number.isSafeInteger) ||
     min_minutes < 1 || max_minutes < min_minutes || step_minutes < 1
   ) {
     throw new DeviceControlError("invalid_config", "The timed profile includes an invalid entity or duration setting.");
   }
-  return { start_script, stop_script, timer_entity, duration_field, min_minutes, max_minutes, step_minutes };
+  return { start_script, stop_script, timer_entity, simple_timer_entity, simple_timer_target, duration_field,
+    min_minutes, max_minutes, step_minutes, presets, daily_usage_entity };
 }
 
 function normalizedConfig(config) {
@@ -81,11 +90,18 @@ function normalizedConfig(config) {
       (!["heater", "boiler"].includes(kind) || !isEntity(config.level_entity, "number"))) {
     throw new DeviceControlError("invalid_config", "Heating level requires a number entity in a heating profile.");
   }
+  if (config.level_steps !== undefined && (kind !== "heater" || domain !== "fan" || config.level_entity ||
+      !Number.isSafeInteger(config.level_steps) || config.level_steps < 2 || config.level_steps > 12)) {
+    throw new DeviceControlError("invalid_config", "Fan heating levels require an integer step count from 2 to 12.");
+  }
+  if (config.level_read_entity !== undefined && (!config.level_steps || !isEntity(config.level_read_entity, "input_number"))) {
+    throw new DeviceControlError("invalid_config", "Fan heating level feedback requires a numeric helper.");
+  }
   if (config.confirmation_ms !== undefined &&
       (!Number.isSafeInteger(config.confirmation_ms) || config.confirmation_ms < 0)) {
     throw new DeviceControlError("invalid_config", "The confirmation time must be a nonnegative number of milliseconds.");
   }
-  return { ...config, kind, domain, timed: timedProfile(config.timed, domain) };
+  return { ...config, kind, domain, timed: timedProfile(config.timed, domain, kind) };
 }
 
 function durationMs(value) {
@@ -116,6 +132,24 @@ function readTimer(entity, states, nowMs) {
   return { entity, state, deadlineMs, remainingMs };
 }
 
+function readSimpleTimer(entity, device, states, nowMs) {
+  if (!entity) return null;
+  const record = states?.[entity];
+  const attrs = record?.attributes;
+  if (!isAvailable(record) || attrs?.switch_entity_id !== device || !["active", "idle"].includes(attrs.timer_state)) {
+    return { entity, state: "unavailable", deadlineMs: null, remainingMs: null };
+  }
+  const deadline = attrs.timer_state === "active" ? timerDeadline(attrs.timer_finishes_at) : NaN;
+  const deadlineMs = Number.isFinite(deadline) ? deadline : null;
+  const seconds = record.state.trim() ? Number(record.state) : NaN;
+  return {
+    entity, state: attrs.timer_state, deadlineMs,
+    remainingMs: attrs.timer_state === "idle" ? 0 : deadlineMs === null ? null : Math.max(0, deadlineMs - nowMs),
+    usedSeconds: Number.isFinite(seconds) && seconds >= 0 ? seconds : null,
+    reverse: attrs.reverse_mode === true && attrs.timer_state === "active",
+  };
+}
+
 function supportedActions(config, states, record, timer, nowMs) {
   const actions = {};
   const add = (id, fields) => { actions[id] = { id, requiresConfirmation: false, ...fields }; };
@@ -142,7 +176,11 @@ function supportedActions(config, states, record, timer, nowMs) {
 
   switch (config.domain) {
     case "switch":
+    case "automation":
       power();
+      break;
+    case "script":
+      add("run_script", { requiresConfirmation: true });
       break;
     case "light":
       power();
@@ -171,6 +209,7 @@ function supportedActions(config, states, record, timer, nowMs) {
       if (supports(CLIMATE.temperature)) temperature("set_temperature");
       if (supports(CLIMATE.range)) temperature("set_temperature_range");
       if (supports(CLIMATE.fan)) options("set_fan_mode", attributes.fan_modes);
+      if (supports(CLIMATE.swing)) options("set_swing_mode", attributes.swing_modes);
       if (supports(CLIMATE.preset)) options("set_preset_mode", attributes.preset_modes);
       break;
     case "water_heater":
@@ -186,8 +225,10 @@ function supportedActions(config, states, record, timer, nowMs) {
     }
   }
 
-  if (timing?.start_script) {
-    // The mapped native script owns automated cutoff for every start in this UI.
+  const timedStart = timing?.start_script || timing?.simple_timer_entity;
+  const timedHeat = timedStart && (config.kind === "heater" || config.kind === "boiler");
+  if (timedHeat || timing?.start_script) {
+    // Mapped heat starts go through a server-side timer that owns automatic cutoff.
     if (!actions.turn_off) {
       if (actions.set_hvac_mode?.options.includes("off")) {
         add("turn_off", { service: "set_hvac_mode", fixedData: { hvac_mode: "off" } });
@@ -198,21 +239,31 @@ function supportedActions(config, states, record, timer, nowMs) {
       }
     }
     for (const action of ["turn_on", "set_hvac_mode", "set_operation_mode", "set_percentage",
-      "set_temperature", "set_temperature_range", "set_fan_mode", "set_preset_mode"]) {
+      "set_temperature", "set_temperature_range", "set_fan_mode", "set_swing_mode", "set_preset_mode"]) {
       delete actions[action];
     }
-    if (isAvailable(states?.[timing.start_script])) {
-      add("start_timed", { min: timing.min_minutes, max: timing.max_minutes, step: timing.step_minutes });
-    }
   }
-  if (config.level_entity && (!timing?.start_script ||
-      (timer?.state === "active" && timer.deadlineMs > nowMs))) {
+  const duration = () => ({ min: timing.min_minutes, max: timing.max_minutes, step: timing.step_minutes,
+    ...(timing.presets !== undefined && { presets: timing.presets }) });
+  if (timing?.start_script && isAvailable(states?.[timing.start_script])) add("start_timed", duration());
+  if (timing?.simple_timer_entity && timer?.state === "idle") add("start_timed", duration());
+  if (timing?.simple_timer_entity && timer?.state === "active") {
+    if (timer.deadlineMs > nowMs) add("extend_timed", duration());
+    add("stop_timed");
+    if (timedHeat) delete actions.turn_off;
+  }
+  const canSetLevel = !timedStart || (timer?.state === "active" && timer.deadlineMs > nowMs);
+  if (config.level_entity && canSetLevel) {
     const level = states?.[config.level_entity];
     const { min, max, step } = level?.attributes ?? {};
     if (isAvailable(level) && level.state.trim() && Number.isFinite(Number(level.state)) &&
         [min, max, step].every(Number.isFinite) && max >= min && step > 0) {
       add("set_heating_level", { min, max, step });
     }
+  }
+  if (config.level_steps && canSetLevel && supports(FAN.speed) && record.state === "on") {
+    add("set_heating_level", { min: 1, max: config.level_steps, step: 1 });
+    delete actions.set_percentage;
   }
   if (timing?.stop_script && isAvailable(states?.[timing.stop_script])) {
     add("stop_timed");
@@ -224,8 +275,19 @@ function supportedActions(config, states, record, timer, nowMs) {
 function deviceModel(config, states, nowMs) {
   const record = states?.[config.entity];
   const attributes = record?.attributes ?? {};
-  const timer = readTimer(config.timed?.timer_entity, states, nowMs);
-  const level = states?.[config.level_entity];
+  const timer = config.timed?.simple_timer_entity
+    ? readSimpleTimer(config.timed.simple_timer_entity, config.timed.simple_timer_target ?? config.entity, states, nowMs)
+    : readTimer(config.timed?.timer_entity, states, nowMs);
+  const usage = states?.[config.timed?.daily_usage_entity];
+  if (timer && isAvailable(usage) && usage.state.trim()) {
+    const multiplier = { s: 1, min: 60, h: 3600 }[usage.attributes?.unit_of_measurement];
+    const seconds = Number(usage.state) * multiplier;
+    if (Number.isFinite(seconds) && seconds >= 0) timer.usedSeconds = seconds;
+  }
+  const level = states?.[config.level_entity ?? config.level_read_entity];
+  const explicitLevel = isAvailable(level) && level.state.trim() ? Number(level.state) : NaN;
+  const percentageLevel = config.level_steps && Number.isFinite(attributes.percentage)
+    ? Math.round(attributes.percentage * config.level_steps / 100) : null;
   return {
     entity: config.entity,
     domain: config.domain,
@@ -236,7 +298,8 @@ function deviceModel(config, states, nowMs) {
     available: isAvailable(record),
     attributes,
     actions: supportedActions(config, states, record, timer, nowMs),
-    level: isAvailable(level) && level.state.trim() ? Number(level.state) : null,
+    level: Number.isFinite(explicitLevel) ? explicitLevel : percentageLevel,
+    ...(config.level_steps && { levelRange: { min: 1, max: config.level_steps, step: 1 } }),
     timer,
   };
 }
@@ -259,7 +322,7 @@ function expectedState(config, action, value, states) {
   const state = target => ({ entity: config.entity, state: target });
   switch (action) {
     case "turn_on":
-      return ["light", "switch", "fan"].includes(config.domain) ? state("on") : null;
+      return ["light", "switch", "fan", "automation"].includes(config.domain) ? state("on") : null;
     case "turn_off":
       return state("off");
     case "open":
@@ -285,6 +348,7 @@ function expectedState(config, action, value, states) {
     case "set_operation_mode":
       return state(value);
     case "set_fan_mode":
+    case "set_swing_mode":
     case "set_preset_mode":
     case "set_temperature":
       return attribute(PARAMETER[action], value, 1e-6);
@@ -332,10 +396,48 @@ export function planDeviceAction(config, states, actionId, value, { confirmed = 
   }
 
   if (actionId === "set_heating_level") {
+    if (config.level_steps) {
+      const percentage = Math.round(value * 100 / config.level_steps);
+      const expected = config.level_read_entity
+        ? { entity: config.level_read_entity, numericState: value }
+        : { entity: config.entity, attributes: { percentage }, tolerance: 1 };
+      return { kind: "service", domain: "fan", service: "set_percentage",
+        target: { entity_id: config.entity }, data: { percentage }, expected };
+    }
     return {
       kind: "service", domain: "number", service: "set_value",
       target: { entity_id: config.level_entity }, data: { value },
       expected: { entity: config.level_entity, numericState: value },
+    };
+  }
+  if (config.timed?.simple_timer_entity && ["start_timed", "extend_timed", "stop_timed"].includes(actionId)) {
+    const entity = config.timed.simple_timer_entity;
+    const cancel = actionId === "stop_timed";
+    const linkedEntity = config.timed.simple_timer_target ?? config.entity;
+    const timerState = { entity, attributes: { switch_entity_id: linkedEntity, timer_state: cancel ? "idle" : "active" } };
+    let expected = timerState;
+    if (cancel) {
+      if (config.domain === "water_heater") timerState.attributes.device_active = false;
+      else expected = { all: [timerState, { entity: config.entity, state: "off" }] };
+    } else {
+      timerState.deadlineAttribute = "timer_finishes_at";
+      timerState.requireNewDeadline = true;
+      timerState.formerDeadline = timerDeadline(states?.[entity]?.attributes?.timer_finishes_at);
+      if (actionId === "start_timed") {
+        timerState.attributes.device_active = true;
+        const powerCondition = config.domain === "climate" ? {
+          entity: config.entity, anyState: HVAC_MODES.filter(mode => mode !== "off"),
+        } : config.domain === "fan" || config.domain === "switch" ? { entity: config.entity, state: "on" } : null;
+        if (powerCondition) expected = { all: [timerState, powerCondition] };
+      }
+    }
+    return {
+      kind: "service", domain: "simple_timer",
+      service: cancel ? "cancel_timer" : actionId === "extend_timed" ? "add_timer" : "start_timer",
+      target: null,
+      data: cancel ? { entity_id: entity, turn_off_entity: true }
+        : { entity_id: entity, duration: value, unit: "min", ...(actionId === "start_timed" && { reverse_mode: false }) },
+      expected,
     };
   }
   const expected = expectedState(config, actionId, value, states);
@@ -374,7 +476,7 @@ function observed(expected, states) {
   if (expected.numericState !== undefined &&
       (!record.state.trim() || !(Math.abs(Number(record.state) - expected.numericState) <= 1e-7))) return false;
   if (expected.requireNewDeadline) {
-    const deadline = timerDeadline(record.attributes?.finishes_at);
+    const deadline = timerDeadline(record.attributes?.[expected.deadlineAttribute ?? "finishes_at"]);
     if (!Number.isFinite(deadline) || deadline === expected.formerDeadline) return false;
   }
   return Object.entries(expected.attributes ?? {}).every(([key, target]) => {

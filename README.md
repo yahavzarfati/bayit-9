@@ -24,9 +24,11 @@ Use **Room shortcuts** to choose up to six controls for a room’s home-screen c
 ## Controls and preferences
 
 - Lights, switches, covers, fans, climate and locks use the entities and permissions you already have in Home Assistant.
+- Tap a shortcut to act and hold it to open the device’s own controls. With a keyboard, use **Shift+Enter** on a shortcut to open those controls.
+- Room panels group lights, covers and climate controls. A light tile acts immediately, and holding it opens adjustable controls such as brightness when the device supports them.
 - The optional home overview brings selected locks, people, calendars and sensors together on the toolbar.
 - Other entities can open their native Home Assistant controls from the room.
-- A timed heating profile uses a timer and script that you select from your own installation.
+- Timed climate and heating controls can read the countdown and daily use from an existing Simple Timer integration or use mapped Home Assistant timers and scripts for heating.
 - In-dashboard appearance choices live in the browser. Set shared defaults in the dashboard editor.
 
 Home Assistant manages room assignment and access to devices. Bayit 9 runs in the frontend and uses the same connection as other dashboards.

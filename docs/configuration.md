@@ -7,7 +7,7 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 | `locale` | `auto`, `en` or `he`. The default uses the Home Assistant language. |
 | `title` | Override the screen title. |
 | `area_ids` | Area or dashboard-only room IDs to show in the listed order. An empty list displays all discovered rooms. |
-| `room_overrides` | Room IDs mapped to objects with optional `name`, `icon`, `entities` and `entity_icons`. Use an ID starting with `bayit_room_` to add a dashboard-only room. |
+| `room_overrides` | Room IDs mapped to objects with optional `name`, `icon`, `entities`, `entity_icons` and `sections`. Use an ID starting with `bayit_room_` to add a dashboard-only room. |
 | `discovery_mode` | `all` includes device controls and readable entities. `controls` discovers only directly controllable domains. You can still add a readable entity to a room manually. |
 | `show_unassigned` | Show unassigned devices in their own room. Default `true`. |
 | `hidden_entities` | Entity IDs to exclude from the dashboard. |
@@ -18,9 +18,12 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 | `shape` | `soft`, `circle` or `square`. |
 | `layout` | `classic` or `header`. |
 | `preference_key` | Optional browser preference key for households using multiple Bayit 9 dashboards. |
-| `profiles` | Boiler and heater controls mapped to local entities. See [heating profiles](heating.md). |
+| `toolbar` | Optional ordered entries with `kind`, `label`, `icon` and `entities`. Kinds include `automations`, `security`, `presence`, `weather`, `energy`, `overview`, `activity`, `settings` and `link`. Link entries use a local Home Assistant `path`. |
+| `profiles` | Climate, boiler and heater controls mapped to local entities. See [heating and timer profiles](heating.md). |
 
 Entity-level room assignment takes precedence over device-level assignment. Home Assistant's disabled and hidden entities remain excluded. Diagnostic and configuration entities are omitted from automatic discovery. A room override with `entities` uses exactly the listed visible entities, in order. An empty list keeps the room with no devices. Omit `entities` to use automatic discovery. `entity_icons` is a mapping from entity ID to icon for that room. Assigning a device explicitly moves it out of automatically discovered rooms on this dashboard. You can include it in multiple rooms by listing it explicitly in each one. These choices leave Home Assistant area assignments as they are.
+
+Each room section has a `kind`, optional `id` and `title`, and an ordered list of `entities`. Available kinds are `lights`, `covers`, `climate`, `heating`, `sensors`, `devices`, `garage`, `weather`, `security`, `media`, `vacuum` and `laundry`. Use an empty title to hide the heading. Devices without an assigned section follow the default grouping.
 
     strategy:
       type: custom:bayit-9
@@ -41,6 +44,11 @@ Entity-level room assignment takes precedence over device-level assignment. Home
           entities:
             - light.demo_reading
             - sensor.demo_temperature
+          sections:
+            - kind: lights
+              title: Reading lights
+              entities:
+                - light.demo_reading
       show_unassigned: false
       hidden_entities:
         - switch.demo_spare
