@@ -65,7 +65,7 @@ export const styles = `
     --surface: rgba(30,35,39,.86);
   }
   .shell[data-shape=circle] { --control-radius: 999px; }
-  .shell[data-shape=square] { --control-radius: 9px; }
+  .shell[data-shape=square] { --control-radius: 9px; --chrome-radius: var(--control-radius); }
   .toolbar {
     position: sticky;
     z-index: 2;
@@ -120,6 +120,7 @@ export const styles = `
     height: 44px;
     background: var(--toolbar-control);
     border-color: var(--line);
+    border-radius: var(--chrome-radius,999px);
   }
   .chrome-button ha-icon { width: 22px; height: 22px; --mdc-icon-size: 22px; }
   .chrome-button:where(:hover,[aria-expanded=true]), .round-action:hover, .quick-button:hover {
@@ -302,6 +303,12 @@ export const styles = `
     color: var(--secondary);
   }
   .modal {
+    --ink: #fff;
+    --secondary: #f8f8f8;
+    --line: rgba(255,255,255,.30);
+    --soft-line: rgba(255,255,255,.18);
+    --surface: rgba(24,24,24,.93);
+    --control: rgba(255,255,255,.075);
     position: fixed;
     inset: max(54px,9dvh) 0 auto;
     width: min(550px,calc(100% - 24px));
@@ -312,34 +319,42 @@ export const styles = `
     color: var(--ink);
     border: 1px solid var(--line);
     border-radius: 23px;
-    background: var(--surface);
-    -webkit-backdrop-filter: blur(19px) saturate(121%);
-    backdrop-filter: blur(19px) saturate(121%);
-    box-shadow: 0 14px 45px rgba(8,15,25,.25),inset 0 1px 0 rgba(255,255,255,.18);
+    background: linear-gradient(145deg,rgba(255,255,255,.06),transparent 58%),rgba(14,14,14,.50);
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
+    box-shadow: 0 12px 38px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.15);
     overflow: hidden;
     overscroll-behavior: contain;
     transform-origin: var(--motion-x,50%) var(--motion-y,34%);
   }
   .modal[open] { display: grid; grid-template-rows: auto minmax(0,1fr); animation: appear .2s ease-out; }
-  .modal::backdrop { background: rgba(8,16,24,.13); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+  .modal::backdrop { background: rgba(0,0,0,.24); }
   .modal-header {
     display: flex;
+    direction: ltr;
     align-items: center;
     justify-content: space-between;
     padding: 12px 13px 10px;
-    border-bottom: 1px solid var(--soft-line);
     gap: 8px;
   }
   .modal-header h2 {
     display: flex;
     align-items: center;
+    flex: 1;
+    min-height: 44px;
+    padding: 6px 11px;
     gap: 8px;
+    border: 1px solid var(--soft-line);
+    border-radius: 999px;
     font-size: 18px;
     line-height: 1.18;
     margin: 0;
     min-width: 0;
     overflow-wrap: anywhere;
   }
+  .shell[dir=rtl] .modal-header h2 { direction: rtl; flex-direction: row-reverse; text-align: left; }
+  .modal-header > .round-action { flex: 0 0 44px; border-radius: 999px; }
+  .confirm .modal-header h2 { min-height: 0; padding: 0; border: 0; }
   .modal-body { min-height: 0; padding: 12px; overflow-y: auto; overscroll-behavior: contain; }
   @keyframes appear { from { opacity: 0; transform: translateY(7px) scale(.975); } }
   .devices, .settings { display: grid; gap: 10px; }
@@ -349,6 +364,17 @@ export const styles = `
     color: var(--secondary);
     font-size: 12px;
     font-weight: 740;
+  }
+  .devices[data-room=true] .device-group {
+    padding: 7px;
+    border: 1px solid var(--soft-line);
+    border-radius: 18px;
+  }
+  .devices[data-room=true] .device-group-title {
+    grid-column: 1 / -1;
+    margin: 3px 0 0;
+    font-size: 13px;
+    text-align: center;
   }
   .setup-page, .setup-editor { display: block; min-width: 0; }
   .setup-status { margin: 0; color: var(--secondary); }
@@ -384,7 +410,7 @@ export const styles = `
     min-width: 0;
     padding: 9px;
     border: 1px solid var(--soft-line);
-    background: rgba(242,252,255,.045);
+    background: rgba(255,255,255,.035);
     border-radius: 16px;
   }
   .device-head { display: grid; grid-template-columns: 32px minmax(0,1fr) 44px; align-items: center; gap: 8px; }
@@ -422,14 +448,14 @@ export const styles = `
     min-height: 44px;
     border: 1px solid var(--line);
     border-radius: 10px;
-    background: rgba(8,22,33,.22);
+    background: rgba(0,0,0,.15);
     color: var(--ink);
     padding: 4px 8px;
     font-size: 16px;
     accent-color: var(--warm);
   }
   .field-row input[type=range] { direction: ltr; border: 0; background: transparent; padding: 0; }
-  .field-row select option { background: #233340; color: #fff; }
+  .field-row select option { background: #292929; color: #fff; }
   .duration-label { color: var(--secondary); background: none; font-size: 12px; }
   .prefs-group { border: 1px solid var(--soft-line); border-radius: 14px; min-width: 0; margin: 0; padding: 8px; }
   .prefs-group legend { padding-inline: 5px; font-size: 13px; font-weight: 760; }
@@ -454,15 +480,47 @@ export const styles = `
     font-size: 13px;
   }
   .notice:empty { display: none; }
+  @media (min-width: 300px) {
+    .devices[data-room=true] .device-group[data-group=room_lights]:has(> .device[data-compact=true] + .device[data-compact=true]) {
+      grid-template-columns: repeat(2,minmax(0,1fr));
+    }
+    .devices[data-room=true] .device-group[data-group=room_lights] > .device:not([data-compact=true]) {
+      grid-column: 1 / -1;
+    }
+  }
+  @media (300px <= width <= 500px) {
+    .devices[data-room=true] .device-group[data-group=room_lights]:has(> .device[data-compact=true] + .device[data-compact=true]) {
+      .device[data-compact=true] {
+        padding: 6px;
+      }
+      .device[data-compact=true] .device-head {
+        grid-template-columns: minmax(0,1fr) 44px;
+        gap: 1px 4px;
+        min-height: 44px;
+      }
+      .device[data-compact=true] .device-icon { grid-area: 1 / 1; justify-self: start; margin-inline-start: 4px; }
+      .device[data-compact=true] .device-head > .round-action { grid-area: 1 / 2; }
+      .device[data-compact=true] .device-detail { grid-area: 2 / 1 / auto / -1; text-align: center; }
+      .device[data-compact=true] .basic-actions {
+        grid-template-columns: repeat(auto-fit,minmax(44px,1fr));
+        gap: 4px;
+      }
+      .device[data-compact=true] .basic-actions .control-button:has(ha-icon) {
+        gap: 0;
+        padding: 4px;
+        font-size: 0;
+      }
+    }
+  }
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .modal { background: #253846; }
+    .modal { background: #252525; }
   }
   @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-    .modal, .notice { -webkit-backdrop-filter: none; backdrop-filter: none; background: #223746; }
+    .modal, .notice { -webkit-backdrop-filter: none; backdrop-filter: none; background: #252525; }
     .toolbar, .room { -webkit-backdrop-filter: none; backdrop-filter: none; }
     .toolbar { background: #233743; }
     .room { background: #283b47; }
-    .shell { --line: rgba(255,255,255,.58); --soft-line: rgba(255,255,255,.31); }
+    .shell, .modal { --line: rgba(255,255,255,.58); --soft-line: rgba(255,255,255,.31); }
   }
   @media (prefers-reduced-motion: reduce) {
     .modal[open], .quick-button[aria-busy=true]::after { animation: none; }

@@ -47,10 +47,20 @@ const hass = {
     return Promise.resolve({});
   },
 };
+if (query.has('room-grid')) {
+  for (const [entity, name, colorMode] of [
+    ['light.demo_wall', 'Wall lamp', 'onoff'], ['light.demo_pendant', 'Pendant lamp', 'brightness'],
+  ]) {
+    states[entity] = { state: 'on', attributes: { friendly_name: name, supported_color_modes: [colorMode] } };
+    hass.entities[entity] = { area_id: 'studio' };
+  }
+}
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
 const selected = query.has('configuration') ? stored().strategy : query.has('curated') ? {
   room_shortcuts: { studio: ['switch.demo_heater', 'light.demo_lamp'] },
   overview_entities: ['switch.demo_heater'],
+} : query.has('room-grid') ? {
+  room_overrides: { studio: { entities: ['light.demo_lamp', 'light.demo_wall', 'light.demo_pendant'] } },
 } : {};
 const config = Strategy.generate(selected, query.has('empty') ? { ...hass, states: {} } : hass);
 const cardConfig = config.views[0].cards[0];
@@ -167,6 +177,23 @@ try {
       await curatedPage.keyboard.press('Escape');
       await overview.waitFor({ state: 'hidden' });
       await curatedPage.close();
+
+      const roomGridPage = await browser.newPage({ viewport: { width: 320, height: 690 } });
+      await roomGridPage.goto(base + '?room-grid&locale=he');
+      await roomGridPage.getByRole('button', { name: 'Studio', exact: true }).click();
+      const lightGroup = roomGridPage.getByRole('dialog').locator('[data-group="room_lights"]');
+      const compactLights = lightGroup.locator('[data-compact="true"]');
+      await compactLights.nth(1).waitFor();
+      const [firstTile, secondTile] = await compactLights.evaluateAll(tiles => tiles.map(tile => {
+        const rect = tile.getBoundingClientRect();
+        return [rect.top, rect.left, rect.width];
+      }));
+      assert.equal(firstTile[0], secondTile[0], 'Simple lights share one row');
+      assert.notEqual(firstTile[1], secondTile[1]);
+      const dimmable = lightGroup.locator('[data-entity="light.demo_pendant"]');
+      assert.ok(await dimmable.evaluate(tile => tile.getBoundingClientRect().width) > firstTile[2] * 1.9);
+      assert.ok(await dimmable.getByRole('slider').isVisible());
+      await roomGridPage.close();
 
       const setupPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
       await setupPage.goto(base + '/fixture-home/home?configuration');

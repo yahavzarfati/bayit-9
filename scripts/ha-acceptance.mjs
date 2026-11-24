@@ -111,6 +111,21 @@ try {
   await room.screenshot({ path: resolve(artifacts, 'room.png'), animations: 'disabled' });
   await room.getByRole('button', { name: 'Close', exact: true }).click();
 
+  await settings.click();
+  await appearance.getByRole('button', { name: 'Customize home', exact: true }).click();
+  const setup = card.getByRole('dialog', { name: 'Customize home', exact: true });
+  await setup.getByText('Rooms', { exact: true }).click();
+  await setup.getByText('New dashboard-only room', { exact: true }).click();
+  await setup.getByLabel('New room name', { exact: true }).fill('Reading nook');
+  await setup.getByRole('button', { name: 'Create room', exact: true }).click();
+  await setup.getByRole('button', { name: 'Save dashboard', exact: true }).click();
+  await poll('the room added by Bayit 9 to be stored in Home Assistant', async () => {
+    const saved = await api.command('lovelace/config', { url_path: dashboard.url_path, force: true });
+    return Object.values(saved?.strategy?.room_overrides ?? {}).some(room => room.name === 'Reading nook');
+  });
+  await card.getByRole('button', { name: 'Reading nook', exact: true }).waitFor();
+  console.log('Bayit 9 room customization was saved and survived the dashboard reload');
+
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.goto(target, { waitUntil: 'domcontentloaded' });
   await card.getByRole('heading', { name: 'Bayit 9', exact: true, level: 1 }).waitFor();

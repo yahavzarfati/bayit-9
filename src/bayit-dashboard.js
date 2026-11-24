@@ -10,7 +10,7 @@ const swatches = { aurora: '#63928a', lagoon: '#37728c', dunes: '#aa7356', graph
 const iconPattern = /^mdi:[a-z0-9-]+$/;
 const entityPattern = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 const controlIcons = {
-  turn_on: 'mdi:power', turn_off: 'mdi:power', open: 'mdi:arrow-up', close: 'mdi:arrow-down',
+  turn_on: 'mdi:power-on', turn_off: 'mdi:power-off', open: 'mdi:arrow-up', close: 'mdi:arrow-down',
   stop: 'mdi:stop', lock: 'mdi:lock-outline', unlock: 'mdi:lock-open-variant-outline',
   start_timed: 'mdi:timer-play-outline', stop_timed: 'mdi:timer-stop-outline',
 };
@@ -546,18 +546,22 @@ export class BayitDashboard extends HTMLElement {
   buildDevices(entities, grouped = false) {
     const content = this.nodes.content;
     content.className = 'devices';
+    if (grouped) content.dataset.room = 'true';
+    else delete content.dataset.room;
     content.replaceChildren();
     if (!entities.length) content.append(make('p', 'empty', this.t('empty_room')));
     const groups = new Map();
     for (const config of entities) {
       let parent = content;
+      let groupKey;
       if (grouped) {
         const domain = domainFor(config);
-        const groupKey = config.kind === 'heater' || config.kind === 'boiler'
+        groupKey = config.kind === 'heater' || config.kind === 'boiler'
           ? 'room_climate' : deviceGroups[domain] || 'room_devices';
         if (!groups.has(groupKey)) {
           const group = make('section', 'device-group');
-          group.append(make('p', 'device-group-title', this.t(groupKey)));
+          group.dataset.group = groupKey;
+          group.append(make('h3', 'device-group-title', this.t(groupKey)));
           content.append(group);
           groups.set(groupKey, group);
         }
@@ -569,7 +573,7 @@ export class BayitDashboard extends HTMLElement {
       const glyph = icon(config.icon || 'mdi:information-outline');
       glyph.className = 'device-icon';
       const details = make('div', 'device-detail');
-      const name = make('h3', 'device-name');
+      const name = make(grouped ? 'h4' : 'h3', 'device-name');
       const state = make('span', 'current');
       details.append(name, state);
       const more = button('round-action', this.t('more_info'), 'mdi:information-outline', true);
@@ -578,7 +582,7 @@ export class BayitDashboard extends HTMLElement {
       const group = make('div', 'action-list');
       item.append(head, group);
       parent.append(item);
-      this.deviceViews.set(config.entity, { config, item, glyph, name, state, more, group, fields: [] });
+      this.deviceViews.set(config.entity, { config, item, glyph, name, state, more, group, groupKey, fields: [] });
     }
     this.updateDevices();
   }
@@ -613,6 +617,9 @@ export class BayitDashboard extends HTMLElement {
     let countdown = false;
     for (const view of this.deviceViews.values()) {
       const model = this.model(view.config);
+      if (view.groupKey === 'room_lights') {
+        view.item.dataset.compact = String(!model.actions.set_brightness);
+      }
       setText(view.name, model.name);
       setIcon(view.glyph, model.icon);
       const timing = this.timerLabel(model.timer);
@@ -750,7 +757,9 @@ export class BayitDashboard extends HTMLElement {
         complex.push(this.buildField(view, action, id, model));
         continue;
       }
-      const control = button('control-button', this.actionLabel(id), controlIcons[id]);
+      const name = this.actionLabel(id);
+      const control = button('control-button', name, controlIcons[id]);
+      label(control, name);
       control.dataset.action = id;
       control.onclick = () => this.requestAction(view.config, id, undefined, control);
       basic.append(control);

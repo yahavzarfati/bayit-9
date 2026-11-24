@@ -4,9 +4,9 @@ A room-based Liquid Glass dashboard for Home Assistant, with a compact home scre
 
 [הוראות בעברית](docs/install.he.md) · [Heating profiles](docs/heating.md)
 
-![Bayit 9 dashboard in Home Assistant's demo installation](https://raw.githubusercontent.com/yahavzarfati/bayit-9/main/docs/screenshots/dashboard.png)
+![Example Bayit 9 dashboard](https://raw.githubusercontent.com/yahavzarfati/bayit-9/main/docs/screenshots/dashboard.png)
 
-[Room controls in the demo installation](docs/screenshots/room.png)
+[Room controls in the example home](docs/screenshots/room.png)
 
 ## Install Bayit 9
 
@@ -19,7 +19,7 @@ Reload Home Assistant after the download. In the Companion app, close and reopen
 
 Open the gear in Bayit 9, choose **Customize home**, then open **Rooms**. A Home Assistant administrator can pick and reorder rooms, rename them, and choose their devices. Create a dashboard-only room to group devices from different areas. Select **Save dashboard** to apply the layout on every device that opens it.
 
-Use **Shortcuts** to choose up to six controls for a room’s home-screen card. For YAML-managed dashboards, use the [strategy options](docs/configuration.md). Bayit 9 starts in the Home Assistant language and supports English and Hebrew.
+Use **Room shortcuts** to choose up to six controls for a room’s home-screen card. For YAML-managed dashboards, use the [strategy options](docs/configuration.md). Bayit 9 starts in the Home Assistant language and supports English and Hebrew.
 
 ## Controls and preferences
 
