@@ -13,7 +13,7 @@ const WORDS = {
     profiles: 'Boiler and heater controls', entity: 'Heating device', kind: 'Control profile',
     heater: 'Room heater', boiler: 'Water heater or boiler', displayName: 'Display name',
     start: 'Scheduled start script', stop: 'Stop script', timer: 'Timer', none: 'None',
-    durationField: 'Duration field', min: 'Shortest run in minutes', max: 'Longest run in minutes',
+    level: 'Heating level entity', durationField: 'Duration field', min: 'Shortest run in minutes', max: 'Longest run in minutes',
     step: 'Step in minutes', add: 'Add profile', save: 'Save profile', edit: 'Edit',
     remove: 'Remove', clear: 'Cancel', choose: 'Select a device',
     invalid: 'Select a heating device to save the profile.',
@@ -32,7 +32,7 @@ const WORDS = {
     profiles: 'שליטה בדוד ובתנורים', entity: 'מכשיר חימום', kind: 'סוג בקר',
     heater: 'תנור חימום', boiler: 'דוד או מחמם מים', displayName: 'שם לתצוגה',
     start: 'סקריפט הפעלה עם זמן', stop: 'סקריפט כיבוי', timer: 'טיימר', none: 'ללא',
-    durationField: 'שדה משך', min: 'זמן מינימלי בדקות', max: 'זמן מקסימלי בדקות',
+    level: 'ישות עוצמת חימום', durationField: 'שדה משך', min: 'זמן מינימלי בדקות', max: 'זמן מקסימלי בדקות',
     step: 'מרווח בחירה בדקות', add: 'הוספת בקר', save: 'שמירת בקר', edit: 'עריכה',
     remove: 'הסרה', clear: 'ביטול', choose: 'בחירת מכשיר',
     invalid: 'בחרו מכשיר חימום לפני השמירה.',
@@ -258,6 +258,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       if (value && !choices.some(([id]) => id === value)) choices.unshift([value, value]);
       return select([['', words.none], ...choices], value || '');
     };
+    const level = entityInput('number', current.level_entity);
     const start = entityInput('script', timed.start_script);
     const stop = entityInput('script', timed.stop_script);
     const timer = entityInput('timer', timed.timer_entity);
@@ -271,6 +272,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
 
     children.push(
       field(words.entity, entity), field(words.kind, kind), field(words.displayName, title),
+      field(words.level, level),
       field(words.start, start), field(words.stop, stop), field(words.timer, timer),
       field(words.durationField, durationField),
       node('div', { className: 'grid' }, [field(words.min, min), field(words.max, max), field(words.step, step)]),
@@ -278,7 +280,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       node('div', { className: 'actions' }, [
         button(words.save, () => {
           const profile = normalizeProfile({
-            entity: entity.value, kind: kind.value, name: title.value,
+            entity: entity.value, kind: kind.value, name: title.value, level_entity: level.value,
             timed: {
               start_script: start.value, stop_script: stop.value, timer_entity: timer.value,
               duration_field: durationField.value, min_minutes: min.valueAsNumber,

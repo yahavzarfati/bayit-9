@@ -20,6 +20,26 @@ The cutoff reacts to timer expiry, cancellation, pause, Home Assistant startup a
 
 Home Assistant can send the off command only while it is running and the switch is reachable. Keep the heater's hardware thermostat and cutoff in use. Home Assistant documents that its timer-finished trigger may be missed when expiry falls during downtime. The startup and reconnect checks handle this case after Home Assistant returns. [Home Assistant Timer](https://www.home-assistant.io/integrations/timer/)
 
+## Optional heating level
+
+If the integration exposes a separate `number` entity for the heater's power level, select it as **Heating level entity** in the profile. Bayit 9 uses the minimum, maximum, and step of the entity, then checks its reported value after a change. Select a number that only adjusts the level. A timed profile exposes this adjustment while its dedicated timer is active.
+
+## Optional weekly schedule
+
+Requires Home Assistant 2026.11.2 or newer.
+
+1. Create a **Schedule** in **Settings → Devices & services → Helpers**. Add weekly time blocks for the heater.
+2. Import the [weekly timed heating blueprint](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fyahavzarfati%2Fbayit-9%2Fmain%2Fblueprints%2Fautomation%2Fbayit_9%2Fweekly_timed_heating.yaml) and create an automation. Select the Schedule helper and the guarded Start script for this heater. Set the default run length in minutes.
+3. To override the default for one block, edit the block's **Additional data** and add a numeric `duration_minutes` value, such as `20`. You can leave Additional data empty to use the same run length each time. A value must be a whole number from 1 through 60. The heater's Start script also enforces its own maximum.
+
+Home Assistant starts a run at a new block boundary, including between adjacent blocks, when the switch and timer are ready. It uses up to the number of whole minutes still available in that block. For example, a 07:00–07:31 block gives a 30-minute run time enough room to begin. A block with less than one minute left is skipped. An already-running heater keeps its existing timer.
+
+Disabling the weekly automation or removing a block prevents future starts. A block ending or being edited does not cancel a running timer. Use the mapped Stop script to stop the current run immediately. The weekly automation does not replay missed starts when Home Assistant restarts, the Schedule entity reconnects, or a block is edited mid-window. The cutoff automation still reconciles an existing timed run after startup. [Home Assistant Schedule](https://www.home-assistant.io/integrations/schedule/)
+
 ## Developer tests
 
 Run `python -m pip install -r tests/requirements-heating.txt` followed by `python tests/test_heating_kit.py`. Tests execute the supplied templates and action sequences with synthetic states and service calls. They never connect to a home or a real heater.
+
+For native integration coverage, use a Python environment with `homeassistant==2026.11.2` and run `python tests/test_heating_core.py`. It boots a temporary Core configuration with a native Timer and two fake switches. It seeds a timer that expired during downtime so the test can verify cutoff at startup.
+
+Run `python tests/test_heating_schedule.py` in the same environment for weekly schedule coverage. It uses the native Schedule trigger, the guarded Start script and fake switches.

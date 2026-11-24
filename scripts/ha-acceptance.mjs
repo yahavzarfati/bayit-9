@@ -97,7 +97,7 @@ try {
   await card.screenshot({ path: resolve(artifacts, 'dashboard.png'), animations: 'disabled' });
   await roomButton.click();
   await room.waitFor();
-  await card.screenshot({ path: resolve(artifacts, 'room.png'), animations: 'disabled' });
+  await room.screenshot({ path: resolve(artifacts, 'room.png'), animations: 'disabled' });
 } catch (error) {
   await mkdir(artifacts, { recursive: true });
   if (page && !page.isClosed()) {

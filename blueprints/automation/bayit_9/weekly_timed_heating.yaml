@@ -1,0 +1,82 @@
+blueprint:
+  name: Bayit 9 - Weekly timed heating
+  description: Use the native Schedule helper to run the guarded Bayit 9 Start script once at a block boundary.
+  domain: automation
+  homeassistant:
+    min_version: 2026.11.2
+  input:
+    weekly_schedule:
+      name: Weekly Schedule helper
+      description: Select a native Schedule. The beginning of each block can start one timed run.
+      selector:
+        entity:
+          filter:
+            - domain: schedule
+    start_script:
+      name: Guarded start script
+      description: Select the Bayit 9 Start timed heating script for this heater.
+      selector:
+        entity:
+          filter:
+            - domain: script
+    fixed_minutes:
+      name: Default minutes per block
+      description: Match the start script's permitted range. A block can override this with numeric duration_minutes in Additional data.
+      default: 15
+      selector:
+        number:
+          min: 1
+          max: 60
+          step: 1
+          unit_of_measurement: min
+          mode: box
+
+mode: single
+max_exceeded: silent
+
+triggers:
+  - trigger: schedule.block_started
+    target:
+      entity_id: !input weekly_schedule
+
+actions:
+  - variables:
+      weekly: !input weekly_schedule
+      starter: !input start_script
+      default_minutes: !input fixed_minutes
+  # Keep the guards in the sequence so the editor's Run actions cannot bypass them.
+  - condition: template
+    value_template: >-
+      {{ weekly is string and weekly is match('^schedule[.][a-z0-9_]+$')
+         and starter is string and starter is match('^script[.][a-z0-9_]+$')
+         and starter not in ('script.turn_on', 'script.turn_off', 'script.toggle', 'script.reload')
+         and trigger is defined and trigger.platform == 'schedule.block_started'
+         and trigger.entity_id == weekly
+         and trigger.from_state is defined and trigger.from_state is not none
+         and trigger.from_state.state in ('off', 'on')
+         and trigger.to_state is defined and trigger.to_state is not none
+         and trigger.to_state.state == 'on' }}
+  - condition: state
+    entity_id: !input weekly_schedule
+    state: "on"
+  # An edit, reload, or late update should not create a new heating run.
+  - variables:
+      run_minutes: >-
+        {% set boundary = as_timestamp(trigger.from_state.attributes.get('next_event'), 0) %}
+        {% set block_end = as_timestamp(trigger.to_state.attributes.get('next_event'), 0) %}
+        {% set observed_at = as_timestamp(now()) %}
+        {% set requested = trigger.to_state.attributes.get('duration_minutes', default_minutes) %}
+        {% if 0 <= observed_at - boundary <= 10
+              and block_end > observed_at
+              and as_timestamp(state_attr(weekly, 'next_event'), 0) == block_end
+              and requested is number and requested is not boolean
+              and requested == (requested | int(0)) and 1 <= requested <= 60 %}
+          {{ [requested | int, ((block_end - observed_at) // 60) | int] | min }}
+        {% else %}
+          {{ 0 }}
+        {% endif %}
+  - condition: template
+    value_template: "{{ 1 <= run_minutes <= 60 }}"
+  - action: "{{ starter }}"
+    data:
+      duration: "{{ run_minutes }}"

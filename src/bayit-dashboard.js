@@ -29,7 +29,7 @@ const stateKeys = {
 };
 const actionsInOrder = ['turn_on', 'turn_off', 'open', 'stop', 'close', 'lock', 'unlock',
   'set_position', 'set_brightness', 'set_percentage', 'set_hvac_mode', 'set_temperature',
-  'set_temperature_range', 'set_fan_mode', 'set_preset_mode', 'set_operation_mode', 'start_timed', 'stop_timed'];
+  'set_temperature_range', 'set_fan_mode', 'set_preset_mode', 'set_operation_mode', 'set_heating_level', 'start_timed', 'stop_timed'];
 const statusNames = new Set(['on', 'off', 'open', 'closed', 'opening', 'closing', 'locked',
   'unlocked', 'locking', 'unlocking', 'jammed', 'cool', 'heat', 'heat_cool', 'dry', 'fan_only',
   'auto', 'idle', 'active', 'paused', 'playing', 'cleaning', 'docked', 'unavailable', 'unknown']);
@@ -114,6 +114,9 @@ export function normalizeDashboardConfig(config = {}) {
       if (text(item.name)) entry.name = text(item.name);
       if (iconPattern.test(text(item.icon))) entry.icon = item.icon;
       if (['heater', 'boiler'].includes(item.kind)) entry.kind = item.kind;
+      if (entityPattern.test(text(item.level_entity)) && item.level_entity.startsWith('number.')) {
+        entry.level_entity = item.level_entity;
+      }
       if (item.timed && typeof item.timed === 'object' && !Array.isArray(item.timed)) entry.timed = { ...item.timed };
       unique.set(entity, entry);
     }
@@ -683,6 +686,7 @@ export class BayitDashboard extends HTMLElement {
       second.value = String(attrs.target_temp_high ?? action.max ?? 25);
     } else if (id === 'set_hvac_mode') input.value = model.state;
     else if (id === 'start_timed') input.value = String(action.min ?? 15);
+    else if (id === 'set_heating_level') input.value = String(number(model.level) ?? action.min);
     else if (id === 'set_brightness') {
       const brightness = number(attrs.brightness);
       input.value = String(brightness === null ? action.min ?? 0 : Math.round(brightness / 255 * 100));

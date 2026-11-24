@@ -57,6 +57,8 @@ export function normalizeProfile(value) {
   }
   const profile = { entity: value.entity, kind: value.kind };
   if (typeof value.name === 'string' && value.name.trim()) profile.name = value.name.trim().slice(0, 80);
+  const level = idForDomain(value.level_entity, 'number');
+  if (level) profile.level_entity = level;
   const timed = value.timed;
   if (!timed || typeof timed !== 'object') return profile;
 
@@ -114,6 +116,7 @@ function presentEntity(entity, state, registry, profile) {
     ...(typeof name === 'string' && name && { name }),
     ...(typeof icon === 'string' && icon && { icon }),
     ...(profile && { kind: profile.kind }),
+    ...(profile?.level_entity && { level_entity: profile.level_entity }),
     ...(profile?.timed && { timed: profile.timed }),
   };
 }
@@ -128,7 +131,7 @@ export function discoverRooms(config, hass, locale) {
   const profiles = profilesOf(config.profiles);
   const adapterEntities = new Set([...profiles.values()].flatMap(profile => {
     const timed = profile.timed;
-    return timed ? [timed.start_script, timed.stop_script, timed.timer_entity].filter(Boolean) : [];
+    return [profile.level_entity, timed?.start_script, timed?.stop_script, timed?.timer_entity].filter(Boolean);
   }));
   const states = hass.states ?? {};
   const registry = hass.entities ?? null;

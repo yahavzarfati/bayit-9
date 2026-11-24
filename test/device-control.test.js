@@ -284,3 +284,37 @@ test("timed controls retain an absolute native off fallback even when a mapped s
     assert.equal(getDeviceModel(c, states).actions[service], undefined);
   }
 });
+
+test("mapped heating level obeys the reported range and requires an active timer for timed heat", async () => {
+  const c = config("switch.example_heater", {
+    kind: "heater", level_entity: "number.example_level",
+    timed: { start_script: "script.example_start", timer_entity: "timer.example_heat" },
+  });
+  const states = {
+    [c.entity]: entity("on"),
+    [c.level_entity]: entity("3", { min: 1, max: 9, step: 1 }),
+    "script.example_start": entity("off"),
+    "timer.example_heat": entity("idle"),
+  };
+  assert.equal(getDeviceModel(c, states).actions.set_heating_level, undefined);
+  states["timer.example_heat"] = entity("active", { finishes_at: new Date(Date.now() + 300_000).toISOString() });
+  assert.equal(getDeviceModel(c, states).level, 3);
+  assert.throws(() => planDeviceAction(c, states, "set_heating_level", 4.5), code("invalid_value"));
+  const actions = [];
+  const controller = createDeviceController({ getHass: () => ({
+    states,
+    callWS(message) {
+      actions.push(message);
+      states[c.level_entity] = entity("5.0", states[c.level_entity].attributes);
+    },
+  }) });
+  const reply = await controller.execute(c, "set_heating_level", 5);
+  assert.equal(reply.status, "confirmed");
+  assert.deepEqual(actions[0], {
+    type: "call_service", domain: "number", service: "set_value",
+    target: { entity_id: c.level_entity }, service_data: { value: 5 },
+  });
+  states[c.level_entity] = entity("unavailable");
+  assert.equal(getDeviceModel(c, states).actions.set_heating_level, undefined);
+  assert.throws(() => getDeviceModel({ ...c, level_entity: "switch.other" }, states), code("invalid_config"));
+});

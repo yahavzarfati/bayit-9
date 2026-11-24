@@ -77,6 +77,10 @@ function normalizedConfig(config) {
   if (kind !== domain && (!["heater", "boiler"].includes(kind) || !HEATING_DOMAINS.includes(domain))) {
     throw new DeviceControlError("invalid_config", "The entity does not support the requested device profile.");
   }
+  if (config.level_entity !== undefined &&
+      (!["heater", "boiler"].includes(kind) || !isEntity(config.level_entity, "number"))) {
+    throw new DeviceControlError("invalid_config", "Heating level requires a number entity in a heating profile.");
+  }
   if (config.confirmation_ms !== undefined &&
       (!Number.isSafeInteger(config.confirmation_ms) || config.confirmation_ms < 0)) {
     throw new DeviceControlError("invalid_config", "The confirmation time must be a nonnegative number of milliseconds.");
@@ -112,7 +116,7 @@ function readTimer(entity, states, nowMs) {
   return { entity, state, deadlineMs, remainingMs };
 }
 
-function supportedActions(config, states, record) {
+function supportedActions(config, states, record, timer, nowMs) {
   const actions = {};
   const add = (id, fields) => { actions[id] = { id, requiresConfirmation: false, ...fields }; };
   const power = () => { add("turn_on"); add("turn_off"); };
@@ -201,6 +205,15 @@ function supportedActions(config, states, record) {
       add("start_timed", { min: timing.min_minutes, max: timing.max_minutes, step: timing.step_minutes });
     }
   }
+  if (config.level_entity && (!timing?.start_script ||
+      (timer?.state === "active" && timer.deadlineMs > nowMs))) {
+    const level = states?.[config.level_entity];
+    const { min, max, step } = level?.attributes ?? {};
+    if (isAvailable(level) && level.state.trim() && Number.isFinite(Number(level.state)) &&
+        [min, max, step].every(Number.isFinite) && max >= min && step > 0) {
+      add("set_heating_level", { min, max, step });
+    }
+  }
   if (timing?.stop_script && isAvailable(states?.[timing.stop_script])) {
     add("stop_timed");
     delete actions.turn_off;
@@ -211,6 +224,8 @@ function supportedActions(config, states, record) {
 function deviceModel(config, states, nowMs) {
   const record = states?.[config.entity];
   const attributes = record?.attributes ?? {};
+  const timer = readTimer(config.timed?.timer_entity, states, nowMs);
+  const level = states?.[config.level_entity];
   return {
     entity: config.entity,
     domain: config.domain,
@@ -220,8 +235,9 @@ function deviceModel(config, states, nowMs) {
     state: record?.state ?? "missing",
     available: isAvailable(record),
     attributes,
-    actions: supportedActions(config, states, record),
-    timer: readTimer(config.timed?.timer_entity, states, nowMs),
+    actions: supportedActions(config, states, record, timer, nowMs),
+    level: isAvailable(level) && level.state.trim() ? Number(level.state) : null,
+    timer,
   };
 }
 
@@ -315,6 +331,13 @@ export function planDeviceAction(config, states, actionId, value, { confirmed = 
     throw new DeviceControlError("invalid_value", "The selected value is outside the published device options.");
   }
 
+  if (actionId === "set_heating_level") {
+    return {
+      kind: "service", domain: "number", service: "set_value",
+      target: { entity_id: config.level_entity }, data: { value },
+      expected: { entity: config.level_entity, numericState: value },
+    };
+  }
   const expected = expectedState(config, actionId, value, states);
   if (actionId === "start_timed" || actionId === "stop_timed") {
     const start = actionId === "start_timed";
@@ -348,6 +371,8 @@ function observed(expected, states) {
   if (!isAvailable(record)) return false;
   if (expected.state !== undefined && expected.state !== record.state) return false;
   if (expected.anyState && !expected.anyState.includes(record.state)) return false;
+  if (expected.numericState !== undefined &&
+      (!record.state.trim() || !(Math.abs(Number(record.state) - expected.numericState) <= 1e-7))) return false;
   if (expected.requireNewDeadline) {
     const deadline = timerDeadline(record.attributes?.finishes_at);
     if (!Number.isFinite(deadline) || deadline === expected.formerDeadline) return false;

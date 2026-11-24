@@ -42,6 +42,8 @@ jobs:
         run: |
           docker run --rm --network none --volume "${PWD}:/bayit:ro" \
             --entrypoint python ghcr.io/home-assistant/home-assistant:2026.11.2 /bayit/tests/test_heating_core.py
+          docker run --rm --network none --volume "${PWD}:/bayit:ro" \
+            --entrypoint python ghcr.io/home-assistant/home-assistant:2026.11.2 /bayit/tests/test_heating_schedule.py
       - name: Collect synthetic screenshots and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
