@@ -7,7 +7,7 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 | `locale` | `auto`, `en` or `he`. The default uses the Home Assistant language. |
 | `title` | Override the screen title. |
 | `area_ids` | Area or dashboard-only room IDs to show in the listed order. An empty list displays all discovered rooms. |
-| `room_overrides` | Room IDs mapped to objects with optional `name`, `icon`, `entities`, `entity_icons`, `sections`, `read_only_entities` and `activities`. Use an ID starting with `bayit_room_` to add a dashboard-only room. |
+| `room_overrides` | Room IDs mapped to objects with optional `name`, `icon`, `entities`, `entity_icons`, `sections`, `read_only_entities`, `activities` and `media_panel_links`. Use an ID starting with `bayit_room_` to add a dashboard-only room. |
 | `discovery_mode` | `all` includes device controls and readable entities. `controls` discovers only directly controllable domains. You can still add a readable entity to a room manually. |
 | `show_unassigned` | Show unassigned devices in their own room. Default `true`. |
 | `hidden_entities` | Entity IDs to exclude from the dashboard. |
@@ -30,6 +30,8 @@ Each room section has a `kind`, optional `id` and `title`, and an ordered list o
 In **Rooms**, open **Appliance activity badges** to map the room's oven, cooktop, dishwasher or washer. Each `activities` entry has a `kind` (`oven`, `hob`, `dishwasher` or `washer`) and an `operation_entity` sensor. Add `finish_entity` for an expected finish timestamp. The oven requires a finish sensor. The cooktop and washer require a `power_entity`; the cooktop uses the time the power state last changed. A washer can also read a `done_entity` and a percentage `progress_entity`. The badges read these sources directly without adding device controls.
 
 Use `read_only_entities` on a room to display a device's state and let users open Home Assistant's details from that room. Bayit omits the device's direct controls in that room and its shortcuts. This is a dashboard display setting. Home Assistant permissions still govern the underlying device and its native details.
+
+A cover shortcut shows the requested direction while Home Assistant is responding. If the cover supports Stop, press the shortcut again during movement to send Stop. The position shown in the dashboard comes from Home Assistant.
 
 Open a light's device controls to pick a color when it advertises RGB, HS or XY support. Choose the color and press **Apply**. Applying a color turns on the light if it was off. Use the power control to turn it off. White temperature and named effects follow the light's reported capabilities.
 
