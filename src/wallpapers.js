@@ -319,18 +319,25 @@ const labels = {
 
 export function createWallpaperGallery({ locale, controller, selected, onSelect, onUpload }) {
   const words = labels[locale] ?? labels.en;
-  const element = document.createElement('fieldset');
+  const element = document.createElement('details');
   element.className = 'wallpaper-gallery';
   element.dir = locale === 'he' ? 'rtl' : 'ltr';
-  const legend = document.createElement('legend');
+  const summary = document.createElement('summary');
+  const legend = document.createElement('span');
   legend.textContent = words.legend;
+  const current = document.createElement('span');
+  current.className = 'wallpaper-current';
+  summary.append(legend, current);
   const categories = document.createElement('div');
   categories.className = 'wallpaper-categories';
   const content = document.createElement('div');
   const status = document.createElement('p');
   status.className = 'wallpaper-message';
   status.setAttribute('role', 'status');
-  element.append(legend, categories, content, status);
+  const choices = document.createElement('div');
+  choices.className = 'wallpaper-choices';
+  choices.append(categories, content, status);
+  element.append(summary, choices);
   const categoryButtons = new Map();
   let category = selected === personalWallpaperId ? 'personal' : catalog[selected]?.group ?? 'nature';
   let request = 0;
@@ -345,6 +352,8 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
 
   function select(id) {
     selected = id;
+    const wallpaper = catalog[id];
+    current.textContent = id === personalWallpaperId ? words.personal : wallpaper?.[locale] ?? wallpaper?.en ?? '';
     for (const option of content.querySelectorAll('[data-wallpaper-choice]')) {
       option.setAttribute('aria-pressed', String(option.dataset.wallpaperChoice === id));
     }
@@ -429,7 +438,10 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
     categories.append(item);
     categoryButtons.set(group, item);
   }
-  render(category);
+  element.addEventListener('toggle', () => {
+    if (element.open && !content.firstElementChild) render(category);
+  });
+  select(selected);
   return { element, select };
 }
 
@@ -467,14 +479,38 @@ export const wallpaperStyles = `
   .wallpaper-gallery {
     margin: 0;
     min-inline-size: 0;
-    padding: 9px;
     border: 1px solid var(--soft-line);
     border-radius: 15px;
   }
-  .wallpaper-gallery legend { padding-inline: 5px; font-size: 13px; font-weight: 760; }
+  .wallpaper-gallery summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-block-size: 44px;
+    padding-inline: 11px;
+    cursor: pointer;
+    list-style: none;
+    font-size: 13px;
+    font-weight: 760;
+  }
+  .wallpaper-gallery summary::-webkit-details-marker { display: none; }
+  .wallpaper-gallery summary::after {
+    content: '';
+    inline-size: 6px;
+    block-size: 6px;
+    margin-inline-start: 3px;
+    margin-block-start: -4px;
+    border: solid currentColor;
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg);
+    flex: none;
+  }
+  .wallpaper-gallery[open] summary::after { transform: rotate(225deg); margin-block-start: 4px; }
+  .wallpaper-current { margin-inline-start: auto; color: var(--secondary); text-align: end; font-weight: 600; }
+  .wallpaper-choices { padding: 0 9px 9px; }
   .wallpaper-categories, .wallpaper-options { display: grid; gap: 7px; }
   .wallpaper-categories { grid-template-columns: repeat(auto-fit,minmax(min(105px,100%),1fr)); margin-block-end: 9px; }
-  .wallpaper-options { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .wallpaper-options { grid-template-columns: repeat(3,minmax(0,1fr)); }
   .wallpaper-category, .wallpaper-option, .wallpaper-upload {
     min-inline-size: 0;
     min-block-size: 44px;
@@ -501,7 +537,7 @@ export const wallpaperStyles = `
   .wallpaper-sample {
     display: block;
     width: 100%;
-    aspect-ratio: 16 / 9;
+    block-size: 54px;
     border: 1px solid rgba(255,255,255,.14);
     border-radius: 7px;
   }

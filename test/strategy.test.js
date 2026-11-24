@@ -4,6 +4,7 @@ import {
   CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, generateDashboard,
   normalizeProfile, selectableRoomEntities, suggestedDashboard,
 } from '../src/strategy-model.js';
+import { getDeviceModel } from '../src/device-control.mjs';
 
 function home() {
   return {
@@ -159,6 +160,24 @@ test('overview cannot surface hidden or excluded devices', () => {
     overview_entities: ['calendar.demo_schedule', 'light.demo_lamp', 'fan.demo_fan', 'calendar.demo_schedule'],
   }, home());
   assert.deepEqual(dashboard.views[0].cards[0].overview, ['calendar.demo_schedule']);
+});
+
+test('supports status-only room devices without changing the same device in another room', () => {
+  const entity = 'switch.demo_boiler';
+  const hass = home();
+  const rooms = discoverRooms({
+    area_ids: ['lounge', 'studio'],
+    room_overrides: {
+      lounge: { entities: [entity], read_only_entities: [entity, 'switch.not_in_room'] },
+      studio: { entities: [entity] },
+    },
+    room_shortcuts: { lounge: [entity] },
+  }, hass, 'en');
+  assert.deepEqual(rooms[0].entities.map(device => [device.entity, device.role]), [[entity, 'status']]);
+  assert.deepEqual(rooms[0].shortcuts, [entity]);
+  assert.deepEqual(rooms[1].entities.map(device => [device.entity, device.role]), [[entity, undefined]]);
+  assert.deepEqual(Object.keys(getDeviceModel(rooms[0].entities[0], hass.states).actions), ['more_info']);
+  assert.ok(getDeviceModel(rooms[1].entities[0], hass.states).actions.turn_on);
 });
 
 test('honors room names, icons and hand-picked device order across areas without moving HA entities', () => {

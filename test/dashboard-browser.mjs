@@ -267,6 +267,17 @@ try {
       await quickAir.click({ delay: 600 });
       const air = detailPage.getByRole('dialog', { name: 'Studio air conditioner', exact: true });
       await air.getByRole('button', { name: rightToLeft ? 'העלאת טמפרטורת היעד' : 'Increase target temperature' }).waitFor();
+      const airBody = await air.locator('.modal-body').evaluate(body => {
+        const styles = getComputedStyle(body);
+        const padding = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
+        return {
+          available: body.clientHeight,
+          scroll: body.scrollHeight,
+          content: body.querySelector('[data-role="content"]').offsetHeight + padding,
+        };
+      });
+      assert.equal(airBody.scroll, airBody.available, 'A short thermostat panel needs no scroll');
+      assert.ok(Math.abs(airBody.available - airBody.content) < 3, 'A short thermostat panel fits its contents');
       assert.equal(await air.getByRole('combobox', { name: rightToLeft ? 'נדנוד' : 'Swing' }).inputValue(), 'off');
       assert.equal(await air.getByText(rightToLeft ? 'שימוש היום 10:00' : 'Used today 10:00', { exact: true }).count(), 1);
       const presetPositions = await air.locator('.timer-preset').evaluateAll(presets =>
@@ -307,6 +318,15 @@ try {
       await panelsPage.keyboard.press('Escape');
       await panels.waitFor({state:'hidden'});
       await panelsPage.getByRole('button',{name:'Appearance',exact:true}).click();
+      const wallpaper = panelsPage.getByRole('dialog').locator('.wallpaper-gallery');
+      assert.equal(await wallpaper.locator('[data-wallpaper-choice]').count(), 0);
+      await wallpaper.locator('summary').click();
+      await wallpaper.getByRole('button', { name:'Materials', exact:true }).click();
+      await wallpaper.getByRole('button', { name:'Brushed bronze', exact:true }).click();
+      await wallpaper.locator('.wallpaper-current').getByText('Brushed bronze', { exact:true }).waitFor();
+      assert.equal(await panelsPage.locator('.shell').getAttribute('data-background'), 'bronze');
+      await wallpaper.locator('summary').click();
+      await wallpaper.getByRole('button', { name:'Materials', exact:true }).waitFor({ state:'hidden' });
       await panelsPage.getByRole('dialog').getByRole('button',{name:'Media',exact:true}).click();
       panels = panelsPage.getByRole('dialog',{name:'Media',exact:true});
       await panels.getByRole('button',{name:'Pause playback',exact:true}).waitFor();
@@ -339,10 +359,12 @@ try {
       await setup.getByRole('button', { name: 'Create room', exact: true }).click();
       await setup.getByLabel('Available devices', { exact: true }).selectOption('light.demo_lamp');
       await setup.getByRole('button', { name: 'Add device', exact: true }).click();
+      await setup.getByLabel('Show status only for selected room devices', { exact: true }).selectOption(['light.demo_lamp']);
       await setup.getByRole('button', { name: 'Save dashboard', exact: true }).click();
       await setupPage.getByRole('button', { name: 'Reading nook', exact: true }).waitFor();
       const persisted = await setupPage.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')));
-      assert.deepEqual(Object.values(persisted.strategy.room_overrides), [{ name: 'Reading nook', entities: ['light.demo_lamp'] }]);
+      assert.deepEqual(Object.values(persisted.strategy.room_overrides), [{ name: 'Reading nook',
+        entities: ['light.demo_lamp'], read_only_entities: ['light.demo_lamp'] }]);
       assert.equal(await setupPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain).length), 0);
       await setupPage.close();
 

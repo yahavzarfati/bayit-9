@@ -168,6 +168,7 @@ function dashboardAreas(config, hass) {
       icon: ROOM_ICON.test(icon) ? icon : area?.icon ?? 'mdi:home-outline',
       entityIds,
       sections,
+      readOnly: new Set(idList(override.read_only_entities)),
       entityIcons: entityIcons && typeof entityIcons === 'object' && !Array.isArray(entityIcons) ? entityIcons : null,
       custom: !area,
     });
@@ -299,6 +300,7 @@ export function discoverRooms(config, hass, locale) {
       }
     }
     const room = { id, name: area.name, icon: area.icon, entities };
+    for (const device of entities) if (area.readOnly?.has(device.entity)) device.role = 'status';
     if (area.sections !== undefined) {
       const byId = new Map(entities.map(entity => [entity.entity, entity]));
       room.sections = area.sections.map(section => ({

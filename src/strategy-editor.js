@@ -15,6 +15,7 @@ const WORDS = {
     moveUp: 'Move up', moveDown: 'Move down', hideRoom: 'Hide room',
     automaticDevices: 'Automatic', manualDevices: 'Choose devices and order',
     roomDevices: 'Devices in this room', deviceToAdd: 'Available devices', addDevice: 'Add device',
+    readOnlyRoom: 'Show status only for selected room devices',
     sections: 'Room sections', sectionMode: 'Section arrangement', automaticSections: 'Automatic grouping',
     manualSections: 'Arrange sections manually', automaticDevicesAndSections: 'Automatic devices and sections',
     editSection: 'Section to customize', addSection: 'Add section', removeSection: 'Delete section',
@@ -60,6 +61,7 @@ const WORDS = {
     moveUp: 'העברה למעלה', moveDown: 'העברה למטה', hideRoom: 'הסתרת חדר',
     automaticDevices: 'בחירה אוטומטית', manualDevices: 'בחירת מכשירים וסדר',
     roomDevices: 'מכשירים בחדר', deviceToAdd: 'מכשירים זמינים', addDevice: 'הוספת מכשיר',
+    readOnlyRoom: 'הצגת מצב בלבד למכשירים שנבחרו',
     sections: 'קבוצות בחדר', sectionMode: 'סידור הקבוצות', automaticSections: 'קיבוץ אוטומטי',
     manualSections: 'סידור ידני של הקבוצות', automaticDevicesAndSections: 'בחירה אוטומטית של מכשירים וקבוצות',
     editSection: 'קבוצה לעריכה', addSection: 'הוספת קבוצה', removeSection: 'מחיקת קבוצה',
@@ -483,11 +485,29 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const children = room.custom
       ? [node('h4', { className: 'room-choice-heading', textContent: words.roomDevices })]
       : [field(words.roomDevices, choice)];
+    const chosen = this.#roomMembership(room, override, sections, language);
+    if (chosen.length) {
+      const readOnly = new Set(configuredIds(override.read_only_entities));
+      const selected = node('select', { multiple: true, size: Math.min(5, Math.max(2, chosen.length)) });
+      for (const id of chosen) {
+        const item = option(id, this.#hass.states?.[id]?.attributes?.friendly_name ?? id);
+        item.selected = readOnly.has(id);
+        selected.append(item);
+      }
+      selected.dataset.roomFocus = 'room-read-only';
+      selected.addEventListener('change', () => {
+        const next = { ...override };
+        const entities = [...selected.selectedOptions].map(item => item.value);
+        if (entities.length) next.read_only_entities = entities;
+        else delete next.read_only_entities;
+        this.#setRoomOverride(room.id, next, 'room-read-only');
+      });
+      children.push(field(words.readOnlyRoom, selected));
+    }
     if (!manual) return children;
 
     const areaNames = new Map(areas.map(area => [area.id, area.name]));
     const available = new Map(selectableRoomEntities(this.#config, this.#hass).map(entry => [entry.entity, entry]));
-    const chosen = this.#roomMembership(room, override, sections, language);
     const records = chosen.map(id => {
       const device = available.get(id);
       const previousName = this.#hass.states?.[id]?.attributes?.friendly_name;
@@ -496,6 +516,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const change = (items, focusKey) => {
       const entities = items.map(item => item.id);
       const next = { ...override, entities };
+      if (Array.isArray(next.read_only_entities)) {
+        next.read_only_entities = next.read_only_entities.filter(id => entities.includes(id));
+        if (!next.read_only_entities.length) delete next.read_only_entities;
+      }
       if (sections && entities.length < chosen.length) {
         const kept = new Set(entities);
         const removed = new Set(chosen.filter(entity => !kept.has(entity)));

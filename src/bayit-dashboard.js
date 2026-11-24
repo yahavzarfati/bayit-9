@@ -226,7 +226,11 @@ const layout = `
     <p class="empty"></p>
     <div class="notice" data-role="page-notice" role="status" aria-atomic="true"></div>
     <dialog class="modal">
-      <header class="modal-header"><h2></h2>
+      <header class="modal-header">
+        <button type="button" class="round-action" data-role="back" hidden>
+          <ha-icon aria-hidden="true"></ha-icon>
+        </button>
+        <h2></h2>
         <button type="button" class="round-action" data-role="close" autofocus>
           <ha-icon icon="mdi:close" aria-hidden="true"></ha-icon>
         </button>
@@ -256,7 +260,8 @@ export class BayitDashboard extends HTMLElement {
     const role = name => get('[data-role="' + name + '"]');
     this.nodes = {
       shell: get('.shell'), toolbar: get('.toolbar'), toolbarActions: get('.toolbar-actions'),
-      roomScroll: get('.room-scroll'), rooms: get('.rooms'), empty: get('.empty'), title: get('h1'), close: role('close'),
+      roomScroll: get('.room-scroll'), rooms: get('.rooms'), empty: get('.empty'), title: get('h1'),
+      back: role('back'), close: role('close'),
       modal: get('dialog:not(.confirm)'), modalTitle: get('dialog:not(.confirm) h2'),
       modalBody: get('dialog:not(.confirm) .modal-body'), content: role('content'),
       confirm: get('.confirm'), confirmTitle: get('.confirm h2'), confirmText: get('.confirmation-text'),
@@ -272,6 +277,7 @@ export class BayitDashboard extends HTMLElement {
     n.confirm.setAttribute('aria-describedby', n.confirmText.id);
     this.popupMotion = createPopupMotion({ dialog: n.modal, clip: n.roomScroll, toolbar: n.toolbar });
     this.pageChrome = createPageChrome(this, { onChange: () => this.fitPage() });
+    n.back.onclick = () => this.backToBoilerRoom();
     n.close.onclick = () => this.popupMotion.dismiss();
     n.abort.onclick = () => n.confirm.close();
     n.accept.onclick = () => this.acceptAction();
@@ -323,6 +329,8 @@ export class BayitDashboard extends HTMLElement {
     n.shell.style.setProperty('--bayit-room-rows', String(Math.max(1, Math.ceil(next.rooms.length / 2))));
     setText(n.title, next.title);
     setText(n.empty, this.t('empty'));
+    label(n.back, this.t('back_to_room'));
+    setIcon(n.back.firstElementChild, next.locale === 'he' ? 'mdi:chevron-right' : 'mdi:chevron-left');
     label(n.close, this.t('close'));
     n.rooms.setAttribute('aria-label', this.t('rooms'));
     setText(n.confirmTitle, this.t('confirm_title'));
@@ -653,7 +661,12 @@ export class BayitDashboard extends HTMLElement {
     const selected = type === 'device' ? room?.entities.find(item => item.entity === entity) : null;
     if (type === 'device' && !selected) return;
     const model = selected ? this.model(selected) : null;
-    this.panel = { type, room };
+    const boilerControls = selected?.kind === 'boiler' && selected.role !== 'status';
+    const fromBoilerRoom = boilerControls && this.panel?.type === 'room' &&
+      this.panel.room === room && n.modal.open && n.content.contains(source);
+    if (fromBoilerRoom) this.roomScroll.set(room.id, n.modalBody.scrollTop);
+    this.panel = { type, room, boilerReturn: fromBoilerRoom ? selected.entity : undefined };
+    n.back.hidden = !fromBoilerRoom;
     this.setup = null;
     this.toolbarPanel?.dispose();
     this.boilerView?.dispose();
@@ -666,7 +679,7 @@ export class BayitDashboard extends HTMLElement {
     if (type === 'room') this.buildDevices(room.entities, room);
     if (selected) {
       this.buildDevices([selected]);
-      if (selected.kind === 'boiler') this.buildBoilerView(selected);
+      if (boilerControls) this.buildBoilerView(selected);
     }
     if (type === 'overview') {
       if (toolbar?.sections) this.openToolbarPanel('overview', toolbar);
@@ -682,10 +695,20 @@ export class BayitDashboard extends HTMLElement {
     this.update();
   }
 
+  backToBoilerRoom() {
+    const { room, boilerReturn } = this.panel ?? {};
+    const source = room && this.roomViews.get(room.id)?.heading;
+    if (!boilerReturn || !source || !this.nodes.modal.open) return;
+    this.openPanel('room', source, room);
+    const view = Array.from(this.deviceViews).find(item => item.config.entity === boilerReturn);
+    view?.more?.focus({ preventScroll: true });
+  }
+
   closePanel() {
     const n = this.nodes;
     if (n.modal.open) return;
     if (this.panel?.type === 'room') this.roomScroll.set(this.panel.room.id, n.modalBody.scrollTop);
+    n.back.hidden = true;
     this.panel = null;
     this.setup = null;
     this.toolbarPanel?.dispose();
@@ -758,10 +781,12 @@ export class BayitDashboard extends HTMLElement {
       const details = make('div', 'device-detail');
       details.append(name, state);
       const cover = !!room && domain === 'cover';
+      const hasPanel = !!room && (cover || (config.kind === 'boiler' && config.role !== 'status'));
       if (cover) item.dataset.compact = 'cover';
-      const more = button('round-action', this.t(cover ? 'device_controls' : 'more_info'),
+      const more = button('round-action', this.t(hasPanel ? 'device_controls' : 'more_info'),
         cover ? config.icon || deviceIcons.cover : 'mdi:information-outline', true);
-      more.onclick = () => cover ? this.openPanel('device', more, room, config.entity) : this.moreInfo(config);
+      if (hasPanel) more.setAttribute('aria-haspopup', 'dialog');
+      more.onclick = () => hasPanel ? this.openPanel('device', more, room, config.entity) : this.moreInfo(config);
       head.append(glyph, details, more);
       const group = make('div', 'action-list');
       item.append(head, group);

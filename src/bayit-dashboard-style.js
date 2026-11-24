@@ -329,6 +329,7 @@ export const styles = `
     position: fixed;
     inset: var(--panel-top) 0 auto;
     width: min(550px,calc(100% - 2 * var(--edge)));
+    height: fit-content;
     max-width: none;
     max-height: calc(var(--panel-bottom) - var(--panel-top) - max(16px,env(safe-area-inset-bottom,0px)));
     margin: 0 auto;
@@ -351,13 +352,14 @@ export const styles = `
   .modal[data-kind=toolbar] {
     --panel-top: clamp(14px,calc(var(--bayit-popup-area-top,142px) - 78px),max(14px,calc(var(--panel-bottom) - 180px)));
   }
-  .modal[open] { display: grid; grid-template-rows: auto minmax(0,1fr); }
+  .modal[open] { display: flex; flex-direction: column; }
   .modal[open]:not([data-kind]) { animation: appear 190ms cubic-bezier(.22,1,.36,1); }
   .modal[data-closing] { pointer-events: none; }
   .modal::backdrop { background: rgba(0,0,0,.55); }
   .shell[data-page=true] .modal::backdrop { background: rgba(0,0,0,.34); }
   .modal-header {
     display: flex;
+    flex: none;
     direction: ltr;
     align-items: center;
     justify-content: space-between;
@@ -383,7 +385,7 @@ export const styles = `
   .shell[dir=rtl] .modal-header h2 { direction: rtl; flex-direction: row-reverse; text-align: left; }
   .modal-header > .round-action { flex: 0 0 44px; border-radius: 999px; }
   .confirm .modal-header h2 { min-height: 0; padding: 0; border: 0; }
-  .modal-body { min-height: 0; padding: 0 15px 15px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+  .modal-body { flex: 1 1 auto; min-height: 0; padding: 0 15px 15px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
   @keyframes appear { from { opacity: 0; transform: scale(.92); } }
   .devices, .settings { display: grid; gap: 12px; }
   .settings-screens { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
