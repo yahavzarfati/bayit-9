@@ -14,6 +14,7 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 | `included_entities` | Extra visible entity IDs to include, such as a template sensor omitted by discovery. |
 | `overview_entities` | Optional visible entities to include in the toolbar's home overview. |
 | `room_shortcuts` | Optional per-room lists of up to six visible entity IDs, in display order. A room without a list uses automatic shortcuts. An empty list hides that room's shortcuts. |
+| `light_effect_groups` | Optional categories for a light's advertised effects. Open the light's details, choose an effect and press **Apply**. |
 | `background` | A built-in wallpaper ID such as `aurora`, `lagoon`, `dunes` or `graphite`. The appearance options in the editor list all built-in backgrounds. |
 | `fullscreen` | Set to `true` to hide the Home Assistant header and sidebar on this standalone dashboard. Use **Home Assistant menu** in Bayit 9 Settings, or add `?disable_km=1` to the dashboard address, to restore them. |
 | `shape` | `soft`, `circle` or `square`. |
@@ -30,7 +31,20 @@ In **Rooms**, open **Appliance activity badges** to map the room's oven, cooktop
 
 Use `read_only_entities` on a room to display a device's state and let users open Home Assistant's details from that room. Bayit omits the device's direct controls in that room and its shortcuts. This is a dashboard display setting. Home Assistant permissions still govern the underlying device and its native details.
 
-Open a light's device controls to pick a color when it advertises RGB, HS or XY support. Choose the color and press **Apply**. Applying a color turns on the light if it was off. Use the power control to turn it off. White temperature and named effects follow the light's reported capabilities. Manufacturer-only scene categories and catalog controls stay in the manufacturer integration.
+Open a light's device controls to pick a color when it advertises RGB, HS or XY support. Choose the color and press **Apply**. Applying a color turns on the light if it was off. Use the power control to turn it off. White temperature and named effects follow the light's reported capabilities.
+
+To show a grouped effect gallery, list the light's exact reported effect names in the strategy. Each category has a `title` and ordered `effects`. An effect entry can add an optional display `name` and MDI `icon`. Unlisted native effects appear in **Other effects**. Lights without a matching category use the default effect picker.
+
+    strategy:
+      type: custom:bayit-9
+      light_effect_groups:
+        light.demo_reading:
+          - title: Evening
+            effects:
+              - Sunset
+              - effect: Slow pulse
+                name: Gentle glow
+                icon: mdi:weather-night
 
 Toolbar sections accept ordered entities and can render action tiles, locks, covers, person tiles, solar readings, forecasts, and history graphs. Choose those presentations in **Toolbar and extra screens**. A status or graph tile is read-only, and confirmations can be set for explicit actions. Overview sections can show active devices only. Media, vacuum, calendar and other configured screens can live inside Settings.
 

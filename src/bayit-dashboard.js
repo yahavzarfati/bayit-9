@@ -7,6 +7,7 @@ import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { buildPanelControls, panelControlStyles } from './panel-controls.js';
 import { lightColorHex, parseLightColor } from './light-color.mjs';
 import { activityKinds, applianceActivity, normalizeRoomActivities } from './room-appliance.mjs';
+import { createLightEffectGallery, lightEffectStyles, normalizeLightEffectGroups } from './light-effects.js';
 import { createNativeCards, createToolbarPanel, sensorGraphConfig, toolbarPanelStyles } from './toolbar-panels.js';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
@@ -183,6 +184,10 @@ function normalizeEntity(item) {
   if (entity.startsWith('media_player.') && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(item.media_panel_id ?? '')) {
     entry.media_panel_id = item.media_panel_id;
   }
+  if (entity.startsWith('light.') && entry.role !== 'status') {
+    const groups = normalizeLightEffectGroups(item.effect_groups);
+    if (groups.length) entry.effect_groups = groups;
+  }
   if (item.command === 'run_script') entry.command = item.command;
   if (typeof item.confirmation === 'boolean' || typeof item.confirmation === 'string') entry.confirmation = item.confirmation;
   if (Number.isInteger(item.graph_hours) && item.graph_hours >= 1 && item.graph_hours <= 336) entry.graph_hours = item.graph_hours;
@@ -296,7 +301,7 @@ export class BayitDashboard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' }).innerHTML = '<style>' + styles + panelControlStyles + toolbarPanelStyles +
-      wallpaperStyles + boilerHistoryStyles + '</style>' + layout;
+      wallpaperStyles + boilerHistoryStyles + lightEffectStyles + '</style>' + layout;
     const get = selector => this.shadowRoot.querySelector(selector);
     const role = name => get('[data-role="' + name + '"]');
     this.nodes = {
@@ -1081,6 +1086,7 @@ export class BayitDashboard extends HTMLElement {
         control.disabled = !this.canRequest(view.config.entity, control.dataset.action);
       }
       view.special.update(model, pending);
+      view.effectGallery?.update(model, this.canRequest(view.config.entity, 'set_effect'));
       for (const field of view.fields) {
         this.syncField(field, model);
         if (field.valid && !field.valid(field.input.value)) field.apply.disabled = true;
@@ -1219,6 +1225,7 @@ export class BayitDashboard extends HTMLElement {
     const active = this.shadowRoot.activeElement;
     const focused = active && view.group.contains(active) ? active.dataset.action : undefined;
     view.fields = [];
+    view.effectGallery = null;
     const basic = make('div', 'basic-actions');
     const complex = [];
     view.special = buildPanelControls(model, { make, button, icon, label, t: key => this.t(key),
@@ -1227,6 +1234,14 @@ export class BayitDashboard extends HTMLElement {
       const action = model.actions[id];
       if (!action || view.special.used.has(id) || (view.room && model.domain === 'cover' && id === 'set_position')) continue;
       if (action.color && this.panel?.type !== 'device') continue;
+      if (id === 'set_effect' && this.panel?.type === 'device') {
+        view.effectGallery = createLightEffectGallery(view.config.effect_groups, action.options, { make, button, icon,
+          t: key => this.t(key), request: (value, control) => this.requestAction(view.config, id, value, control) });
+        if (view.effectGallery) {
+          complex.push(view.effectGallery.content);
+          continue;
+        }
+      }
       if (action.color || rangeActions.has(id) || action.options || typeof action.min === 'number' ||
           ['set_temperature_range','start_timed'].includes(id)) {
         complex.push(this.buildField(view, action, id, model));
@@ -1241,7 +1256,8 @@ export class BayitDashboard extends HTMLElement {
     }
     view.group.replaceChildren(...(basic.childElementCount ? [basic] : []), ...view.special.content, ...complex);
     if (focused) {
-      const successor = [...view.group.querySelectorAll('[data-action]')].find(el => el.dataset.action === focused);
+      const successor = [...view.group.querySelectorAll('[data-action]')]
+        .find(el => el.dataset.action === focused && !el.closest('[hidden]'));
       (successor || view.more).focus({ preventScroll: true });
     }
   }

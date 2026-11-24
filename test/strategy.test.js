@@ -90,6 +90,26 @@ test('installs as a native panel dashboard from a Hebrew Home Assistant', () => 
   assert.equal(view.cards[0].rooms.at(-1).name, 'ללא חדר');
 });
 
+test('maps effect categories to visible controllable lights and preserves native names exactly', () => {
+  const states = Object.fromEntries(['light.demo_lamp', 'light.demo_read_only', 'light.demo_hidden', 'switch.demo_switch']
+    .map(entity => [entity, { state: 'off', attributes: {} }]));
+  const config = { area_ids: ['bayit_room_demo'], room_overrides: {
+    bayit_room_demo: { name: 'Demo', entities: Object.keys(states), read_only_entities: ['light.demo_read_only'] },
+  }, hidden_entities: ['light.demo_hidden'] };
+  const name = 'Spring\u00a0Wind';
+  const effects = [{ title: ' Nature ', effects: [{ effect: name, name: ' Breeze ', icon: 'mdi:weather-windy' },
+    name, '  ', { effect: 'Unknown', icon: 'not-mdi', action: 'script.any' }] }];
+  config.light_effect_groups = Object.fromEntries(Object.keys(states).map(entity => [entity, effects]));
+  const [room] = discoverRooms(config, { states }, 'en');
+  assert.deepEqual(room.entities, [
+    { entity: 'light.demo_lamp', effect_groups: [{ title: 'Nature', effects: [
+      { effect: name, name: 'Breeze', icon: 'mdi:weather-windy' }, { effect: 'Unknown' },
+    ] }] },
+    { entity: 'light.demo_read_only', role: 'status' }, { entity: 'switch.demo_switch' },
+  ]);
+  assert.equal(effects[0].title, ' Nature ');
+});
+
 test('discovers rooms via device and entity registries without exposing hidden or disabled entries', () => {
   const rooms = Object.fromEntries(discoverRooms({}, home(), 'en').map(room => [room.id, room]));
   assert.deepEqual(rooms.lounge.entities.map(entry => entry.entity), ['light.demo_lamp']);

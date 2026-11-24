@@ -3,6 +3,7 @@ import { HEATING_DOMAINS } from './device-control.mjs';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
 import { wallpaperChoices } from './wallpapers.js';
+import { normalizeLightEffectGroups } from './light-effects.js';
 
 export const CARD_TYPE = 'custom:bayit-dashboard';
 export const STRATEGY_NAME = 'bayit-9';
@@ -316,9 +317,14 @@ export function discoverRooms(config, hass, locale) {
     if (activities.length) room.activities = activities;
     for (const device of entities) {
       if (area.readOnly?.has(device.entity)) device.role = 'status';
-      if (!device.entity.startsWith('media_player.') || !Object.hasOwn(area.mediaPanelLinks ?? {}, device.entity)) continue;
-      const target = area.mediaPanelLinks[device.entity];
-      if (mediaPanels.has(target)) device.media_panel_id = target;
+      if (device.entity.startsWith('media_player.') && Object.hasOwn(area.mediaPanelLinks ?? {}, device.entity)) {
+        const target = area.mediaPanelLinks[device.entity];
+        if (mediaPanels.has(target)) device.media_panel_id = target;
+      }
+      if (device.role === 'status' || domainOf(device.entity) !== 'light' ||
+          !Object.hasOwn(config.light_effect_groups ?? {}, device.entity)) continue;
+      const groups = normalizeLightEffectGroups(config.light_effect_groups[device.entity]);
+      if (groups.length) device.effect_groups = groups;
     }
     if (area.sections !== undefined) {
       const byId = new Map(entities.map(entity => [entity.entity, entity]));

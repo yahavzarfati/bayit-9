@@ -94,6 +94,10 @@ if (query.has('room-grid')) {
       supported_features: 4, effect_list: ['Color loop', 'Slow pulse'], effect: 'off',
     });
   }
+  if (query.has('many-effect-categories')) {
+    states['light.demo_pendant'].attributes.effect_list.push('Sunburst', 'Midnight',
+      ...Array.from({ length: 7 }, (_, i) => 'Preset ' + (i + 1)));
+  }
 }
 if (query.has('device-panel')) {
   states['climate.demo_air'] = { state: 'off', attributes: {
@@ -186,6 +190,15 @@ const selected = query.has('configuration') ? stored().strategy : query.has('cur
 } : query.has('room-grid') ? {
   room_overrides: { studio: { entities: ['light.demo_lamp', 'light.demo_wall', 'light.demo_pendant', 'light.demo_monitor'],
     read_only_entities: ['light.demo_monitor'] } },
+  ...(query.has('grouped-effects') && { light_effect_groups: {
+    'light.demo_pendant': [
+      { title: 'Evening', effects: [{ effect: 'Slow pulse', name: 'Gentle glow', icon: 'mdi:weather-night' }, 'Missing',
+        ...Array.from({ length: 7 }, (_, i) => 'Preset ' + (i + 1))] },
+      { title: 'Morning', effects: ['Sunburst'] },
+      { title: 'Night', effects: ['Midnight'] },
+    ],
+    'light.demo_monitor': [{ title: 'Evening', effects: ['Slow pulse'] }],
+  } }),
 } : query.has('device-panel') ? {
   room_shortcuts: { studio: ['light.demo_lamp', 'climate.demo_air'] },
   profiles: [{ entity: 'climate.demo_air', kind: 'climate', timed: {
@@ -578,6 +591,58 @@ try {
       assert.equal(await monitor.locator('input[type="color"]').count(), 0);
       assert.equal(await roomGridPage.evaluate(() => window.bayitTest.calls.length), 3);
       await roomGridPage.close();
+
+      for (const [locale, width] of [['he', 320], ['en', 390]]) {
+        const effectsPage = await browser.newPage({ viewport: { width, height: 760 }, hasTouch: true });
+        const many = locale === 'en' ? '&many-effect-categories' : '';
+        await effectsPage.goto(base + '?room-grid&grouped-effects&locale=' + locale + many);
+        await effectsPage.getByRole('button', { name: 'Studio', exact: true }).tap();
+        await effectsPage.getByRole('dialog').locator('[data-entity="light.demo_pendant"] .device-tile').press('Shift+Enter');
+        const effectsDialog = effectsPage.getByRole('dialog', { name: 'Pendant lamp', exact: true });
+        const gallery = effectsDialog.getByRole('region', { name: locale === 'he' ? 'אפקט תאורה' : 'Light effect' });
+        const apply = gallery.getByRole('button', { name: locale === 'he' ? 'החל · אפקט תאורה' : 'Apply · Light effect' });
+        const gentle = gallery.getByRole('button', { name: 'Gentle glow · Slow pulse', exact: true });
+        await gentle.waitFor();
+        assert.equal(await gallery.getByText('Missing').count(), 0);
+        assert.equal(await apply.isDisabled(), true);
+        await gentle.tap();
+        assert.equal(await gentle.getAttribute('aria-pressed'), 'true');
+        assert.equal(await effectsPage.evaluate(() => window.bayitTest.calls.length), 0);
+        if (locale === 'he') {
+          await gallery.getByRole('button', { name: 'אפקטים נוספים', exact: true }).tap();
+          await gallery.getByText('נבחר · Gentle glow', { exact: true }).waitFor();
+        } else {
+          assert.equal(await gallery.getByText('1 of 2', { exact: true }).count(), 1);
+          await gallery.getByRole('button', { name: 'Next', exact: true }).tap();
+          await gallery.getByRole('button', { name: 'Preset 7', exact: true }).waitFor();
+          await gallery.getByText('Selected · Gentle glow', { exact: true }).waitFor();
+          await gallery.getByRole('button', { name: 'Previous', exact: true }).tap();
+          await gentle.waitFor();
+          assert.equal(await gentle.getAttribute('aria-pressed'), 'true');
+          await gallery.getByRole('combobox', { name: 'Effect categories' }).selectOption({ label: 'Other effects' });
+          await gallery.getByText('Selected · Gentle glow', { exact: true }).waitFor();
+        }
+        const leftover = gallery.getByRole('button', { name: 'Color loop', exact: true });
+        await leftover.waitFor();
+        assert.ok((await leftover.boundingBox()).height >= 44);
+        assert.equal(await gallery.evaluate(el => el.scrollWidth > el.clientWidth), false);
+        assert.equal(await effectsPage.evaluate(() => window.bayitTest.calls.length), 0);
+        await apply.tap();
+        await gallery.getByText(locale === 'he' ? 'פעיל · Gentle glow' : 'Active · Gentle glow', { exact: true }).waitFor();
+        assert.equal(await apply.isDisabled(), true);
+        assert.deepEqual(await effectsPage.evaluate(() => window.bayitTest.calls), [
+          { type: 'call_service', domain: 'light', service: 'turn_on', target: { entity_id: 'light.demo_pendant' },
+            service_data: { effect: 'Slow pulse' } },
+        ]);
+        await effectsPage.keyboard.press('Escape');
+        await effectsDialog.waitFor({ state: 'hidden' });
+        await effectsPage.getByRole('button', { name: 'Studio', exact: true }).tap();
+        await effectsPage.getByRole('dialog').locator('[data-entity="light.demo_monitor"] .device-tile').press('Shift+Enter');
+        const readOnlyLight = effectsPage.getByRole('dialog', { name: 'Monitor lamp', exact: true });
+        await readOnlyLight.waitFor();
+        assert.equal(await readOnlyLight.locator('.light-effect-gallery, [data-action="set_effect"]').count(), 0);
+        await effectsPage.close();
+      }
 
       const detailPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
       const rightToLeft = engine === 'WebKit';
