@@ -91,6 +91,8 @@ try {
   const settings = card.getByRole('button', { name: 'Appearance', exact: true });
   await settings.click();
   const appearance = card.getByRole('dialog', { name: 'Appearance', exact: true });
+  const wallpaperPicker = appearance.locator('.wallpaper-gallery:not([open]) > summary');
+  await wallpaperPicker.click();
   const lagoon = appearance.getByRole('button', { name: 'Lagoon', exact: true });
   await lagoon.click();
   assert.equal(await lagoon.getAttribute('aria-pressed'), 'true');
@@ -98,6 +100,7 @@ try {
   await page.reload({ waitUntil: 'domcontentloaded' });
   await roomButton.waitFor();
   await settings.click();
+  await wallpaperPicker.click();
   await appearance.getByRole('button', { name: 'Lagoon', exact: true, pressed: true }).waitFor();
   assert.ok(moduleResponses.includes(200) || moduleResponses.includes(304),
     'The browser did not fetch the registered Bayit 9 bundle');
