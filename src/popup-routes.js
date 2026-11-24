@@ -45,6 +45,12 @@ export function resolvePopupRoute(fragment, admit, aliases) {
   return alias && admit(alias) ? alias : null;
 }
 
+export function normalizePopupAliases(config) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return {};
+  return Object.fromEntries(Object.entries(config).filter(([alias, target]) =>
+    validFragment(alias) && parsePopupRoute(target) && alias !== target).slice(0, 128));
+}
+
 export function createPopupHistory({ view, resolve, onChange, pathname = view.location.pathname }) {
   let listening = false;
   let observed;

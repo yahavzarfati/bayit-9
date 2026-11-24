@@ -205,7 +205,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     if (!context) return;
     stopFrame(context);
     stopAnimation(context);
-    context.highlighted.removeAttribute('data-popup-origin');
+    context.highlighted?.removeAttribute('data-popup-origin');
     view.removeEventListener('resize', reposition);
     clip?.removeEventListener('scroll', onScroll);
     context.spacer?.remove();
@@ -221,10 +221,11 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
 
   function reposition() {
     const context = current;
-    if (!context || context.closing || !isConnected(context.source) || !dialog.open) return;
+    if (!context || context.closing || !dialog.open) return;
     stopFrame(context);
     stopAnimation(context);
     updateArea();
+    if (!isConnected(context.source)) return;
     const sourceRect = context.source.getBoundingClientRect();
     const panelRect = dialog.getBoundingClientRect();
     setOrigin(sourceRect, panelRect);
@@ -234,6 +235,16 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
   function open(source, { kind = 'toolbar', highlighted = source } = {}) {
     if (!isConnected(dialog)) return;
     const focusTarget = dialog.querySelector('[autofocus]');
+    if (!source) {
+      resetContext(current, false);
+      current = { kind };
+      dialog.dataset.kind = kind;
+      updateArea();
+      if (!dialog.open) dialog.showModal();
+      view.addEventListener('resize', reposition);
+      focusWithoutScroll(focusTarget);
+      return;
+    }
     if (dialog.open && current) {
       const context = current;
       stopFrame(context);
@@ -268,7 +279,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
   function dismiss({ immediate = false, restoreFocus = true } = {}) {
     if (!dialog.open) return;
     const context = current;
-    if (!context || immediate || media.matches) {
+    if (!context?.source || immediate || media.matches) {
       if (context) context.restoreFocus = restoreFocus;
       dialog.close();
       return;

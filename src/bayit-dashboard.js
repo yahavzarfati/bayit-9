@@ -4,6 +4,7 @@ import { MAX_ROOM_SHORTCUTS, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { createDeviceController, getDeviceModel } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
+import { createPopupHistory, normalizePopupAliases, popupRouteFragment, resolvePopupRoute } from './popup-routes.js';
 import { buildPanelControls, panelControlStyles } from './panel-controls.js';
 import { lightColorHex, parseLightColor } from './light-color.mjs';
 import { activityKinds, applianceActivity, normalizeRoomActivities } from './room-appliance.mjs';
@@ -265,6 +266,7 @@ export function normalizeDashboardConfig(config = {}) {
   }) : null;
   return {
     locale, rooms, overview, context, toolbar, page: config.page === true, fullscreen: config.fullscreen === true,
+    popupAliases: new Map(Object.entries(normalizePopupAliases(config.popup_aliases))),
     title: text(config.title) || languages[locale].home,
     background: backgrounds.includes(config.background) ? config.background : 'aurora',
     layout: options.layout.includes(config.layout) ? config.layout : 'classic',
@@ -381,6 +383,8 @@ export class BayitDashboard extends HTMLElement {
   setConfig(raw) {
     const next = normalizeDashboardConfig(raw);
     if (this.config?.storageKey !== next.storageKey) this.preferences = {};
+    this.popupHistory?.stop();
+    this.popupHistory = undefined;
     if (this.nodes.confirm.open) this.nodes.confirm.close();
     this.popupMotion.reset();
     this.toolbarPanel?.dispose();
@@ -410,6 +414,7 @@ export class BayitDashboard extends HTMLElement {
     this.pageChrome.update({ enabled: next.page && next.fullscreen });
     this.update();
     this.fitPage();
+    this.startPopupHistory();
   }
 
   set hass(hass) {
@@ -419,6 +424,7 @@ export class BayitDashboard extends HTMLElement {
     this.frame = requestAnimationFrame(() => {
       this.frame = 0;
       this.update();
+      this.popupHistory?.refresh();
     });
   }
 
@@ -434,9 +440,12 @@ export class BayitDashboard extends HTMLElement {
     this.pageChrome.update({ enabled: this.config?.page && this.config.fullscreen });
     this.fitPage();
     this.update();
+    this.startPopupHistory();
   }
 
   disconnectedCallback() {
+    this.popupHistory?.stop();
+    this.popupHistory = this.popupHistoryPath = undefined;
     window.removeEventListener('storage', this.storageChange);
     window.removeEventListener('resize', this.resize);
     window.visualViewport?.removeEventListener('resize', this.resize);
@@ -467,6 +476,53 @@ export class BayitDashboard extends HTMLElement {
     this.nodes.shell.style.setProperty('--bayit-view-height', Math.max(0, bottom - bounds.top) + 'px');
     this.nodes.shell.style.setProperty('--bayit-page-top', bounds.top + 'px');
     this.nodes.modal.style.setProperty('--bayit-popup-view-bottom', bottom + 'px');
+  }
+
+  startPopupHistory() {
+    if (!this.isConnected || !this.config?.page || this.popupHistory) return;
+    const view = this.ownerDocument.defaultView;
+    this.popupHistoryPath ??= view.location.pathname;
+    this.popupHistory = createPopupHistory({
+      view, pathname: this.popupHistoryPath, resolve: hash => this.resolvePopup(hash),
+      onChange: event => this.showPopupRoute(event),
+    });
+    this.popupHistory.start();
+  }
+
+  resolvePopup(hash) {
+    if (!this._hass?.states) return null;
+    return resolvePopupRoute(hash, route => {
+      if (route.kind === 'panel') return Boolean(this.popupToolbar(route.panel));
+      const room = this.roomViews.get(route.room)?.room;
+      return Boolean(room && (route.kind === 'room' || room.entities.some(device => device.entity === route.entity)));
+    }, this.config.popupAliases);
+  }
+
+  popupToolbar(id) {
+    const visible = this.toolbarViews.filter(view => !view.element.hidden).map(view => view.panel);
+    const extra = visible.some(panel => panel.kind === 'settings') ? this.settingsScreens() : [];
+    const matches = [...visible, ...extra].filter(panel => panel.kind !== 'link' && (panel.id || panel.kind) === id);
+    // The automatic overview intentionally appears in both the bar and Settings.
+    return matches.length === 1 || !this.config.toolbar ? matches[0] : undefined;
+  }
+
+  showPopupRoute({ route, hash, reason }) {
+    if (reason === 'open' || reason === 'close') return;
+    if (this.nodes.confirm.open) {
+      this.confirming = null;
+      this.nodes.confirm.close();
+    }
+    if (!route) {
+      if (this.panel?.routeHash) this.popupMotion.dismiss({ immediate: true, restoreFocus: false });
+      return;
+    }
+    if (route.kind === 'panel') {
+      const panel = this.popupToolbar(route.panel);
+      this.openPanel(panel.kind, null, undefined, undefined, panel, undefined, { hash });
+    } else {
+      const room = this.roomViews.get(route.room)?.room;
+      this.openPanel(route.kind, null, room, route.entity, undefined, undefined, { hash });
+    }
   }
 
   t(key) { return this.words?.[key] || key; }
@@ -559,6 +615,7 @@ export class BayitDashboard extends HTMLElement {
       const name = item.label || this.t(kind);
       const entities = item.sections?.flatMap(section => section.entities) ?? item.entities ??
         (kind === 'overview' ? settings.overview : settings.context[kind] ?? []);
+      const panel = { ...item, name, entities };
       const element = button('chrome-button', name, item.icon, true);
       element.dataset.role = kind;
       if (kind !== 'link') element.setAttribute('aria-haspopup', 'dialog');
@@ -570,11 +627,11 @@ export class BayitDashboard extends HTMLElement {
       }
       element.onclick = () => {
         if (kind === 'link') return location.assign(item.path);
-        this.openPanel(kind, element, undefined, undefined, { ...item, name, entities });
+        this.openPanel(kind, element, undefined, undefined, panel);
       };
       const needsContent = !settings.toolbar && (kind === 'overview' || contextKeys.includes(kind));
       this.nodes.toolbarActions.append(element);
-      return { kind, element, badge, entities, needsContent };
+      return { kind, element, badge, entities, needsContent, panel };
     });
   }
 
@@ -831,7 +888,7 @@ export class BayitDashboard extends HTMLElement {
     if (!countdown && this.ticker) { clearInterval(this.ticker); this.ticker = 0; }
   }
 
-  openPanel(type, source, room, entity, toolbar, returnFromRoom) {
+  openPanel(type, source, room, entity, toolbar, returnFromRoom, navigation = {}) {
     if (!this.config) return;
     const n = this.nodes;
     const selected = type === 'device' ? room?.entities.find(item => item.entity === entity) : null;
@@ -843,8 +900,11 @@ export class BayitDashboard extends HTMLElement {
     const fromLinkedRoom = (type === 'media' || type === 'vacuum') && returnFromRoom && this.panel?.type === 'room' &&
       this.panel.room === returnFromRoom.room && n.modal.open && n.content.contains(source);
     const returnTo = fromBoilerRoom ? { room, entity: selected.entity } : fromLinkedRoom ? returnFromRoom : undefined;
-    if (returnTo) this.roomScroll.set(returnTo.room.id, n.modalBody.scrollTop);
-    this.panel = { type, room, returnTo };
+    if (this.panel?.type === 'room' && n.modal.open) {
+      this.roomScroll.set(this.panel.room.id, n.modalBody.scrollTop);
+    }
+    const panel = { type, room, returnTo, routeHash: navigation.hash ?? this.panel?.routeHash };
+    this.panel = panel;
     n.back.hidden = !returnTo;
     this.setup = null;
     this.toolbarPanel?.dispose();
@@ -854,7 +914,7 @@ export class BayitDashboard extends HTMLElement {
     this.deviceViews.clear();
     this.activitySignature = null;
     setText(n.modalNotice, '');
-    const glyph = model?.icon || room?.icon || toolbar?.icon || source.querySelector('ha-icon')?.getAttribute('icon');
+    const glyph = model?.icon || room?.icon || toolbar?.icon || source?.querySelector('ha-icon')?.getAttribute('icon');
     const title = model?.name || room?.name || toolbar?.name || this.t(type);
     n.modal.setAttribute('aria-label', title);
     n.modalTitle.replaceChildren(icon(glyph), title);
@@ -876,13 +936,26 @@ export class BayitDashboard extends HTMLElement {
     this.popupMotion.open(source, { kind, highlighted: type === 'room' ? this.roomViews.get(room.id)?.article : source });
     n.modalBody.scrollTop = type === 'room' ? this.roomScroll.get(room.id) || 0 : 0;
     this.update();
+    if (!navigation.hash && this.popupHistory) {
+      const route = type === 'room' ? { kind: type, room: room.id }
+        : type === 'device' ? { kind: type, room: room.id, entity }
+        : toolbar ? { kind: 'panel', panel: toolbar.id || type } : null;
+      const hash = popupRouteFragment(route);
+      if (hash) {
+        this.popupHistory.open(route, { source, replace: navigation.replace });
+        const location = this.ownerDocument.defaultView.location;
+        if (location.pathname === this.popupHistoryPath && popupRouteFragment(this.resolvePopup(location.hash)) === hash) {
+          panel.routeHash = location.hash;
+        }
+      }
+    }
   }
 
   backToRoom() {
     const { room, entity } = this.panel?.returnTo ?? {};
     const source = room && this.roomViews.get(room.id)?.heading;
     if (!entity || !source || !this.nodes.modal.open) return;
-    this.openPanel('room', source, room);
+    this.openPanel('room', source, room, undefined, undefined, undefined, { replace: true });
     const view = Array.from(this.deviceViews).find(item => item.config.entity === entity);
     view?.more?.focus({ preventScroll: true });
   }
@@ -890,6 +963,7 @@ export class BayitDashboard extends HTMLElement {
   closePanel() {
     const n = this.nodes;
     if (n.modal.open) return;
+    const routeHash = this.panel?.routeHash;
     if (this.panel?.type === 'room') this.roomScroll.set(this.panel.room.id, n.modalBody.scrollTop);
     n.back.hidden = true;
     this.panel = null;
@@ -902,6 +976,7 @@ export class BayitDashboard extends HTMLElement {
     clearInterval(this.ticker);
     this.ticker = 0;
     this.update();
+    if (routeHash) this.popupHistory?.close(routeHash);
   }
 
   buildDevices(entities, room, presentation) {
@@ -1084,7 +1159,9 @@ export class BayitDashboard extends HTMLElement {
 
   moreInfo(config) {
     if (!this.model(config).actions.more_info) return;
+    const routeHash = this.panel?.routeHash;
     this.popupMotion.dismiss({ immediate: true, restoreFocus: false });
+    if (routeHash) this.popupHistory?.close(routeHash);
     this.dispatchEvent(new CustomEvent('hass-more-info', {
       detail: { entityId: config.entity }, bubbles: true, composed: true,
     }));
@@ -1146,6 +1223,16 @@ export class BayitDashboard extends HTMLElement {
     return countdown;
   }
 
+  settingsScreens() {
+    const extra = ['overview','sensors','calendar','media','vacuum'];
+    const configured = this.config.toolbar?.filter(item => item.placement === 'settings');
+    const automatic = extra.flatMap(kind => {
+      const entries = kind === 'overview' ? this.config.overview : this.config.context[kind];
+      return entries.length ? [{ kind, icon: toolbarIcons[kind], entities: entries }] : [];
+    });
+    return (configured?.length ? configured : automatic).map(item => ({ ...item, name: item.label || this.t(item.kind) }));
+  }
+
   paintSettings() {
     const content = this.nodes.content;
     content.className = 'settings';
@@ -1156,16 +1243,10 @@ export class BayitDashboard extends HTMLElement {
       content.append(setup);
     }
     const screens = make('div', 'settings-screens');
-    const extra = ['overview','sensors','calendar','media','vacuum'];
-    const configured = this.config.toolbar?.filter(item => item.placement === 'settings');
-    const automatic = extra.flatMap(kind => {
-      const entries = kind === 'overview' ? this.config.overview : this.config.context[kind];
-      return entries.length ? [{ kind, icon: toolbarIcons[kind], entities: entries }] : [];
-    });
-    for (const item of configured?.length ? configured : automatic) {
-      const route = button('control-button', item.label || this.t(item.kind), item.icon);
+    for (const item of this.settingsScreens()) {
+      const route = button('control-button', item.name, item.icon);
       route.onclick = () => item.kind === 'link' ? location.assign(item.path)
-        : this.openPanel(item.kind, route, undefined, undefined, { ...item, name: item.label || this.t(item.kind) });
+        : this.openPanel(item.kind, route, undefined, undefined, item);
       screens.append(route);
     }
     if (screens.childElementCount) {
@@ -1233,6 +1314,7 @@ export class BayitDashboard extends HTMLElement {
         status.textContent = this.t('setup_saving');
         try {
           await saveConfiguration(this._hass, current, draft);
+          if (this.panel === page && page.routeHash) this.popupHistory?.close(page.routeHash);
           location.reload();
         } catch (error) {
           if (this.panel !== page) return;

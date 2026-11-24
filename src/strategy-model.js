@@ -4,6 +4,7 @@ import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
 import { wallpaperChoices } from './wallpapers.js';
 import { normalizeLightEffectGroups } from './light-effects.js';
+import { normalizePopupAliases } from './popup-routes.js';
 
 export const CARD_TYPE = 'custom:bayit-dashboard';
 export const STRATEGY_NAME = 'bayit-9';
@@ -485,6 +486,8 @@ export function generateDashboard(config = {}, hass = {}) {
     title,
     rooms: discoverRooms(config, hass, locale),
   };
+  const popupAliases = normalizePopupAliases(config.popup_aliases);
+  if (Object.keys(popupAliases).length) card.popup_aliases = popupAliases;
   const visible = new Set(card.rooms.flatMap(room => room.entities.map(device => device.entity)));
   const overview = idList(config.overview_entities).filter(id => visible.has(id));
   if (overview.length) card.overview = overview;

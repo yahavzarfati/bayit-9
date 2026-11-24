@@ -20,7 +20,11 @@ const states = {
 };
 const calls = [];
 const moreInfoCalls = [];
-document.addEventListener('hass-more-info', event => moreInfoCalls.push(event.detail.entityId));
+const moreInfoHashes = [];
+document.addEventListener('hass-more-info', event => {
+  moreInfoCalls.push(event.detail.entityId);
+  moreInfoHashes.push(location.hash);
+});
 const coverRequests = [];
 let finishLevel;
 let finishPreselect;
@@ -244,7 +248,22 @@ if (query.has('large-setup')) {
   }
 }
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
-const selected = query.has('configuration') ? stored().strategy : query.has('curated') ? {
+const selected = query.has('configuration') ? stored().strategy : query.has('popup-routes') ? {
+  room_overrides: { studio: { entities: ['light.demo_lamp', 'switch.demo_heater'],
+    read_only_entities: ['switch.demo_heater'] } },
+  hidden_entities: ['script.demo_start'],
+  toolbar: [
+    { id: 'appearance', kind: 'settings' },
+    { id: 'room-status', kind: 'devices', label: 'Device viewer', placement: 'settings', entities: ['switch.demo_heater'] },
+    { id: 'outside', kind: 'link', path: '/outside/view' },
+  ],
+  popup_aliases: {
+    '#legacy-lamp': '#device/studio/light.demo_lamp',
+    '#legacy-viewer': '#panel/room-status',
+    '#legacy-hidden': '#device/studio/script.demo_start',
+    '#legacy-link': '#panel/outside',
+  },
+} : query.has('curated') ? {
   room_shortcuts: { studio: ['switch.demo_heater', 'light.demo_lamp'] },
   overview_entities: ['switch.demo_heater'],
 } : query.has('room-grid') ? {
@@ -296,10 +315,10 @@ const selected = query.has('configuration') ? stored().strategy : query.has('cur
   ],
 } : {};
 const config = Strategy.generate(selected, query.has('empty') ? { ...hass, states: {} } : hass);
-const cardConfig = config.views[0].cards[0];
+const cardConfig = { ...config.views[0].cards[0], ...(query.has('embedded-popup-card') && { page: false }) };
 const card = document.createElement('bayit-dashboard');
 card.setConfig(cardConfig);
-card.hass = hass;
+if (!query.has('defer-popup-hass')) card.hass = hass;
 document.querySelector('#surface').append(card);
 
 if (query.has('editor')) {
@@ -311,7 +330,8 @@ if (query.has('editor')) {
   document.querySelector('#editor').append(editor);
 }
 window.bayitTest = {
-  registrations: window.customStrategies, calls, moreInfoCalls, config,
+  registrations: window.customStrategies, calls, moreInfoCalls, moreInfoHashes, config,
+  loadPopupHass() { card.hass = hass; },
   finishCover: (index, failed = false) => coverRequests[index](failed),
   setRoomState(entity, state) {
     states[entity] = { ...states[entity], state };
@@ -372,6 +392,83 @@ try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
     try {
+      const routesPage = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
+      const rtlRoutes = engine === 'WebKit';
+      const routeUrl = base + '/fixture-home/home?popup-routes&locale=' + (rtlRoutes ? 'he' : 'en');
+      const delayedUrl = routeUrl + '&defer-popup-hass';
+      const routeDialog = routesPage.getByRole('dialog');
+      const routeClose = routeDialog.getByRole('button', { name: rtlRoutes ? 'סגירה' : 'Close', exact: true });
+      const deskHeading = routeDialog.getByRole('heading', { name: 'Desk lamp', exact: true });
+      const studioHeading = routeDialog.getByRole('heading', { name: 'Studio', exact: true });
+      const routeErrors = [];
+      routesPage.on('pageerror', error => routeErrors.push(error.message));
+
+      await routesPage.goto(delayedUrl + '#legacy-lamp');
+      await routesPage.waitForFunction(() => window.bayitTest);
+      assert.equal(await routeDialog.count(), 0);
+      await routesPage.evaluate(() => window.bayitTest.loadPopupHass());
+      await deskHeading.waitFor();
+      assert.equal(await routesPage.locator('[data-popup-origin]').count(), 0);
+      assert.equal(await routeClose.evaluate(button => button.getRootNode().activeElement === button), true);
+      assert.equal(new URL(routesPage.url()).hash, '#legacy-lamp');
+      await routesPage.reload();
+      await routesPage.waitForFunction(() => window.bayitTest);
+      await routesPage.evaluate(() => window.bayitTest.loadPopupHass());
+      await deskHeading.waitFor();
+      const more = routeDialog.getByRole('button', { name: rtlRoutes ? 'מידע נוסף' : 'More info', exact: true });
+      await more.tap();
+      await routeDialog.waitFor({ state: 'hidden' });
+      assert.deepEqual(await routesPage.evaluate(() => [window.bayitTest.moreInfoCalls, window.bayitTest.moreInfoHashes]),
+        [['light.demo_lamp'], ['']]);
+      assert.equal(new URL(routesPage.url()).search, new URL(delayedUrl).search);
+
+      await routesPage.getByRole('button', { name: 'Studio', exact: true }).tap();
+      await studioHeading.waitFor();
+      assert.equal(new URL(routesPage.url()).hash, '#room-studio');
+      assert.equal(await routesPage.locator('.room[data-popup-origin]').count(), 1);
+      await routeDialog.locator('[data-entity="light.demo_lamp"] .device-tile').press('Shift+Enter');
+      await deskHeading.waitFor();
+      assert.equal(new URL(routesPage.url()).hash, '#device/studio/light.demo_lamp');
+      await routesPage.evaluate(() => history.back());
+      await studioHeading.waitFor();
+      assert.equal(await routesPage.locator('[data-popup-origin]').count(), 0);
+      await routesPage.evaluate(() => history.forward());
+      await deskHeading.waitFor();
+      await routeClose.tap();
+      await routeDialog.waitFor({ state: 'hidden' });
+      await routesPage.waitForURL(delayedUrl);
+
+      await routesPage.goto(routeUrl + '#legacy-viewer');
+      await routeDialog.getByRole('heading', { name: 'Device viewer', exact: true }).waitFor();
+      await routesPage.goto(routeUrl + '#device/studio/switch.demo_heater');
+      await routeDialog.getByRole('heading', { level: 2, name: 'Room heater', exact: true }).waitFor();
+      assert.equal(await routeDialog.locator('.action-list button').count(), 0);
+      await routesPage.evaluate(() => { location.hash = '#native-anchor'; });
+      await routeDialog.waitFor({ state: 'hidden' });
+      assert.equal(new URL(routesPage.url()).hash, '#native-anchor');
+      for (const hash of ['#legacy-hidden', '#legacy-link', '#boiler-schedule-edit']) {
+        await routesPage.goto(routeUrl + hash);
+        await routesPage.waitForFunction(() => window.bayitTest);
+        assert.equal(await routeDialog.count(), 0);
+        assert.equal(new URL(routesPage.url()).hash, hash);
+      }
+      await routesPage.evaluate(() => {
+        history.pushState(null, '', '/other/view#room-studio');
+        window.dispatchEvent(new CustomEvent('location-changed'));
+      });
+      assert.equal(await routeDialog.count(), 0);
+      assert.equal(new URL(routesPage.url()).pathname, '/other/view');
+      assert.equal(await routesPage.evaluate(() => window.bayitTest.calls.length), 0);
+      assert.deepEqual(routeErrors, []);
+
+      await routesPage.goto(routeUrl + '&embedded-popup-card#legacy-lamp');
+      await routesPage.waitForFunction(() => window.bayitTest);
+      assert.equal(await routeDialog.count(), 0);
+      await routesPage.getByRole('button', { name: 'Studio', exact: true }).tap();
+      await studioHeading.waitFor();
+      assert.equal(new URL(routesPage.url()).hash, '#legacy-lamp');
+      await routesPage.close();
+
       for (const [locale, width] of [['en', 320], ['he', 390], ['en', 430]]) {
         const page = await browser.newPage({ viewport: { width, height: 844 }, hasTouch: true });
         const errors = [];

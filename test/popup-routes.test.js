@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createPopupHistory, parsePopupRoute, popupRouteFragment, resolvePopupRoute } from '../src/popup-routes.js';
+import { createPopupHistory, normalizePopupAliases, parsePopupRoute, popupRouteFragment, resolvePopupRoute } from '../src/popup-routes.js';
 
 const room = { kind: 'room', room: 'Studio_1' };
 const device = { kind: 'device', room: 'Studio_1', entity: 'light.desk' };
@@ -72,6 +72,14 @@ test('aliases cannot bypass admission, shadow valid native routes, or chain to o
   assert.equal(resolvePopupRoute('#legacy-light', route => route.kind !== 'device', configured), null);
   assert.equal(resolvePopupRoute('#chain', valid, configured), null);
   assert.equal(resolvePopupRoute(undefined, valid, configured), null);
+});
+
+test('owner aliases accept only local fragments with typed popup destinations', () => {
+  assert.deepEqual(normalizePopupAliases({
+    '#old-room': roomHash, '#old-lamp': deviceHash, [panelHash]: panelHash,
+    '#other-site': 'https://example.com/#weather', '#old-form': '#boiler-schedule-edit',
+    '#malformed\n': roomHash, '#bad-route': '/another/dashboard',
+  }), { '#old-room': roomHash, '#old-lamp': deviceHash });
 });
 
 test('preserves direct aliases, pushes explicit opens once, and restores through Back/Forward without an origin', () => {
