@@ -39,6 +39,8 @@ In **Customize home**, open **Light effect categories** and pick a light. Name a
 
 In YAML, use the light's exact reported effect names. Each category has a `title` and ordered `effects`. An effect entry can add an optional display `name` and MDI `icon`. Unlisted native effects appear in **Other effects**. Lights without a matching category use the default effect picker.
 
+In a grouped gallery, **Effects**, **Fixed color**, and **White** switch between controls supported by the light. Switching views leaves the light as it is. Use **Apply** to send the chosen effect, color, or white temperature.
+
     strategy:
       type: custom:bayit-9
       light_effect_groups:

@@ -260,6 +260,10 @@ window.bayitTest = {
     states[entity] = { ...states[entity], state };
     card.hass = { ...hass, states: { ...states } };
   },
+  setLightModes(entity, modes) {
+    states[entity] = { ...states[entity], attributes: { ...states[entity].attributes, supported_color_modes: modes } };
+    card.hass = { ...hass, states: { ...states } };
+  },
   setRoomLayout(layout) { card.setConfig({ ...cardConfig, layout }); },
   setMediaArt(entity_picture) {
     states['media_player.demo_speaker'].attributes.entity_picture = entity_picture;
@@ -687,6 +691,25 @@ try {
         const gallery = effectsDialog.getByRole('region', { name: locale === 'he' ? 'אפקט תאורה' : 'Light effect' });
         const apply = gallery.getByRole('button', { name: locale === 'he' ? 'החל · אפקט תאורה' : 'Apply · Light effect' });
         const gentle = gallery.getByRole('button', { name: 'Gentle glow · Slow pulse', exact: true });
+        const mode = effectsDialog.getByRole('group', { name: locale === 'he' ? 'מצב תאורה' : 'Light mode' });
+        const effectsMode = mode.getByRole('button', { name: locale === 'he' ? 'אפקטים' : 'Effects', exact: true });
+        const fixedMode = mode.getByRole('button', { name: locale === 'he' ? 'צבע קבוע' : 'Fixed color', exact: true });
+        const whiteMode = mode.getByRole('button', { name: locale === 'he' ? 'לבן' : 'White', exact: true });
+        const color = effectsDialog.getByLabel(locale === 'he' ? 'צבע התאורה' : 'Light color', { exact: true });
+        const white = effectsDialog.getByRole('slider', { name: locale === 'he' ? 'גוון לבן' : 'White temperature', exact: true });
+        await gentle.waitFor();
+        assert.equal(await effectsMode.getAttribute('aria-pressed'), 'true');
+        assert.equal(await color.isVisible(), false);
+        assert.equal(await white.isVisible(), false);
+        assert.equal(await mode.evaluate(el => el.scrollWidth > el.clientWidth), false);
+        assert.ok(await fixedMode.evaluate(el => el.offsetHeight >= 44));
+        await whiteMode.press('Enter');
+        await gallery.waitFor({ state: 'hidden' });
+        assert.equal(await white.inputValue(), '3200');
+        await fixedMode.press('Enter');
+        await color.waitFor();
+        assert.equal(await white.isVisible(), false);
+        await effectsMode.press('Enter');
         await gentle.waitFor();
         assert.equal(await gallery.getByText('Missing').count(), 0);
         assert.equal(await apply.isDisabled(), true);
@@ -719,13 +742,33 @@ try {
           { type: 'call_service', domain: 'light', service: 'turn_on', target: { entity_id: 'light.demo_pendant' },
             service_data: { effect: 'Slow pulse' } },
         ]);
+        await fixedMode.press('Enter');
+        await color.fill('#804020');
+        assert.equal(await effectsPage.evaluate(() => window.bayitTest.calls.length), 1);
+        const applyColor = effectsDialog.getByRole('button', {
+          name: locale === 'he' ? 'החל · צבע התאורה' : 'Apply · Light color', exact: true,
+        });
+        await applyColor.tap();
+        await effectsDialog.getByText(locale === 'he' ? 'המצב של Pendant lamp עודכן.' : 'Pendant lamp updated.', { exact: true }).waitFor();
+        assert.deepEqual(await effectsPage.evaluate(() => window.bayitTest.calls[1]), {
+          type: 'call_service', domain: 'light', service: 'turn_on', target: { entity_id: 'light.demo_pendant' },
+          service_data: { rgb_color: [128, 64, 32] },
+        });
+        await fixedMode.focus();
+        await effectsPage.evaluate(() => window.bayitTest.setLightModes('light.demo_pendant', ['xy']));
+        await whiteMode.waitFor({ state: 'detached' });
+        assert.equal(await fixedMode.getAttribute('aria-pressed'), 'true');
+        assert.equal(await fixedMode.evaluate(el => el.getRootNode().activeElement === el), true);
+        await effectsPage.evaluate(() => window.bayitTest.setRoomState('light.demo_pendant', 'unavailable'));
+        await mode.waitFor({ state: 'hidden' });
+        assert.equal(await color.isVisible(), false);
         await effectsPage.keyboard.press('Escape');
         await effectsDialog.waitFor({ state: 'hidden' });
         await effectsPage.getByRole('button', { name: 'Studio', exact: true }).tap();
         await effectsPage.getByRole('dialog').locator('[data-entity="light.demo_monitor"] .device-tile').press('Shift+Enter');
         const readOnlyLight = effectsPage.getByRole('dialog', { name: 'Monitor lamp', exact: true });
         await readOnlyLight.waitFor();
-        assert.equal(await readOnlyLight.locator('.light-effect-gallery, [data-action="set_effect"]').count(), 0);
+        assert.equal(await readOnlyLight.locator('.light-effect-gallery, .light-mode-bar, [data-action="set_effect"]').count(), 0);
         await effectsPage.close();
       }
 

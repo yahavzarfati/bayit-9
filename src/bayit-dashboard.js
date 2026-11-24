@@ -7,7 +7,7 @@ import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { buildPanelControls, panelControlStyles } from './panel-controls.js';
 import { lightColorHex, parseLightColor } from './light-color.mjs';
 import { activityKinds, applianceActivity, normalizeRoomActivities } from './room-appliance.mjs';
-import { createLightEffectGallery, lightEffectStyles, normalizeLightEffectGroups } from './light-effects.js';
+import { createLightEffectGallery, lightEffectStyles, normalizeLightEffectGroups, organizeLightModes } from './light-effects.js';
 import { createNativeCards, createToolbarPanel, sensorGraphConfig, toolbarPanelStyles } from './toolbar-panels.js';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
@@ -1109,6 +1109,7 @@ export class BayitDashboard extends HTMLElement {
       }
       view.item.setAttribute('aria-busy', String(!!pending));
       for (const control of view.group.querySelectorAll('button,input,select')) {
+        if (control.dataset.lightMode) continue;
         control.disabled = !this.canRequest(view.config.entity, control.dataset.action);
       }
       view.special.update(model, pending);
@@ -1249,11 +1250,11 @@ export class BayitDashboard extends HTMLElement {
 
   buildActions(view, model) {
     const active = this.shadowRoot.activeElement;
-    const focused = active && view.group.contains(active) ? active.dataset.action : undefined;
+    const focused = active && view.group.contains(active) ? active.dataset : undefined;
     view.fields = [];
     view.effectGallery = null;
     const basic = make('div', 'basic-actions');
-    const complex = [];
+    const complex = new Map();
     view.special = buildPanelControls(model, { make, button, icon, label, t: key => this.t(key),
       request: (id, value, control) => this.requestAction(view.config, id, value, control) });
     for (const id of actionsInOrder) {
@@ -1264,13 +1265,13 @@ export class BayitDashboard extends HTMLElement {
         view.effectGallery = createLightEffectGallery(view.config.effect_groups, action.options, { make, button, icon,
           t: key => this.t(key), request: (value, control) => this.requestAction(view.config, id, value, control) });
         if (view.effectGallery) {
-          complex.push(view.effectGallery.content);
+          complex.set(id, view.effectGallery.content);
           continue;
         }
       }
       if (action.color || rangeActions.has(id) || action.options || typeof action.min === 'number' ||
           ['set_temperature_range','start_timed'].includes(id)) {
-        complex.push(this.buildField(view, action, id, model));
+        complex.set(id, this.buildField(view, action, id, model));
         continue;
       }
       const name = this.actionLabel(id);
@@ -1280,10 +1281,13 @@ export class BayitDashboard extends HTMLElement {
       control.onclick = () => this.requestAction(view.config, id, undefined, control);
       basic.append(control);
     }
-    view.group.replaceChildren(...(basic.childElementCount ? [basic] : []), ...view.special.content, ...complex);
-    if (focused) {
-      const successor = [...view.group.querySelectorAll('[data-action]')]
-        .find(el => el.dataset.action === focused && !el.closest('[hidden]'));
+    if (view.effectGallery) organizeLightModes(complex, view.lightMode, mode => { view.lightMode = mode; },
+      { make, button, t: key => this.t(key) });
+    view.group.replaceChildren(...(basic.childElementCount ? [basic] : []), ...view.special.content, ...complex.values());
+    if (focused?.action || focused?.lightMode) {
+      const successor = [...view.group.querySelectorAll('[data-action], [data-light-mode]')].find(el =>
+        !el.closest('[hidden]') && (focused.action && el.dataset.action === focused.action ||
+          focused.lightMode && el.dataset.lightMode === focused.lightMode));
       (successor || view.more).focus({ preventScroll: true });
     }
   }

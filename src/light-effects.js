@@ -1,6 +1,11 @@
 const iconPattern = /^mdi:[a-z0-9-]+$/;
 const effectAction = 'set_effect';
 const pageSize = 6;
+const lightModes = [
+  [effectAction, 'light_mode_effects'],
+  ['set_light_color', 'light_mode_color'],
+  ['set_color_temp_kelvin', 'light_mode_white'],
+];
 
 export function normalizeLightEffectGroups(groups) {
   if (!Array.isArray(groups)) return [];
@@ -161,7 +166,47 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
   };
 }
 
+export function organizeLightModes(fields, selected, changed, { make, button, t }) {
+  const parts = lightModes.flatMap(([id, name]) => fields.has(id)
+    ? [{ id, name, field: fields.get(id) }] : []);
+  if (parts.length < 2) return;
+  const modeBar = make('div', 'light-mode-bar');
+  modeBar.setAttribute('role', 'group');
+  modeBar.setAttribute('aria-label', t('light_mode'));
+  for (const part of parts) {
+    const control = button('control-button', t(part.name));
+    part.control = control;
+    control.dataset.lightMode = part.id;
+    control.onclick = () => {
+      setActive(part.id);
+      changed(part.id);
+    };
+    modeBar.append(control);
+    fields.delete(part.id);
+  }
+  function setActive(active) {
+    for (const { id, control, field } of parts) {
+      control.setAttribute('aria-pressed', String(id === active));
+      field.hidden = id !== active;
+    }
+  }
+  setActive(parts.some(({ id }) => id === selected) ? selected : parts[0].id);
+  const panel = make('div', 'light-mode-panel');
+  panel.append(modeBar, ...parts.map(({ field }) => field));
+  fields.set(effectAction, panel);
+}
+
 export const lightEffectStyles = `
+  .light-mode-panel { display:grid; gap:10px; min-width:0; }
+  .light-mode-panel > [hidden] { display:none; }
+  .light-mode-bar {
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(min(64px,100%),1fr)); gap:4px;
+  }
+  .light-mode-bar .control-button { min-width:0; padding-inline:6px; overflow-wrap:anywhere; }
+  .light-mode-bar .control-button[aria-pressed=true] {
+    border-color:currentColor;
+    box-shadow:inset 0 0 0 1px currentColor;
+  }
   .light-effect-gallery { display:grid; gap:8px; min-width:0; }
   .light-effect-caption { margin:0; font-size:.87rem; font-weight:650; }
   .light-effect-categories { display:flex; flex-wrap:wrap; gap:6px; }
