@@ -979,10 +979,11 @@ export class BayitDashboard extends HTMLElement {
       view.state.dataset.tone = this.tone(model);
       const pending = this.pending.get(view.config.entity);
       if (view.tile) {
-        const actionId = model.state === 'on' ? 'turn_off' : 'turn_on';
-        label(view.tile, this.t(actionId));
-        view.tile.setAttribute('aria-description', model.name);
-        view.tile.setAttribute('aria-pressed', String(model.state === 'on'));
+        const actionId = model.state === 'off' ? 'turn_on' : 'turn_off';
+        const toggles = !!model.actions[actionId];
+        label(view.tile, model.name + ' · ' + this.t(toggles ? actionId : 'more_info'));
+        if (toggles) view.tile.setAttribute('aria-pressed', String(model.state === 'on'));
+        else view.tile.removeAttribute('aria-pressed');
         view.tile.setAttribute('aria-busy', String(!!pending));
         continue;
       }

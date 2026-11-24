@@ -80,7 +80,8 @@ try {
   const deviceState = async () => (await api.command('get_states')).find(state => state.entity_id === fixture.entity)?.state;
   const original = await deviceState();
   assert.ok(['on', 'off'].includes(original), 'Expected an available synthetic light');
-  await device.getByRole('button', { name: original === 'on' ? 'Turn off' : 'Turn on', exact: true }).click();
+  const actionName = original === 'on' ? 'Turn off' : 'Turn on';
+  await device.getByRole('button', { name: new RegExp(' · ' + actionName + '$') }).click();
   await poll('the real Home Assistant state of the synthetic light to change', async () => (
     await deviceState() === (original === 'on' ? 'off' : 'on')
   ));

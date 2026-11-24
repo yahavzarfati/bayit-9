@@ -268,7 +268,7 @@ try {
         await page.getByRole('button', { name: 'Studio', exact: true }).tap();
         const dialog = page.getByRole('dialog');
         await dialog.getByRole('heading', { name: 'Studio' }).waitFor();
-        await dialog.getByRole('button', { name: locale === 'he' ? 'הדלקה' : 'Turn on', exact: true }).first().tap();
+        await dialog.getByRole('button', { name: 'Desk lamp · ' + (locale === 'he' ? 'הדלקה' : 'Turn on'), exact: true }).tap();
         await page.waitForFunction(() => window.bayitTest.calls.length > 0);
         const call = await page.evaluate(() => window.bayitTest.calls[0]);
         assert.equal(call.domain, 'light');
@@ -476,7 +476,9 @@ try {
       await roomGridPage.keyboard.press('Escape');
       await pendant.waitFor({ state: 'hidden' });
       await roomGridPage.getByRole('button', { name: 'Studio', exact: true }).click();
-      await roomGridPage.getByRole('dialog').locator('[data-entity="light.demo_monitor"] .device-tile').press('Shift+Enter');
+      const monitorTile = roomGridPage.getByRole('dialog').getByRole('button', { name: 'Monitor lamp · מידע נוסף', exact: true });
+      assert.equal(await monitorTile.getAttribute('aria-pressed'), null);
+      await monitorTile.press('Shift+Enter');
       const monitor = roomGridPage.getByRole('dialog', { name: 'Monitor lamp', exact: true });
       await monitor.waitFor();
       assert.equal(await monitor.locator('.action-list').evaluate(node => node.childElementCount), 0);
