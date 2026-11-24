@@ -12,7 +12,7 @@ const token = 'synthetic-test-credential';
 const published = { repository, tag, digest, prerelease: false };
 const assetUrl = 'https://github.com/' + repository + '/releases/download/' + tag + '/bayit-9.js';
 const nativeUrl = '/hacsfiles/bayit-9/bayit-9.js?hacstag=123010';
-const enabled = { version: HACS_VERSION, startup: false, stage: 'running', lovelace_mode: 'storage' };
+const enabled = { version: HACS_VERSION, startup: false, stage: 'running', lovelace_mode: 'auto-gen' };
 const readiness = { timeout: 50, interval: 0 };
 
 function githubFixture({ privateRepo = false, overrideDigest, remaining = 990 } = {}) {

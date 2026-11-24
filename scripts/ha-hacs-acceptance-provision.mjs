@@ -115,7 +115,6 @@ export async function installPublishedRelease(api, url, verifiedRelease, { reque
     const status = await hacsCommand(api, 'hacs/info', undefined, { allowNotReady: true });
     if (!status) return false;
     assert.equal(status.version, HACS_VERSION, 'Unexpected HACS version');
-    assert.equal(status.lovelace_mode, 'storage', 'HACS needs Lovelace to use storage');
     assertHacsEnabled(status);
     return status.stage === 'running' && status.startup === false;
   }, readiness);

@@ -36,7 +36,10 @@ node scripts/prepare-ha-hacs-release.mjs "$repository" "$tag" "$receipt"
 hacs_zip="$stage/hacs.zip"
 curl -q --proto '=https' --proto-redir '=https' --fail --silent --show-error --location --max-time 120 \
   'https://github.com/hacs/integration/releases/download/2.0.5/hacs.zip' --output "$hacs_zip"
-printf '%s  %s\n' '97be6b824a4f38e683728cc6dd72367f6b8bad0a43428b1b3b987a3087adf413' "$hacs_zip" | sha256sum --check --status
+printf '%s  %s\n' '97be6b824a4f38e683728cc6dd72367f6b8bad0a43428b1b3b987a3087adf413' "$hacs_zip" | sha256sum --check --status || {
+  echo 'The pinned HACS archive failed SHA-256 verification' >&2
+  exit 2
+}
 mkdir -p -- "$results" "$stage/fixture/custom_components/hacs" "$stage/fixture/www"
 unzip -q "$hacs_zip" -d "$stage/fixture/custom_components/hacs"
 cp -R -- scripts/fixtures/bayit_acceptance_hacs "$stage/fixture/custom_components/"
