@@ -43,9 +43,10 @@ const hass = {
     }
     if (request.domain === 'light') {
       const id = request.target.entity_id;
-      const { color_temp_kelvin, effect } = request.service_data ?? {};
+      const { color_temp_kelvin, effect, rgb_color } = request.service_data ?? {};
       const attributes = { ...states[id].attributes };
       if (color_temp_kelvin !== undefined) attributes.color_temp_kelvin = color_temp_kelvin;
+      if (rgb_color) Object.assign(attributes, { rgb_color: [255, 135, 75], xy_color: [0.574, 0.359], color_mode: 'xy' });
       if (effect !== undefined) attributes.effect = effect;
       states[id] = { ...states[id], attributes, state: request.service === 'turn_off' ? 'off' : 'on' };
       card.hass = { ...hass, states: { ...states } };
@@ -81,6 +82,7 @@ if (query.has('room-grid')) {
     states[entity] = { state: 'on', attributes: { friendly_name: name, supported_color_modes: [colorMode] } };
     hass.entities[entity] = { area_id: 'studio' };
     if (colorMode === 'color_temp') Object.assign(states[entity].attributes, {
+      supported_color_modes: ['color_temp', 'xy'], color_mode: 'color_temp',
       min_color_temp_kelvin: 2200, max_color_temp_kelvin: 7000, color_temp_kelvin: 3200,
       supported_features: 4, effect_list: ['Color loop', 'Slow pulse'], effect: 'off',
     });
@@ -431,6 +433,7 @@ try {
       assert.notEqual(firstTile[1], secondTile[1]);
       const dimmable = lightGroup.locator('[data-entity="light.demo_pendant"] .device-tile');
       assert.equal(await lightGroup.getByRole('slider').count(), 0);
+      assert.equal(await lightGroup.locator('input[type="color"]').count(), 0);
       await dimmable.press('Shift+Enter');
       const pendant = roomGridPage.getByRole('dialog', { name: 'Pendant lamp', exact: true });
       const kelvin = pendant.getByRole('slider', { name: 'גוון לבן' });
@@ -452,11 +455,23 @@ try {
       await effect.selectOption('Slow pulse');
       assert.equal(await roomGridPage.evaluate(() => window.bayitTest.calls.length), 1);
       await applyEffect.click();
+      const color = pendant.getByLabel('צבע התאורה', { exact: true });
+      const applyColor = pendant.getByRole('button', { name: 'החל · צבע התאורה', exact: true });
+      assert.equal(await color.getAttribute('type'), 'color');
+      await color.fill('#000000');
+      assert.equal(await applyColor.isDisabled(), true);
+      await color.fill('#804020');
+      assert.equal(await roomGridPage.evaluate(() => window.bayitTest.calls.length), 2);
+      await applyColor.click();
+      await roomGridPage.waitForFunction(() => window.bayitTest.calls.length === 3);
+      await pendant.getByText('המצב של Pendant lamp עודכן.', { exact: true }).waitFor();
       assert.deepEqual(await roomGridPage.evaluate(() => window.bayitTest.calls), [
         { type: 'call_service', domain: 'light', service: 'turn_on', target: { entity_id: 'light.demo_pendant' },
           service_data: { color_temp_kelvin: 3500 } },
         { type: 'call_service', domain: 'light', service: 'turn_on', target: { entity_id: 'light.demo_pendant' },
           service_data: { effect: 'Slow pulse' } },
+        { type: 'call_service', domain: 'light', service: 'turn_on', target: { entity_id: 'light.demo_pendant' },
+          service_data: { rgb_color: [128, 64, 32] } },
       ]);
       await roomGridPage.keyboard.press('Escape');
       await pendant.waitFor({ state: 'hidden' });
@@ -465,7 +480,8 @@ try {
       const monitor = roomGridPage.getByRole('dialog', { name: 'Monitor lamp', exact: true });
       await monitor.waitFor();
       assert.equal(await monitor.locator('.action-list').evaluate(node => node.childElementCount), 0);
-      assert.equal(await roomGridPage.evaluate(() => window.bayitTest.calls.length), 2);
+      assert.equal(await monitor.locator('input[type="color"]').count(), 0);
+      assert.equal(await roomGridPage.evaluate(() => window.bayitTest.calls.length), 3);
       await roomGridPage.close();
 
       const detailPage = await browser.newPage({ viewport: { width: 390, height: 844 } });

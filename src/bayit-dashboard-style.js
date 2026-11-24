@@ -553,6 +553,7 @@ export const styles = `
     accent-color: var(--warm);
   }
   .field-row input[type=range] { direction: ltr; border: 0; background: transparent; padding: 0; }
+  .field-row .light-color-choice { width: 70px; padding: 4px; }
   .field-row select option { background: #292929; color: #fff; }
   .duration-label { color: var(--secondary); background: none; font-size: 12px; }
   .prefs-group { border: 1px solid var(--soft-line); border-radius: 14px; min-width: 0; margin: 0; padding: 8px; }

@@ -5,6 +5,7 @@ import { loadConfiguration, saveConfiguration } from './dashboard-configuration.
 import { createDeviceController, getDeviceModel } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { buildPanelControls, panelControlStyles } from './panel-controls.js';
+import { lightColorHex, parseLightColor } from './light-color.mjs';
 import { createNativeCards, createToolbarPanel, sensorGraphConfig, toolbarPanelStyles } from './toolbar-panels.js';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
@@ -66,7 +67,8 @@ const stateKeys = {
   set_operation_mode: 'operation_mode', set_swing_mode: 'swing_mode', select_source: 'source', set_fan_speed: 'fan_speed',
 };
 const actionsInOrder = ['turn_on', 'turn_off', 'open', 'stop', 'close', 'lock', 'unlock',
-  'set_position', 'set_brightness', 'set_color_temp_kelvin', 'set_effect', 'set_percentage', 'set_hvac_mode', 'set_temperature',
+  'set_position', 'set_brightness', 'set_color_temp_kelvin', 'set_light_color', 'set_effect',
+  'set_percentage', 'set_hvac_mode', 'set_temperature',
   'set_temperature_range', 'set_fan_mode', 'set_swing_mode', 'set_preset_mode', 'set_operation_mode', 'set_heating_level',
   'start_timed', 'extend_timed', 'stop_timed', 'run_script', 'press_button',
   'media_previous_track','media_play','media_pause','media_next_track','media_stop',
@@ -998,7 +1000,7 @@ export class BayitDashboard extends HTMLElement {
       view.special.update(model, pending);
       for (const field of view.fields) {
         this.syncField(field, model);
-        if (field.id === 'set_effect' && !field.input.value) field.apply.disabled = true;
+        if (field.valid && !field.valid(field.input.value)) field.apply.disabled = true;
       }
     }
     return countdown;
@@ -1141,7 +1143,8 @@ export class BayitDashboard extends HTMLElement {
     for (const id of actionsInOrder) {
       const action = model.actions[id];
       if (!action || view.special.used.has(id) || (view.room && model.domain === 'cover' && id === 'set_position')) continue;
-      if (rangeActions.has(id) || action.options || typeof action.min === 'number' ||
+      if (action.color && this.panel?.type !== 'device') continue;
+      if (action.color || rangeActions.has(id) || action.options || typeof action.min === 'number' ||
           ['set_temperature_range','start_timed'].includes(id)) {
         complex.push(this.buildField(view, action, id, model));
         continue;
@@ -1187,7 +1190,12 @@ export class BayitDashboard extends HTMLElement {
         op.value = value;
         field.input.append(op);
       }
+    } else if (action.color) {
+      field.input = make('input', 'light-color-choice');
+      field.input.type = 'color';
+      field.valid = parseLightColor;
     } else field.input = this.numberInput(action, isRange ? 'range' : 'number');
+    if (id === 'set_effect') field.valid = Boolean;
     field.input.dataset.action = id;
     if (id === 'set_color_temp_kelvin') field.input.setAttribute('aria-label', title);
     caption.append(field.input);
@@ -1208,14 +1216,15 @@ export class BayitDashboard extends HTMLElement {
     const touched = () => {
       field.dirty = true;
       if (field.output) setText(field.output, field.input.value + field.unit);
-      if (id === 'set_effect') apply.disabled = !field.input.value || !this.canRequest(view.config.entity, id);
+      if (field.valid) apply.disabled = !field.valid(field.input.value) || !this.canRequest(view.config.entity, id);
     };
     field.input.addEventListener('input', touched);
+    if (action.color) field.input.addEventListener('change', touched);
     field.second?.addEventListener('input', touched);
     apply.dataset.action = id;
     label(apply, id === 'start_timed' ? this.actionLabel(id) : this.t('apply') + ' · ' + title);
     apply.onclick = () => {
-      const single = field.input.localName === 'select' ? field.input.value : field.input.valueAsNumber;
+      const single = action.color || field.input.localName === 'select' ? field.input.value : field.input.valueAsNumber;
       const value = field.second ? { low: field.input.valueAsNumber, high: field.second.valueAsNumber } : single;
       this.requestAction(view.config, id, value, apply);
     };
@@ -1240,7 +1249,8 @@ export class BayitDashboard extends HTMLElement {
     else if (id === 'set_brightness') {
       const brightness = number(attrs.brightness);
       input.value = String(brightness === null ? action.min ?? 0 : Math.round(brightness / 255 * 100));
-    } else if (id === 'volume_set') input.value = String(Math.round((number(attrs.volume_level) ?? 0) * 100));
+    } else if (action.color) input.value = model.state === 'on' ? lightColorHex(attrs) || '#ffffff' : '#ffffff';
+    else if (id === 'volume_set') input.value = String(Math.round((number(attrs.volume_level) ?? 0) * 100));
     else if (input.localName === 'select') input.value = attrs[stateKeys[id]] ?? input.options[0]?.value ?? '';
     else input.value = String(number(attrs[stateKeys[id]]) ?? action.min ?? 0);
     if (input.localName === 'select' && input.selectedIndex === -1) input.selectedIndex = 0;

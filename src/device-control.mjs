@@ -1,5 +1,6 @@
 // Portable Home Assistant device models and commands used by the dashboard UI.
 import { addSpecialDeviceActions, specialDeviceRequest } from './media-device-support.mjs';
+import { matchesLightColor, parseLightColor, supportsLightColor } from './light-color.mjs';
 
 const ENTITY_ID = /^[a-z][a-z0-9_]*\.[a-z0-9_]+$/;
 const VARIABLE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -222,6 +223,7 @@ function supportedActions(config, states, record, timer, nowMs) {
       if (modes.includes("color_temp") && Number.isSafeInteger(min) && Number.isSafeInteger(max) && min > 0 && min < max) {
         add("set_color_temp_kelvin", { min, max, step: 1 });
       }
+      if (supportsLightColor(modes)) add("set_light_color", { color: true });
       if (supports(LIGHT_EFFECT) && Array.isArray(effects)) {
         options("set_effect", effects.filter(name => typeof name === "string" && name.trim()));
       }
@@ -452,6 +454,14 @@ export function planDeviceAction(config, states, actionId, value, { confirmed = 
     throw new DeviceControlError("invalid_value", "The selected value is outside the published device options.");
   }
 
+  if (actionId === "set_light_color") {
+    const color = parseLightColor(value);
+    if (!color) throw new DeviceControlError("invalid_value", "Select a valid light color.");
+    return {
+      kind: "service", domain: "light", service: "turn_on", target: { entity_id: config.entity },
+      data: { rgb_color: color }, expected: { entity: config.entity, state: "on", lightColor: color },
+    };
+  }
   if (actionId === "set_heating_level") {
     if (config.level_select_script) {
       const power = config.timed.simple_timer_target;
@@ -545,6 +555,7 @@ function observed(expected, states) {
   if (!isAvailable(record)) return false;
   if (expected.state !== undefined && expected.state !== record.state) return false;
   if (expected.anyState && !expected.anyState.includes(record.state)) return false;
+  if (expected.lightColor && !matchesLightColor(record.attributes, expected.lightColor)) return false;
   if (expected.numericState !== undefined &&
       (!record.state.trim() || !(Math.abs(Number(record.state) - expected.numericState) <= 1e-7))) return false;
   if (expected.requireNewDeadline) {

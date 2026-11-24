@@ -85,6 +85,30 @@ test("lights expose absolute Kelvin and named effects only for reported capabili
   assert.deepEqual(actionIds(getDeviceModel(lamp, { [lamp.entity]: entity("unavailable", capabilities) })), ["more_info"]);
 });
 
+test("native light color is supported only in RGB, HS or XY and targets one exact light", () => {
+  const lamp = config("light.fixture_color");
+  for (const mode of ["rgb", "hs", "xy"]) {
+    const states = { [lamp.entity]: entity("off", { supported_color_modes: [mode] }) };
+    assert.equal(getDeviceModel(lamp, states).actions.set_light_color.color, true);
+    assert.deepEqual(planDeviceAction(lamp, states, "set_light_color", "#Af801B"), {
+      kind: "service", domain: "light", service: "turn_on", target: { entity_id: lamp.entity },
+      data: { rgb_color: [175, 128, 27] }, expected: { entity: lamp.entity, state: "on", lightColor: [175, 128, 27] },
+    });
+    for (const value of ["#000000", "#123", "Af801B", "#123xyz", "#AABBCC\n", [1, 2, 3], undefined]) {
+      assert.throws(() => planDeviceAction(lamp, states, "set_light_color", value), code("invalid_value"));
+    }
+    assert.throws(() => planDeviceAction({ ...lamp, role: "status" }, states, "set_light_color", "#Af801B"),
+      code("action_unavailable"));
+  }
+  for (const modes of [undefined, "rgb", [], ["white", "color_temp"], ["brightness"], ["onoff"]]) {
+    const states = { [lamp.entity]: entity("on", { supported_color_modes: modes, rgb_color: [7, 8, 9] }) };
+    assert.throws(() => planDeviceAction(lamp, states, "set_light_color", "#Af801B"), code("action_unavailable"));
+  }
+  assert.throws(() => planDeviceAction(lamp, {
+    [lamp.entity]: entity("unavailable", { supported_color_modes: ["rgb"] }),
+  }, "set_light_color", "#Af801B"), code("action_unavailable"));
+});
+
 test("cover controls honor feature bits and absolute position never uses toggle", () => {
   const c = config("cover.sunshade");
   const states = { [c.entity]: entity("opening", { supported_features: 13, current_position: 12 }) };
@@ -368,6 +392,27 @@ test("heater script feedback has to confirm both level and unchanged device link
   assert.equal((await changedBinding.controller.execute(c, "set_heating_level", 8)).reason, "state_timeout");
   const noFeedback = harness(selectorStates());
   assert.equal((await noFeedback.controller.execute(c, "set_heating_level", 8)).reason, "state_timeout");
+});
+
+test("light color readback matches reported color after native conversion, not stale or incompatible observations", async () => {
+  const lamp = config("light.fixture_color");
+  const capabilities = { supported_color_modes: ["xy", "hs", "color_temp"], color_mode: "xy", xy_color: [0.3, 0.6] };
+  const initial = { [lamp.entity]: entity("on", capabilities) };
+  const reported = (attributes, state = "on") => harness(initial, { onSleep(elapsed, hass) {
+    if (elapsed >= 20) hass.states = { [lamp.entity]: entity(state, { ...capabilities, ...attributes }) };
+  } });
+  const converted = reported({ xy_color: [0.574, 0.359], rgb_color: [255, 135, 75] });
+  assert.equal((await converted.controller.execute(lamp, "set_light_color", "#804020")).status, "confirmed");
+  const hue = reported({ color_mode: "hs", rgb_color: [255, 127, 62] });
+  assert.equal((await hue.controller.execute(lamp, "set_light_color", "#804020")).status, "confirmed");
+  assert.deepEqual(converted.calls, [{ type: "call_service", domain: "light", service: "turn_on",
+    target: { entity_id: lamp.entity }, service_data: { rgb_color: [128, 64, 32] } }]);
+  for (const mismatch of [harness(initial), reported({ xy_color: [0.6, 0.3] }),
+    reported({ xy_color: [0.574, 0.359] }, "off"), reported({ color_mode: "color_temp", rgb_color: [255, 129, 64] }),
+    reported({ xy_color: undefined, rgb_color: [255, 129, 64] }),
+    reported({ color_mode: "hs", rgb_color: [255, 255, 64] })]) {
+    assert.equal((await mismatch.controller.execute(lamp, "set_light_color", "#804020")).reason, "state_timeout");
+  }
 });
 
 test("controller uses exact websocket target, observes current state, and handles more-info without a call", async () => {
