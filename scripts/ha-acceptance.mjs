@@ -4,8 +4,13 @@ import { resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { connect, fixtureOrigin, onboard, poll, RESOURCE_URL, seedLovelace } from './ha-acceptance-provision.mjs';
 import { installPublishedRelease } from './ha-hacs-acceptance-provision.mjs';
+import { installMarketplaceRelease } from './ha-marketplace-acceptance-provision.mjs';
 
-const releaseReceipt = process.env.BAYIT_QA_HACS_RECEIPT;
+const hacsReceipt = process.env.BAYIT_QA_HACS_RECEIPT;
+const marketplaceReceipt = process.env.BAYIT_QA_MARKETPLACE_RECEIPT;
+assert.ok(!(hacsReceipt && marketplaceReceipt), 'Select only one package installation path');
+const releaseReceipt = hacsReceipt ?? marketplaceReceipt;
+const installRelease = marketplaceReceipt ? installMarketplaceRelease : installPublishedRelease;
 const base = fixtureOrigin(process.env.BAYIT_QA_URL);
 const tokens = await onboard(base, process.env.BAYIT_QA_MARKER);
 const api = await connect(base, tokens.access_token, releaseReceipt ? { timeout: 90000 } : undefined);
@@ -19,7 +24,7 @@ try {
   if (process.env.BAYIT_QA_HA_VERSION) assert.equal(api.version, process.env.BAYIT_QA_HA_VERSION);
   const fixture = await seedLovelace(api, { registerModule: !releaseReceipt });
   const resourceUrl = releaseReceipt
-    ? await installPublishedRelease(api, base, JSON.parse(await readFile(releaseReceipt, 'utf8')))
+    ? await installRelease(api, base, JSON.parse(await readFile(releaseReceipt, 'utf8')))
     : RESOURCE_URL;
   const browserModuleUrl = new URL(resourceUrl, base).href;
   console.log('Synthetic Home Assistant ' + api.version + ' onboarded and module registered');

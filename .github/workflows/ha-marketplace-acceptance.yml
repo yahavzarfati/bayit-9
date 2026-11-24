@@ -1,0 +1,50 @@
+name: Marketplace release acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published Bayit 9 release tag
+        required: true
+        type: string
+      core_version:
+        description: Home Assistant Core version
+        type: choice
+        default: '2026.11.3'
+        options:
+          - '2026.11.3'
+          - '2026.11.2'
+
+permissions:
+  contents: read
+
+jobs:
+  public-marketplace-install:
+    if: github.ref == 'refs/heads/main' && !github.event.repository.private
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npx playwright-core install --with-deps chromium
+      - name: Install the published release through the native Marketplace
+        env:
+          BAYIT_QA_MARKETPLACE_TOKEN: ${{ github.token }}
+          BAYIT_QA_RELEASE_TAG: ${{ inputs.release_tag }}
+          BAYIT_QA_CORE_VERSION: ${{ inputs.core_version }}
+        run: bash scripts/run-ha-marketplace-acceptance.sh "$GITHUB_REPOSITORY" "$BAYIT_QA_RELEASE_TAG" "$BAYIT_QA_CORE_VERSION"
+      - name: Collect the synthetic browser failure screenshot
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ha-marketplace-acceptance
+          path: test-results/ha-marketplace-acceptance/*/failure.png
+          if-no-files-found: ignore
+          retention-days: 7

@@ -31,10 +31,10 @@ function bundleDigest(bytes) {
   return 'sha256:' + createHash('sha256').update(bytes).digest('hex');
 }
 
-export async function verifyPublishedRelease(repository, tag, { token, request = fetch } = {}) {
+export async function verifyPublishedRelease(repository, tag, { token, request = fetch, verifyHacsUpstream = true } = {}) {
   const target = releaseTarget(repository, tag);
   assert.ok(typeof token === 'string' && token.length > 0,
-    'Provide a read-only GitHub Actions or App installation token in BAYIT_QA_HACS_TOKEN');
+    'Provide a read-only GitHub Actions or App installation token for the disposable fixture');
   const repo = await github('/repos/' + repository, 'Public repository metadata lookup', request, token);
   assert.ok(repo.private === false && repo.full_name?.toLowerCase() === repository.toLowerCase(),
     'HACS acceptance requires a canonical public release repository');
@@ -57,13 +57,15 @@ export async function verifyPublishedRelease(repository, tag, { token, request =
     'Use a job or read-only App token for the Bayit 9 repository');
   await github('/repos/' + repository + '/contents/hacs.json?ref=' + encodeURIComponent(tag),
     'Bayit 9 manifest permission check', request, token, 'token');
-  const upstream = '/repos/hacs/integration';
-  await github(upstream, 'HACS upstream repository permission check', request, token, 'token');
-  await github(upstream + '/git/trees/' + HACS_VERSION, 'HACS upstream tree permission check', request, token, 'token');
-  await github(upstream + '/contents/custom_components/hacs/manifest.json?ref=' + HACS_VERSION,
-    'HACS upstream manifest permission check', request, token, 'token');
-  await github(upstream + '/releases/tags/' + HACS_VERSION,
-    'HACS upstream release permission check', request, token, 'token');
+  if (verifyHacsUpstream) {
+    const upstream = '/repos/hacs/integration';
+    await github(upstream, 'HACS upstream repository permission check', request, token, 'token');
+    await github(upstream + '/git/trees/' + HACS_VERSION, 'HACS upstream tree permission check', request, token, 'token');
+    await github(upstream + '/contents/custom_components/hacs/manifest.json?ref=' + HACS_VERSION,
+      'HACS upstream manifest permission check', request, token, 'token');
+    await github(upstream + '/releases/tags/' + HACS_VERSION,
+      'HACS upstream release permission check', request, token, 'token');
+  }
   const limit = await github('/rate_limit', 'GitHub credential rate-limit check', request, token);
   assert.ok(Number.isInteger(limit.resources?.core?.remaining) && limit.resources.core.remaining > 0,
     'The GitHub credential has no remaining Core requests');
