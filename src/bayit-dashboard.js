@@ -54,6 +54,8 @@ const deviceGroups = {
   sensor: 'room_sensors', binary_sensor: 'room_sensors', weather: 'room_sensors',
 };
 const domainFor = config => config.entity.split('.')[0];
+const isTemperatureSensor = (domain, attributes) => domain === 'sensor' &&
+  (attributes?.device_class === 'temperature' || /^(?:°C|°F)$/i.test(attributes?.unit_of_measurement ?? ''));
 const movement = new Set(['open','close','set_position']);
 const rangeActions = new Set(['set_position', 'set_brightness', 'set_color_temp_kelvin', 'set_percentage', 'volume_set']);
 const stateKeys = {
@@ -669,7 +671,7 @@ export class BayitDashboard extends HTMLElement {
         if (model.domain === 'light' && model.state === 'on') lit++;
         if (tone !== 'quiet' && !active.has(config.entity)) active.set(config.entity, { config, model, room: view.room });
         if (model.available) {
-          if (model.attributes?.device_class === 'temperature') {
+          if (isTemperatureSensor(model.domain, model.attributes)) {
             temperature ||= this.temperatureBadge(model.state, model.attributes.unit_of_measurement);
           }
           if (model.domain === 'climate') ambient ||= this.temperatureBadge(model.attributes?.current_temperature);
@@ -812,8 +814,8 @@ export class BayitDashboard extends HTMLElement {
         group.dataset.group = key;
         if (title !== '') group.append(make('h3', 'device-group-title', title ?? this.t(key)));
         for (const config of members) {
-          const temperature = (key === 'room_sensors' || key === 'room_weather') && domainFor(config) === 'sensor' &&
-            this._hass?.states?.[config.entity]?.attributes?.device_class === 'temperature';
+          const temperature = (key === 'room_sensors' || key === 'room_weather') &&
+            isTemperatureSensor(domainFor(config), this._hass?.states?.[config.entity]?.attributes);
           if (!temperature) {
             this.buildDevice(config, group, room, key);
             continue;

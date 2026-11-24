@@ -143,7 +143,7 @@ if (query.has('toolbar-panels')) {
     'sun.sun': {state:'above_horizon', attributes:{friendly_name:'Sun', next_rising:'2026-11-25T04:00:00Z',elevation:15,azimuth:270}},
     'person.demo_friend': {state:'home',attributes:{friendly_name:'Simona'}},
     'sensor.demo_meter': {state:'51',attributes:{friendly_name:'Energy meter',unit_of_measurement:'kWh'}},
-    'sensor.demo_studio_temperature': {state:'22.5',attributes:{friendly_name:'Studio temperature',device_class:'temperature',unit_of_measurement:'°C'}},
+    'sensor.demo_studio_temperature': {state:'22.5',attributes:{friendly_name:'Studio temperature',unit_of_measurement:'°C'}},
     'media_player.demo_speaker': {state:'playing',attributes:{friendly_name:'Speaker',supported_features:30749,volume_level:.24,
       is_volume_muted:false,source:'Radio',source_list:['Radio','Aux'],media_title:'Station'}},
     'vacuum.demo_robot': {state:'idle',attributes:{friendly_name:'Robot',supported_features:8244,fan_speed_list:['silent','normal']}},
