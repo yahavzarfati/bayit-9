@@ -314,17 +314,21 @@ export const styles = `
     justify-content: start;
   }
 
-  .quick-button[data-transition]:not([data-transition=""])::before {
-    content: ""; position: absolute; inset-block-end: 5px; width: 10px;
-    border-block-end: 2px solid currentColor; border-radius: 999px; pointer-events: none;
+  .quick-button:is([data-transition=opening], [data-transition=closing])::before {
+    content: ""; position: absolute; inset-block-end: 3px; left: calc(50% - 3px);
+    width: 6px; height: 6px; border-top: 1.5px solid currentColor; border-right: 1.5px solid currentColor;
+    pointer-events: none; animation: cover-direction .8s ease-in-out infinite alternate;
   }
+  .quick-button[data-transition=opening]::before { rotate: -45deg; --cover-shift: -1px; }
+  .quick-button[data-transition=closing]::before { rotate: 135deg; --cover-shift: 1px; }
+  @keyframes cover-direction { from { opacity: .55; } to { transform: translateY(var(--cover-shift)); } }
   .quick-button[data-tone=warm], .current[data-tone=warm] { color: var(--warm); }
   .quick-button[data-tone=moving], .current[data-tone=moving] { color: var(--moving); }
   .quick-button[data-tone=critical], .current[data-tone=critical] { color: var(--critical); }
   .quick-button[data-tone=warm] { background: rgba(255,197,83,.14); border-color: rgba(255,215,147,.39); }
   .quick-button[data-tone=moving] { background: rgba(98,202,255,.14); border-color: rgba(164,225,255,.41); }
   .quick-button[data-tone=critical] { background: rgba(255,146,151,.16); border-color: rgba(255,187,187,.42); }
-  .quick-button[aria-busy=true]::after {
+  .quick-button[aria-busy=true][data-transition=""]::after {
     content: ""; position: absolute; inset: 4px; border-radius: inherit;
     border: 1px solid transparent; border-block-start-color: currentColor;
     pointer-events: none; animation: progress 1s linear infinite;
@@ -619,7 +623,8 @@ export const styles = `
     .shell, .modal { --line: rgba(255,255,255,.58); --soft-line: rgba(255,255,255,.31); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .modal[open]:not([data-kind]), .quick-button[aria-busy=true]::after { animation: none; }
+    .modal[open]:not([data-kind]), .quick-button[aria-busy=true]::after,
+    .quick-button:is([data-transition=opening], [data-transition=closing])::before { animation: none; }
     .chrome-button, .round-action, .quick-button { transition: none; }
     .chrome-button:active, .round-action:active, .quick-button:active { transform: none; }
   }

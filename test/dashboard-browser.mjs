@@ -21,6 +21,7 @@ const states = {
 const calls = [];
 const moreInfoCalls = [];
 document.addEventListener('hass-more-info', event => moreInfoCalls.push(event.detail.entityId));
+const coverRequests = [];
 let finishLevel;
 const query = new URL(location.href).searchParams;
 const storedKey = 'bayit9-browser-fixture';
@@ -52,6 +53,11 @@ const hass = {
       if (effect !== undefined) attributes.effect = effect;
       states[id] = { ...states[id], attributes, state: request.service === 'turn_off' ? 'off' : 'on' };
       card.hass = { ...hass, states: { ...states } };
+    }
+    if (request.domain === 'cover' && query.has('cover-feedback')) {
+      return new Promise((resolve, reject) => {
+        coverRequests.push(failed => failed ? reject(new Error('Fixture rejection')) : resolve({}));
+      });
     }
     if (request.domain === 'script' && request.service === 'demo_select_heat_step') {
       states['script.demo_select_heat_step'] = { state: 'on', attributes: {} };
@@ -127,7 +133,10 @@ if (query.has('room-status')) {
   hass.config = { unit_system: { temperature: '°C' } };
   Object.assign(states, {
     'climate.demo_room': { state: 'cool', attributes: { friendly_name: 'Cooling', temperature: 26, current_temperature: 19 } },
-    'cover.demo_window': { state: 'opening', attributes: { friendly_name: 'Window shade', current_position: 57 } },
+    'cover.demo_window': {
+      state: query.has('cover-feedback') ? 'closed' : 'opening',
+      attributes: { friendly_name: 'Window shade', current_position: query.has('cover-feedback') ? 0 : 57, supported_features: 15 },
+    },
     'sensor.demo_temperature': { state: '23.5', attributes: { device_class: 'temperature', unit_of_measurement: '°C' } },
     'sensor.demo_unmapped': { state: '99', attributes: { device_class: 'temperature', unit_of_measurement: '°C' } },
     'light.demo_unavailable': { state: 'unavailable', attributes: { friendly_name: 'Desk light' } },
@@ -246,6 +255,7 @@ if (query.has('editor')) {
 }
 window.bayitTest = {
   registrations: window.customStrategies, calls, moreInfoCalls, config,
+  finishCover: (index, failed = false) => coverRequests[index](failed),
   setRoomState(entity, state) {
     states[entity] = { ...states[entity], state };
     card.hass = { ...hass, states: { ...states } };
@@ -387,6 +397,71 @@ try {
         }
         assert.equal(await statusPage.evaluate(() => window.bayitTest.calls.length), 0);
         await statusPage.close();
+      }
+
+      for (const locale of ['en', 'he']) {
+        const reduce = locale === 'he';
+        const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true,
+          reducedMotion: reduce ? 'reduce' : 'no-preference' });
+        page.setDefaultTimeout(8000);
+        await page.goto(base + '?room-status&cover-feedback&locale=' + locale);
+        const room = page.locator('.room[data-room="bayit_room_status"]');
+        const shade = room.locator('.quick-button[data-entity="cover.demo_window"]');
+        const indicator = (direction, busy) => shade.and(page.locator(
+          '.quick-button[data-tone="moving"][data-transition="' + direction + '"][aria-busy="' + busy + '"]'));
+        const state = value => page.evaluate(value => window.bayitTest.setRoomState('cover.demo_window', value), value);
+        const finish = (index, failed) => page.evaluate(([index, failed]) => window.bayitTest.finishCover(index, failed), [index, failed]);
+        await shade.tap();
+        await indicator('opening', true).waitFor();
+        assert.match(await shade.getAttribute('aria-label'), reduce ? /נשלחה בקשת פתיחה · עצירה/ : /Opening requested · Stop/);
+        assert.equal(await shade.evaluate(el => getComputedStyle(el, '::before').animationName), reduce ? 'none' : 'cover-direction');
+
+        // A second tap stops the same cover before either movement or acknowledgement is reported.
+        await shade.tap();
+        assert.deepEqual(await page.evaluate(() => window.bayitTest.calls), ['open_cover', 'stop_cover'].map(service => ({
+          type: 'call_service', domain: 'cover', service, service_data: {}, target: { entity_id: 'cover.demo_window' },
+        })));
+        await shade.and(page.locator('[data-transition=""][aria-busy="true"]')).waitFor();
+        await finish(0, true);
+        await finish(1);
+        await shade.and(page.locator('[data-tone="quiet"][aria-busy="false"]')).waitFor();
+        const note = page.locator('.notice[data-role="page-notice"]');
+        await note.filter({ hasText: reduce ? 'נשלחה פקודה אל' : 'Command sent to' }).waitFor();
+
+        // Closing has distinct feedback, and a known stop can settle before a new direction.
+        await state('open');
+        await shade.tap();
+        await indicator('closing', true).waitFor();
+        assert.match(await shade.getAttribute('aria-label'), reduce ? /נשלחה בקשת סגירה/ : /Closing requested/);
+        await state('closing');
+        await shade.and(page.getByRole('button', { name: reduce ? /^Window shade · נסגר ·/ : /^Window shade · Closing ·/ })).waitFor();
+        await shade.press('Shift+Enter');
+        const details = page.getByRole('dialog');
+        const stop = details.locator('[data-action="stop"]');
+        await stop.waitFor();
+        assert.equal(await stop.isEnabled(), true);
+        assert.equal(await details.locator('[data-action="open"]').isDisabled(), true);
+        await stop.tap();
+        await page.keyboard.press('Escape');
+        await details.waitFor({ state: 'hidden' });
+        await finish(2);
+        await finish(3);
+        await indicator('closing', true).waitFor();
+        await state('closed');
+        await shade.and(page.locator('[data-tone="quiet"][aria-busy="false"]')).waitFor();
+        await shade.tap();
+        await indicator('opening', true).waitFor();
+        await state('unavailable');
+        await shade.and(page.locator('[data-transition=""][data-tone="quiet"][aria-busy="false"]')).waitFor();
+        assert.match(await room.locator('[data-badge="availability"]').getAttribute('aria-label'), /Window shade/);
+        await finish(4, true);
+        await note.filter({ hasText: reduce ? 'הפעולה לא הושלמה.' : 'Could not complete the action.' }).waitFor();
+        await page.evaluate(() => window.bayitTest.setRoomState('light.demo_unavailable', 'on'));
+        await room.locator('.quick-button[data-entity="light.demo_unavailable"][data-tone="warm"][data-transition=""]').waitFor();
+        assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.map(call => call.service)),
+          ['open_cover', 'stop_cover', 'close_cover', 'stop_cover', 'open_cover']);
+        await page.close();
+        console.log(engine + ' ' + locale + ' 320: delayed cover feedback, stop, reversal, reduced motion, and availability');
       }
 
       const mediaPage = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });

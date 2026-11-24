@@ -61,6 +61,7 @@ const domainFor = config => config.entity.split('.')[0];
 const isTemperatureSensor = (domain, attributes) => domain === 'sensor' &&
   (attributes?.device_class === 'temperature' || /^(?:°C|°F)$/i.test(attributes?.unit_of_measurement ?? ''));
 const movement = new Set(['open','close','set_position']);
+const coverMovingStates = new Set(['opening', 'closing']);
 const rangeActions = new Set(['set_position', 'set_brightness', 'set_color_temp_kelvin', 'set_percentage', 'volume_set']);
 const stateKeys = {
   set_position: 'current_position', set_percentage: 'percentage', set_brightness: 'brightness',
@@ -571,13 +572,26 @@ export class BayitDashboard extends HTMLElement {
     const model = this.model(config);
     const { domain, state } = model;
     let action;
-    if (domain === 'cover') action = ['opening', 'closing'].includes(state)
+    if (domain === 'cover') action = this.coverIsMoving(model)
       ? 'stop' : state === 'open' ? 'close' : state === 'closed' ? 'open' : undefined;
     else if (domain === 'lock') action = state === 'locked' ? 'unlock' : state === 'unlocked' ? 'lock' : undefined;
     else if (powerDomains.has(domain) && !config.kind) action = state === 'off' ? 'turn_on' : 'turn_off';
     if (action && model.actions[action]) {
       this.requestAction(config, action, undefined, source, domain === 'lock');
     } else this.openPanel('device', source, room, config.entity);
+  }
+
+  coverIsMoving(model) {
+    return model.available && (coverMovingStates.has(model.state) || movement.has(this.pending.get(model.entity)?.id));
+  }
+
+  coverFeedback(model, pending) {
+    if (model.domain !== 'cover' || !model.available) return null;
+    if (coverMovingStates.has(model.state)) return { direction: model.state };
+    if (pending?.coverDirection) return {
+      direction: pending.coverDirection, requestLabel: this.t(pending.coverDirection + '_requested'),
+    };
+    return null;
   }
 
   buildRooms() {
@@ -748,11 +762,16 @@ export class BayitDashboard extends HTMLElement {
         }
         const shortcut = view.shortcut.get(config.entity);
         if (!shortcut) continue;
+        const pending = this.pending.get(config.entity);
+        const feedback = this.coverFeedback(model, pending);
+        const stop = model.domain === 'cover' && model.actions.stop && this.coverIsMoving(model) &&
+          this.canRequest(config.entity, 'stop');
         setIcon(shortcut.firstElementChild, model.icon);
-        label(shortcut, model.name + ' · ' + this.stateLabel(model));
-        shortcut.dataset.tone = tone;
-        shortcut.dataset.transition = ['opening','closing'].includes(model.state) ? model.state : '';
-        const busy = this.pending.has(config.entity);
+        const status = feedback?.requestLabel || this.stateLabel(model);
+        label(shortcut, model.name + ' · ' + status + (stop ? ' · ' + this.t('stop') : ''));
+        shortcut.dataset.tone = feedback ? 'moving' : tone;
+        shortcut.dataset.transition = feedback?.direction || '';
+        const busy = !!pending && (model.domain !== 'cover' || model.available);
         shortcut.setAttribute('aria-busy', String(busy));
       }
       const reading = temperature || ambient;
@@ -1061,9 +1080,10 @@ export class BayitDashboard extends HTMLElement {
       const media = model.domain === 'media_player' && view.config.role !== 'now_playing' &&
         typeof model.attributes.media_title === 'string'
         ? model.attributes.media_title.trim().slice(0, 160) : '';
-      setText(view.state, this.stateLabel(model) + (media ? ' · ' + media : ''));
-      view.state.dataset.tone = this.tone(model);
       const pending = this.pending.get(view.config.entity);
+      const feedback = this.coverFeedback(model, pending);
+      setText(view.state, (feedback?.requestLabel || this.stateLabel(model)) + (media ? ' · ' + media : ''));
+      view.state.dataset.tone = feedback ? 'moving' : this.tone(model);
       if (view.tile) {
         const actionId = model.state === 'off' ? 'turn_on' : 'turn_off';
         const toggles = !!model.actions[actionId];
@@ -1387,6 +1407,16 @@ export class BayitDashboard extends HTMLElement {
     const model = this.model(config);
     if (!model.actions[id]) return;
     const token = { id, value };
+    if (model.domain === 'cover' && movement.has(id)) {
+      if (id === 'open') token.coverDirection = 'opening';
+      if (id === 'close') token.coverDirection = 'closing';
+      if (id === 'set_position') {
+        const position = model.attributes.current_position;
+        if (Number.isFinite(position) && Number.isFinite(value) && value !== position) {
+          token.coverDirection = value > position ? 'opening' : 'closing';
+        }
+      }
+    }
     this.pending.set(config.entity, token);
     this.announce(this.t('sending').replace('{name}', model.name));
     this.update();
