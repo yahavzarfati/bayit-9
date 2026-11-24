@@ -302,10 +302,6 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     if (dialog.open) dialog.close();
   }
 
-  dialog.addEventListener('cancel', event => {
-    event.preventDefault();
-    dismiss();
-  });
   dialog.addEventListener('close', () => {
     if (!dialog.open) resetContext(current, current?.restoreFocus !== false);
   });

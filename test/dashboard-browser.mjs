@@ -442,6 +442,19 @@ try {
       await routeDialog.waitFor({ state: 'hidden' });
       await routesPage.waitForURL(delayedUrl);
 
+      // Closing an animated source-open panel must remove its route before a refresh can reopen it.
+      await routesPage.getByRole('button', { name: 'Studio', exact: true }).tap();
+      await studioHeading.waitFor();
+      const hashDuringDismissal = await routeClose.evaluate(button => {
+        button.click();
+        return location.hash;
+      });
+      assert.equal(hashDuringDismissal, '');
+      await routesPage.reload();
+      await routesPage.waitForFunction(() => window.bayitTest);
+      await routesPage.evaluate(() => window.bayitTest.loadPopupHass());
+      await routeDialog.waitFor({ state: 'hidden' });
+
       await routesPage.goto(routeUrl + '#legacy-viewer');
       await routeDialog.getByRole('heading', { name: 'Device viewer', exact: true }).waitFor();
       await routesPage.goto(routeUrl + '#device/studio/switch.demo_heater');

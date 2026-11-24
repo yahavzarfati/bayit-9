@@ -98,6 +98,7 @@ try {
   await lagoon.click();
   assert.equal(await lagoon.getAttribute('aria-pressed'), 'true');
   await appearance.getByRole('button', { name: 'Close', exact: true }).click();
+  assert.equal(new URL(page.url()).hash, '', 'Closing Appearance removes its route before reload');
   await page.reload({ waitUntil: 'domcontentloaded' });
   await roomButton.waitFor();
   await settings.click();

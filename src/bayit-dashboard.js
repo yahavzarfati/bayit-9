@@ -335,9 +335,13 @@ export class BayitDashboard extends HTMLElement {
     this.popupMotion = createPopupMotion({ dialog: n.modal, clip: n.roomScroll, toolbar: n.toolbar });
     this.pageChrome = createPageChrome(this, { onChange: () => this.fitPage() });
     n.back.onclick = () => this.backToRoom();
-    n.close.onclick = () => this.popupMotion.dismiss();
+    n.close.onclick = () => this.dismissPanel();
     n.abort.onclick = () => n.confirm.close();
     n.accept.onclick = () => this.acceptAction();
+    n.modal.addEventListener('cancel', event => {
+      event.preventDefault();
+      this.dismissPanel();
+    });
     n.modal.addEventListener('close', () => this.closePanel());
     n.confirm.addEventListener('close', () => {
       const source = this.confirming?.source;
@@ -348,7 +352,7 @@ export class BayitDashboard extends HTMLElement {
       const bounds = dialog.getBoundingClientRect();
       if (event.target === dialog && (event.clientX < bounds.left || event.clientX > bounds.right ||
           event.clientY < bounds.top || event.clientY > bounds.bottom)) {
-        if (dialog === n.modal) this.popupMotion.dismiss();
+        if (dialog === n.modal) this.dismissPanel();
         else dialog.close();
       }
     });
@@ -970,6 +974,12 @@ export class BayitDashboard extends HTMLElement {
     view?.more?.focus({ preventScroll: true });
   }
 
+  dismissPanel(options) {
+    const routeHash = this.panel?.routeHash;
+    if (routeHash) this.popupHistory?.close(routeHash);
+    this.popupMotion.dismiss(options);
+  }
+
   closePanel() {
     const n = this.nodes;
     if (n.modal.open) return;
@@ -1169,9 +1179,7 @@ export class BayitDashboard extends HTMLElement {
 
   moreInfo(config) {
     if (!this.model(config).actions.more_info) return;
-    const routeHash = this.panel?.routeHash;
-    this.popupMotion.dismiss({ immediate: true, restoreFocus: false });
-    if (routeHash) this.popupHistory?.close(routeHash);
+    this.dismissPanel({ immediate: true, restoreFocus: false });
     this.dispatchEvent(new CustomEvent('hass-more-info', {
       detail: { entityId: config.entity }, bubbles: true, composed: true,
     }));
@@ -1288,7 +1296,7 @@ export class BayitDashboard extends HTMLElement {
       const bypass = new URL(location.href).searchParams.has('disable_km');
       const menu = button('control-button', this.t(bypass ? 'fullscreen' : 'ha_menu'), 'mdi:menu');
       menu.onclick = () => {
-        this.popupMotion.dismiss({ immediate: true, restoreFocus: false });
+        this.dismissPanel({ immediate: true, restoreFocus: false });
         this.pageChrome.toggleHomeAssistantMenu();
       };
       content.append(menu);
