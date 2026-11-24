@@ -102,7 +102,8 @@ const roomStatusSelected = {
   room_overrides: {
     bayit_room_status: {
       name: hass.locale.language === 'he' ? 'חדר הפנאי' : 'Family room',
-      entities: ['climate.demo_room', 'cover.demo_window', 'sensor.demo_temperature', 'light.demo_unavailable'],
+      entities: ['climate.demo_room', 'cover.demo_window', 'sensor.demo_temperature', 'light.demo_unavailable',
+        'light.demo_side1', 'light.demo_side2', 'light.demo_side3'],
     },
     ...Object.fromEntries(Array.from({ length: 9 }, (_, index) =>
       ['bayit_room_fixture_' + index, { name: 'Room ' + index, entities: [] }])),
@@ -119,6 +120,9 @@ if (query.has('room-status')) {
     'light.demo_unavailable': { state: 'unavailable', attributes: { friendly_name: 'Desk light' } },
     'timer.demo_room': { state: 'active', attributes: { finishes_at: new Date(Date.now() + 3660000).toISOString() } },
   });
+  for (const number of [1, 2, 3]) {
+    states['light.demo_side' + number] = { state: 'off', attributes: { supported_color_modes: ['onoff'] } };
+  }
 }
 const heaterFan = 'fan.demo_step_heater';
 const helper = 'input_number.demo_heat_step';
@@ -308,12 +312,24 @@ try {
         await strip.locator('[data-badge="temperature"]').filter({ hasText: '19°C' }).waitFor();
         await strip.locator('[data-badge="availability"]:not([hidden])').waitFor();
         assert.match(await active.innerText(), /26°C/);
+        for (const width of [320, 391, 430]) {
+          await statusPage.setViewportSize({ width, height: 845 });
+          const arrangement = await fixtureRoom.evaluate(room => {
+            const controls = [...room.querySelectorAll('.quick-button')].map(button => button.getBoundingClientRect());
+            const heading = room.querySelector('.room-title').getBoundingClientRect();
+            const rows = [...new Set(controls.map(box => box.top))];
+            return [rows.map(top => controls.filter(box => box.top === top).length),
+              heading.top >= Math.max(...controls.map(box => box.bottom))];
+          });
+          assert.deepEqual(arrangement, width <= 420 ? [[3, 3], true] : [[2, 2, 2], false]);
+        }
+        await statusPage.setViewportSize({ width: 320, height: 845 });
         await statusPage.evaluate(() => window.bayitTest.setRoomLayout('header'));
         const headingY = await fixtureRoom.locator('.room-title').boundingBox();
         assert.ok(headingY.y < (await strip.boundingBox()).y);
         await statusPage.evaluate(() => window.bayitTest.setRoomLayout('classic'));
         for (const [width, columns, gridWidth] of [[860, 2, 430], [900, 4, 804], [1280, 4, 900]]) {
-          await statusPage.setViewportSize({ width, height: 844 });
+          await statusPage.setViewportSize({ width, height: 721 });
           const measured = await statusPage.locator('.rooms').evaluate(grid => {
             const box = grid.getBoundingClientRect();
             return [getComputedStyle(grid).gridTemplateColumns.split(' ').length, Math.round(box.width), Math.round(box.left)];
@@ -327,6 +343,7 @@ try {
             return Math.abs((text.left + text.width / 2) - (glyph.left + glyph.width / 2));
           });
           assert.ok(alignment < 45, 'Classic room labels stay close to their icon on wide screens');
+          if (width === 1280) assert.equal(Math.round((await fixtureRoom.boundingBox()).height), 208);
         }
         assert.equal(await statusPage.evaluate(() => window.bayitTest.calls.length), 0);
         await statusPage.close();

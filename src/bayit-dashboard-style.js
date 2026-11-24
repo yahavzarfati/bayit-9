@@ -41,18 +41,17 @@ export const styles = `
     background: var(--wallpaper);
   }
   .shell[data-page=true] {
+    --page-top: max(0px,calc(8px - var(--bayit-page-top,0px)));
     --page-bottom: max(8px,env(safe-area-inset-bottom,0px));
     --room-rows: var(--bayit-room-rows,5);
-    --room-block: clamp(132px,calc(
-      (var(--bayit-view-height,100dvh) - var(--toolbar-min) - var(--page-bottom))
-      / var(--room-rows) - var(--room-gap)
-    ),164px);
+    --room-available: calc(var(--bayit-view-height,100dvh) - var(--toolbar-min) - var(--page-top) - var(--page-bottom) - 9px);
+    --room-block: clamp(132px,calc(var(--room-available) / var(--room-rows) - var(--room-gap)),var(--room-block-limit,164px));
     display: grid;
     grid-template-rows: auto minmax(0,1fr);
     gap: var(--room-gap);
     block-size: var(--bayit-view-height,100dvh);
     min-height: 0;
-    padding-block: 0 var(--page-bottom);
+    padding-block: var(--page-top) var(--page-bottom);
     padding-inline: 0;
   }
   .shell[data-page=true] .toolbar { margin-inline: var(--edge); margin-block-end: 0; }
@@ -633,6 +632,34 @@ export const styles = `
     .room-title > ha-icon:first-child { width: 19px; height: 19px; --mdc-icon-size: 19px; }
     .quick-button ha-icon { width: 18px; height: 18px; --mdc-icon-size: 18px; }
   }
+  @container (max-width: 420px) {
+    .shell[data-page=true][data-layout=classic] .room-scroll { padding-inline: 16px; }
+    .shell[data-page=true][data-layout=classic] .toolbar { margin-inline: 16px; }
+    .shell[data-page=true][data-layout=classic] .room {
+      --shortcut-width: clamp(32px,calc((100cqi - 98px) / 6),42px);
+      grid-template-areas: "status" "quick" "title";
+      grid-template-columns: minmax(0,1fr);
+      grid-template-rows: minmax(17px,1fr) auto 31px;
+    }
+    .shell[data-page=true][data-layout=classic] .quick {
+      grid-template-columns: repeat(3,minmax(0,1fr));
+      grid-template-rows: repeat(2,var(--shortcut-height));
+      justify-items: center;
+    }
+    .shell[data-page=true][data-layout=classic] .quick > :only-child { grid-column: 3; }
+    .shell[data-page=true][data-layout=classic] .quick:has(> :nth-child(2):last-child) > :first-child,
+    .shell[data-page=true][data-layout=classic] .quick:has(> :nth-child(4):last-child) > :nth-child(odd) { grid-column: 2; }
+    .shell[data-page=true][data-layout=classic] .room-title {
+      align-self: stretch;
+      min-height: 0;
+      grid-template-areas: "icon count label";
+      grid-template-columns: 22px auto minmax(0,1fr);
+      grid-template-rows: 1fr;
+      font-size: 12px;
+    }
+    .shell[data-page=true][data-layout=classic] .room-title > ha-icon:first-child { width: 22px; height: 22px; --mdc-icon-size: 22px; }
+    .shell[data-page=true][data-layout=classic] .room-title > .room-name { text-align: left; }
+  }
   @container (max-width: 275px) {
     .rooms { grid-template-columns: 1fr; }
     .room { --shortcut-width: 44px; --shortcut-height: 38px; padding: 8px; }
@@ -649,7 +676,10 @@ export const styles = `
     .room-status { font-size: 12px; }
   }
   @container (min-width: 900px) {
-    .shell[data-page=true] { --room-rows: var(--bayit-room-rows-wide,3); }
+    .shell[data-page=true] {
+      --room-rows: var(--bayit-room-rows-wide,3);
+      --room-block-limit: max(164px,calc(var(--room-available) / 2 - var(--room-gap)));
+    }
     .shell[data-page=true] .room-scroll { padding-inline: 48px; }
     .shell[data-page=true] .rooms {
       max-width: 900px;

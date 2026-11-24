@@ -5,8 +5,8 @@ const catalog = Object.freeze({
     'radial-gradient(ellipse at 98% 28%,#335c79,transparent 45%), radial-gradient(ellipse at 20% 72%,#11635d,transparent 58%), linear-gradient(138deg,#111e36 12%,#174152 75%,#142533)' },
   dunes: { en: 'Dunes', he: 'דיונות', group: 'nature', background:
     'radial-gradient(ellipse at 86% 18%,#84543d,transparent 52%), radial-gradient(ellipse at 15% 85%,#59374a,transparent 55%), linear-gradient(146deg,#321f29 11%,#4c3334 66%,#241d32)' },
-  jade: { en: 'Jade forest', he: 'יער ירקן', group: 'nature', background:
-    'repeating-linear-gradient(90deg,transparent 0 39px,#061b194d 40px 45px,transparent 46px 87px), radial-gradient(ellipse at 50% 32%,#9dd3ae4d,transparent 58%), linear-gradient(180deg,#355b4c,#193c35 47%,#0b211e)' },
+  jade: { en: 'Misty forest', he: 'יער ערפילי', group: 'nature', background:
+    'repeating-linear-gradient(90deg,transparent 0px,transparent 39px,rgba(6,27,25,.30) 40px,rgba(6,27,25,.30) 45px,transparent 46px,transparent 87px), radial-gradient(ellipse at 50% 32%,rgba(157,211,174,.30),transparent 58%), linear-gradient(180deg,#355b4c 0%,#193c35 47%,#0b211e 100%)' },
   blue_hour: { en: 'Blue hour', he: 'השעה הכחולה', group: 'nature', background:
     'radial-gradient(circle at 72% 18%,#aec2da 0 4%,transparent 4.4%), linear-gradient(157deg,transparent 0 49%,#3c5967 49.3% 63%,transparent 63.3%), linear-gradient(203deg,transparent 0 56%,#223b50 56.3% 71%,transparent 71.3%), linear-gradient(180deg,#27384d 0 66%,#1c4c5c 66.3%,#102432)' },
   graphite: { en: 'Graphite', he: 'גרפיט', group: 'materials', background:
