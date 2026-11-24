@@ -270,6 +270,53 @@ test("explicit heater script changes bounded level with the heater off, manually
     "set_heating_level", 8), code("action_unavailable"));
 });
 
+test("off-only heater preselection writes only its dedicated helper and keeps the running action separate", async () => {
+  const c = { ...levelSelector, level_preselect_entity: "input_number.fixture_next_level" };
+  const next = "preselect_heating_level";
+  const running = "set_heating_level";
+  const idle = { ...selectorStates(), [c.level_preselect_entity]: selectorLevel(5) };
+  const on = { ...selectorStates("on"), [c.level_preselect_entity]: selectorLevel(8) };
+  assert.equal(getDeviceModel(c, idle).level, 5);
+  assert.equal(getDeviceModel(c, idle).levelAction, next);
+  assert.equal(getDeviceModel(c, on).level, 3);
+  assert.equal(getDeviceModel(c, on).levelAction, running);
+  assert.deepEqual(planDeviceAction(c, on, running, 7), planDeviceAction(levelSelector, on, running, 7));
+  assert.equal(getDeviceModel(c, idle).actions[running], undefined);
+  assert.deepEqual(planDeviceAction(c, idle, next, 8), {
+    kind: "service", domain: "input_number", service: "set_value",
+    target: { entity_id: c.level_preselect_entity }, data: { value: 8 },
+    expected: { entity: c.level_preselect_entity, numericState: 8 },
+  });
+  for (const value of [0, 10, 2.5, "8"]) {
+    assert.throws(() => planDeviceAction(c, idle, next, value), code("invalid_value"));
+  }
+  for (const [id, record] of [
+    [c.entity, entity("on")], [c.entity, entity("unavailable")],
+    [c.timed.simple_timer_target, entity("on")], [c.timed.simple_timer_target, undefined],
+    [c.timed.simple_timer_entity, selectorTimer({ switch_entity_id: "switch.other" })],
+    [c.timed.simple_timer_entity, selectorTimer({ timer_state: "active" })],
+    [c.level_preselect_entity, entity("5", { min: 0, max: 8, step: 1 })],
+    [c.level_preselect_entity, entity("unknown")],
+  ]) {
+    assert.throws(() => planDeviceAction(c, { ...idle, [id]: record }, next, 8), code("action_unavailable"));
+  }
+  assert.throws(() => planDeviceAction({ ...c, role: "status" }, idle, next, 8), code("action_unavailable"));
+  assert.throws(() => getDeviceModel({ ...c, timed: { simple_timer_entity: c.timed.simple_timer_entity } }, idle),
+    code("invalid_config"));
+
+  const calls = [];
+  let current = idle;
+  const controller = createDeviceController({ getHass: () => ({ states: current, callWS: async call => {
+    calls.push(call);
+    current = { ...current, [c.level_preselect_entity]: selectorLevel(8) };
+  } }) });
+  assert.equal((await controller.execute(c, next, 8)).status, "confirmed");
+  current = on;
+  await assert.rejects(controller.execute(c, next, 7), code("action_unavailable"));
+  assert.deepEqual(calls, [{ type: "call_service", domain: "input_number", service: "set_value",
+    target: { entity_id: c.level_preselect_entity }, service_data: { value: 8 } }]);
+});
+
 test("lock unlock requires explicit confirmation and an optional PIN stays in its one request", () => {
   const c = config("lock.entry");
   const states = { [c.entity]: entity("locked", { supported_features: 1, code_format: "^\\d{4}$" }) };

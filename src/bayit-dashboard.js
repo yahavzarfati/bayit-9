@@ -73,6 +73,7 @@ const actionsInOrder = ['turn_on', 'turn_off', 'open', 'stop', 'close', 'lock', 
   'set_position', 'set_brightness', 'set_color_temp_kelvin', 'set_light_color', 'set_effect',
   'set_percentage', 'set_hvac_mode', 'set_temperature',
   'set_temperature_range', 'set_fan_mode', 'set_swing_mode', 'set_preset_mode', 'set_operation_mode', 'set_heating_level',
+  'preselect_heating_level',
   'start_timed', 'extend_timed', 'stop_timed', 'run_script', 'press_button',
   'media_previous_track','media_play','media_pause','media_next_track','media_stop',
   'volume_down','mute','unmute','volume_up','volume_set','select_source',
@@ -176,6 +177,12 @@ function normalizeEntity(item) {
       /^sensor\.[a-z0-9_]+$/.test(entry.timed?.simple_timer_entity ?? '') &&
       /^script\.[a-z0-9_]+$/.test(item.level_select_script ?? '')) {
     entry.level_select_script = item.level_select_script;
+  }
+  if (entry.kind === 'heater' && entity.startsWith('fan.') && entry.level_steps && !entry.level_entity &&
+      /^sensor\.[a-z0-9_]+$/.test(entry.timed?.simple_timer_entity ?? '') &&
+      /^switch\.[a-z0-9_]+$/.test(entry.timed?.simple_timer_target ?? '') &&
+      /^input_number\.[a-z0-9_]+$/.test(item.level_preselect_entity ?? '')) {
+    entry.level_preselect_entity = item.level_preselect_entity;
   }
   if (entry.kind === 'boiler' && item.schedule && typeof item.schedule === 'object') {
     entry.schedule = Object.fromEntries(['save_script', 'delete_script'].flatMap(key =>
@@ -1111,7 +1118,7 @@ export class BayitDashboard extends HTMLElement {
         if (view.more.title !== view.panelLaunch.hint) view.more.title = view.panelLaunch.hint;
       } else view.more.hidden = !model.actions.more_info;
       const timerLayout = model.timer ? [model.timer.state, Number.isFinite(model.timer.usedSeconds), model.state === 'on'] : null;
-      const signature = JSON.stringify([actionsInOrder.map(id => model.actions[id] || null), timerLayout]);
+      const signature = JSON.stringify([actionsInOrder.map(id => model.actions[id] || null), timerLayout, model.levelAction]);
       if (signature !== view.signature) {
         view.signature = signature;
         this.buildActions(view, model);
@@ -1443,7 +1450,8 @@ export class BayitDashboard extends HTMLElement {
       const result = await this.controller.execute(config, id, value, { confirmed });
       if (this.pending.get(config.entity) !== token) return;
       const key = ['confirmed','sent','unconfirmed'].includes(result?.status) ? result.status : 'sent';
-      this.announce(this.t(key).replace('{name}', model.name));
+      const status = key === 'confirmed' && id === 'preselect_heating_level' ? 'heating_preselect_saved' : key;
+      this.announce(this.t(status).replace('{name}', model.name));
       if (result?.status === 'confirmed') {
         for (const view of this.deviceViews) {
           if (view.config.entity !== config.entity) continue;

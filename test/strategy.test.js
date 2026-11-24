@@ -558,6 +558,25 @@ test('projects a level selection script only through a timed heater fan and its 
   assert.equal(heater.timed.simple_timer_target, profile.timed.simple_timer_target);
 });
 
+test('projects next-start level only for a heater fan with an explicitly linked Simple Timer switch', () => {
+  const profile = { entity: 'fan.demo_step_heat', kind: 'heater', level_steps: 9,
+    level_preselect_entity: 'input_number.demo_next_level',
+    timed: { simple_timer_entity: 'sensor.demo_heat_runtime', simple_timer_target: 'switch.demo_heat_relay' } };
+  for (const invalid of [
+    { kind: 'boiler' }, { level_steps: 1 }, { level_entity: 'number.level' }, { level_preselect_entity: 'number.level' },
+    { timed: { simple_timer_entity: 'sensor.demo_heat_runtime' } },
+    { timed: { start_script: 'script.demo_start', timer_entity: 'timer.demo_heat_runtime' } },
+  ]) assert.equal(normalizeProfile({ ...profile, ...invalid }).level_preselect_entity, undefined);
+  const hass = home();
+  hass.states[profile.entity] = { state: 'off', attributes: {} };
+  hass.entities[profile.entity] = { area_id: 'studio' };
+  hass.states[profile.level_preselect_entity] = { state: '5', attributes: {} };
+  hass.entities[profile.level_preselect_entity] = { area_id: 'studio' };
+  const entities = generateDashboard({ profiles: [profile] }, hass).views[0].cards[0].rooms.flatMap(room => room.entities);
+  assert.equal(entities.find(item => item.entity === profile.entity).level_preselect_entity, profile.level_preselect_entity);
+  assert.equal(entities.some(item => item.entity === profile.level_preselect_entity), false);
+});
+
 test('limits optional dashboard destinations and excludes cameras from automatic context', () => {
   const hass = home();
   const contextRows = [

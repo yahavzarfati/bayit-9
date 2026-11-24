@@ -23,6 +23,7 @@ const moreInfoCalls = [];
 document.addEventListener('hass-more-info', event => moreInfoCalls.push(event.detail.entityId));
 const coverRequests = [];
 let finishLevel;
+let finishPreselect;
 const query = new URL(location.href).searchParams;
 const storedKey = 'bayit9-browser-fixture';
 const stored = () => JSON.parse(sessionStorage.getItem(storedKey) ||
@@ -66,6 +67,15 @@ const hass = {
         finishLevel = () => {
           states['input_number.demo_heat_step'].state = String(request.service_data.target_step);
           states['script.demo_select_heat_step'] = { state: 'off', attributes: {} };
+          card.hass = { ...hass, states: { ...states } };
+          resolve({});
+        };
+      });
+    }
+    if (request.domain === 'input_number' && request.target?.entity_id === nextLevel) {
+      return new Promise(resolve => {
+        finishPreselect = () => {
+          states[nextLevel].state = String(request.service_data.value);
           card.hass = { ...hass, states: { ...states } };
           resolve({});
         };
@@ -151,10 +161,12 @@ const helper = 'input_number.demo_heat_step';
 const heaterTimer = 'sensor.demo_step_runtime';
 const heaterRelay = 'switch.demo_step_power';
 const heaterScript = 'script.demo_select_heat_step';
+const nextLevel = 'input_number.demo_next_step';
 if (query.has('heater-level')) {
   Object.assign(states, {
     [heaterFan]: { state: 'off', attributes: { friendly_name: 'Fixture step heater', supported_features: 49 } },
     [helper]: { state: '3', attributes: { min: 0, max: 9, step: 1 } },
+    [nextLevel]: { state: '5', attributes: { min: 0, max: 9, step: 1 } },
     [heaterRelay]: { state: 'off', attributes: {} },
     [heaterTimer]: { state: '0', attributes: { switch_entity_id: heaterRelay, timer_state: 'idle' } },
     [heaterScript]: { state: 'off', attributes: {} },
@@ -218,6 +230,7 @@ const selected = query.has('configuration') ? stored().strategy : query.has('cur
   room_shortcuts: { studio: [heaterFan] },
   profiles: [{ entity: heaterFan, kind: 'heater', level_steps: 9,
     level_read_entity: helper, level_select_script: heaterScript,
+    ...(query.has('preselect') && { level_preselect_entity: nextLevel }),
     timed: { simple_timer_entity: heaterTimer, simple_timer_target: heaterRelay } }],
 } : query.has('toolbar-panels') ? {
   ...(query.has('room-link') && { room_overrides: { studio: {
@@ -273,6 +286,8 @@ window.bayitTest = {
     card.hass = { ...hass, states: { ...states } };
   },
   finishLevel: () => finishLevel(),
+  finishPreselect: () => finishPreselect(),
+  heatingState: () => [states[heaterFan].state, states[heaterRelay].state, states[heaterTimer].attributes.timer_state],
   setHeaterPower: state => {
     states[heaterFan].state = states[heaterRelay].state = state;
     card.hass = { ...hass, states: { ...states } };
@@ -610,10 +625,14 @@ try {
       await editorPage.getByRole('alert').getByText('Set 2–12 heating levels', { exact: false }).waitFor();
       await editorPage.getByLabel('Number of heating levels').fill('9');
       await editorPage.getByLabel('Heating level feedback').selectOption('input_number.demo_heat_step');
+      const nextHelper = editorPage.getByLabel('Next-start level helper');
+      assert.ok(await nextHelper.getAttribute('aria-describedby'));
+      await nextHelper.selectOption('input_number.demo_next_step');
       await editorPage.getByRole('button', {name: 'Save profile'}).click();
       const heaterProfile = await editorPage.evaluate(() => window.latest.profiles.find(item => item.entity.startsWith('fan.')));
       assert.equal(heaterProfile?.level_select_script, 'script.demo_select_heat_step');
       assert.equal(heaterProfile?.level_read_entity, 'input_number.demo_heat_step');
+      assert.equal(heaterProfile?.level_preselect_entity, 'input_number.demo_next_step');
       assert.equal(heaterProfile?.timed.simple_timer_target, 'switch.demo_step_power');
       assert.equal(await editorPage.evaluate(() => window.bayitTest.calls.length), 0);
       await editorPage.getByLabel('Language').selectOption('he');
@@ -860,6 +879,44 @@ try {
       await heaterPage.waitForFunction(() => document.querySelector('bayit-dashboard').shadowRoot
         .querySelector('.heat-level-choice[data-action="set_heating_level"]')?.disabled);
       await heaterPage.close();
+
+      const nextPage = await browser.newPage({ viewport: { width: 320, height: 812 } });
+      await nextPage.goto(base + '?heater-level&preselect&locale=' + (rightToLeft ? 'he' : 'en'));
+      await nextPage.locator('.quick-button[data-entity="fan.demo_step_heater"]').click();
+      const nextPanel = nextPage.getByRole('dialog', { name: 'Fixture step heater', exact: true });
+      const nextStep = step => nextPanel.getByRole('button', {
+        name: (rightToLeft ? 'עוצמה להפעלה הבאה ' : 'Level for next start ') + step, exact: true,
+      });
+      await nextStep(5).waitFor();
+      assert.equal(await nextStep(5).getAttribute('aria-pressed'), 'true');
+      await nextStep(7).click();
+      assert.equal(await nextStep(7).getAttribute('data-changing'), '');
+      assert.deepEqual(await nextPage.evaluate(() => window.bayitTest.heatingState()), ['off', 'off', 'idle']);
+      assert.deepEqual(await nextPage.evaluate(() => window.bayitTest.calls), [{
+        type: 'call_service', domain: 'input_number', service: 'set_value',
+        target: { entity_id: 'input_number.demo_next_step' }, service_data: { value: 7 },
+      }]);
+      await nextPage.evaluate(() => window.bayitTest.finishPreselect());
+      await nextPanel.locator('[data-role="modal-notice"]').filter({
+        hasText: rightToLeft ? 'העוצמה להפעלה הבאה נשמרה' : 'Next-start level saved',
+      }).waitFor();
+      assert.equal(await nextStep(7).getAttribute('aria-pressed'), 'true');
+      await nextPage.evaluate(() => window.bayitTest.setHeaterPower('on'));
+      const runningStep = nextPanel.getByRole('button', {
+        name: (rightToLeft ? 'עוצמת חימום ' : 'Heating level ') + '3', exact: true,
+      });
+      await runningStep.waitFor();
+      assert.equal(await runningStep.getAttribute('aria-pressed'), 'true');
+      assert.equal(await nextStep(7).count(), 0);
+      await nextPage.evaluate(() => {
+        window.bayitTest.setHeaterPower('off');
+        window.bayitTest.repointTimer();
+      });
+      await nextStep(7).waitFor();
+      assert.equal(await nextStep(7).isDisabled(), true);
+      assert.equal(await nextPage.evaluate(() => window.bayitTest.calls.length), 1);
+      await nextPage.close();
+      console.log(engine + ' 320: helper-only heater preselect, observed save and independent running controls');
 
       const panelsPage = await browser.newPage({ viewport: { width:390,height:844 } });
       if (engine === 'Chromium') {

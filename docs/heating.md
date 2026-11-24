@@ -46,6 +46,10 @@ For a heater fan with Simple Timer, an optional **Level selection script** (`lev
 
 The script must accept one integer field named `target_step` and own the update of the feedback helper. It should store the selection while the heater is off and change the level while the heater is already running. Its server-side checks must prevent any level selection from energizing or restarting the heater, including if heating ends during the request. It must leave the timer and cutoff in force and update feedback after it completes the selection. Verify that contract on your own script before mapping it. Bayit 9 confirms the observed level and power states after the script returns.
 
+For a heater fan whose Simple Timer monitors a separate linked switch, **Next-start level helper** (`level_preselect_entity`) is an optional `input_number` used only to store the next requested level. Configure the helper that this heater reads at startup. The helper must be dedicated to this heater and changing its value must have no device-action side effects, including through automations. It uses a step of 1, a minimum of 0 or 1, and a maximum of at least `level_steps`.
+
+The dashboard offers **Level for next start** when both the fan and linked switch report off and the matching timer is idle. Selection updates only that helper and confirms its reported value. The running heater keeps its existing level action and feedback. If the heater starts at the same moment through another control, the start uses the value available when the startup automation reads the helper.
+
 ## Optional weekly schedule
 
 Requires Home Assistant 2026.11.2 or newer.

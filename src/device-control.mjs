@@ -111,6 +111,10 @@ function normalizedConfig(config) {
       !config.level_steps || !config.level_read_entity || !timed?.simple_timer_entity)) {
     throw new DeviceControlError("invalid_config", "Heater level selection requires a script, step feedback and Simple Timer.");
   }
+  if (config.level_preselect_entity !== undefined && (!isEntity(config.level_preselect_entity, "input_number") ||
+      !config.level_steps || !timed?.simple_timer_target)) {
+    throw new DeviceControlError("invalid_config", "Next-start level requires a numeric helper and a heater with a linked Simple Timer switch.");
+  }
   if (config.confirmation_ms !== undefined &&
       (!Number.isSafeInteger(config.confirmation_ms) || config.confirmation_ms < 0)) {
     throw new DeviceControlError("invalid_config", "The confirmation time must be a nonnegative number of milliseconds.");
@@ -305,7 +309,7 @@ function supportedActions(config, states, record, timer, nowMs) {
   }
   if (config.level_select_script) {
     const switchEntity = timing.simple_timer_target;
-    const powerMatches = ["on", "off"].includes(record.state) &&
+    const powerMatches = (record.state === "on" || (record.state === "off" && !config.level_preselect_entity)) &&
       (!switchEntity || states?.[switchEntity]?.state === record.state);
     const timerReady = timer?.state === "idle" ||
       (timer?.state === "active" && timer.deadlineMs > nowMs && record.state === "on" && !timer.reverse);
@@ -316,6 +320,11 @@ function supportedActions(config, states, record, timer, nowMs) {
   } else if (config.level_steps && canSetLevel && supports(FAN.speed) && record.state === "on") {
     add("set_heating_level", { min: 1, max: config.level_steps, step: 1 });
     delete actions.set_percentage;
+  }
+  if (config.level_preselect_entity && record.state === "off" && timer?.state === "idle" &&
+      states?.[timing.simple_timer_target]?.state === "off" &&
+      verifiedLevel(states?.[config.level_preselect_entity], config.level_steps) !== null) {
+    add("preselect_heating_level", { min: 1, max: config.level_steps, step: 1 });
   }
   if (timing?.stop_script && isAvailable(states?.[timing.stop_script])) {
     add("stop_timed");
@@ -337,6 +346,7 @@ function deviceModel(config, states, nowMs) {
     if (Number.isFinite(seconds) && seconds >= 0) timer.usedSeconds = seconds;
   }
   const level = states?.[config.level_entity ?? config.level_read_entity];
+  const preselect = config.level_preselect_entity && record?.state === "off";
   const explicitLevel = isAvailable(level) && level.state.trim() ? Number(level.state) : NaN;
   const percentageLevel = config.level_steps && Number.isFinite(attributes.percentage)
     ? Math.round(attributes.percentage * config.level_steps / 100) : null;
@@ -350,10 +360,12 @@ function deviceModel(config, states, nowMs) {
     available: isAvailable(record),
     attributes,
     actions: supportedActions(config, states, record, timer, nowMs),
-    level: config.level_select_script ? verifiedLevel(level, config.level_steps)
+    level: preselect ? verifiedLevel(states?.[config.level_preselect_entity], config.level_steps)
+      : config.level_select_script ? verifiedLevel(level, config.level_steps)
       : Number.isFinite(explicitLevel) ? explicitLevel : percentageLevel,
     ...(config.level_steps && !READ_ONLY_ROLES.has(config.role) && {
       levelRange: { min: 1, max: config.level_steps, step: 1 },
+      levelAction: preselect ? "preselect_heating_level" : "set_heating_level",
       levelChanging: !!config.level_select_script && states?.[config.level_select_script]?.state === "on",
     }),
     timer,
@@ -460,6 +472,13 @@ export function planDeviceAction(config, states, actionId, value, { confirmed = 
     return {
       kind: "service", domain: "light", service: "turn_on", target: { entity_id: config.entity },
       data: { rgb_color: color }, expected: { entity: config.entity, state: "on", lightColor: color },
+    };
+  }
+  if (actionId === "preselect_heating_level") {
+    return {
+      kind: "service", domain: "input_number", service: "set_value",
+      target: { entity_id: config.level_preselect_entity }, data: { value },
+      expected: { entity: config.level_preselect_entity, numericState: value },
     };
   }
   if (actionId === "set_heating_level") {

@@ -158,32 +158,33 @@ export function buildPanelControls(model, { make, button, icon, label, t, reques
     content.push(card);
   }
 
-  const level = actions.set_heating_level ?? model.levelRange;
+  const levelId = model.levelAction ?? 'set_heating_level';
+  const level = actions[levelId] ?? model.levelRange;
   if (level) {
     const count = Math.floor((level.max - level.min) / level.step) + 1;
     if (count >= 2 && count <= 12) {
-      used.add('set_heating_level');
+      used.add(levelId);
       const section = make('section', 'heat-level');
-      const caption = make('p', 'heat-level-title', t('set_heating_level'));
+      const caption = make('p', 'heat-level-title', t(levelId));
       const changing = make('p', 'heat-level-title', t('heating_level_changing'));
       changing.hidden = true;
       changing.setAttribute('role', 'status');
       updates.push((current, pending) => {
-        changing.hidden = pending?.id === 'set_heating_level' || !current.levelChanging;
+        changing.hidden = levelId !== 'set_heating_level' || pending?.id === levelId || !current.levelChanging;
       });
       const choices = make('div', 'heat-level-options');
       for (let i = 0; i < count; i++) {
         const value = Number((level.min + i * level.step).toFixed(8));
         const choice = button('control-button heat-level-choice', String(value));
-        label(choice, t('set_heating_level') + ' ' + value);
-        choice.dataset.action = 'set_heating_level';
-        choice.onclick = () => request('set_heating_level', value, choice);
+        label(choice, t(levelId) + ' ' + value);
+        choice.dataset.action = levelId;
+        choice.onclick = () => request(levelId, value, choice);
         buttons.push(choice);
         updates.push((current, pending) => {
-          const selected = pending?.id === 'set_heating_level' ? pending.value : current.level;
-          choice.disabled = !!pending || !current.actions.set_heating_level;
+          const selected = pending?.id === levelId ? pending.value : current.level;
+          choice.disabled = !!pending || !current.actions[levelId];
           choice.setAttribute('aria-pressed', String(selected === value));
-          choice.toggleAttribute('data-changing', pending?.id === 'set_heating_level' && selected === value);
+          choice.toggleAttribute('data-changing', pending?.id === levelId && selected === value);
         });
         choices.append(choice);
       }
