@@ -290,8 +290,6 @@ export class BayitDashboard extends HTMLElement {
     };
     const n = this.nodes;
     const prefix = 'bayit-9-' + ++nextId;
-    n.modalTitle.id = prefix + '-title';
-    n.modal.setAttribute('aria-labelledby', n.modalTitle.id);
     n.confirmTitle.id = prefix + '-confirm';
     n.confirmText.id = prefix + '-message';
     n.confirm.setAttribute('aria-labelledby', n.confirmTitle.id);
@@ -736,7 +734,9 @@ export class BayitDashboard extends HTMLElement {
     this.activitySignature = null;
     setText(n.modalNotice, '');
     const glyph = model?.icon || room?.icon || source.querySelector('ha-icon')?.getAttribute('icon');
-    n.modalTitle.replaceChildren(icon(glyph), model?.name || room?.name || toolbar?.name || this.t(type));
+    const title = model?.name || room?.name || toolbar?.name || this.t(type);
+    n.modal.setAttribute('aria-label', title);
+    n.modalTitle.replaceChildren(icon(glyph), title);
     if (type === 'room') this.buildDevices(room.entities, room);
     if (selected) {
       this.buildDevices([selected]);

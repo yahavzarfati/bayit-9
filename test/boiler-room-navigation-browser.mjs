@@ -71,10 +71,12 @@ try {
       const back = dialog.getByRole('button', { name: words.back });
       const body = dialog.locator('.modal-body');
       await kitchen.tap();
+      await page.getByRole('dialog', { name: 'Kitchen', exact: true }).waitFor();
       await details.scrollIntoViewIfNeeded();
       const before = await body.evaluate(element => element.scrollTop);
       assert.ok(before > 0, 'The kitchen fixture must start scrolled');
       await details.tap();
+      await page.getByRole('dialog', { name: 'Fixture boiler', exact: true }).waitFor();
       await dialog.getByRole('heading', { name: 'Fixture boiler', exact: true }).first().waitFor();
       assert.equal(await back.locator('ha-icon').getAttribute('icon'), words.backIcon);
       await dialog.getByRole('button', { name: words.schedule, exact: true }).tap();
@@ -82,6 +84,7 @@ try {
       await dialog.getByRole('button', { name: words.history, exact: true }).tap();
       await page.waitForFunction(() => window.fixture.requests.includes('history/history_during_period'));
       await back.tap();
+      await page.getByRole('dialog', { name: 'Kitchen', exact: true }).waitFor();
       await dialog.getByRole('heading', { name: 'Kitchen', exact: true }).waitFor();
       assert.ok(Math.abs(await body.evaluate(element => element.scrollTop) - before) < 2);
       assert.equal(await details.evaluate(button => button.getRootNode().activeElement === button), true);
