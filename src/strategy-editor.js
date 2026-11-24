@@ -419,15 +419,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
     ]);
   }
 
-  #resolvedRoom(room, language) {
-    return discoverRooms({ ...this.#config, room_selection: 'manual', area_ids: [room.id] }, this.#hass, language)
-      .find(item => item.id === room.id);
-  }
-
   #roomMembership(room, override, sections, language) {
     if (Array.isArray(override.entities)) return configuredIds(override.entities);
     if (sections?.length) return configuredIds(sections.flatMap(section => section.entities));
-    return this.#resolvedRoom(room, language)?.entities.map(item => item.entity) ?? [];
+    // Resolve the visible room with other rooms' explicit assignments in scope.
+    const visible = discoverRooms(this.#config, this.#hass, language).find(item => item.id === room.id);
+    return visible?.entities.map(item => item.entity) ?? [];
   }
 
   #roomSectionsPanel(room, override, words, language) {

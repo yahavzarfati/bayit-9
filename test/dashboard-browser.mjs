@@ -28,6 +28,7 @@ const query = new URL(location.href).searchParams;
 const storedKey = 'bayit9-browser-fixture';
 const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection') && { show_unassigned: false }),
   ...(query.has('legacy-room-order') && { area_ids: ['lounge', 'studio'] }),
+  ...(query.has('cross-area-room-device') && { room_overrides: { lounge: { entities: ['light.demo_lamp'] } } }),
   ...(query.has('sole-room') && { area_ids: ['bayit_room_only'],
     room_overrides: { bayit_room_only: { name: 'Reading nook', entities: [] } } }),
 };
@@ -107,6 +108,7 @@ if (query.has('room-selection')) {
   hass.areas.lounge = { area_id: 'lounge', name: 'Lounge' };
   hass.entities['light.demo_lounge'] = { area_id: 'lounge' };
   states['light.demo_lounge'] = { state: 'off', attributes: { friendly_name: 'Lounge lamp', supported_color_modes: ['onoff'] } };
+  if (query.has('empty-source-room')) delete states['switch.demo_heater'];
 }
 if (query.has('room-grid')) {
   for (const [entity, name, colorMode] of [
@@ -1316,6 +1318,50 @@ try {
       assert.deepEqual(await roomOrder(lastRoomPage), ['lounge', 'studio']);
       await lastRoomPage.close();
       console.log(engine + ' 320: explicit empty room selection, keyboard order, and member behavior');
+
+      for (const empty of [false, true]) {
+        const membershipPage = await newRoomConfigPage();
+        const roomCase = empty ? '&empty-source-room' : '&legacy-room-order';
+        await membershipPage.goto(roomConfigUrl + '&cross-area-room-device' + roomCase);
+        const before = membershipPage.locator('.room[data-room="studio"]');
+        const movedLamp = membershipPage.locator('.room[data-room="lounge"] [data-entity="light.demo_lamp"]');
+        await movedLamp.waitFor();
+        assert.equal(await before.count(), empty ? 0 : 1);
+        assert.equal(await before.locator('[data-entity="light.demo_lamp"]').count(), 0);
+
+        const membershipSetup = await openRoomEditor(membershipPage);
+        const currentRoom = membershipSetup.getByLabel('Room to customize', { exact: true });
+        await currentRoom.selectOption('studio');
+        const deviceMode = membershipSetup.getByLabel('Devices in this room', { exact: true });
+        assert.equal(await deviceMode.inputValue(), 'auto');
+        await deviceMode.selectOption('manual');
+        const removal = membershipSetup.getByRole('button', { name: 'Remove · Room heater', exact: true });
+        assert.equal(await removal.count(), empty ? 0 : 1);
+        assert.equal(await membershipSetup.getByRole('button', { name: 'Remove · Desk lamp', exact: true }).count(), 0);
+        if (empty) await membershipSetup.getByText('No devices selected.', { exact: true }).waitFor();
+        await deviceMode.selectOption('auto');
+        const roomsDisclosure = membershipSetup.getByText('Rooms', { exact: true });
+        await roomsDisclosure.tap();
+        await currentRoom.waitFor({ state: 'hidden' });
+        await roomsDisclosure.tap();
+        assert.equal(await currentRoom.inputValue(), 'studio');
+        assert.equal(await deviceMode.inputValue(), 'auto');
+        await deviceMode.selectOption('manual');
+        assert.equal(await removal.count(), empty ? 0 : 1);
+        assert.equal(await membershipSetup.getByRole('button', { name: 'Remove · Desk lamp', exact: true }).count(), 0);
+
+        await saveRoomConfig(membershipSetup);
+        await before.waitFor();
+        assert.equal(await before.locator('[data-entity="light.demo_lamp"]').count(), 0);
+        assert.equal(await movedLamp.count(), 1);
+        assert.deepEqual(await membershipPage.evaluate(() =>
+          JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.room_overrides), {
+          lounge: { entities: ['light.demo_lamp'] },
+          studio: { entities: empty ? [] : ['switch.demo_heater'] },
+        });
+        await membershipPage.close();
+      }
+      console.log(engine + ' 320: automatic device membership preserves existing cross-area placement when edited and reopened');
 
       const emptyPage = await browser.newPage();
       await emptyPage.goto(base + '?empty');
