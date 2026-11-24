@@ -49,6 +49,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ha-hacs-acceptance
-          path: test-results/ha-hacs-acceptance/2026.11.2/failure.png
+          path: test-results/ha-hacs-acceptance/2026.10.4/failure.png
           if-no-files-found: ignore
           retention-days: 7

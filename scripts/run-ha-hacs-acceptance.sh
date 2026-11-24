@@ -6,9 +6,9 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd -- "$root"
 repository="${1:?Supply the public owner/bayit-9 repository}"
 tag="${2:?Supply an already published release tag}"
-version="${3:-2026.11.2}"
+version="${3:-2026.10.4}"
 if [[ ! "$version" =~ ^20[0-9]{2}\.[0-9]{1,2}\.[0-9]+$ ]]; then
-  echo 'Supply a numbered Home Assistant Core version, such as 2026.11.2' >&2
+  echo 'Supply a numbered Home Assistant Core version, such as 2026.10.4' >&2
   exit 2
 fi
 : "${BAYIT_QA_HACS_TOKEN:?Supply a token for this disposable fixture}"
