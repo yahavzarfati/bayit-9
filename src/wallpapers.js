@@ -193,7 +193,7 @@ export function createWallpaperController(shell, { storageKey = 'default' } = {}
       themedNodes.add(node);
     }
     if (modal) {
-      const dimming = shell.dataset.page === 'true' ? .34 : .55;
+      const dimming = shell.dataset.page === 'true' ? 0 : .55;
       setInk(modal, darkInkOn(raster, modal.getBoundingClientRect(), box, dimming));
       themedNodes.add(modal);
     }

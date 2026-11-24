@@ -41,13 +41,32 @@ export function createNativeCards(host, hass, make) {
   const cards = new Set();
   const view = host.ownerDocument.defaultView;
   let live = true;
+  let helpersReady;
+
+  function loadHelpers() {
+    helpersReady ??= (async () => {
+      const dialog = host.closest('dialog');
+      if (dialog) {
+        const frame = () => new Promise(resolve => view.requestAnimationFrame(resolve));
+        // The fallback is usable immediately. Let the opening motion finish
+        // before chart construction can monopolize the main thread.
+        await frame();
+        await Promise.allSettled((dialog.getAnimations?.() ?? []).map(animation => animation.finished));
+        await frame();
+        await frame();
+      }
+      if (live && (!dialog || dialog.open && !dialog.hasAttribute('data-closing'))) return view.loadCardHelpers?.();
+    })();
+    return helpersReady;
+  }
+
   return {
     mount(config, fallback) {
       const slot = make('div', 'native-panel-card');
       slot.append(fallback);
       void (async () => {
         try {
-          const helpers = await view.loadCardHelpers?.();
+          const helpers = await loadHelpers();
           if (!live) return;
           const card = await helpers?.createCardElement(config);
           if (!live || !card || card.localName === 'hui-error-card') return;

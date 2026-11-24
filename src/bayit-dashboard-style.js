@@ -364,7 +364,7 @@ export const styles = `
   .modal[open]:not([data-kind]) { animation: appear 190ms cubic-bezier(.22,1,.36,1); }
   .modal[data-closing] { pointer-events: none; }
   .modal::backdrop { background: rgba(0,0,0,.55); }
-  .shell[data-page=true] .modal::backdrop { background: rgba(0,0,0,.34); }
+  .shell[data-page=true] .modal::backdrop { background: transparent; }
   .modal-header {
     display: flex;
     flex: none;
@@ -602,6 +602,7 @@ export const styles = `
   }
   @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
     .modal, .notice { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--surface); }
+    .shell[data-page=true] .modal::backdrop { background: rgba(0,0,0,.34); }
     .toolbar, .room { -webkit-backdrop-filter: none; backdrop-filter: none; }
     .toolbar, .room { background: var(--surface); }
     .shell, .modal { --line: rgba(255,255,255,.58); --soft-line: rgba(255,255,255,.31); }

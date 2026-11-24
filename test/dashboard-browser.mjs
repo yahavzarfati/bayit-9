@@ -158,6 +158,9 @@ if (query.has('toolbar-panels')) {
   hass.entities['sensor.demo_studio_temperature'] = { area_id: 'studio' };
   window.loadCardHelpers = async () => ({createCardElement(configuration) {
     const card = document.createElement('div');
+    const dialog = document.querySelector('bayit-dashboard')?.shadowRoot.querySelector('.modal[open]');
+    card.dataset.duringOpening = String(!!dialog?.getAnimations().some(animation =>
+      animation.playState === 'running' || animation.pending));
     card.dataset.nativeType = configuration.type;
     if (configuration.graph) card.dataset.graphHours = configuration.hours_to_show;
     card.textContent = configuration.type === 'calendar' ? configuration.entities.length + ' calendars' : configuration.name || configuration.entity;
@@ -529,12 +532,35 @@ try {
       await heaterPage.close();
 
       const panelsPage = await browser.newPage({ viewport: { width:390,height:844 } });
+      if (engine === 'Chromium') {
+        const session = await panelsPage.context().newCDPSession(panelsPage);
+        await session.send('Emulation.setEmulatedMedia', { features: [
+          { name: 'prefers-reduced-transparency', value: 'no-preference' },
+        ] });
+      }
       await panelsPage.goto(base + '?toolbar-panels');
       const roomGraph = panelsPage.locator('[data-native-type=sensor][data-graph-hours="24"]');
       assert.equal(await roomGraph.count(), 0);
       await panelsPage.getByRole('button', {name:'Studio',exact:true}).click();
-      await panelsPage.getByRole('dialog',{name:'Studio',exact:true}).getByText('Studio temperature',{exact:true}).waitFor();
+      const studio = panelsPage.getByRole('dialog',{name:'Studio',exact:true});
+      await studio.getByText('Studio temperature',{exact:true}).waitFor();
       await roomGraph.waitFor();
+      assert.equal(await roomGraph.getAttribute('data-during-opening'), 'false', 'The optional graph cannot preempt opening motion');
+      const material = await studio.evaluate(dialog => {
+        const reduced = matchMedia('(prefers-reduced-transparency: reduce), (prefers-contrast: more)').matches;
+        const surface = getComputedStyle(dialog);
+        return { reduced, fill: surface.backgroundColor, blur: surface.backdropFilter,
+          backdrop: getComputedStyle(dialog, '::backdrop').backgroundColor };
+      });
+      if (!material.reduced) {
+        assert.equal(material.fill, 'rgba(0, 0, 0, 0)');
+        assert.equal(material.backdrop, 'rgba(0, 0, 0, 0)');
+        assert.equal(material.blur, 'blur(14px)');
+      }
+      await panelsPage.emulateMedia({ contrast: 'more' });
+      assert.equal(await studio.evaluate(dialog => getComputedStyle(dialog).backdropFilter), 'none');
+      assert.equal(await studio.evaluate(dialog => getComputedStyle(dialog).backgroundColor), 'rgb(40, 40, 40)');
+      await panelsPage.emulateMedia({ contrast: 'no-preference' });
       await panelsPage.keyboard.press('Escape');
       await roomGraph.waitFor({state:'detached'});
       await panelsPage.getByRole('button',{name:'Weather',exact:true}).click();
