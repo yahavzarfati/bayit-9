@@ -266,6 +266,9 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
 } : query.has('curated') ? {
   room_shortcuts: { studio: ['switch.demo_heater', 'light.demo_lamp'] },
   overview_entities: ['switch.demo_heater'],
+} : query.has('popup-geometry') ? {
+  room_overrides: { studio: { entities: ['switch.demo_heater'] } },
+  room_shortcuts: { studio: ['switch.demo_heater'] },
 } : query.has('room-grid') ? {
   room_overrides: { studio: { entities: ['light.demo_lamp', 'light.demo_wall', 'light.demo_pendant', 'light.demo_monitor'],
     read_only_entities: ['light.demo_monitor'] } },
@@ -865,7 +868,7 @@ try {
       const geometryPage = await browser.newPage({
         viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce',
       });
-      await geometryPage.goto(base + '?device-panel&locale=he');
+      await geometryPage.goto(base + '?popup-geometry&locale=he');
       const geometryDialog = geometryPage.getByRole('dialog');
       const modalGeometry = () => geometryDialog.evaluate(dialog => {
         const root = dialog.getRootNode();
@@ -873,6 +876,7 @@ try {
         const close = dialog.querySelector('[data-role="close"]').getBoundingClientRect();
         const source = root.querySelector('[data-popup-origin]');
         return {
+          kind: dialog.dataset.kind, name: dialog.getAttribute("aria-label"),
           top: rect.top, bottom: rect.bottom, height: rect.height,
           gridTop: root.querySelector('.room-scroll').getBoundingClientRect().top,
           closeX: close.left + close.width / 2,
@@ -882,16 +886,19 @@ try {
       });
       await geometryPage.getByRole('button', { name: 'Studio', exact: true }).tap();
       const roomGeometry = await modalGeometry();
+      assert.equal(roomGeometry.kind, 'room');
       assert.ok(Math.abs(roomGeometry.top - roomGeometry.gridTop - 86) <= 1);
       assert.match(roomGeometry.sourceRing, /2px inset/);
       await geometryPage.keyboard.press('Escape');
       await geometryDialog.waitFor({ state: 'hidden' });
-      const deskShortcut = geometryPage.locator('.quick-button[data-entity="light.demo_lamp"]');
-      await deskShortcut.press('Shift+Enter');
+      const geometryShortcut = geometryPage.locator('.quick-button[data-entity="switch.demo_heater"]');
+      await geometryShortcut.press('Shift+Enter');
+      await geometryPage.getByRole('dialog', { name: 'Room heater', exact: true }).waitFor();
       const deviceGeometry = await modalGeometry();
+      assert.equal(deviceGeometry.kind, 'device');
       assert.ok(Math.abs(deviceGeometry.top - (roomGeometry.top + 844 - 16 - deviceGeometry.height) / 2) <= 1);
       const roomBandHeight = 844 - 16 - roomGeometry.top;
-      assert.ok(deviceGeometry.height < roomBandHeight, 'Fixture must fit inside the device panel band');
+      assert.ok(deviceGeometry.height < roomBandHeight, 'Standalone relay should fit the device panel band ' + JSON.stringify(deviceGeometry));
       assert.equal(deviceGeometry.closeX, roomGeometry.closeX);
       assert.equal(deviceGeometry.closeOffset, roomGeometry.closeOffset);
       assert.match(deviceGeometry.sourceRing, /2px inset/);
@@ -903,7 +910,7 @@ try {
       assert.ok(constrainedGeometry.top >= roomGeometry.top - 1);
       await geometryPage.keyboard.press('Escape');
       await geometryDialog.waitFor({ state: 'hidden' });
-      assert.equal(await deskShortcut.evaluate(button => button.getRootNode().activeElement === button), true);
+      assert.equal(await geometryShortcut.evaluate(button => button.getRootNode().activeElement === button), true);
       await geometryPage.close();
 
       for (const [locale, width] of [['he', 320], ['en', 390]]) {
