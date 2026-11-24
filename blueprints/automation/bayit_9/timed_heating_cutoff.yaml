@@ -1,0 +1,74 @@
+blueprint:
+  name: Bayit 9 - Timed heating cutoff
+  description: Turn off one dedicated heater switch if its server-side countdown cannot protect it.
+  domain: automation
+  homeassistant:
+    min_version: 2026.11.2
+  input:
+    heater_switch:
+      name: Heater switch
+      description: Select a single timer-only heater switch. The automation turns it off if you switch it on without an active countdown.
+      selector:
+        entity:
+          filter:
+            - domain: switch
+    heater_timer:
+      name: Dedicated timer
+      description: Select the heater's native Timer helper. Enable Restore on the helper.
+      selector:
+        entity:
+          filter:
+            - domain: timer
+
+mode: single
+max_exceeded: silent
+
+triggers:
+  - trigger: homeassistant
+    event: start
+  - trigger: state
+    entity_id: !input heater_switch
+    to: "on"
+  - trigger: state
+    entity_id: !input heater_timer
+    to:
+      - idle
+      - paused
+      - unknown
+      - unavailable
+  - trigger: time_pattern
+    seconds: "/30"
+
+variables:
+  heater: !input heater_switch
+  countdown: !input heater_timer
+
+conditions:
+  - condition: template
+    value_template: >-
+      {{ heater is string and heater is match('^switch[.][a-z0-9_]+$')
+         and countdown is string and countdown is match('^timer[.][a-z0-9_]+$')
+         and state_attr(heater, 'entity_id') is none }}
+  - condition: state
+    entity_id: !input heater_switch
+    state: "on"
+
+actions:
+  - if:
+      - condition: template
+        value_template: "{{ states(countdown) not in ('idle', 'active', 'paused') }}"
+    then:
+      - wait_template: >-
+          {{ states(countdown) in ('idle', 'active', 'paused') or not is_state(heater, 'on') }}
+        timeout: "00:00:10"
+        continue_on_timeout: true
+  - condition: state
+    entity_id: !input heater_switch
+    state: "on"
+  - condition: template
+    value_template: >-
+      {{ not (is_state(countdown, 'active') and state_attr(countdown, 'restore') is sameas true
+        and 0 < as_timestamp(state_attr(countdown, 'finishes_at'), 0) - as_timestamp(now()) <= 3600) }}
+  - action: switch.turn_off
+    target:
+      entity_id: !input heater_switch

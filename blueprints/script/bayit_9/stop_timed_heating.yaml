@@ -1,0 +1,71 @@
+blueprint:
+  name: Bayit 9 - Stop timed heating
+  description: Cancel the dedicated timer and confirm that its single heater switch is off.
+  domain: script
+  homeassistant:
+    min_version: 2026.11.2
+  input:
+    heater_switch:
+      name: Heater switch
+      description: Select the same single switch used in the start script and cutoff automation.
+      selector:
+        entity:
+          filter:
+            - domain: switch
+    heater_timer:
+      name: Dedicated timer
+      description: Select the same native Timer helper used in the start script and cutoff automation.
+      selector:
+        entity:
+          filter:
+            - domain: timer
+
+mode: single
+max_exceeded: silent
+sequence:
+  - variables:
+      heater: !input heater_switch
+      countdown: !input heater_timer
+  - if:
+      - condition: template
+        value_template: >-
+          {{ not (heater is string and heater is match('^switch[.][a-z0-9_]+$')
+            and countdown is string and countdown is match('^timer[.][a-z0-9_]+$')
+            and state_attr(heater, 'entity_id') is none) }}
+    then:
+      - stop: Timed heating requires a dedicated single switch and timer.
+        error: true
+  - if:
+      - condition: state
+        entity_id: !input heater_timer
+        state:
+          - active
+          - paused
+    then:
+      - action: timer.cancel
+        target:
+          entity_id: !input heater_timer
+        continue_on_error: true
+  - if:
+      - condition: not
+        conditions:
+          - condition: state
+            entity_id: !input heater_switch
+            state: "off"
+    then:
+      - action: switch.turn_off
+        target:
+          entity_id: !input heater_switch
+        continue_on_error: true
+      - wait_template: "{{ is_state(heater, 'off') }}"
+        timeout: "00:00:08"
+        continue_on_timeout: true
+  - if:
+      - condition: not
+        conditions:
+          - condition: state
+            entity_id: !input heater_switch
+            state: "off"
+    then:
+      - stop: The switch has not reported that it is off. Check its state and try again.
+        error: true

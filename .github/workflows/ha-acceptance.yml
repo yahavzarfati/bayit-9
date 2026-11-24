@@ -1,0 +1,52 @@
+name: Home Assistant acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - 'test/**'
+      - 'dist/bayit-9.js'
+      - 'package*.json'
+      - 'hacs.json'
+      - '.github/workflows/ha-acceptance.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  clean-home-assistant:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        home-assistant: ['2026.5.0', '2026.11.2']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Install Chromium
+        run: npx playwright-core install --with-deps chromium
+      - name: Create and exercise Bayit 9 inside Home Assistant
+        run: bash scripts/run-ha-acceptance.sh ${{ matrix.home-assistant }}
+      - name: Exercise timed heating blueprints inside Home Assistant
+        if: matrix.home-assistant == '2026.11.2'
+        run: |
+          docker run --rm --network none --volume "${PWD}:/bayit:ro" \
+            --entrypoint python ghcr.io/home-assistant/home-assistant:2026.11.2 /bayit/tests/test_heating_core.py
+      - name: Collect synthetic fixture diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ha-acceptance-${{ matrix.home-assistant }}
+          path: test-results/ha-acceptance/${{ matrix.home-assistant }}
+          if-no-files-found: ignore
+          retention-days: 7
