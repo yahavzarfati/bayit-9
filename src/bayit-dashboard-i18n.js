@@ -1,6 +1,6 @@
 export const languages = {
   en: {
-    home: 'Home', settings: 'Appearance', close: 'Close', activity: 'Active devices', rooms: 'Rooms',
+    home: 'Home', overview: 'Home overview', settings: 'Appearance', close: 'Close', activity: 'Active devices', rooms: 'Rooms',
     more_info: 'More info', empty: 'No rooms have been added.', empty_room: 'No devices in this room.',
     quiet: 'All quiet', active: 'active', unavailable: 'Unavailable', unknown: 'Unknown state',
     apply: 'Apply', cancel: 'Cancel', confirm: 'Confirm', confirm_title: 'Confirm action',
@@ -25,7 +25,7 @@ export const languages = {
     available_option: 'Choose an option',
   },
   he: {
-    home: 'בית', settings: 'מראה', close: 'סגירה', activity: 'מכשירים פעילים', rooms: 'חדרים',
+    home: 'בית', overview: 'מבט על הבית', settings: 'מראה', close: 'סגירה', activity: 'מכשירים פעילים', rooms: 'חדרים',
     more_info: 'מידע נוסף', empty: 'עדיין אין חדרים בדשבורד.', empty_room: 'אין מכשירים בחדר הזה.',
     quiet: 'הכול שקט', active: 'פעיל', unavailable: 'לא זמין', unknown: 'מצב לא ידוע',
     apply: 'החל', cancel: 'ביטול', confirm: 'אישור', confirm_title: 'אישור פעולה',

@@ -194,6 +194,9 @@ export function generateDashboard(config = {}, hass = {}) {
     title,
     rooms: discoverRooms(config, hass, locale),
   };
+  const visible = new Set(card.rooms.flatMap(room => room.entities.map(device => device.entity)));
+  const overview = idList(config.overview_entities).filter(id => visible.has(id));
+  if (overview.length) card.overview = overview;
   if (Object.hasOwn(BACKGROUNDS, config.background)) card.background = config.background;
   if (['soft', 'circle', 'square'].includes(config.shape)) card.shape = config.shape;
   if (['classic', 'header'].includes(config.layout)) card.layout = config.layout;

@@ -4,6 +4,10 @@ A room-based Liquid Glass dashboard for Home Assistant. Bayit 9 groups the devic
 
 [הוראות בעברית](docs/install.he.md) · [Heating profiles](docs/heating.md)
 
+![Bayit 9 dashboard in Home Assistant's demo installation](https://raw.githubusercontent.com/yahavzarfati/bayit-9/main/docs/screenshots/dashboard.png)
+
+[Room controls in the demo installation](docs/screenshots/room.png)
+
 ## Install through HACS
 
 The **Community dashboards** picker requires Home Assistant 2026.5 or newer. Assign devices to areas in Home Assistant to give them room cards. Devices without an area appear together by default.
@@ -18,6 +22,7 @@ Choose **Edit dashboard** to pick rooms, arrange their shortcuts, include or hid
 ## Controls and preferences
 
 - Lights, switches, covers, fans, climate and locks use the entities and permissions you already have in Home Assistant.
+- The optional home overview brings selected locks, people, calendars and sensors together on the toolbar.
 - Other entities can open their native Home Assistant controls from the room.
 - A timed heating profile uses a timer and script that you select from your own installation.
 - In-dashboard appearance choices live in the browser. Set shared defaults in the dashboard editor.
@@ -43,3 +48,7 @@ Use Node.js 22 or later.
     npm run check:dist
 
 The build produces `dist/bayit-9.js`, the browser module installed by HACS.
+
+## License
+
+Bayit 9 is available for installation and use with Home Assistant. See [License](LICENSE.md).

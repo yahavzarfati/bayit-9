@@ -1,0 +1,54 @@
+name: HACS release acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published Bayit 9 release tag
+        required: true
+        type: string
+      use_github_app:
+        description: Use the dedicated read-only GitHub App instead of the job token
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  public-hacs-install:
+    if: github.ref == 'refs/heads/main' && !github.event.repository.private
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright-core install --with-deps chromium
+      - name: Issue a short-lived read-only GitHub App token
+        id: hacs-token
+        if: inputs.use_github_app
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.HACS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HACS_APP_PRIVATE_KEY }}
+          permission-contents: read
+      - name: Install the published release through HACS
+        env:
+          BAYIT_QA_HACS_TOKEN: ${{ steps.hacs-token.outputs.token || github.token }}
+          BAYIT_QA_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: bash scripts/run-ha-hacs-acceptance.sh "$GITHUB_REPOSITORY" "$BAYIT_QA_RELEASE_TAG"
+      - name: Collect the synthetic browser failure screenshot
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ha-hacs-acceptance
+          path: test-results/ha-hacs-acceptance/2026.11.2/failure.png
+          if-no-files-found: ignore
+          retention-days: 7

@@ -192,7 +192,7 @@ export async function connect(url, token, { WebSocketImpl = WebSocket, timeout =
   };
 }
 
-export async function seedLovelace(api) {
+export async function seedLovelace(api, { registerModule = true } = {}) {
   const area = await api.command('config/area_registry/create', { name: ROOM_NAME, icon: 'mdi:tools' });
   assert.ok(area?.area_id, 'Home Assistant did not return an area ID');
 
@@ -209,11 +209,13 @@ export async function seedLovelace(api) {
   } else {
     await api.command('config/entity_registry/update', { entity_id: demo.entity_id, area_id: area.area_id });
   }
-  const resources = await api.command('lovelace/resources');
-  assert.ok(!resources.some(resource => resource.url === RESOURCE_URL), 'The temporary resource already exists');
-  await api.command('lovelace/resources/create', { res_type: 'module', url: RESOURCE_URL });
-  const registered = await api.command('lovelace/resources');
-  assert.ok(registered.some(resource => resource.url === RESOURCE_URL && resource.type === 'module'),
-    'The bundle was not stored as a Lovelace module');
+  if (registerModule) {
+    const resources = await api.command('lovelace/resources');
+    assert.ok(!resources.some(resource => resource.url === RESOURCE_URL), 'The temporary resource already exists');
+    await api.command('lovelace/resources/create', { res_type: 'module', url: RESOURCE_URL });
+    const registered = await api.command('lovelace/resources');
+    assert.ok(registered.some(resource => resource.url === RESOURCE_URL && resource.type === 'module'),
+      'The bundle was not stored as a Lovelace module');
+  }
   return { entity: demo.entity_id, area: area.area_id, room: ROOM_NAME };
 }

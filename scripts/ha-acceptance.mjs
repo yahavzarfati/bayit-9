@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { connect, fixtureOrigin, onboard, poll, RESOURCE_URL, seedLovelace } from './ha-acceptance-provision.mjs';
+import { installPublishedRelease } from './ha-hacs-acceptance-provision.mjs';
 
+const releaseReceipt = process.env.BAYIT_QA_HACS_RECEIPT;
 const base = fixtureOrigin(process.env.BAYIT_QA_URL);
 const tokens = await onboard(base, process.env.BAYIT_QA_MARKER);
-const api = await connect(base, tokens.access_token);
+const api = await connect(base, tokens.access_token, releaseReceipt ? { timeout: 90000 } : undefined);
 const artifacts = resolve(process.env.BAYIT_QA_RESULTS ?? 'test-results/ha-acceptance');
 let browser;
 let page;
@@ -15,7 +17,11 @@ const runtimeErrors = [];
 
 try {
   if (process.env.BAYIT_QA_HA_VERSION) assert.equal(api.version, process.env.BAYIT_QA_HA_VERSION);
-  const fixture = await seedLovelace(api);
+  const fixture = await seedLovelace(api, { registerModule: !releaseReceipt });
+  const resourceUrl = releaseReceipt
+    ? await installPublishedRelease(api, base, JSON.parse(await readFile(releaseReceipt, 'utf8')))
+    : RESOURCE_URL;
+  const browserModuleUrl = new URL(resourceUrl, base).href;
   console.log('Synthetic Home Assistant ' + api.version + ' onboarded and module registered');
 
   browser = await chromium.launch();
@@ -28,7 +34,7 @@ try {
   page = await context.newPage();
   page.setDefaultTimeout(30000);
   page.on('response', result => {
-    if (new URL(result.url()).pathname === RESOURCE_URL) moduleResponses.push(result.status());
+    if (result.url() === browserModuleUrl) moduleResponses.push(result.status());
   });
   page.on('pageerror', error => runtimeErrors.push(error.message));
 
@@ -98,6 +104,22 @@ try {
   await roomButton.click();
   await room.waitFor();
   await room.screenshot({ path: resolve(artifacts, 'room.png'), animations: 'disabled' });
+  await room.getByRole('button', { name: 'Close', exact: true }).click();
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  const edit = page.getByRole('button', { name: 'Edit dashboard', exact: true });
+  await edit.click();
+  const editor = page.locator('dialog-dashboard-strategy-editor');
+  const editorTitle = editor.getByLabel('Dashboard title', { exact: true });
+  await editorTitle.fill('Bayit 9 Test Home');
+  await editorTitle.blur();
+  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  await poll('settings saved through the native dashboard strategy editor', async () => {
+    const saved = await api.command('lovelace/config', { url_path: dashboard.url_path, force: true });
+    return saved?.strategy?.title === 'Bayit 9 Test Home';
+  });
+  await card.getByRole('heading', { name: 'Bayit 9 Test Home', exact: true, level: 1 }).waitFor();
+  console.log('Dashboard title saved through the strategy editor');
 } catch (error) {
   await mkdir(artifacts, { recursive: true });
   if (page && !page.isClosed()) {

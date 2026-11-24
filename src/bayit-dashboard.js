@@ -18,6 +18,7 @@ const deviceIcons = {
   cover:'mdi:blinds', climate:'mdi:thermostat', lock:'mdi:lock-outline',
   heater:'mdi:radiator', boiler:'mdi:water-boiler', water_heater:'mdi:water-boiler',
   sensor:'mdi:gauge', binary_sensor:'mdi:motion-sensor', calendar:'mdi:calendar-outline',
+  alarm_control_panel:'mdi:shield-home-outline', weather:'mdi:weather-partly-cloudy',
   person:'mdi:account-outline', vacuum:'mdi:robot-vacuum', camera:'mdi:cctv', media_player:'mdi:speaker',
 };
 const movement = new Set(['open','close','set_position']);
@@ -126,8 +127,11 @@ export function normalizeDashboardConfig(config = {}) {
     }
     return parsed;
   });
+  const entities = new Map(rooms.flatMap(room => room.entities.map(device => [device.entity, device])));
+  const overview = Array.isArray(config.overview)
+    ? [...new Set(config.overview)].filter(id => entities.has(id)).map(id => entities.get(id)) : [];
   return {
-    locale, rooms, title: text(config.title) || languages[locale].home,
+    locale, rooms, overview, title: text(config.title) || languages[locale].home,
     background: backgrounds.includes(config.background) ? config.background : 'aurora',
     layout: options.layout.includes(config.layout) ? config.layout : 'classic',
     shape: options.shape.includes(config.shape) ? config.shape : 'soft',
@@ -140,6 +144,9 @@ const layout = `
     <header class="toolbar">
       <div class="brand"><ha-icon icon="mdi:home-variant-outline" aria-hidden="true"></ha-icon><h1></h1></div>
       <div class="toolbar-actions">
+        <button type="button" class="chrome-button" data-role="overview" aria-haspopup="dialog" hidden>
+          <ha-icon icon="mdi:view-dashboard-outline" aria-hidden="true"></ha-icon>
+        </button>
         <button type="button" class="chrome-button" data-role="activity" aria-haspopup="dialog">
           <ha-icon icon="mdi:chart-box-outline" aria-hidden="true"></ha-icon>
           <span class="badge" hidden aria-hidden="true"></span>
@@ -182,7 +189,7 @@ export class BayitDashboard extends HTMLElement {
     const role = name => get('[data-role="' + name + '"]');
     this.nodes = {
       shell: get('.shell'), rooms: get('.rooms'), empty: get('.empty'), title: get('h1'),
-      activity: role('activity'), badge: get('.badge'), settings: role('settings'), close: role('close'),
+      overview: role('overview'), activity: role('activity'), badge: get('.badge'), settings: role('settings'), close: role('close'),
       modal: get('dialog:not(.confirm)'), modalTitle: get('dialog:not(.confirm) h2'),
       modalBody: get('dialog:not(.confirm) .modal-body'), content: role('content'),
       confirm: get('.confirm'), confirmTitle: get('.confirm h2'), confirmText: get('.confirmation-text'),
@@ -196,6 +203,7 @@ export class BayitDashboard extends HTMLElement {
     n.confirmText.id = prefix + '-message';
     n.confirm.setAttribute('aria-labelledby', n.confirmTitle.id);
     n.confirm.setAttribute('aria-describedby', n.confirmText.id);
+    n.overview.onclick = () => this.openPanel('overview', n.overview);
     n.settings.onclick = () => this.openPanel('settings', n.settings);
     n.activity.onclick = () => this.openPanel('activity', n.activity);
     n.close.onclick = () => n.modal.close();
@@ -243,6 +251,8 @@ export class BayitDashboard extends HTMLElement {
     setText(n.empty, this.t('empty'));
     label(n.settings, this.t('settings'));
     label(n.activity, this.t('activity'));
+    label(n.overview, this.t('overview'));
+    n.overview.hidden = !next.overview.length;
     label(n.close, this.t('close'));
     n.rooms.setAttribute('aria-label', this.t('rooms'));
     setText(n.confirmTitle, this.t('confirm_title'));
@@ -431,7 +441,7 @@ export class BayitDashboard extends HTMLElement {
     this.activeDevices = active;
     n.badge.hidden = !active.size;
     setText(n.badge, active.size);
-    if (this.panel?.type === 'room') this.updateDevices();
+    if (this.panel?.type === 'room' || this.panel?.type === 'overview') this.updateDevices();
     if (this.panel?.type === 'activity') this.paintActivity();
   }
 
@@ -444,9 +454,9 @@ export class BayitDashboard extends HTMLElement {
     this.deviceViews.clear();
     this.activitySignature = null;
     setText(n.modalNotice, '');
-    const glyph = type === 'room' ? room.icon : type === 'settings' ? 'mdi:cog-outline' : 'mdi:chart-box-outline';
+    const glyph = room?.icon || source.querySelector('ha-icon')?.getAttribute('icon');
     n.modalTitle.replaceChildren(icon(glyph), type === 'room' ? room.name : this.t(type));
-    if (type === 'room') this.buildDevices(room);
+    if (type === 'room' || type === 'overview') this.buildDevices(room?.entities ?? this.config.overview);
     if (type === 'settings') this.paintSettings();
     if (type === 'activity') this.paintActivity();
     if (!n.modal.open) n.modal.showModal();
@@ -475,12 +485,12 @@ export class BayitDashboard extends HTMLElement {
     if (source?.isConnected) source.focus({ preventScroll: true });
   }
 
-  buildDevices(room) {
+  buildDevices(entities) {
     const content = this.nodes.content;
     content.className = 'devices';
     content.replaceChildren();
-    if (!room.entities.length) content.append(make('p', 'empty', this.t('empty_room')));
-    for (const config of room.entities) {
+    if (!entities.length) content.append(make('p', 'empty', this.t('empty_room')));
+    for (const config of entities) {
       const item = make('section', 'device');
       item.dataset.entity = config.entity;
       const head = make('header', 'device-head');

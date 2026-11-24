@@ -10,6 +10,7 @@ Use the Bayit 9 editor from **Edit dashboard** in Home Assistant. Strategy setti
 | `show_unassigned` | Show unassigned devices in their own room. Default `true`. |
 | `hidden_entities` | Entity IDs to exclude from the dashboard. |
 | `included_entities` | Extra visible entity IDs to include, such as a template sensor omitted by discovery. |
+| `overview_entities` | Optional visible entities to include in the toolbar's home overview. |
 | `room_shortcuts` | Optional area-by-area lists of up to six visible entity IDs, in display order. A room without a list uses automatic shortcuts. An empty list hides that room's shortcuts. |
 | `background` | `aurora`, `lagoon`, `dunes` or `graphite`. |
 | `shape` | `soft`, `circle` or `square`. |

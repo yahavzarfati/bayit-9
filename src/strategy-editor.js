@@ -7,6 +7,8 @@ const WORDS = {
     appearance: 'Appearance', background: 'Wallpaper', layout: 'Room titles', shape: 'Button shape',
     classic: 'Alongside the controls', header: 'At the top', soft: 'Rounded', circle: 'Circle', square: 'Square',
     devices: 'Device visibility', hidden: 'Hide devices', included: 'Add other entities',
+    overview: 'Home overview', overviewDevices: 'Devices and sensors to show',
+    overviewHint: 'Choose devices for the overview button, such as a lock, people, a calendar or an energy sensor.',
     shortcuts: 'Room shortcuts', shortcutRoom: 'Room', automaticShortcuts: 'Choose shortcuts automatically',
     shortcut: 'Shortcut', shortcutHint: 'Pick up to six devices in display order. All devices remain available inside the room.',
     noShortcutRooms: 'Add a device to a visible room to set its shortcuts.',
@@ -26,6 +28,8 @@ const WORDS = {
     appearance: 'מראה', background: 'רקע', layout: 'שמות חדרים', shape: 'צורת כפתורים',
     classic: 'לצד הכפתורים', header: 'בראש הכרטיס', soft: 'מעוגל', circle: 'עיגול', square: 'ריבוע',
     devices: 'הצגת מכשירים', hidden: 'הסתרת מכשירים', included: 'הוספת ישויות נוספות',
+    overview: 'מבט על הבית', overviewDevices: 'מכשירים וחיישנים לתצוגה',
+    overviewHint: 'בחרו מה יוצג במבט על הבית, למשל מנעול, אנשים, יומן או חיישן צריכת חשמל.',
     shortcuts: 'קיצורים בחדרים', shortcutRoom: 'חדר', automaticShortcuts: 'בחירת קיצורים אוטומטית',
     shortcut: 'קיצור', shortcutHint: 'אפשר לבחור עד שישה מכשירים לפי סדר התצוגה. כל המכשירים נשארים זמינים בתוך החדר.',
     noShortcutRooms: 'הוסיפו מכשיר לחדר שמוצג בדשבורד כדי לבחור קיצורים.',
@@ -159,8 +163,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     }));
   }
 
-  #entityMulti(label, key, words) {
-    const options = entityOptions(this.#hass);
+  #entityMulti(label, key, words, options = entityOptions(this.#hass)) {
     const filter = node('input', { type: 'search', placeholder: words.searchable });
     const picker = node('select', { multiple: true, size: 4 });
     filter.setAttribute('aria-label', words.searchable + ' · ' + label);
@@ -325,6 +328,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
     }));
     roomOptions.unshift(node('p', { textContent: words.anyArea + (language === 'he' ? ' כשלא נבחר חדר' : ' when none are selected') }));
 
+    const overviewOptions = discoverRooms(this.#config, this.#hass, language).flatMap(room =>
+      room.entities.map(device => [device.entity, (device.name || device.entity) + ' · ' + room.name]));
     const form = node('form', { dir: language === 'he' ? 'rtl' : 'ltr' }, [
       field(words.title, title), field(words.language, locale),
       checkbox(words.unassigned, this.#config.show_unassigned !== false, checked => this.#commit({ show_unassigned: checked })),
@@ -337,6 +342,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
         ])]),
       disclosure(words.devices, this.#open.devices, open => { this.#open.devices = open; },
         [this.#entityMulti(words.hidden, 'hidden_entities', words), this.#entityMulti(words.included, 'included_entities', words)]),
+      disclosure(words.overview, this.#open.overview, open => { this.#open.overview = open; },
+        [node('p', { textContent: words.overviewHint }), this.#entityMulti(words.overviewDevices, 'overview_entities', words, overviewOptions)]),
       disclosure(words.shortcuts, this.#open.shortcuts, open => { this.#open.shortcuts = open; },
         [node('div', { className: 'stack' }, this.#shortcutPanel(words, language))]),
       disclosure(words.profiles, this.#open.profiles, open => { this.#open.profiles = open; },

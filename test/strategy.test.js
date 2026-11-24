@@ -147,3 +147,12 @@ test('keeps curated shortcuts in order, limits them to visible room members, and
   assert.deepEqual(rooms.find(room => room.id === 'studio').shortcuts, []);
   assert.equal(rooms.find(room => room.id === 'porch').shortcuts, undefined);
 });
+
+test('overview cannot surface hidden or excluded devices', () => {
+  const dashboard = generateDashboard({
+    area_ids: ['lounge', 'porch'],
+    hidden_entities: ['light.demo_lamp'],
+    overview_entities: ['calendar.demo_schedule', 'light.demo_lamp', 'fan.demo_fan', 'calendar.demo_schedule'],
+  }, home());
+  assert.deepEqual(dashboard.views[0].cards[0].overview, ['calendar.demo_schedule']);
+});
