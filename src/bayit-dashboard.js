@@ -54,14 +54,15 @@ const deviceGroups = {
 };
 const domainFor = config => config.entity.split('.')[0];
 const movement = new Set(['open','close','set_position']);
-const rangeActions = new Set(['set_position', 'set_brightness', 'set_percentage', 'volume_set']);
+const rangeActions = new Set(['set_position', 'set_brightness', 'set_color_temp_kelvin', 'set_percentage', 'volume_set']);
 const stateKeys = {
   set_position: 'current_position', set_percentage: 'percentage', set_brightness: 'brightness',
+  set_color_temp_kelvin: 'color_temp_kelvin', set_effect: 'effect',
   set_temperature: 'temperature', set_fan_mode: 'fan_mode', set_preset_mode: 'preset_mode',
   set_operation_mode: 'operation_mode', set_swing_mode: 'swing_mode', select_source: 'source', set_fan_speed: 'fan_speed',
 };
 const actionsInOrder = ['turn_on', 'turn_off', 'open', 'stop', 'close', 'lock', 'unlock',
-  'set_position', 'set_brightness', 'set_percentage', 'set_hvac_mode', 'set_temperature',
+  'set_position', 'set_brightness', 'set_color_temp_kelvin', 'set_effect', 'set_percentage', 'set_hvac_mode', 'set_temperature',
   'set_temperature_range', 'set_fan_mode', 'set_swing_mode', 'set_preset_mode', 'set_operation_mode', 'set_heating_level',
   'start_timed', 'extend_timed', 'stop_timed', 'run_script', 'press_button',
   'media_previous_track','media_play','media_pause','media_next_track','media_stop',
@@ -964,7 +965,10 @@ export class BayitDashboard extends HTMLElement {
         control.disabled = !this.canRequest(view.config.entity, control.dataset.action);
       }
       view.special.update(model, pending);
-      for (const field of view.fields) this.syncField(field, model);
+      for (const field of view.fields) {
+        this.syncField(field, model);
+        if (field.id === 'set_effect' && !field.input.value) field.apply.disabled = true;
+      }
     }
     return countdown;
   }
@@ -1141,13 +1145,20 @@ export class BayitDashboard extends HTMLElement {
     const field = { action, id };
     if (action.options) {
       field.input = make('select');
+      if (id === 'set_effect') {
+        const placeholder = make('option', '', this.t('available_option'));
+        placeholder.value = '';
+        placeholder.disabled = true;
+        field.input.append(placeholder);
+      }
       for (const value of action.options) {
-        const op = make('option', '', this.t(value));
+        const op = make('option', '', id === 'set_effect' ? value : this.t(value));
         op.value = value;
         field.input.append(op);
       }
     } else field.input = this.numberInput(action, isRange ? 'range' : 'number');
     field.input.dataset.action = id;
+    if (id === 'set_color_temp_kelvin') field.input.setAttribute('aria-label', title);
     caption.append(field.input);
     if (id === 'set_temperature_range') {
       field.input.setAttribute('aria-label', title + ' · ' +this.t('min'));
@@ -1160,13 +1171,16 @@ export class BayitDashboard extends HTMLElement {
       field.output = make('output', 'duration-label');
       caption.append(field.output);
     }
+    if (isRange) field.unit = id === 'set_color_temp_kelvin' ? ' K' : '%';
+    const apply = button('control-button', id === 'start_timed' ? this.actionLabel(id) : this.t('apply'));
+    field.apply = apply;
     const touched = () => {
       field.dirty = true;
-      if (field.output) setText(field.output, field.input.value + '%');
+      if (field.output) setText(field.output, field.input.value + field.unit);
+      if (id === 'set_effect') apply.disabled = !field.input.value || !this.canRequest(view.config.entity, id);
     };
     field.input.addEventListener('input', touched);
     field.second?.addEventListener('input', touched);
-    const apply = button('control-button', id === 'start_timed' ? this.actionLabel(id) : this.t('apply'));
     apply.dataset.action = id;
     label(apply, id === 'start_timed' ? this.actionLabel(id) : this.t('apply') + ' · ' + title);
     apply.onclick = () => {
@@ -1199,7 +1213,7 @@ export class BayitDashboard extends HTMLElement {
     else if (input.localName === 'select') input.value = attrs[stateKeys[id]] ?? input.options[0]?.value ?? '';
     else input.value = String(number(attrs[stateKeys[id]]) ?? action.min ?? 0);
     if (input.localName === 'select' && input.selectedIndex === -1) input.selectedIndex = 0;
-    if (field.output) setText(field.output, input.value + '%');
+    if (field.output) setText(field.output, input.value + field.unit);
   }
 
   canRequest(entity, id) {

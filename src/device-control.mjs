@@ -6,6 +6,7 @@ const VARIABLE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export const HEATING_DOMAINS = Object.freeze(["switch", "climate", "fan", "water_heater"]);
 const HVAC_MODES = ["off", "heat", "cool", "heat_cool", "auto", "dry", "fan_only"];
 
+const LIGHT_EFFECT = 4;
 const COVER = { open: 1, close: 2, position: 4, stop: 8 };
 const FAN = { speed: 1, preset: 8, off: 16, on: 32 };
 const CLIMATE = { temperature: 1, range: 2, fan: 8, preset: 16, swing: 32, off: 128, on: 256 };
@@ -17,6 +18,8 @@ const SERVICES = {
   stop: "stop_cover",
   set_position: "set_cover_position",
   set_brightness: "turn_on",
+  set_color_temp_kelvin: "turn_on",
+  set_effect: "turn_on",
   set_temperature_range: "set_temperature",
   run_script: "turn_on",
 };
@@ -24,6 +27,8 @@ const SERVICES = {
 const PARAMETER = {
   set_position: "position",
   set_brightness: "brightness_pct",
+  set_color_temp_kelvin: "color_temp_kelvin",
+  set_effect: "effect",
   set_percentage: "percentage",
   set_hvac_mode: "hvac_mode",
   set_fan_mode: "fan_mode",
@@ -193,14 +198,22 @@ function supportedActions(config, states, record, timer, nowMs) {
       add("run_script", { requiresConfirmation: !explicitlyUnconfirmed });
       break;
     }
-    case "light":
+    case "light": {
       power();
-      if ((Array.isArray(attributes.supported_color_modes) && attributes.supported_color_modes.some(mode =>
-        ["brightness", "color_temp", "hs", "xy", "rgb", "rgbw", "rgbww", "white"].includes(mode))) ||
-        Number.isFinite(attributes.brightness)) {
+      const modes = Array.isArray(attributes.supported_color_modes) ? attributes.supported_color_modes : [];
+      if (modes.some(mode => ["brightness", "color_temp", "hs", "xy", "rgb", "rgbw", "rgbww", "white"].includes(mode))
+          || Number.isFinite(attributes.brightness)) {
         add("set_brightness", { min: 0, max: 100, step: 1 });
       }
+      const { min_color_temp_kelvin: min, max_color_temp_kelvin: max, effect_list: effects } = attributes;
+      if (modes.includes("color_temp") && Number.isSafeInteger(min) && Number.isSafeInteger(max) && min > 0 && min < max) {
+        add("set_color_temp_kelvin", { min, max, step: 1 });
+      }
+      if (supports(LIGHT_EFFECT) && Array.isArray(effects)) {
+        options("set_effect", effects.filter(name => typeof name === "string" && name.trim()));
+      }
       break;
+    }
     case "cover":
       if (supports(COVER.open)) add("open");
       if (supports(COVER.close)) add("close");
@@ -352,6 +365,9 @@ function expectedState(config, action, value, states) {
       return value === 0 ? state("off") : {
         ...attribute("brightness", Math.round(value * 255 / 100), 2), state: "on",
       };
+    case "set_color_temp_kelvin":
+    case "set_effect":
+      return { ...attribute(PARAMETER[action], value), state: "on" };
     case "set_percentage":
       return value === 0 ? state("off") : attribute("percentage", value);
     case "lock":

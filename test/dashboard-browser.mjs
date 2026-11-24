@@ -42,7 +42,11 @@ const hass = {
     }
     if (request.domain === 'light') {
       const id = request.target.entity_id;
-      states[id] = { ...states[id], state: request.service === 'turn_off' ? 'off' : 'on' };
+      const { color_temp_kelvin, effect } = request.service_data ?? {};
+      const attributes = { ...states[id].attributes };
+      if (color_temp_kelvin !== undefined) attributes.color_temp_kelvin = color_temp_kelvin;
+      if (effect !== undefined) attributes.effect = effect;
+      states[id] = { ...states[id], attributes, state: request.service === 'turn_off' ? 'off' : 'on' };
       card.hass = { ...hass, states: { ...states } };
     }
     if (request.domain === 'simple_timer' && request.service === 'start_timer') {
@@ -58,10 +62,15 @@ const hass = {
 };
 if (query.has('room-grid')) {
   for (const [entity, name, colorMode] of [
-    ['light.demo_wall', 'Wall lamp', 'onoff'], ['light.demo_pendant', 'Pendant lamp', 'brightness'],
+    ['light.demo_wall', 'Wall lamp', 'onoff'], ['light.demo_pendant', 'Pendant lamp', 'color_temp'],
+    ['light.demo_monitor', 'Monitor lamp', 'color_temp'],
   ]) {
     states[entity] = { state: 'on', attributes: { friendly_name: name, supported_color_modes: [colorMode] } };
     hass.entities[entity] = { area_id: 'studio' };
+    if (colorMode === 'color_temp') Object.assign(states[entity].attributes, {
+      min_color_temp_kelvin: 2200, max_color_temp_kelvin: 7000, color_temp_kelvin: 3200,
+      supported_features: 4, effect_list: ['Color loop', 'Slow pulse'], effect: 'off',
+    });
   }
 }
 if (query.has('device-panel')) {
@@ -125,7 +134,8 @@ const selected = query.has('configuration') ? stored().strategy : query.has('cur
   room_shortcuts: { studio: ['switch.demo_heater', 'light.demo_lamp'] },
   overview_entities: ['switch.demo_heater'],
 } : query.has('room-grid') ? {
-  room_overrides: { studio: { entities: ['light.demo_lamp', 'light.demo_wall', 'light.demo_pendant'] } },
+  room_overrides: { studio: { entities: ['light.demo_lamp', 'light.demo_wall', 'light.demo_pendant', 'light.demo_monitor'],
+    read_only_entities: ['light.demo_monitor'] } },
 } : query.has('device-panel') ? {
   room_shortcuts: { studio: ['light.demo_lamp', 'climate.demo_air'] },
   profiles: [{ entity: 'climate.demo_air', kind: 'climate', timed: {
@@ -343,9 +353,39 @@ try {
       assert.equal(await lightGroup.getByRole('slider').count(), 0);
       await dimmable.press('Shift+Enter');
       const pendant = roomGridPage.getByRole('dialog', { name: 'Pendant lamp', exact: true });
-      await pendant.getByRole('slider').waitFor();
+      const kelvin = pendant.getByRole('slider', { name: 'גוון לבן' });
+      await kelvin.waitFor();
+      assert.equal(await pendant.getByRole('slider').count(), 2);
+      assert.equal(await kelvin.inputValue(), '3200');
+      assert.equal(await kelvin.getAttribute('min'), '2200');
+      assert.equal(await kelvin.getAttribute('max'), '7000');
       assert.equal(await pendant.locator('.device').count(), 1);
       assert.equal(await roomGridPage.evaluate(() => window.bayitTest.calls.length), 0);
+      await kelvin.fill('3500');
+      await pendant.getByText('3500 K', { exact: true }).waitFor();
+      await pendant.getByRole('button', { name: 'החל · גוון לבן', exact: true }).click();
+      await roomGridPage.waitForFunction(() => window.bayitTest.calls.length === 1);
+      const effect = pendant.getByRole('combobox', { name: 'אפקט תאורה' });
+      const applyEffect = pendant.getByRole('button', { name: 'החל · אפקט תאורה', exact: true });
+      assert.equal(await effect.inputValue(), '');
+      assert.equal(await applyEffect.isDisabled(), true);
+      await effect.selectOption('Slow pulse');
+      assert.equal(await roomGridPage.evaluate(() => window.bayitTest.calls.length), 1);
+      await applyEffect.click();
+      assert.deepEqual(await roomGridPage.evaluate(() => window.bayitTest.calls), [
+        { type: 'call_service', domain: 'light', service: 'turn_on', target: { entity_id: 'light.demo_pendant' },
+          service_data: { color_temp_kelvin: 3500 } },
+        { type: 'call_service', domain: 'light', service: 'turn_on', target: { entity_id: 'light.demo_pendant' },
+          service_data: { effect: 'Slow pulse' } },
+      ]);
+      await roomGridPage.keyboard.press('Escape');
+      await pendant.waitFor({ state: 'hidden' });
+      await roomGridPage.getByRole('button', { name: 'Studio', exact: true }).click();
+      await roomGridPage.getByRole('dialog').locator('[data-entity="light.demo_monitor"] .device-tile').press('Shift+Enter');
+      const monitor = roomGridPage.getByRole('dialog', { name: 'Monitor lamp', exact: true });
+      await monitor.waitFor();
+      assert.equal(await monitor.locator('.action-list').evaluate(node => node.childElementCount), 0);
+      assert.equal(await roomGridPage.evaluate(() => window.bayitTest.calls.length), 2);
       await roomGridPage.close();
 
       const detailPage = await browser.newPage({ viewport: { width: 390, height: 844 } });

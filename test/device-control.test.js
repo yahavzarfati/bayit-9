@@ -45,6 +45,46 @@ test("light brightness appears only when the light supports it", () => {
   assert.equal(p.expected.attributes.brightness, 191);
 });
 
+test("lights expose absolute Kelvin and named effects only for reported capabilities", () => {
+  const lamp = config("light.fixture");
+  const capabilities = {
+    supported_color_modes: ["rgb", "color_temp"], min_color_temp_kelvin: 2200, max_color_temp_kelvin: 7000,
+    supported_features: 4, effect_list: ["Slow pulse", "Color loop", "off", "Slow pulse", " ", null],
+  };
+  const states = { [lamp.entity]: entity("off", capabilities) };
+  const { actions } = getDeviceModel(lamp, states);
+  assert.deepEqual(actions.set_color_temp_kelvin, {
+    id: "set_color_temp_kelvin", requiresConfirmation: false, min: 2200, max: 7000, step: 1,
+  });
+  assert.deepEqual(actions.set_effect.options, ["Slow pulse", "Color loop", "off"]);
+  for (const [id, key, value] of [
+    ["set_color_temp_kelvin", "color_temp_kelvin", 3500], ["set_effect", "effect", "Slow pulse"],
+  ]) {
+    assert.deepEqual(planDeviceAction(lamp, states, id, value), {
+      kind: "service", domain: "light", service: "turn_on", target: { entity_id: lamp.entity },
+      data: { [key]: value }, expected: { entity: lamp.entity, attributes: { [key]: value }, tolerance: undefined, state: "on" },
+    });
+  }
+  for (const invalid of [2199, 7001, 3500.1, "3500", NaN]) {
+    assert.throws(() => planDeviceAction(lamp, states, "set_color_temp_kelvin", invalid), code("invalid_value"));
+  }
+  for (const invalid of ["", "color loop", "Slow pulse ", "Magic"]) {
+    assert.throws(() => planDeviceAction(lamp, states, "set_effect", invalid), code("invalid_value"));
+  }
+  for (const unsupported of [
+    { supported_color_modes: ["rgb"] }, { min_color_temp_kelvin: 7000 }, { max_color_temp_kelvin: "7000" },
+  ]) {
+    assert.equal(getDeviceModel(lamp, { [lamp.entity]: entity("on", { ...capabilities, ...unsupported }) })
+      .actions.set_color_temp_kelvin, undefined);
+  }
+  for (const unsupported of [{ supported_features: 0 }, { effect_list: [] }]) {
+    assert.equal(getDeviceModel(lamp, { [lamp.entity]: entity("on", { ...capabilities, ...unsupported }) })
+      .actions.set_effect, undefined);
+  }
+  assert.deepEqual(actionIds(getDeviceModel({ ...lamp, role: "status" }, states)), ["more_info"]);
+  assert.deepEqual(actionIds(getDeviceModel(lamp, { [lamp.entity]: entity("unavailable", capabilities) })), ["more_info"]);
+});
+
 test("cover controls honor feature bits and absolute position never uses toggle", () => {
   const c = config("cover.sunshade");
   const states = { [c.entity]: entity("opening", { supported_features: 13, current_position: 12 }) };
