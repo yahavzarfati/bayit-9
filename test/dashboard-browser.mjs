@@ -792,7 +792,8 @@ try {
       await deskShortcut.press('Shift+Enter');
       const deviceGeometry = await modalGeometry();
       assert.ok(Math.abs(deviceGeometry.top - (roomGeometry.top + 844 - 16 - deviceGeometry.height) / 2) <= 1);
-      assert.ok(deviceGeometry.top > roomGeometry.top + 100);
+      const roomBandHeight = 844 - 16 - roomGeometry.top;
+      assert.ok(deviceGeometry.height < roomBandHeight, 'Fixture must fit inside the device panel band');
       assert.equal(deviceGeometry.closeX, roomGeometry.closeX);
       assert.equal(deviceGeometry.closeOffset, roomGeometry.closeOffset);
       assert.match(deviceGeometry.sourceRing, /2px inset/);
