@@ -5,6 +5,7 @@ import { normalizeVacuumMap } from './vacuum-map.js';
 import { wallpaperChoices } from './wallpapers.js';
 import { normalizeLightEffectGroups } from './light-effects.js';
 import { normalizePopupAliases } from './popup-routes.js';
+import { calendarAccent, normalizeCalendarAgenda, supportsDailyForecast } from './calendar-agenda.js';
 
 export const CARD_TYPE = 'custom:bayit-dashboard';
 export const STRATEGY_NAME = 'bayit-9';
@@ -458,12 +459,13 @@ function toolbarSections(value, describe, kind, vacuumPanels) {
         : item?.confirmation === true || (item?.confirmation === false && command) ? item.confirmation : undefined;
       const graphHours = item?.graph_hours;
       const hasGraphHours = role === 'graph' && Number.isInteger(graphHours) && graphHours >= 1 && graphHours <= 336;
-      const vacuumPanel = role === 'graph' && domain === 'sensor' && section.kind !== 'series' &&
+      const vacuumPanel = kind === 'sensors' && role === 'graph' && domain === 'sensor' && section.kind !== 'series' &&
         vacuumPanels?.has(item.vacuum_panel_id) ? item.vacuum_panel_id : undefined;
+      const accent = kind === 'calendar' && domain === 'calendar' ? calendarAccent(item.accent_color) : undefined;
       return [{ ...descriptor, ...(name && { name }), ...(ROOM_ICON.test(icon) && { icon }),
         ...(role && { role }), ...(command && { command }),
         ...(confirmation !== undefined && { confirmation }), ...(hasGraphHours && { graph_hours: graphHours }),
-        ...(vacuumPanel && { vacuum_panel_id: vacuumPanel }) }];
+        ...(vacuumPanel && { vacuum_panel_id: vacuumPanel }), ...(accent && { accent_color: accent }) }];
     });
     return [{ id, kind: section.kind, ...(title !== undefined && { title }),
       ...(section.filter === 'active' && { filter:'active' }), ...overview, entities }];
@@ -492,13 +494,17 @@ function dashboardToolbar(config, hass) {
     const icon = typeof entry.icon === 'string' ? entry.icon.trim() : '';
     const entities = Array.isArray(entry.entities) ? idList(entry.entities).map(describe).filter(Boolean) : undefined;
     const sections = entry.kind !== 'link'
-      ? toolbarSections(entry.sections, describe, entry.kind, entry.kind === 'sensors' ? vacuumPanels : undefined) : undefined;
+      ? toolbarSections(entry.sections, describe, entry.kind, vacuumPanels) : undefined;
     const orefMap = entry.kind === 'security' ? normalizeOrefMap(entry.oref_map) : undefined;
     const vacuumMap = entry.kind === 'vacuum'
       ? normalizeVacuumMap(entry.vacuum_map, entity => isVisibleEntity(entity, states, registry, hidden), registry) : undefined;
+    const agenda = entry.kind === 'calendar' ? normalizeCalendarAgenda(entry.calendar_agenda, entity =>
+      isVisibleEntity(entity, states, registry, hidden) &&
+      supportsDailyForecast(states[entity])) : undefined;
     return { id, kind: entry.kind, ...(label && { label }), ...(ROOM_ICON.test(icon) && { icon }),
       ...(path && { path }), ...(entry.placement === 'settings' && entry.kind !== 'settings' && { placement:'settings' }),
       ...(entities !== undefined && { entities }), ...(sections !== undefined && { sections }),
+      ...(agenda && { calendar_agenda: agenda }),
       ...(orefMap && { oref_map: orefMap }), ...(vacuumMap && { vacuum_map: vacuumMap }) };
   });
 }

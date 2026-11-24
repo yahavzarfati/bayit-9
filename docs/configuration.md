@@ -64,6 +64,8 @@ In YAML, use `discover: {domain: light, exclude_entities: [light.example], exclu
 
 A history graph in **Sensors** can open a configured Vacuum panel when you tap its heading or reading. Set **Open Vacuum on graph tap** in the graph's display settings.
 
+To use the read-only **Compact agenda**, enable it on the Calendar panel and choose the calendars to include. Its short view shows up to six events across four listed dates. Tap the agenda or use **Show the full week** to see the next seven days. Under **Sections**, each calendar can have its own icon and accent color. Select a daily forecast to show the condition and high beside dates.
+
 For a media player with playback controls and track details, edit its row in a toolbar section and choose **Now Playing** under **Display as**. In YAML, set `role: now_playing` on that media player. The display uses the title, artist or source, and progress reported by Home Assistant. Artwork can load through the selected player's Home Assistant proxy.
 
 To open a Media panel from a room, first configure a Media button or extra screen. Then choose that panel under **Open on media press and hold** for a media player in the room editor. A regular press opens Home Assistant details, a press and hold opens the selected Media panel, and **Back to room** returns to the source row. In YAML, set `media_panel_links` under the room override with the media entity ID as its key and a Media toolbar entry ID as its value.

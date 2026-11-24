@@ -12,6 +12,7 @@ import { createLightEffectGallery, lightEffectStyles, normalizeLightEffectGroups
 import { createNativeCards, createToolbarPanel, sensorGraphConfig, toolbarPanelStyles } from './toolbar-panels.js';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
+import { calendarAccent, normalizeCalendarAgenda } from './calendar-agenda.js';
 import { createWallpaperController, createWallpaperGallery, personalWallpaperId, wallpaperChoices, wallpaperStyles } from './wallpapers.js';
 import { createPageChrome } from './page-chrome.js';
 import { openBoilerHistory, boilerHistoryStyles } from './boiler-history.js';
@@ -191,6 +192,10 @@ function normalizeEntity(item) {
   }
   if (typeof item.role === 'string') entry.role = item.role;
   const domain = domainFor(entry);
+  if (domain === 'calendar') {
+    const accent = calendarAccent(item.accent_color);
+    if (accent) entry.accent_color = accent;
+  }
   const panelKind = ROOM_PANEL_KINDS.get(domain) ?? (domain === 'sensor' && entry.role === 'graph' ? 'vacuum' : undefined);
   const panelId = item[panelKind + '_panel_id'];
   if (panelKind && typeof panelId === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(panelId)) {
@@ -252,10 +257,12 @@ export function normalizeDashboardConfig(config = {}) {
     if (!Object.hasOwn(toolbarIcons, item?.kind) || (item.kind === 'link' && !localPath.test(item.path))) return [];
     const orefMap = item.kind === 'security' ? normalizeOrefMap(item.oref_map) : undefined;
     const vacuumMap = item.kind === 'vacuum' ? normalizeVacuumMap(item.vacuum_map) : undefined;
+    const agenda = item.kind === 'calendar' ? normalizeCalendarAgenda(item.calendar_agenda) : undefined;
     return [{ kind: item.kind, id: text(item.id), label: text(item.label), path: item.path,
       ...(item.placement === 'settings' && item.kind !== 'settings' && {placement:'settings'}),
       ...(orefMap && { oref_map: orefMap }),
       ...(vacuumMap && { vacuum_map: vacuumMap }),
+      ...(agenda && { calendar_agenda: agenda }),
       icon: validIcon(item.icon, toolbarIcons[item.kind]),
       ...(Array.isArray(item.entities) && { entities: item.entities.map(normalizeEntity) }),
       ...(Array.isArray(item.sections) && { sections: item.sections.flatMap(section => {
@@ -624,7 +631,7 @@ export class BayitDashboard extends HTMLElement {
       const { kind } = item;
       const name = item.label || this.t(kind);
       const entities = item.sections?.flatMap(section => section.entities) ?? item.entities ??
-        (kind === 'overview' ? settings.overview : settings.context[kind] ?? []);
+        (item.calendar_agenda ? [] : kind === 'overview' ? settings.overview : settings.context[kind] ?? []);
       const panel = { ...item, name, entities };
       const element = button('chrome-button', name, item.icon, true);
       element.dataset.role = kind;
@@ -1119,9 +1126,11 @@ export class BayitDashboard extends HTMLElement {
     delete content.dataset.room;
     content.replaceChildren();
     this.toolbarPanel = createToolbarPanel(type, {
-      sections: toolbar?.sections, entities: toolbar?.entities ?? this.config.context[type] ?? [],
+      sections: toolbar?.sections,
+      entities: toolbar?.entities ?? (toolbar?.calendar_agenda ? [] : this.config.context[type]) ?? [],
       orefMap: toolbar?.oref_map,
       vacuumMap: toolbar?.vacuum_map,
+      calendarAgenda: toolbar?.calendar_agenda,
     }, {
       host: content, dialog: this.nodes.modal, hass: this._hass, getHass: () => this._hass,
       locale: this.config.locale, hiddenEntities: this.config.hiddenEntities,

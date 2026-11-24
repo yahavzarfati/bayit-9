@@ -4,6 +4,7 @@ import {
 } from './strategy-model.js';
 import { normalizeOrefMap, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
 import { sameVacuumDevice } from './vacuum-map.js';
+import { normalizeCalendarAgenda, supportsDailyForecast } from './calendar-agenda.js';
 
 const WORDS = {
   en: {
@@ -39,6 +40,9 @@ const WORDS = {
     vacuumDevice: 'Roborock vacuum', vacuumSelector: 'Selected-map entity',
     floorOption: 'Map option', floorImage: 'Calibrated map image', floorName: 'Display name',
     addFloor: 'Add floor', removeFloor: 'Remove floor',
+    calendarAgenda: 'Compact agenda', calendarAgendaHint: 'Choose the calendars to show. Tap to expand to seven days.',
+    calendarWeather: 'Daily forecast beside dates', calendarNoWeather: 'No forecast',
+    calendarAccent: 'Calendar accent', calendarInvalidAccent: 'Enter a six-digit color such as #80BFFF.',
     activity: 'Activity', automations: 'Automations', security: 'Security', presence: 'Presence',
     weather: 'Weather', energy: 'Energy', settings: 'Settings', overview: 'Overview',
     sensors: 'Sensors', media: 'Media', vacuum: 'Vacuum', calendar: 'Calendar', link: 'Local link',
@@ -80,6 +84,9 @@ const WORDS = {
     vacuumDevice: 'שואב Roborock', vacuumSelector: 'ישות לבחירת מפה',
     floorOption: 'אפשרות מפה', floorImage: 'תמונת מפה מכוילת', floorName: 'שם לתצוגה',
     addFloor: 'הוספת קומה', removeFloor: 'הסרת קומה',
+    calendarAgenda: 'יומן בתצוגה מקוצרת', calendarAgendaHint: 'בחרו אילו יומנים להציג. לחיצה מציגה שבעה ימים.',
+    calendarWeather: 'תחזית יומית ליד התאריך', calendarNoWeather: 'ללא תחזית',
+    calendarAccent: 'צבע היומן', calendarInvalidAccent: 'הזינו צבע בן שש ספרות, למשל ‎#80BFFF‎.',
     activity: 'פעילות', automations: 'אוטומציות', security: 'אבטחה', presence: 'נוכחות',
     weather: 'מזג אוויר', energy: 'אנרגיה', settings: 'הגדרות', overview: 'סקירה',
     sensors: 'חיישנים', media: 'מדיה', vacuum: 'שואב רובוטי', calendar: 'יומן', link: 'קישור מקומי',
@@ -360,6 +367,12 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         }
       }
     }
+    if (domain === 'calendar' && toolbar[entryIndex].kind === 'calendar' &&
+        toolbar[entryIndex].calendar_agenda?.enabled === true) {
+      fields.push(textField(words.calendarAccent, record.accent_color, value => save({ accent_color: value || undefined }),
+        { dir:'ltr', maxLength:7, placeholder:'#80BFFF', pattern:/^#[0-9a-f]{6}$/i,
+          error:words.calendarInvalidAccent }).field);
+    }
     if (record.role === 'action' && domain === 'script') {
       const run = node('input', { type: 'checkbox', checked: record.command === 'run_script' });
       run.dataset.toolbarFocus = 'run-script';
@@ -585,6 +598,32 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     return node('fieldset', { className: 'toolbar-editor-detail' }, output);
   }
 
+  function editCalendarAgenda(entry) {
+    const settings = normalizeCalendarAgenda(entry.calendar_agenda);
+    const enabled = node('input', { type:'checkbox', checked: !!settings });
+    enabled.dataset.toolbarFocus = 'enable-agenda';
+    enabled.addEventListener('change', () => {
+      changeEntry({ calendar_agenda: enabled.checked ? { enabled:true } : undefined,
+        ...(enabled.checked && !Array.isArray(entry.sections) && !Array.isArray(entry.entities) && { entities: [] }),
+      }, true, 'enable-agenda');
+    });
+    const controls = [node('label', { className:'check' }, [enabled, words.calendarAgenda])];
+    if (settings) {
+      controls.push(node('small', { textContent: words.calendarAgendaHint }));
+      const weather = candidates.filter(item => item.entity.startsWith('weather.') && supportsDailyForecast(hass.states?.[item.entity]))
+        .map(item => [item.entity, item.name || item.entity]);
+      if (settings.weather_entity && !weather.some(([id]) => id === settings.weather_entity)) {
+        weather.push([settings.weather_entity, words.unavailable + ' · ' + settings.weather_entity]);
+      }
+      const forecast = select([['', words.calendarNoWeather], ...weather], settings.weather_entity ?? '');
+      forecast.addEventListener('change', () => changeEntry({ calendar_agenda: {
+        enabled:true, ...(forecast.value && { weather_entity: forecast.value }),
+      } }));
+      controls.push(field(words.calendarWeather, forecast));
+    }
+    return node('div', { className:'toolbar-editor-stack' }, controls);
+  }
+
   function entryDetails(entry) {
     const fields = [node('h3', { textContent: words.editButton }),
       textField(words.label, entry.label, value => {
@@ -600,6 +639,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     }
     if (entry.kind === 'security') fields.push(editOrefMap(entry));
     if (entry.kind === 'vacuum') fields.push(editVacuumMap(entry));
+    if (entry.kind === 'calendar') fields.push(editCalendarAgenda(entry));
     if (entry.kind === 'link') {
       const path = textField(words.localPath, entry.path, value => {
         if (LOCAL_ROUTE.test(value)) changeEntry({ path: value });

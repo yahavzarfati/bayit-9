@@ -2,6 +2,7 @@ import { createOrefMap } from './oref-alert-map.js';
 import { createVacuumMap } from './vacuum-map.js';
 import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
 import { discoverOverviewLights, isActiveOverviewLight } from './strategy-model.js';
+import { calendarAgendaStyles, createCalendarAgenda } from './calendar-agenda.js';
 
 const sectionKeys = {
   actions: 'automations', locks: 'toolbar_locks', covers: 'room_covers', status: 'toolbar_status',
@@ -281,7 +282,10 @@ export function createToolbarPanel(kind, configuration, context) {
 
   const sections = configuration.sections ?? sectionsFor(kind, configuration.entities);
   const calendarItems = kind === 'calendar' ? sections.flatMap(section => section.entities).filter(item => domain(item) === 'calendar') : [];
-  if (calendarItems.length) {
+  let calendarAgenda;
+  if (kind === 'calendar' && configuration.calendarAgenda?.enabled) {
+    calendarAgenda = createCalendarAgenda({ host, context, items:calendarItems, settings:configuration.calendarAgenda });
+  } else if (calendarItems.length) {
     const fallback = make('div','toolbar-section-items');
     for (const item of calendarItems) fallback.append(renderTile(item,'status'));
     host.append(nativeCard({type:'calendar', entities:[...new Set(calendarItems.map(item=>item.entity))], initial_view:'listWeek'},fallback));
@@ -392,6 +396,7 @@ export function createToolbarPanel(kind, configuration, context) {
       native.update(hass);
       orefMap?.update(hass);
       vacuumMap?.update(hass);
+      calendarAgenda?.update(hass);
       for (const update of handlers) update();
       if (quiet) quiet.hidden = !!host.querySelector('.toolbar-section:not([hidden])');
     },
@@ -399,6 +404,7 @@ export function createToolbarPanel(kind, configuration, context) {
       live = false;
       orefMap?.dispose();
       vacuumMap?.dispose();
+      calendarAgenda?.dispose();
       for (const player of mediaViews) player.dispose();
       if (clockTimer) view.clearInterval(clockTimer);
       native.dispose();
@@ -406,7 +412,7 @@ export function createToolbarPanel(kind, configuration, context) {
   };
 }
 
-export const toolbarPanelStyles = nowPlayingStyles + `
+export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
   .toolbar-panes, .toolbar-section-items { display: grid; gap: 8px; min-width: 0; }
   .toolbar-section { min-width: 0; border: 1px solid var(--soft-line); border-radius: 13px; padding: 8px; }
   .toolbar-section-title { margin: 0 0 8px; text-align: center; font-size: 14px; }
