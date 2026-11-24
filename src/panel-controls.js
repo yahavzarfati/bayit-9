@@ -228,9 +228,17 @@ export const panelControlStyles = `
     direction: ltr; accent-color: var(--moving); }
   .timer-amount { white-space: nowrap; font-size: 12px; }
   .timer-command { min-width: 44px; padding-inline: 8px; }
-  .timer-presets, .heat-level-options { display: grid; gap: 4px; direction: ltr; grid-template-columns: repeat(auto-fit,minmax(48px,1fr)); }
-  .timer-preset, .heat-level-choice { padding-inline: 3px; }
-  .heat-level-options { margin-top: 5px; }
+  .timer-presets, .heat-level-options { display: grid; gap: 4px; direction: ltr; }
+  .timer-presets { grid-template-columns: repeat(auto-fit,minmax(48px,1fr)); }
+  .timer-preset { padding-inline: 3px; }
+  .heat-level-options {
+    margin-top: 5px;
+    grid-template-columns: repeat(auto-fit,minmax(25px,1fr));
+    /* Fit nine targets before widening the gutters. */
+    column-gap: clamp(1px,calc((100% - 233px) / 8),4px);
+  }
+  .heat-level-options > .heat-level-choice { min-width: 25px; padding-inline: 1px; font-variant-numeric: tabular-nums; }
+  .heat-level-choice[aria-pressed=true] { background: color-mix(in srgb,var(--warm) 16%,var(--control)); }
   .heat-level-choice[data-changing] { outline: 1px dashed currentColor; outline-offset: -4px; }
   .modal[data-kind=device] .device[data-treatment=climate] .device-name { display: none; }
 `;

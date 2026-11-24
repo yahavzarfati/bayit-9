@@ -285,6 +285,7 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     min_minutes: 15, max_minutes: 120, step_minutes: 15, presets: [30,60,90,120],
   } }],
 } : query.has('room-status') ? roomStatusSelected : query.has('heater-level') ? {
+  ...(query.has('compact-heater-steps') && { shape: 'circle' }),
   room_shortcuts: { studio: [heaterFan] },
   profiles: [{ entity: heaterFan, kind: 'heater', level_steps: 9,
     level_read_entity: helper, level_select_script: heaterScript,
@@ -1062,16 +1063,45 @@ try {
         .querySelector('.heat-level-choice[data-action="set_heating_level"]')?.disabled);
       await heaterPage.close();
 
-      const nextPage = await browser.newPage({ viewport: { width: 320, height: 812 } });
-      await nextPage.goto(base + '?heater-level&preselect&locale=' + (rightToLeft ? 'he' : 'en'));
-      await nextPage.locator('.quick-button[data-entity="fan.demo_step_heater"]').click();
+      const nextPage = await browser.newPage({ viewport: { width: 320, height: 812 }, hasTouch: true, reducedMotion: 'reduce' });
+      await nextPage.goto(base + '?heater-level&preselect&compact-heater-steps&locale=' + (rightToLeft ? 'he' : 'en'));
+      await nextPage.locator('.quick-button[data-entity="fan.demo_step_heater"]').tap();
       const nextPanel = nextPage.getByRole('dialog', { name: 'Fixture step heater', exact: true });
       const nextStep = step => nextPanel.getByRole('button', {
         name: (rightToLeft ? 'עוצמה להפעלה הבאה ' : 'Level for next start ') + step, exact: true,
       });
       await nextStep(5).waitFor();
       assert.equal(await nextStep(5).getAttribute('aria-pressed'), 'true');
-      await nextStep(7).click();
+      for (const width of [320, 390, 280]) {
+        await nextPage.setViewportSize({ width, height: 812 });
+        const layout = await nextPanel.locator('.heat-level-options').evaluate(row => {
+          const buttons = [...row.querySelectorAll('.heat-level-choice')];
+          const selected = buttons.find(button => button.getAttribute('aria-pressed') === 'true');
+          return {
+            targets: buttons.map(button => {
+              const { x, y, width, height } = button.getBoundingClientRect();
+              return { value: button.textContent, x, y, width, height };
+            }),
+            active: selected?.textContent,
+            selectedBackground: getComputedStyle(selected).backgroundColor,
+            idleBackground: getComputedStyle(buttons[0]).backgroundColor,
+            fits: row.scrollWidth <= row.clientWidth + 1,
+          };
+        });
+        assert.deepEqual(layout.targets.map(target => target.value), ['1', '2', '3', '4', '5', '6', '7', '8', '9']);
+        assert.equal(layout.active, '5');
+        assert.notEqual(layout.selectedBackground, layout.idleBackground);
+        assert.equal(layout.fits, true);
+        assert.ok(layout.targets.every(target => target.width >= 24.9 && target.height >= 43.9));
+        const rows = new Set(layout.targets.map(target => Math.round(target.y)));
+        if (width === 280) assert.ok(rows.size > 1, 'Smaller containers wrap without narrowing the targets');
+        else {
+          assert.equal(rows.size, 1, 'All levels fit on one row');
+          assert.ok(layout.targets.every((target, index) => index === 0 || target.x > layout.targets[index - 1].x));
+        }
+      }
+      await nextPage.setViewportSize({ width: 320, height: 812 });
+      await nextStep(7).tap();
       assert.equal(await nextStep(7).getAttribute('data-changing'), '');
       assert.deepEqual(await nextPage.evaluate(() => window.bayitTest.heatingState()), ['off', 'off', 'idle']);
       assert.deepEqual(await nextPage.evaluate(() => window.bayitTest.calls), [{
