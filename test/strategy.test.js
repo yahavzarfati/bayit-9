@@ -1,10 +1,63 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, generateDashboard,
-  normalizeProfile, selectableRoomEntities, suggestedDashboard,
+  CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverOverviewLights, discoverRooms, generateDashboard,
+  normalizeOverviewDiscovery, normalizeProfile, selectableRoomEntities, suggestedDashboard,
 } from '../src/strategy-model.js';
 import { getDeviceModel } from '../src/device-control.mjs';
+
+test('discovers only visible active lights from an opted-in Overview section', () => {
+  const hass = home();
+  const add = (entity, state, metadata = {}) => {
+    hass.states[entity] = { state, attributes: { friendly_name: entity } };
+    hass.entities[entity] = metadata;
+  };
+  add('light.first', 'on', { ai: 'other' });
+  add('light.second', 'on');
+  add('light.excluded', 'on');
+  add('light.utility_helper', 'on');
+  add('light.compact_hidden', 'on', { hidden: true });
+  add('light.registry_hidden', 'on', { hidden_by: 'user' });
+  add('light.registry_disabled', 'on', { disabled_by: 'user' });
+  add('light.dashboard_hidden', 'on');
+  add('light.gone', 'unavailable');
+  add('light.inactive', 'off');
+  add('switch.active', 'on');
+
+  const discover = { domain: 'light', exclude_entities: ['light.excluded'], exclude_id_contains: ['helper'] };
+  const section = { kind: 'status', discover };
+  const card = generateDashboard({
+    area_ids: ['studio'], show_unassigned: false, hidden_entities: ['light.dashboard_hidden'],
+    toolbar: [{ kind: 'overview', sections: [section] }, { kind: 'security', sections: [{ ...section, entities: [] }] }],
+  }, hass).views[0].cards[0];
+  assert.deepEqual(card.toolbar[0].sections, [{ id: 'section-1', kind: 'status', filter: 'active', discover, entities: [] }]);
+  assert.deepEqual(card.toolbar[1].sections, [{ id: 'section-1', kind: 'status', entities: [] }]);
+  assert.deepEqual(card.hidden_entities, ['light.dashboard_hidden']);
+  const hidden = new Set(card.hidden_entities);
+  const visible = () => discoverOverviewLights(discover, hass, hidden, 'en').map(({ entity, role }) => [entity, role]);
+  assert.deepEqual(visible(), [['light.first', 'action'], ['light.second', 'action']]);
+  add('light.new', 'on');
+  assert.deepEqual(visible(), [['light.first', 'action'], ['light.new', 'action'], ['light.second', 'action']]);
+  assert.deepEqual(discoverOverviewLights(discover, { ...hass, entities: undefined }, hidden, 'en'), []);
+  assert.equal(normalizeOverviewDiscovery({ ...discover, exclude_id_contains: ['.*'] }), undefined);
+  assert.equal(normalizeOverviewDiscovery({ ...discover, exclude_entities: ['switch.active'] }), undefined);
+  assert.equal(normalizeOverviewDiscovery({ domain: 'script' }), undefined);
+});
+
+test('keeps closing covers opt-in and leaves legacy active and other toolbar sections alone', () => {
+  const cover = { kind: 'covers', filter: 'active', entities: [] };
+  const chosen = { ...cover, include_closing: true };
+  const inactive = { ...chosen, filter: undefined };
+  const card = generateDashboard({ toolbar: [
+    { kind: 'overview', sections: [cover, chosen, inactive] }, { kind: 'security', sections: [chosen] },
+  ] }, home()).views[0].cards[0];
+  const [legacy, explicit, unfiltered] = card.toolbar[0].sections;
+  assert.deepEqual(legacy, { id: 'section-1', ...cover });
+  assert.deepEqual(explicit, { id: 'section-2', ...chosen });
+  assert.deepEqual(unfiltered, { id: 'section-3', kind: 'covers', entities: [] });
+  assert.deepEqual(card.toolbar[1].sections, [{ id: 'section-1', ...cover }]);
+  assert.equal(card.hidden_entities, undefined);
+});
 
 test('keeps explicit vacuum floor bindings and excludes card config and geometry', () => {
   const states = Object.fromEntries(['vacuum.robot', 'select.map', 'select.other', 'image.first', 'image.second']

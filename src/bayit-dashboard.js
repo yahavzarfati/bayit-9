@@ -1,6 +1,6 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
-import { MAX_ROOM_SHORTCUTS, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
+import { MAX_ROOM_SHORTCUTS, overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { createDeviceController, getDeviceModel } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
@@ -258,14 +258,19 @@ export function normalizeDashboardConfig(config = {}) {
       ...(vacuumMap && { vacuum_map: vacuumMap }),
       icon: validIcon(item.icon, toolbarIcons[item.kind]),
       ...(Array.isArray(item.entities) && { entities: item.entities.map(normalizeEntity) }),
-      ...(Array.isArray(item.sections) && { sections: item.sections.filter(section => Array.isArray(section?.entities)).map(section => ({
-        id: text(section.id), kind: text(section.kind), title: typeof section.title === 'string' ? section.title : undefined,
-        ...(section.filter === 'active' && {filter:'active'}),
-        entities: section.entities.map(normalizeEntity),
-      })) }) }];
+      ...(Array.isArray(item.sections) && { sections: item.sections.flatMap(section => {
+        if (!section || typeof section !== 'object' || Array.isArray(section)) return [];
+        const overview = overviewSectionOptions(item.kind, section);
+        const selected = Array.isArray(section.entities) ? section.entities : overview.discover ? [] : null;
+        if (!selected) return [];
+        return [{ id: text(section.id), kind: text(section.kind), title: typeof section.title === 'string' ? section.title : undefined,
+          ...(section.filter === 'active' && {filter:'active'}), ...overview, entities: selected.map(normalizeEntity) }];
+      }) }) }];
   }) : null;
   return {
     locale, rooms, overview, context, toolbar, page: config.page === true, fullscreen: config.fullscreen === true,
+    hiddenEntities: new Set(Array.isArray(config.hidden_entities)
+      ? config.hidden_entities.filter(id => typeof id === 'string' && entityPattern.test(id)) : []),
     popupAliases: new Map(Object.entries(normalizePopupAliases(config.popup_aliases))),
     title: text(config.title) || languages[locale].home,
     background: backgrounds.includes(config.background) ? config.background : 'aurora',
@@ -1118,7 +1123,8 @@ export class BayitDashboard extends HTMLElement {
       orefMap: toolbar?.oref_map,
       vacuumMap: toolbar?.vacuum_map,
     }, {
-      host: content, dialog: this.nodes.modal, hass: this._hass, locale: this.config.locale,
+      host: content, dialog: this.nodes.modal, hass: this._hass, getHass: () => this._hass,
+      locale: this.config.locale, hiddenEntities: this.config.hiddenEntities,
       make, button, icon, label, t: key => this.t(key),
       modelFor: item => this.model(item), stateLabel: model => this.stateLabel(model),
       moreInfo: item => this.moreInfo(item), pending: entity => this.pending.has(entity),

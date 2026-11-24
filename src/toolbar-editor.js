@@ -1,5 +1,5 @@
 import {
-  generateDashboard, LOCAL_ROUTE, roomPanelOptions, selectableRoomEntities,
+  generateDashboard, LOCAL_ROUTE, normalizeOverviewDiscovery, overviewSectionOptions, roomPanelOptions, selectableRoomEntities,
   TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
 } from './strategy-model.js';
 import { normalizeOrefMap, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
@@ -19,6 +19,9 @@ const WORDS = {
     unavailable: 'Unavailable', noChoices: 'No more devices available',
     sectionType: 'Section type', sectionName: 'Section title', sectionList: 'Panel sections',
     showHeading: 'Show section title', addSection: 'Add section', editSection: 'Edit section', sectionDisplay: 'Section display',
+    overviewSource: 'Device source', overviewDiscover: 'Discover active lights', overviewExcluded: 'Exclude these lights',
+    overviewExcludedIds: 'Exclude by text in entity ID', overviewInvalidIds: 'Enter up to 16 comma-separated ID fragments.',
+    overviewActiveOnly: 'Show active devices only', overviewClosing: 'Include closing covers',
     deviceLabel: 'Device label', deviceRole: 'Display as', editDevice: 'Edit device display',
     ask: 'Ask before running', skip: 'Run immediately', askCustom: 'Custom confirmation',
     confirmation: 'Confirmation', confirmationText: 'Confirmation message', graphHours: 'History hours',
@@ -57,6 +60,9 @@ const WORDS = {
     unavailable: 'לא זמין', noChoices: 'אין עוד מכשירים זמינים',
     sectionType: 'סוג הקבוצה', sectionName: 'כותרת הקבוצה', sectionList: 'קבוצות בחלונית',
     showHeading: 'הצגת כותרת הקבוצה', addSection: 'הוספת קבוצה', editSection: 'עריכת קבוצה', sectionDisplay: 'תצוגת הקבוצה',
+    overviewSource: 'מקור המכשירים', overviewDiscover: 'גילוי אורות דולקים', overviewExcluded: 'אורות להחרגה',
+    overviewExcludedIds: 'החרגה לפי חלק ממזהה הישות', overviewInvalidIds: 'הזינו עד 16 קטעי מזהה מופרדים בפסיקים.',
+    overviewActiveOnly: 'הצגת מכשירים פעילים בלבד', overviewClosing: 'הצגת תריסים בזמן סגירה',
     deviceLabel: 'תווית המכשיר', deviceRole: 'אופן התצוגה', editDevice: 'עריכת תצוגת המכשיר',
     ask: 'בקשת אישור לפני ההפעלה', skip: 'הפעלה מיידית', askCustom: 'הודעת אישור מותאמת',
     confirmation: 'אישור פעולה', confirmationText: 'הודעת אישור', graphHours: 'שעות היסטוריה',
@@ -152,7 +158,11 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     .filter(entry => TOOLBAR_KINDS.has(entry?.kind))
     .map(entry => Array.isArray(entry.sections) ? {
       ...entry,
-      sections: entry.sections.filter(section => TOOLBAR_SECTION_KINDS.has(section?.kind) && Array.isArray(section.entities)),
+      sections: entry.sections.flatMap(section => {
+        if (!TOOLBAR_SECTION_KINDS.has(section?.kind)) return [];
+        if (Array.isArray(section.entities)) return [section];
+        return overviewSectionOptions(entry.kind, section).discover ? [{ ...section, entities: [] }] : [];
+      }),
     } : entry) : undefined;
   let entryIndex = toolbar?.[viewState.entryIndex] ? viewState.entryIndex : 0;
   let sectionIndex = toolbar?.[entryIndex]?.sections?.[viewState.sectionIndex] ? viewState.sectionIndex : 0;
@@ -383,6 +393,50 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     return node('div', { className: 'toolbar-editor-detail' }, fields);
   }
 
+  function overviewFilters(active, discovery) {
+    const fields = [];
+    if (active.kind === 'status') {
+      const source = select([['manual', words.deviceList], ['discover', words.overviewDiscover]], discovery ? 'discover' : 'manual');
+      source.dataset.toolbarFocus = 'overview-source';
+      source.addEventListener('change', () => changeSection({
+        discover: source.value === 'discover' ? { domain: 'light' } : undefined,
+      }, true, 'overview-source'));
+      fields.push(field(words.overviewSource, source));
+    }
+    if (discovery) {
+      const save = edits => {
+        const current = normalizeOverviewDiscovery(toolbar[entryIndex].sections[sectionIndex].discover);
+        const next = normalizeOverviewDiscovery({ ...current, ...edits });
+        if (next) changeSection({ discover: next });
+      };
+      const chosen = new Set(discovery.exclude_entities);
+      const choices = new Set(candidates.filter(item => item.entity.startsWith('light.')).map(item => item.entity));
+      for (const id of chosen) choices.add(id);
+      const exclusionOptions = [...choices].map(id => {
+        const name = available.get(id)?.name;
+        return node('option', { value: id, textContent: name && name !== id ? name + ' · ' + id : id, selected: chosen.has(id) });
+      });
+      const exclusions = node('select', { multiple: true, size: Math.min(5, Math.max(2, choices.size)) }, exclusionOptions);
+      exclusions.addEventListener('change', () => save({ exclude_entities: [...exclusions.selectedOptions].map(option => option.value) }));
+      const fragments = textField(words.overviewExcludedIds, discovery.exclude_id_contains.join(', '), value => {
+        save({ exclude_id_contains: value ? value.split(',').map(fragment => fragment.trim().toLowerCase()) : [] });
+      }, { pattern: /^[a-z0-9_]{1,64}(?:\s*,\s*[a-z0-9_]{1,64}){0,15}$/i, maxLength: 1054,
+        dir: 'ltr', error: words.overviewInvalidIds, placeholder: 'helper, test' });
+      fields.push(field(words.overviewExcluded, exclusions), fragments.field);
+      return fields;
+    }
+    const activeOnly = node('input', { type: 'checkbox', checked: active.filter === 'active' });
+    activeOnly.dataset.toolbarFocus = 'overview-active';
+    activeOnly.addEventListener('change', () => changeSection({ filter: activeOnly.checked ? 'active' : undefined }, true, 'overview-active'));
+    fields.push(node('label', { className: 'check' }, [activeOnly, words.overviewActiveOnly]));
+    if (activeOnly.checked && (active.kind === 'covers' || active.entities.some(item => entityId(item)?.startsWith('cover.')))) {
+      const closing = node('input', { type: 'checkbox', checked: active.include_closing === true });
+      closing.addEventListener('change', () => changeSection({ include_closing: closing.checked ? true : undefined }));
+      fields.push(node('label', { className: 'check' }, [closing, words.overviewClosing]));
+    }
+    return fields;
+  }
+
   function sectionsEditor() {
     const getSections = () => toolbar[entryIndex].sections;
     const sections = getSections();
@@ -425,12 +479,17 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       renameItem('section', sectionIndex, value || words[active.kind]);
     }, { placeholder: words[active.kind] });
     title.field.hidden = !heading.checked;
-    const entity = entityPicker(() => getSections()[sectionIndex].entities,
-      (entities, focus) => changeSection({ entities }, true, focus), true);
     const fields = [node('h3', { textContent: words.editSection }), field(words.sectionDisplay, display),
-      node('label', { className: 'check' }, [heading, words.showHeading]), title.field, entity];
-    const position = active.entities.findIndex(item => entityId(item) === editedEntity);
-    if (position !== -1) fields.push(entityDetails(active, position, active.entities[position]));
+      node('label', { className: 'check' }, [heading, words.showHeading]), title.field];
+    const kind = toolbar[entryIndex].kind;
+    const { discover } = overviewSectionOptions(kind, active);
+    if (kind === 'overview' && ['status', 'covers'].includes(active.kind)) fields.push(...overviewFilters(active, discover));
+    if (!discover) {
+      fields.push(entityPicker(() => getSections()[sectionIndex].entities,
+        (entities, focus) => changeSection({ entities }, true, focus), true));
+      const position = active.entities.findIndex(item => entityId(item) === editedEntity);
+      if (position !== -1) fields.push(entityDetails(active, position, active.entities[position]));
+    }
     output.push(node('div', { className: 'toolbar-editor-detail' }, fields));
     return output;
   }

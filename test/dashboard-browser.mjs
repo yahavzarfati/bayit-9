@@ -115,6 +115,22 @@ if (query.has('room-selection')) {
   states['light.demo_lounge'] = { state: 'off', attributes: { friendly_name: 'Lounge lamp', supported_color_modes: ['onoff'] } };
   if (query.has('empty-source-room')) delete states['switch.demo_heater'];
 }
+if (query.has('overview-opt-in')) {
+  for (const [id, name, metadata] of [
+    ['light.demo_dining', 'Dining task lamp', {}],
+    ['light.demo_excluded', 'Excluded lamp', {}],
+    ['light.demo_helper', 'Helper lamp', {}],
+    ['light.demo_compact_hidden', 'Compact hidden lamp', { hidden: true }],
+    ['light.demo_registry_hidden', 'Registry hidden lamp', { hidden_by: 'user' }],
+    ['light.demo_disabled', 'Disabled lamp', { disabled_by: 'user' }],
+    ['light.demo_dashboard_hidden', 'Dashboard hidden lamp', {}],
+  ]) {
+    states[id] = { state: 'on', attributes: { friendly_name: name, supported_color_modes: ['onoff'] } };
+    hass.entities[id] = metadata;
+  }
+  states['cover.demo_overview_window'] = { state: 'closing', attributes: { friendly_name: 'Overview cover', supported_features: 15 } };
+  hass.entities['cover.demo_overview_window'] = {};
+}
 if (query.has('room-grid')) {
   for (const [entity, name, colorMode] of [
     ['light.demo_wall', 'Wall lamp', 'onoff'], ['light.demo_pendant', 'Pendant lamp', 'color_temp'],
@@ -295,6 +311,16 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     level_read_entity: helper, level_select_script: heaterScript,
     ...(query.has('preselect') && { level_preselect_entity: nextLevel }),
     timed: { simple_timer_entity: heaterTimer, simple_timer_target: heaterRelay } }],
+} : query.has('overview-opt-in') ? {
+  hidden_entities: ['light.demo_dashboard_hidden'],
+  toolbar: [{kind:'overview',sections:[
+    {kind:'status',title:'Discovered lighting',discover:{domain:'light',
+      exclude_entities:['light.demo_excluded'],exclude_id_contains:['helper']},entities:['light.demo_lamp']},
+    {kind:'covers',title:'Closing status',filter:'active',include_closing:true,entities:[
+      {entity:'cover.demo_overview_window',role:'status'}]},
+    {kind:'covers',title:'Default covers',filter:'active',entities:[
+      {entity:'cover.demo_overview_window',role:'status'}]},
+  ]},{kind:'settings'}],
 } : query.has('toolbar-panels') ? {
   ...(query.has('room-link') && { room_overrides: { studio: {
     entities:['light.demo_lamp','media_player.demo_tv','vacuum.demo_robot'],
@@ -329,7 +355,7 @@ document.querySelector('#surface').append(card);
 if (query.has('editor')) {
   document.querySelector('#surface').hidden = true;
   const editor = Strategy.getConfigElement();
-  editor.setConfig({ type: 'custom:bayit-9', ...(query.has('toolbar-panels') && selected) });
+  editor.setConfig({ type: 'custom:bayit-9', ...((query.has('toolbar-panels') || query.has('overview-opt-in')) && selected) });
   editor.hass = hass;
   editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
   document.querySelector('#editor').append(editor);
@@ -340,6 +366,11 @@ window.bayitTest = {
   finishCover: (index, failed = false) => coverRequests[index](failed),
   setRoomState(entity, state) {
     states[entity] = { ...states[entity], state };
+    card.hass = { ...hass, states: { ...states } };
+  },
+  setDiscoveredLight(entity, name, metadata) {
+    states[entity] = { state: 'on', attributes: { friendly_name: name, supported_color_modes: ['onoff'] } };
+    hass.entities = { ...hass.entities, [entity]: metadata };
     card.hass = { ...hass, states: { ...states } };
   },
   setLightModes(entity, modes) {
@@ -1249,6 +1280,81 @@ try {
       await panelsPage.getByRole('dialog').getByRole('button',{name:'Calendar',exact:true}).click();
       await panelsPage.getByRole('dialog',{name:'Calendar',exact:true}).getByText('2 calendars',{exact:true}).waitFor();
       await panelsPage.close();
+
+      const overviewPage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+      overviewPage.setDefaultTimeout(8000);
+      await overviewPage.goto(base + '?overview-opt-in');
+      await overviewPage.getByRole('button', { name: 'Home overview', exact: true }).tap();
+      const overviewDrawer = overviewPage.getByRole('dialog', { name: 'Home overview', exact: true });
+      const overviewSection = title => overviewDrawer.locator('.toolbar-section').filter({
+        has: overviewPage.getByRole('heading', { name: title, exact: true, includeHidden: true }),
+      });
+      const lighting = overviewSection('Discovered lighting');
+      const closes = overviewSection('Closing status');
+      const legacyCovers = overviewSection('Default covers');
+      const dining = lighting.getByRole('button', { name: 'Dining task lamp · On', exact: true });
+      await dining.waitFor();
+      assert.deepEqual(await lighting.locator('.tile-label').allTextContents(), ['Dining task lamp']);
+      await closes.getByRole('button', { name: 'Overview cover · Closing', exact: true }).waitFor();
+      assert.equal(await legacyCovers.isVisible(), false);
+      for (const state of ['unknown', 'unavailable', 'closed']) {
+        await overviewPage.evaluate(() => window.bayitTest.setRoomState('cover.demo_overview_window', 'opening'));
+        await legacyCovers.getByRole('button', { name: 'Overview cover · Opening', exact: true }).waitFor();
+        await overviewPage.evaluate(state => window.bayitTest.setRoomState('cover.demo_overview_window', state), state);
+        await legacyCovers.waitFor({ state: 'hidden' });
+        await closes.waitFor({ state: 'hidden' });
+      }
+
+      await dining.focus();
+      await overviewPage.evaluate(() => window.bayitTest.setDiscoveredLight('light.demo_arrived', 'A new lamp', {}));
+      const arrived = lighting.getByRole('button', { name: 'A new lamp · On', exact: true });
+      await arrived.waitFor();
+      assert.deepEqual(await lighting.locator('.tile-label').allTextContents(), ['A new lamp', 'Dining task lamp']);
+      assert.equal(await dining.evaluate(tile => tile.getRootNode().activeElement === tile), true);
+      await arrived.evaluate(tile => {
+        window.bayitTest.setDiscoveredLight('light.demo_arrived', 'A new lamp', { hidden: true });
+        tile.click();
+      });
+      await arrived.waitFor({ state: 'hidden' });
+      assert.equal(await overviewPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain).length), 0);
+      await dining.tap();
+      await lighting.waitFor({ state: 'hidden' });
+      assert.deepEqual(await overviewPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), [{
+        type: 'call_service', domain: 'light', service: 'turn_off', target: { entity_id: 'light.demo_dining' }, service_data: {},
+      }]);
+      await overviewDrawer.getByText('All quiet', { exact: true }).waitFor();
+      await overviewPage.close();
+
+      const overviewEditor = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true });
+      overviewEditor.setDefaultTimeout(8000);
+      await overviewEditor.goto(base + '?overview-opt-in&editor');
+      await overviewEditor.getByText('Toolbar and extra screens', { exact: true }).tap();
+      await overviewEditor.getByRole('button', { name: 'Overview', exact: true }).tap();
+      await overviewEditor.getByRole('button', { name: 'Discovered lighting', exact: true }).tap();
+      const lightSource = overviewEditor.getByLabel('Device source', { exact: true });
+      assert.equal(await lightSource.inputValue(), 'discover');
+      await overviewEditor.getByLabel('Exclude these lights', { exact: true }).selectOption(['light.demo_excluded', 'light.demo_dining']);
+      const fragments = overviewEditor.getByLabel('Exclude by text in entity ID', { exact: true });
+      await fragments.fill('unsafe.*');
+      await fragments.blur();
+      assert.equal(await fragments.getAttribute('aria-invalid'), 'true');
+      assert.deepEqual(await overviewEditor.evaluate(() => window.latest.toolbar[0].sections[0].discover.exclude_id_contains), ['helper']);
+      await fragments.fill('helper, AUX');
+      await fragments.blur();
+      assert.deepEqual(await overviewEditor.evaluate(() => window.latest.toolbar[0].sections[0].discover), {
+        domain: 'light', exclude_entities: ['light.demo_dining', 'light.demo_excluded'], exclude_id_contains: ['helper', 'aux'],
+      });
+      await lightSource.selectOption('manual');
+      assert.deepEqual(await overviewEditor.evaluate(() => window.latest.toolbar[0].sections[0].entities), ['light.demo_lamp']);
+      assert.equal(await overviewEditor.evaluate(() => window.latest.toolbar[0].sections[0].discover), undefined);
+      await lightSource.selectOption('discover');
+      await overviewEditor.getByRole('button', { name: 'Default covers', exact: true }).tap();
+      const closingOption = overviewEditor.getByLabel('Include closing covers', { exact: true });
+      assert.equal(await closingOption.isChecked(), false);
+      await closingOption.check();
+      assert.equal(await overviewEditor.evaluate(() => window.latest.toolbar[0].sections[2].include_closing), true);
+      await overviewEditor.close();
+      console.log(engine + ' 320: live Overview discovery, exclusions, closing covers and visual editor');
 
       const effectEditorPage = await browser.newPage({ viewport: { width: 320, height: 760 } });
       await effectEditorPage.addInitScript(() => {

@@ -1,6 +1,7 @@
 import { createOrefMap } from './oref-alert-map.js';
 import { createVacuumMap } from './vacuum-map.js';
 import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
+import { discoverOverviewLights, isActiveOverviewLight } from './strategy-model.js';
 
 const sectionKeys = {
   actions: 'automations', locks: 'toolbar_locks', covers: 'room_covers', status: 'toolbar_status',
@@ -116,7 +117,7 @@ export function createToolbarPanel(kind, configuration, context) {
     return { model, state: model.state === 'home' ? t('person_home') : model.state === 'not_home' ? t('person_away') : stateLabel(model) };
   };
 
-  function renderTile(item, itemKind) {
+  function renderTile(item, itemKind, register = update => handlers.push(update), canActivate) {
     const tile = button('tile-row');
     const visual = make('span', 'tile-mark');
     const glyph = icon('mdi:information-outline');
@@ -134,8 +135,12 @@ export function createToolbarPanel(kind, configuration, context) {
     }
     tile.append(visual, name, state);
     let action;
-    tile.onclick = () => action ? request(item, action, undefined, tile) : moreInfo(item);
-    handlers.push(() => {
+    tile.onclick = () => {
+      if (canActivate && !canActivate(item.entity)) return;
+      if (action) request(item, action, undefined, tile);
+      else moreInfo(item);
+    };
+    register(() => {
       const value = amount(item);
       const model = value.model;
       name.textContent = model.name;
@@ -166,6 +171,36 @@ export function createToolbarPanel(kind, configuration, context) {
       }
     });
     return tile;
+  }
+
+  function discoveredLightSection(panel, items, source) {
+    const tiles = new Map();
+    const allowed = entity => isActiveOverviewLight(entity, source, context.getHass(), context.hiddenEntities);
+    handlers.push(() => {
+      const lights = discoverOverviewLights(source, currentHass, context.hiddenEntities, context.locale);
+      const active = new Set(lights.map(item => item.entity));
+      for (const [id, view] of tiles) {
+        if (active.has(id)) continue;
+        view.tile.remove();
+        tiles.delete(id);
+      }
+      let cursor = items.firstElementChild;
+      for (const item of lights) {
+        let view = tiles.get(item.entity);
+        if (!view) {
+          view = { item };
+          view.tile = renderTile(item, 'action', update => { view.update = update; }, allowed);
+          tiles.set(item.entity, view);
+        } else {
+          view.item.name = item.name;
+          view.item.icon = item.icon;
+        }
+        view.update();
+        if (view.tile === cursor) cursor = cursor.nextElementSibling;
+        else items.insertBefore(view.tile, cursor);
+      }
+      panel.hidden = lights.length === 0;
+    });
   }
 
   function renderSun(item) {
@@ -261,14 +296,15 @@ export function createToolbarPanel(kind, configuration, context) {
     forecastClock.lastChild.textContent = format({weekday:'long',day:'numeric',month:'long'}).format(now);
   };
   for (const section of sections) {
-    if (!section.entities.length) continue;
+    if (!section.entities.length && !section.discover) continue;
     if (calendarItems.length && section.entities.every(item => domain(item) === 'calendar')) continue;
     const panel = make('section', 'toolbar-section');
     panel.dataset.section = section.kind;
     const caption = section.title ?? t(sectionKeys[section.kind] ?? 'room_devices');
     if (caption) panel.append(make('h3', 'toolbar-section-title', caption));
     const items = make('div', 'toolbar-section-items');
-    if (section.kind === 'series') {
+    if (section.discover) discoveredLightSection(panel, items, section.discover);
+    else if (section.kind === 'series') {
       const fallback = make('div','toolbar-section-items');
       for (const item of section.entities) fallback.append(renderTile(item, 'status'));
       items.append(nativeCard({ type:'history-graph', hours_to_show:section.entities.find(item=>item.graph_hours)?.graph_hours ?? 24,
@@ -282,7 +318,8 @@ export function createToolbarPanel(kind, configuration, context) {
         for (const {node, item} of pairs) {
           const model = modelFor(item);
           const active = model.available && (model.domain === 'climate' ? model.state !== 'off'
-            : model.domain === 'cover' ? !['closed','closing'].includes(model.state) : model.state === 'on');
+            : model.domain === 'cover' ? model.state !== 'closed' && (section.include_closing || model.state !== 'closing')
+              : model.state === 'on');
           node.hidden = !active;
           visible ||= active;
         }

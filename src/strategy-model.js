@@ -234,6 +234,42 @@ function isVisibleEntity(entity, states, registry, hidden) {
   return info?.hidden !== true && !info?.hidden_by && !info?.disabled_by;
 }
 
+const overviewIdFragment = /^[a-z0-9_]{1,64}$/;
+
+export function normalizeOverviewDiscovery(value) {
+  if (!value || value.domain !== 'light' || Array.isArray(value)) return undefined;
+  const { exclude_entities = [], exclude_id_contains = [] } = value;
+  if (!Array.isArray(exclude_entities) || exclude_entities.some(id => !idForDomain(id, 'light')) ||
+      !Array.isArray(exclude_id_contains) || exclude_id_contains.length > 16 ||
+      exclude_id_contains.some(fragment => typeof fragment !== 'string' || !overviewIdFragment.test(fragment))) {
+    return undefined;
+  }
+  return { domain: 'light', exclude_entities: [...new Set(exclude_entities)], exclude_id_contains: [...new Set(exclude_id_contains)] };
+}
+
+export function overviewSectionOptions(kind, section) {
+  if (kind !== 'overview') return {};
+  const discover = section.kind === 'status' && normalizeOverviewDiscovery(section.discover);
+  if (discover) return { discover, filter: 'active' };
+  return section.filter === 'active' && ['status', 'covers'].includes(section.kind) && section.include_closing === true
+    ? { include_closing: true } : {};
+}
+
+export function isActiveOverviewLight(entity, source, hass, hidden) {
+  const states = hass?.states ?? {};
+  return hass?.entities != null && entity.startsWith('light.') && states[entity]?.state === 'on' &&
+    isVisibleEntity(entity, states, hass?.entities, hidden) &&
+    !source.exclude_entities.includes(entity) &&
+    !source.exclude_id_contains.some(fragment => entity.slice('light.'.length).includes(fragment));
+}
+
+export function discoverOverviewLights(source, hass, hidden, locale) {
+  const states = hass?.states ?? {};
+  return Object.keys(states).filter(entity => isActiveOverviewLight(entity, source, hass, hidden))
+    .map(entity => ({ ...presentEntity(entity, states[entity], hass?.entities?.[entity]), role: 'action' }))
+    .sort((a, b) => compareText(a.name ?? a.entity, b.name ?? b.entity, locale) || compareText(a.entity, b.entity, locale));
+}
+
 export function selectableRoomEntities(config = {}, hass = {}) {
   const states = hass.states ?? {};
   const registry = hass.entities;
@@ -393,15 +429,18 @@ function dashboardContext(config, hass, locale) {
   return context;
 }
 
-function toolbarSections(value, describe, vacuumPanels) {
+function toolbarSections(value, describe, kind, vacuumPanels) {
   if (!Array.isArray(value)) return undefined;
   const seenSections = new Set();
   return value.flatMap((section, index) => {
-    if (!TOOLBAR_SECTION_KINDS.has(section?.kind) || !Array.isArray(section.entities)) return [];
+    if (!TOOLBAR_SECTION_KINDS.has(section?.kind)) return [];
+    const overview = overviewSectionOptions(kind, section);
+    const selected = Array.isArray(section.entities) ? section.entities : overview.discover ? [] : null;
+    if (!selected) return [];
     const id = layoutId(section.id, 'section-' + (index + 1), seenSections);
     const title = typeof section.title === 'string' ? section.title.trim().slice(0, 80) : undefined;
     const seenEntities = new Set();
-    const entities = section.entities.flatMap(item => {
+    const entities = selected.flatMap(item => {
       const entity = typeof item === 'string' ? item : item?.entity;
       if (typeof entity !== 'string' || seenEntities.has(entity)) return [];
       const descriptor = describe(entity);
@@ -427,7 +466,7 @@ function toolbarSections(value, describe, vacuumPanels) {
         ...(vacuumPanel && { vacuum_panel_id: vacuumPanel }) }];
     });
     return [{ id, kind: section.kind, ...(title !== undefined && { title }),
-      ...(section.filter === 'active' && { filter:'active' }), entities }];
+      ...(section.filter === 'active' && { filter:'active' }), ...overview, entities }];
   });
 }
 
@@ -453,7 +492,7 @@ function dashboardToolbar(config, hass) {
     const icon = typeof entry.icon === 'string' ? entry.icon.trim() : '';
     const entities = Array.isArray(entry.entities) ? idList(entry.entities).map(describe).filter(Boolean) : undefined;
     const sections = entry.kind !== 'link'
-      ? toolbarSections(entry.sections, describe, entry.kind === 'sensors' ? vacuumPanels : undefined) : undefined;
+      ? toolbarSections(entry.sections, describe, entry.kind, entry.kind === 'sensors' ? vacuumPanels : undefined) : undefined;
     const orefMap = entry.kind === 'security' ? normalizeOrefMap(entry.oref_map) : undefined;
     const vacuumMap = entry.kind === 'vacuum'
       ? normalizeVacuumMap(entry.vacuum_map, entity => isVisibleEntity(entity, states, registry, hidden), registry) : undefined;
@@ -494,7 +533,11 @@ export function generateDashboard(config = {}, hass = {}) {
   const context = dashboardContext(config, hass, locale);
   if (Object.keys(context).length) card.context = context;
   const toolbar = dashboardToolbar(config, hass);
-  if (toolbar !== undefined) card.toolbar = toolbar;
+  if (toolbar !== undefined) {
+    card.toolbar = toolbar;
+    const hidden = idList(config.hidden_entities);
+    if (hidden.length && toolbar.some(entry => entry.sections?.some(section => section.discover))) card.hidden_entities = hidden;
+  }
   if (Object.hasOwn(BACKGROUNDS, config.background)) card.background = config.background;
   if (['soft', 'circle', 'square'].includes(config.shape)) card.shape = config.shape;
   if (['classic', 'header'].includes(config.layout)) card.layout = config.layout;
