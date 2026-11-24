@@ -75,6 +75,28 @@ if (query.has('device-panel')) {
   } };
   hass.entities['climate.demo_air'] = { area_id: 'studio' };
 }
+if (query.has('toolbar-panels')) {
+  Object.assign(states, {
+    'script.demo_scene': {state:'off', attributes:{friendly_name:'Evening scene'}},
+    'lock.demo_entry': {state:'locked', attributes:{friendly_name:'Front door',code_format:'^[0-9]+$'}},
+    'weather.demo_home': {state:'sunny', attributes:{friendly_name:'Home forecast',supported_features:1,temperature:23}},
+    'sun.sun': {state:'above_horizon', attributes:{friendly_name:'Sun', next_rising:'2026-11-25T04:00:00Z',elevation:15,azimuth:270}},
+    'person.demo_friend': {state:'home',attributes:{friendly_name:'Simona'}},
+    'sensor.demo_meter': {state:'51',attributes:{friendly_name:'Energy meter',unit_of_measurement:'kWh'}},
+    'media_player.demo_speaker': {state:'playing',attributes:{friendly_name:'Speaker',supported_features:30749,volume_level:.24,
+      is_volume_muted:false,source:'Radio',source_list:['Radio','Aux'],media_title:'Station'}},
+    'vacuum.demo_robot': {state:'idle',attributes:{friendly_name:'Robot',supported_features:8244,fan_speed_list:['silent','normal']}},
+    'button.demo_filter': {state:'unknown',attributes:{friendly_name:'Reset filter'}},
+    'calendar.demo_household': {state:'off',attributes:{friendly_name:'Household'}},
+    'calendar.demo_birthdays': {state:'off',attributes:{friendly_name:'Birthdays'}},
+  });
+  window.loadCardHelpers = async () => ({createCardElement(configuration) {
+    const card = document.createElement('div');
+    card.dataset.nativeType = configuration.type;
+    card.textContent = configuration.type === 'calendar' ? configuration.entities.length + ' calendars' : configuration.name || configuration.entity;
+    return card;
+  }});
+}
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
 const selected = query.has('configuration') ? stored().strategy : query.has('curated') ? {
   room_shortcuts: { studio: ['switch.demo_heater', 'light.demo_lamp'] },
@@ -87,6 +109,19 @@ const selected = query.has('configuration') ? stored().strategy : query.has('cur
     simple_timer_entity: 'sensor.demo_air_usage', simple_timer_target: 'input_boolean.demo_air_timer',
     min_minutes: 15, max_minutes: 120, step_minutes: 15, presets: [30,60,90,120],
   } }],
+} : query.has('toolbar-panels') ? {
+  toolbar:[
+    {kind:'automations',sections:[{kind:'actions',entities:[{entity:'script.demo_scene',role:'action',command:'run_script',confirmation:'Run the evening scene?'},
+      {entity:'lock.demo_entry',role:'lock',confirmation:'Open the front door?'}]}]},
+    {kind:'presence',sections:[{kind:'people',entities:['person.demo_friend']}]},
+    {kind:'weather',sections:[{kind:'forecast',entities:['weather.demo_home']},{kind:'sun',entities:['sun.sun']}]},
+    {kind:'energy',sections:[{kind:'electricity',entities:[{entity:'sensor.demo_meter',role:'graph',graph_hours:168}]}]},
+    {kind:'settings'},
+    {kind:'media',placement:'settings',entities:['media_player.demo_speaker']},
+    {kind:'vacuum',placement:'settings',sections:[{kind:'devices',entities:['vacuum.demo_robot']},
+      {kind:'actions',entities:[{entity:'button.demo_filter',role:'action',confirmation:'Reset the filter?'}]}]},
+    {kind:'calendar',placement:'settings',entities:['calendar.demo_household','calendar.demo_birthdays']},
+  ],
 } : {};
 const config = Strategy.generate(selected, query.has('empty') ? { ...hass, states: {} } : hass);
 const cardConfig = config.views[0].cards[0];
@@ -249,6 +284,49 @@ try {
       await air.waitFor({ state: 'hidden' });
       assert.equal(await quickAir.evaluate(control => control.getRootNode().activeElement === control), true);
       await detailPage.close();
+
+      const panelsPage = await browser.newPage({ viewport: { width:390,height:844 } });
+      await panelsPage.goto(base + '?toolbar-panels');
+      await panelsPage.getByRole('button',{name:'Weather',exact:true}).click();
+      let panels = panelsPage.getByRole('dialog',{name:'Weather',exact:true});
+      await panels.locator('[data-native-type=weather-forecast]').waitFor();
+      await panels.getByRole('button',{name:'Sun',exact:true}).click();
+      await panels.getByText('Sunrise',{exact:true}).waitFor();
+      await panelsPage.keyboard.press('Escape');
+      await panels.waitFor({state:'hidden'});
+      await panelsPage.getByRole('button',{name:'Automations',exact:true}).click();
+      panels = panelsPage.getByRole('dialog',{name:'Automations',exact:true});
+      await panels.getByRole('button',{name:'Evening scene',exact:true}).click();
+      let confirm = panelsPage.getByRole('dialog',{name:'Confirm action',exact:true});
+      await confirm.getByText('Run the evening scene?',{exact:true}).waitFor();
+      await confirm.getByRole('button',{name:'Cancel'}).click();
+      assert.equal(await panelsPage.evaluate(() => window.bayitTest.calls.length),0);
+      await panels.getByRole('button',{name:/Front door/}).click();
+      await confirm.getByText('Open the front door?',{exact:true}).waitFor();
+      await confirm.getByRole('button',{name:'Cancel'}).click();
+      await panelsPage.keyboard.press('Escape');
+      await panels.waitFor({state:'hidden'});
+      await panelsPage.getByRole('button',{name:'Appearance',exact:true}).click();
+      await panelsPage.getByRole('dialog').getByRole('button',{name:'Media',exact:true}).click();
+      panels = panelsPage.getByRole('dialog',{name:'Media',exact:true});
+      await panels.getByRole('button',{name:'Pause playback',exact:true}).waitFor();
+      assert.equal(await panels.getByRole('slider',{name:'Volume',exact:true}).inputValue(),'24');
+      await panelsPage.keyboard.press('Escape');
+      await panels.waitFor({state:'hidden'});
+      await panelsPage.getByRole('button',{name:'Appearance',exact:true}).click();
+      await panelsPage.getByRole('dialog').getByRole('button',{name:'Robot vacuum',exact:true}).click();
+      panels = panelsPage.getByRole('dialog',{name:'Robot vacuum',exact:true});
+      await panels.getByRole('button',{name:'Start cleaning',exact:true}).waitFor();
+      await panels.getByRole('button',{name:'Reset filter',exact:true}).click();
+      await confirm.getByText('Reset the filter?',{exact:true}).waitFor();
+      await confirm.getByRole('button',{name:'Cancel'}).click();
+      assert.equal(await panelsPage.evaluate(() => window.bayitTest.calls.length),0);
+      await panelsPage.keyboard.press('Escape');
+      await panels.waitFor({state:'hidden'});
+      await panelsPage.getByRole('button',{name:'Appearance',exact:true}).click();
+      await panelsPage.getByRole('dialog').getByRole('button',{name:'Calendar',exact:true}).click();
+      await panelsPage.getByRole('dialog',{name:'Calendar',exact:true}).getByText('2 calendars',{exact:true}).waitFor();
+      await panelsPage.close();
 
       const setupPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
       await setupPage.goto(base + '/fixture-home/home?configuration');

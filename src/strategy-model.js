@@ -1,15 +1,11 @@
 import { HEATING_DOMAINS } from './device-control.mjs';
+import { wallpaperChoices } from './wallpapers.js';
 
 export const CARD_TYPE = 'custom:bayit-dashboard';
 export const STRATEGY_NAME = 'bayit-9';
 export const MAX_ROOM_SHORTCUTS = 6;
 export const CUSTOM_ROOM_PREFIX = 'bayit_room_';
-export const BACKGROUNDS = {
-  aurora: { en: 'Aurora', he: 'זוהר צפוני' },
-  lagoon: { en: 'Lagoon', he: 'לגונה' },
-  dunes: { en: 'Dunes', he: 'דיונות' },
-  graphite: { en: 'Graphite', he: 'גרפיט' },
-};
+export const BACKGROUNDS = wallpaperChoices;
 
 export const PROFILE_DOMAINS = HEATING_DOMAINS;
 export const DEFAULT_DOMAINS = [
@@ -21,11 +17,17 @@ export const DEFAULT_DOMAINS = [
 const ENTITY_ID = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 const CUSTOM_ROOM_ID = /^bayit_room_[a-z0-9][a-z0-9_-]{0,63}$/;
 const LAYOUT_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const LOCAL_ROUTE = /^\/[a-z0-9_-]+(?:\/[a-z0-9_-]+)*\/?(?:#[a-z0-9_-]+)?$/i;
+export const LOCAL_ROUTE = /^\/[a-z0-9_-]+(?:\/[a-z0-9_-]+)*\/?(?:#[a-z0-9_-]+)?$/i;
 const SECTION_KINDS = new Set(['lights', 'covers', 'climate', 'heating', 'sensors',
   'devices', 'garage', 'weather', 'security', 'media', 'vacuum', 'laundry']);
-const TOOLBAR_KINDS = new Set(['automations', 'security', 'presence', 'weather', 'energy',
-  'settings', 'overview', 'link']);
+export const TOOLBAR_KINDS = new Set(['automations', 'activity', 'security', 'presence', 'weather', 'energy',
+  'settings', 'overview', 'sensors', 'media', 'vacuum', 'calendar', 'devices', 'link']);
+export const TOOLBAR_SECTION_KINDS = new Set(['actions', 'locks', 'covers', 'status', 'devices',
+  'people', 'forecast', 'sun', 'readings', 'electricity', 'water', 'media', 'vacuum', 'series']);
+export const TOOLBAR_ROLES = new Set(['action', 'lock', 'cover', 'status', 'device', 'forecast', 'sun', 'graph', 'person']);
+export const TOOLBAR_ROLE_DOMAINS = new Map([
+  ['lock', 'lock'], ['cover', 'cover'], ['forecast', 'weather'], ['sun', 'sun'], ['person', 'person'],
+]);
 const ROOM_ICON = /^mdi:[a-z0-9-]+$/;
 const CONTROL_DOMAINS = new Set(['light', 'switch', 'cover', 'climate', 'fan', 'lock', 'water_heater']);
 const SECURITY_CLASSES = new Set(['door', 'window', 'garage_door', 'opening']);
@@ -70,6 +72,11 @@ export function normalizeProfile(value) {
   if (typeof value.name === 'string' && value.name.trim()) profile.name = value.name.trim().slice(0, 80);
   const level = idForDomain(value.level_entity, 'number');
   if (level) profile.level_entity = level;
+  if (value.kind === 'boiler') {
+    const save = idForDomain(value.schedule?.save_script, 'script');
+    const remove = idForDomain(value.schedule?.delete_script, 'script');
+    if (save || remove) profile.schedule = { ...(save && {save_script:save}), ...(remove && {delete_script:remove}) };
+  }
   const fanHeater = value.kind === 'heater' && domain === 'fan';
   if (!level && fanHeater && Number.isInteger(value.level_steps) && value.level_steps >= 2 && value.level_steps <= 12) {
     profile.level_steps = value.level_steps;
@@ -196,6 +203,7 @@ function presentEntity(entity, state, registry, profile) {
     ...(profile?.level_steps && { level_steps: profile.level_steps }),
     ...(profile?.level_read_entity && { level_read_entity: profile.level_read_entity }),
     ...(profile?.timed && { timed: profile.timed }),
+    ...(profile?.schedule && { schedule: profile.schedule }),
   };
 }
 
@@ -313,7 +321,7 @@ function dashboardContext(config, hass, locale) {
   const selectedEnergy = new Set(idList(config.overview_entities));
   const selectedAreas = new Set(idList(config.area_ids));
   const nativeAreas = new Set(Object.entries(hass.areas ?? {}).map(([id, area]) => area.area_id ?? id));
-  const automationInScope = entity => {
+  const areaInScope = entity => {
     const id = entityArea(registry?.[entity], hass);
     return nativeAreas.has(id) ? selectedAreas.size === 0 || selectedAreas.has(id) : config.show_unassigned !== false;
   };
@@ -326,7 +334,10 @@ function dashboardContext(config, hass, locale) {
         (domain === 'binary_sensor' && SECURITY_CLASSES.has(deviceClass))) category = 'security';
     else if (domain === 'person') category = 'presence';
     else if (domain === 'weather') category = 'weather';
-    else if (domain === 'automation' && automationInScope(entity)) category = 'automations';
+    else if (domain === 'automation' && areaInScope(entity)) category = 'automations';
+    else if (['media_player', 'vacuum', 'calendar'].includes(domain) && areaInScope(entity)) {
+      category = domain === 'media_player' ? 'media' : domain;
+    }
     else if (domain === 'sensor' && selectedEnergy.has(entity) && ['energy', 'power'].includes(deviceClass)) category = 'energy';
     if (!category || !isVisibleEntity(entity, states, registry, hidden)) continue;
     (context[category] ??= []).push(presentEntity(entity, state, registry?.[entity]));
@@ -337,6 +348,41 @@ function dashboardContext(config, hass, locale) {
   return context;
 }
 
+function toolbarSections(value, describe) {
+  if (!Array.isArray(value)) return undefined;
+  const seenSections = new Set();
+  return value.flatMap((section, index) => {
+    if (!TOOLBAR_SECTION_KINDS.has(section?.kind) || !Array.isArray(section.entities)) return [];
+    const id = layoutId(section.id, 'section-' + (index + 1), seenSections);
+    const title = typeof section.title === 'string' ? section.title.trim().slice(0, 80) : undefined;
+    const seenEntities = new Set();
+    const entities = section.entities.flatMap(item => {
+      const entity = typeof item === 'string' ? item : item?.entity;
+      if (typeof entity !== 'string' || seenEntities.has(entity)) return [];
+      const descriptor = describe(entity);
+      if (!descriptor) return [];
+      const domain = domainOf(entity);
+      const roleDomain = TOOLBAR_ROLE_DOMAINS.get(item?.role);
+      if (roleDomain && roleDomain !== domain) return [];
+      seenEntities.add(entity);
+      const name = typeof item?.name === 'string' ? item.name.trim().slice(0, 80) : '';
+      const icon = typeof item?.icon === 'string' ? item.icon.trim() : '';
+      const role = TOOLBAR_ROLES.has(item?.role) ? item.role : undefined;
+      const command = role === 'action' && domain === 'script' && item.command === 'run_script' ? item.command : undefined;
+      const confirmation = typeof item?.confirmation === 'string'
+        ? item.confirmation.trim().slice(0, 200) || undefined
+        : item?.confirmation === true || (item?.confirmation === false && command) ? item.confirmation : undefined;
+      const graphHours = item?.graph_hours;
+      const hasGraphHours = role === 'graph' && Number.isInteger(graphHours) && graphHours >= 1 && graphHours <= 336;
+      return [{ ...descriptor, ...(name && { name }), ...(ROOM_ICON.test(icon) && { icon }),
+        ...(role && { role }), ...(command && { command }),
+        ...(confirmation !== undefined && { confirmation }), ...(hasGraphHours && { graph_hours: graphHours }) }];
+    });
+    return [{ id, kind: section.kind, ...(title !== undefined && { title }),
+      ...(section.filter === 'active' && { filter:'active' }), entities }];
+  });
+}
+
 function dashboardToolbar(config, hass) {
   if (!Array.isArray(config.toolbar)) return undefined;
   const states = hass.states ?? {};
@@ -344,6 +390,8 @@ function dashboardToolbar(config, hass) {
   const hidden = new Set(idList(config.hidden_entities));
   const profiles = profilesOf(config.profiles);
   const seen = new Set();
+  const describe = entity => isVisibleEntity(entity, states, registry, hidden)
+    ? presentEntity(entity, states[entity], registry?.[entity], profiles.get(entity)) : null;
   return config.toolbar.flatMap((entry, index) => {
     if (!TOOLBAR_KINDS.has(entry?.kind)) return [];
     const path = entry.kind === 'link' && typeof entry.path === 'string' ? entry.path.trim() : '';
@@ -351,11 +399,11 @@ function dashboardToolbar(config, hass) {
     const id = layoutId(entry.id, 'toolbar-' + (index + 1), seen);
     const label = typeof entry.label === 'string' ? entry.label.trim().slice(0, 80) : '';
     const icon = typeof entry.icon === 'string' ? entry.icon.trim() : '';
-    const entities = Array.isArray(entry.entities) ? idList(entry.entities)
-      .filter(entity => isVisibleEntity(entity, states, registry, hidden))
-      .map(entity => presentEntity(entity, states[entity], registry?.[entity], profiles.get(entity))) : undefined;
+    const entities = Array.isArray(entry.entities) ? idList(entry.entities).map(describe).filter(Boolean) : undefined;
+    const sections = entry.kind !== 'link' ? toolbarSections(entry.sections, describe) : undefined;
     return [{ id, kind: entry.kind, ...(label && { label }), ...(ROOM_ICON.test(icon) && { icon }),
-      ...(path && { path }), ...(entities !== undefined && { entities }) }];
+      ...(path && { path }), ...(entry.placement === 'settings' && entry.kind !== 'settings' && { placement:'settings' }),
+      ...(entities !== undefined && { entities }), ...(sections !== undefined && { sections }) }];
   });
 }
 
@@ -370,6 +418,7 @@ export function generateDashboard(config = {}, hass = {}) {
   const card = {
     type: CARD_TYPE,
     page: true,
+    ...(config.fullscreen === true && { fullscreen: true }),
     locale,
     title,
     rooms: discoverRooms(config, hass, locale),

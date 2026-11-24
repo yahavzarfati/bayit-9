@@ -1,0 +1,302 @@
+const sectionKeys = {
+  actions: 'automations', locks: 'toolbar_locks', covers: 'room_covers', status: 'toolbar_status',
+  people: 'presence', forecast: 'toolbar_forecast', sun: 'toolbar_sun', readings: 'toolbar_readings',
+  electricity: 'toolbar_electricity', water: 'toolbar_water', devices: 'room_devices',
+};
+
+const domain = item => item.entity.split('.')[0];
+
+function sectionsFor(kind, entities) {
+  const groups = new Map();
+  for (const item of entities) {
+    const type = domain(item);
+    const section = kind === 'automations' ? 'actions'
+      : kind === 'security' ? ({ lock: 'locks', cover: 'covers', script: 'actions' }[type] || 'status')
+      : kind === 'presence' && type === 'person' ? 'people'
+      : kind === 'weather' ? ({ weather: 'forecast', sun: 'sun' }[type] || 'readings')
+      : kind === 'energy' ? 'electricity' : 'devices';
+    if (!groups.has(section)) groups.set(section, []);
+    groups.get(section).push(item);
+  }
+  return [...groups].map(([kind, entities]) => ({ kind, entities }));
+}
+
+function knownForecast(features) {
+  if (!Number.isInteger(features)) return null;
+  return [[1, 'daily'], [2, 'hourly'], [4, 'twice_daily']].find(([bit]) => (features & bit) === bit)?.[1] ?? null;
+}
+
+function localPortrait(path, origin) {
+  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) return '';
+  try {
+    const url = new URL(path, origin);
+    return url.origin === origin && !url.username && !url.password ? url.href : '';
+  } catch { return ''; }
+}
+
+export function createToolbarPanel(kind, configuration, context) {
+  const { make, icon, button, label, t, modelFor, stateLabel, moreInfo, buildDevice,
+    request, pending, host } = context;
+  const connected = new Set();
+  const handlers = [];
+  let live = true;
+  let currentHass = context.hass;
+  const view = host.ownerDocument.defaultView;
+  const format = settings => {
+    try { return new Intl.DateTimeFormat(context.locale, { ...settings, timeZone:currentHass?.config?.time_zone }); }
+    catch { return new Intl.DateTimeFormat(context.locale, settings); }
+  };
+
+  const amount = config => {
+    const model = modelFor(config);
+    return { model, state: model.state === 'home' ? t('person_home') : model.state === 'not_home' ? t('person_away') : stateLabel(model) };
+  };
+
+  function renderTile(item, itemKind) {
+    const tile = button('tile-row');
+    const visual = make('span', 'tile-mark');
+    const glyph = icon('mdi:information-outline');
+    const name = make('span', 'tile-label');
+    const state = make('span', 'tile-state');
+    visual.append(glyph);
+    let portrait;
+    if (itemKind === 'person') {
+      portrait = make('img', 'tile-portrait');
+      portrait.alt = '';
+      portrait.hidden = true;
+      portrait.referrerPolicy = 'no-referrer';
+      portrait.onerror = () => { portrait.hidden = true; };
+      visual.append(portrait);
+    }
+    tile.append(visual, name, state);
+    let action;
+    tile.onclick = () => action ? request(item, action, undefined, tile) : moreInfo(item);
+    handlers.push(() => {
+      const value = amount(item);
+      const model = value.model;
+      name.textContent = model.name;
+      glyph.setAttribute('icon', model.icon);
+      action = undefined;
+      if (itemKind === 'action') {
+        if (model.actions.run_script) action = 'run_script';
+        else if (model.actions.press_button) action = 'press_button';
+        else if (model.domain === 'lock') action = model.state === 'locked' ? 'unlock' : model.state === 'unlocked' ? 'lock' : undefined;
+        else if (model.actions.turn_on && model.actions.turn_off) action = model.state === 'on' ? 'turn_off' : 'turn_on';
+      }
+      const showState = itemKind !== 'action' || !['script', 'button', 'input_button'].includes(model.domain) || (!model.available && !action);
+      state.textContent = showState ? value.state : '';
+      state.hidden = !showState;
+      tile.dataset.tone = model.state === 'home' ? 'home' : model.state === 'on' ? 'active' : '';
+      tile.disabled = (itemKind === 'action' && pending(item.entity)) || (!action && !model.actions.more_info);
+      tile.setAttribute('aria-busy', String(pending(item.entity)));
+      label(tile, model.name + (showState ? ' · ' + value.state : ''));
+      if (portrait) {
+        const link = localPortrait(model.attributes.entity_picture, view.location.origin);
+        if (!link) {
+          portrait.hidden = true;
+          portrait.removeAttribute('src');
+        } else if (portrait.getAttribute('src') !== link) {
+          portrait.onload = () => { if (live) portrait.hidden = false; };
+          portrait.src = link;
+        }
+      }
+    });
+    return tile;
+  }
+
+  function nativeCard(config, fallback) {
+    const slot = make('div', 'native-panel-card');
+    slot.append(fallback);
+    void (async () => {
+      try {
+        const helpers = await view.loadCardHelpers?.();
+        const card = await helpers?.createCardElement(config);
+        if (!live || !card || card.localName === 'hui-error-card') return;
+        card.hass = currentHass;
+        connected.add(card);
+        slot.replaceChildren(card);
+      } catch { /* The normal status tile remains available if the native card fails. */ }
+    })();
+    return slot;
+  }
+
+  function renderSun(item) {
+    const card = make('div', 'sun-panel');
+    const arc = make('div', 'sun-arc');
+    const marker = icon('mdi:white-balance-sunny');
+    const readings = make('dl', 'sun-times');
+    arc.setAttribute('aria-hidden', 'true');
+    arc.append(marker);
+    const rows = [['sun_rise', 'next_rising'], ['sun_set', 'next_setting'], ['sun_dawn', 'next_dawn'],
+      ['sun_dusk', 'next_dusk'], ['sun_azimuth', 'azimuth'], ['sun_elevation', 'elevation']].map(([labelKey, field]) => {
+      const value = make('dd', '', '—');
+      readings.append(make('dt', '', t(labelKey)), value);
+      return { field, value };
+    });
+    handlers.push(() => {
+      const { attributes, available } = modelFor(item);
+      const formatter = format({ hour: '2-digit', minute: '2-digit', hourCycle:'h23' });
+      const elevation = available && typeof attributes.elevation === 'number' ? attributes.elevation : null;
+      marker.hidden = elevation === null;
+      if (elevation !== null) marker.style.setProperty('--sun-x', Math.max(7, Math.min(93, (attributes.azimuth ?? 180) / 360 * 100)) + '%');
+      for (const { field, value } of rows) {
+        const raw = available ? attributes[field] : undefined;
+        const date = typeof raw === 'string' ? new Date(raw) : null;
+        value.textContent = date && Number.isFinite(date.getTime()) ? formatter.format(date)
+          : typeof raw === 'number' ? Math.round(raw) + '°' : '—';
+      }
+    });
+    card.append(arc, readings);
+    return card;
+  }
+
+  function render(item, section) {
+    const itemKind = item.role ?? ({ people: 'person', actions: 'action', forecast: 'forecast', sun: 'sun' }[section]);
+    if (itemKind === 'person' && domain(item) === 'person') return renderTile(item, 'person');
+    if (itemKind === 'action' || (section === 'actions' && itemKind === 'lock')) return renderTile(item, 'action');
+    if (itemKind === 'forecast' && domain(item) === 'weather') {
+      const forecast = knownForecast(currentHass?.states?.[item.entity]?.attributes?.supported_features);
+      return nativeCard({ type: 'weather-forecast', entity: item.entity, name: item.name, show_current: true,
+        show_forecast: !!forecast, forecast_type: forecast ?? 'daily', forecast_slots: 5, tap_action: { action: 'none' } },
+      renderTile(item, 'status'));
+    }
+    if (itemKind === 'sun' && domain(item) === 'sun') return renderSun(item);
+    if (kind === 'calendar' && domain(item) === 'calendar') {
+      return nativeCard({ type: 'calendar', entities: [item.entity], initial_view: 'listWeek' }, renderTile(item, 'status'));
+    }
+    if (domain(item) === 'sensor' && (item.graph_hours || itemKind === 'graph')) {
+      return nativeCard({ type: 'sensor', entity: item.entity, name: item.name, graph: 'line', detail: 2,
+        hours_to_show: item.graph_hours || 24, tap_action: { action: 'none' } }, renderTile(item, 'status'));
+    }
+    if (['locks','covers','devices'].includes(section) && itemKind !== 'status') {
+      const row = make('div', 'toolbar-device');
+      buildDevice(item, row, section);
+      return row;
+    }
+    return renderTile(item, 'status');
+  }
+
+  const sections = configuration.sections ?? sectionsFor(kind, configuration.entities);
+  const calendarItems = kind === 'calendar' ? sections.flatMap(section => section.entities).filter(item => domain(item) === 'calendar') : [];
+  if (calendarItems.length) {
+    const fallback = make('div','toolbar-section-items');
+    for (const item of calendarItems) fallback.append(renderTile(item,'status'));
+    host.append(nativeCard({type:'calendar', entities:[...new Set(calendarItems.map(item=>item.entity))], initial_view:'listWeek'},fallback));
+  }
+  const forecastPages = new Map();
+  let forecastClock;
+  let clockTimer;
+  const updateClock = () => {
+    if (!forecastClock) return;
+    const now = new Date();
+    forecastClock.firstChild.textContent = format({hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(now);
+    forecastClock.lastChild.textContent = format({weekday:'long',day:'numeric',month:'long'}).format(now);
+  };
+  for (const section of sections) {
+    if (!section.entities.length) continue;
+    if (calendarItems.length && section.entities.every(item => domain(item) === 'calendar')) continue;
+    const panel = make('section', 'toolbar-section');
+    panel.dataset.section = section.kind;
+    const caption = section.title ?? t(sectionKeys[section.kind] ?? 'room_devices');
+    if (caption) panel.append(make('h3', 'toolbar-section-title', caption));
+    const items = make('div', 'toolbar-section-items');
+    if (section.kind === 'series') {
+      const fallback = make('div','toolbar-section-items');
+      for (const item of section.entities) fallback.append(renderTile(item, 'status'));
+      items.append(nativeCard({ type:'history-graph', hours_to_show:section.entities.find(item=>item.graph_hours)?.graph_hours ?? 24,
+        entities:section.entities.map(item=>({entity:item.entity, name:item.name})), }, fallback));
+    } else {
+      const pairs = section.entities.filter(item=>!calendarItems.length || domain(item)!=='calendar')
+        .map(item => ({item, node:render(item, section.kind)}));
+      items.append(...pairs.map(pair=>pair.node));
+      if (section.filter === 'active') handlers.push(() => {
+        let visible = false;
+        for (const {node, item} of pairs) {
+          const model = modelFor(item);
+          const active = model.available && (model.domain === 'climate' ? model.state !== 'off'
+            : model.domain === 'cover' ? !['closed','closing'].includes(model.state) : model.state === 'on');
+          node.hidden = !active;
+          visible ||= active;
+        }
+        panel.hidden = !visible;
+      });
+    }
+    panel.append(items);
+    host.append(panel);
+    if (kind === 'weather' && ['forecast', 'sun'].includes(section.kind)) forecastPages.set(section.kind, panel);
+    if (kind === 'weather' && section.kind === 'forecast' && !forecastClock) {
+      forecastClock = make('div','forecast-clock');
+      forecastClock.append(make('strong'),make('span'));
+      panel.insertBefore(forecastClock, items);
+      updateClock();
+      clockTimer = view.setInterval(updateClock,30000);
+    }
+  }
+  if (forecastPages.size === 2) {
+    const tabs = make('div', 'weather-tabs');
+    for (const [key, panel] of forecastPages) {
+      const tab = button('control-button', t(sectionKeys[key]));
+      tab.setAttribute('aria-pressed', String(key === 'forecast'));
+      panel.hidden = key !== 'forecast';
+      tab.onclick = () => {
+        for (const section of forecastPages.values()) section.hidden = section !== panel;
+        for (const item of tabs.children) item.setAttribute('aria-pressed', String(item === tab));
+      };
+      tabs.append(tab);
+    }
+    host.prepend(tabs);
+  }
+  if (kind === 'energy' && currentHass?.panels?.energy) {
+    const energy = make('a', 'control-button toolbar-link', t('open_energy'));
+    energy.href = '/energy';
+    host.append(energy);
+  }
+  if (!host.childElementCount) host.append(make('p', 'empty', t('empty_room')));
+  const quiet = sections.length && sections.every(section => section.filter === 'active') ? make('p','empty',t('quiet')) : null;
+  if (quiet) host.append(quiet);
+
+  return {
+    update(hass) {
+      if (!live || !hass) return;
+      currentHass = hass;
+      for (const card of connected) if (card.hass !== hass) card.hass = hass;
+      for (const update of handlers) update();
+      if (quiet) quiet.hidden = !!host.querySelector('.toolbar-section:not([hidden])');
+    },
+    dispose() {
+      live = false;
+      if (clockTimer) view.clearInterval(clockTimer);
+      for (const card of connected) card.remove();
+      connected.clear();
+    },
+  };
+}
+
+export const toolbarPanelStyles = `
+  .toolbar-panes, .toolbar-section-items { display: grid; gap: 8px; min-width: 0; }
+  .toolbar-section { min-width: 0; border: 1px solid var(--soft-line); border-radius: 13px; padding: 8px; }
+  .toolbar-section-title { margin: 0 0 8px; text-align: center; font-size: 14px; }
+  .toolbar-section:is([data-section=actions],[data-section=people],[data-section=electricity],[data-section=water],[data-section=readings]) .toolbar-section-items {
+    grid-template-columns: repeat(2,minmax(0,1fr));
+  }
+  .tile-row { display: grid; justify-items: center; align-content: center; gap: 5px; min-height: 80px; width: 100%;
+    padding: 8px 6px; border: 1px solid var(--soft-line); border-radius: 12px; background: var(--control); text-align: center; }
+  .tile-mark { display: grid; place-items: center; position: relative; border-radius: 50%; width: 34px; height: 34px; background: var(--glass); }
+  .tile-portrait { position: absolute; inset: 0; object-fit: cover; width: 100%; height: 100%; border-radius: inherit; }
+  .tile-row:is([data-tone=home],[data-tone=active]) .tile-mark { color: var(--warm); }
+  .tile-label { font-size: 13px; font-weight: 740; width: 100%; overflow-wrap: anywhere; }
+  .tile-state { font-size: 12px; color: var(--secondary); overflow-wrap: anywhere; min-width: 0; }
+  .native-panel-card { min-width: 0; --ha-card-background: transparent; --ha-card-box-shadow: none;
+    --ha-card-border-color: var(--soft-line); --primary-text-color: var(--ink); --secondary-text-color: var(--secondary); }
+  .toolbar-device, .toolbar-link { min-width: 0; }
+  .weather-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .forecast-clock { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 3px 3px 8px; }
+  .forecast-clock strong { font-variant-numeric: tabular-nums; font-size: 19px; }
+  .forecast-clock span { font-size: 13px; color: var(--secondary); }
+  .sun-panel { color: var(--ink); padding: 8px; }
+  .sun-arc { position: relative; margin: 0 auto 7px; height: 52px; width: min(85%,250px);
+    border: 1px solid var(--soft-line); border-radius: 100% 100% 0 0; border-bottom-color: var(--warm); }
+  .sun-arc ha-icon { color: var(--warm); position: absolute; left: var(--sun-x,50%); top: 12px; transform: translateX(-50%); }
+  .sun-times { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin: 0; font-size: 13px; }
+  .sun-times dd { margin: 0; text-align: end; font-weight: 740; }
+`;

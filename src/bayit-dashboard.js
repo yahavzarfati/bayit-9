@@ -5,16 +5,25 @@ import { loadConfiguration, saveConfiguration } from './dashboard-configuration.
 import { createDeviceController, getDeviceModel } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { buildPanelControls, panelControlStyles } from './panel-controls.js';
+import { createToolbarPanel, toolbarPanelStyles } from './toolbar-panels.js';
+import { createWallpaperController, createWallpaperGallery, personalWallpaperId, wallpaperChoices, wallpaperStyles } from './wallpapers.js';
+import { createPageChrome } from './page-chrome.js';
+import { openBoilerHistory, boilerHistoryStyles } from './boiler-history.js';
+import { createBoilerSchedulePanel, isBoilerScheduleProfile } from './boiler-schedule.js';
 
-export const backgrounds = Object.freeze(['aurora', 'lagoon', 'dunes', 'graphite']);
+export const backgrounds = Object.freeze(Object.keys(wallpaperChoices));
 const options = { background: backgrounds, shape: ['soft', 'circle', 'square'], layout: ['classic', 'header'] };
-const swatches = { aurora: '#63928a', lagoon: '#37728c', dunes: '#aa7356', graphite: '#596169' };
 const iconPattern = /^mdi:[a-z0-9-]+$/;
 const entityPattern = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 const controlIcons = {
   turn_on: 'mdi:power-on', turn_off: 'mdi:power-off', open: 'mdi:arrow-up', close: 'mdi:arrow-down',
   stop: 'mdi:stop', lock: 'mdi:lock-outline', unlock: 'mdi:lock-open-variant-outline',
   start_timed: 'mdi:timer-play-outline', stop_timed: 'mdi:timer-stop-outline',
+  media_play: 'mdi:play', media_pause: 'mdi:pause', media_stop: 'mdi:stop',
+  media_previous_track: 'mdi:skip-previous', media_next_track: 'mdi:skip-next', volume_up: 'mdi:volume-plus',
+  volume_down: 'mdi:volume-minus', mute: 'mdi:volume-off', unmute: 'mdi:volume-high',
+  vacuum_start: 'mdi:play', vacuum_pause: 'mdi:pause', vacuum_stop: 'mdi:stop', return_to_base: 'mdi:home-map-marker',
+  locate: 'mdi:map-marker-radius-outline', press_button: 'mdi:gesture-tap-button', run_script: 'mdi:play',
 };
 const deviceIcons = {
   light:'mdi:lightbulb-outline', switch:'mdi:toggle-switch-outline', fan:'mdi:fan',
@@ -24,11 +33,14 @@ const deviceIcons = {
   alarm_control_panel:'mdi:shield-home-outline', weather:'mdi:weather-partly-cloudy',
   person:'mdi:account-outline', vacuum:'mdi:robot-vacuum', camera:'mdi:cctv', media_player:'mdi:speaker',
 };
-const contextKeys = ['automations', 'security', 'presence', 'weather', 'energy'];
+const contextKeys = ['automations', 'security', 'presence', 'weather', 'energy', 'media', 'vacuum', 'calendar', 'sensors', 'devices'];
+const automaticToolbarContext = contextKeys.slice(0, 5);
 const toolbarIcons = {
   activity: 'mdi:home-automation', automations: 'mdi:home-automation', security: 'mdi:shield-home-outline',
   presence: 'mdi:account-group-outline', weather: 'mdi:weather-partly-cloudy', energy: 'mdi:meter-electric-outline',
   overview: 'mdi:view-dashboard-outline', settings: 'mdi:cog-outline', link: 'mdi:arrow-top-right',
+  media: 'mdi:play-box-multiple-outline', vacuum: 'mdi:robot-vacuum', calendar: 'mdi:calendar-month-outline', sensors: 'mdi:chart-line',
+  devices: 'mdi:devices',
 };
 const shortcutDomains = new Set(['light', 'switch', 'fan', 'cover', 'lock', 'climate', 'water_heater']);
 const powerDomains = new Set(['light', 'switch', 'fan', 'climate', 'water_heater']);
@@ -42,19 +54,22 @@ const deviceGroups = {
 };
 const domainFor = config => config.entity.split('.')[0];
 const movement = new Set(['open','close','set_position']);
-const rangeActions = new Set(['set_position', 'set_brightness', 'set_percentage']);
+const rangeActions = new Set(['set_position', 'set_brightness', 'set_percentage', 'volume_set']);
 const stateKeys = {
   set_position: 'current_position', set_percentage: 'percentage', set_brightness: 'brightness',
   set_temperature: 'temperature', set_fan_mode: 'fan_mode', set_preset_mode: 'preset_mode',
-  set_operation_mode: 'operation_mode', set_swing_mode: 'swing_mode',
+  set_operation_mode: 'operation_mode', set_swing_mode: 'swing_mode', select_source: 'source', set_fan_speed: 'fan_speed',
 };
 const actionsInOrder = ['turn_on', 'turn_off', 'open', 'stop', 'close', 'lock', 'unlock',
   'set_position', 'set_brightness', 'set_percentage', 'set_hvac_mode', 'set_temperature',
   'set_temperature_range', 'set_fan_mode', 'set_swing_mode', 'set_preset_mode', 'set_operation_mode', 'set_heating_level',
-  'start_timed', 'extend_timed', 'stop_timed', 'run_script'];
+  'start_timed', 'extend_timed', 'stop_timed', 'run_script', 'press_button',
+  'media_previous_track','media_play','media_pause','media_next_track','media_stop',
+  'volume_down','mute','unmute','volume_up','volume_set','select_source',
+  'vacuum_start','vacuum_pause','vacuum_stop','return_to_base','locate','set_fan_speed','select_option'];
 const statusNames = new Set(['on', 'off', 'open', 'closed', 'opening', 'closing', 'locked',
   'unlocked', 'locking', 'unlocking', 'jammed', 'cool', 'heat', 'heat_cool', 'dry', 'fan_only',
-  'auto', 'idle', 'active', 'paused', 'playing', 'cleaning', 'docked', 'unavailable', 'unknown']);
+  'auto', 'idle', 'active', 'paused', 'playing', 'cleaning', 'returning', 'docked', 'unavailable', 'unknown']);
 let nextId = 0;
 
 function make(tag, className, text) {
@@ -127,6 +142,14 @@ function normalizeEntity(item) {
     if (/^input_number\.[a-z0-9_]+$/.test(item.level_read_entity ?? '')) entry.level_read_entity = item.level_read_entity;
   }
   if (item.timed && typeof item.timed === 'object' && !Array.isArray(item.timed)) entry.timed = { ...item.timed };
+  if (entry.kind === 'boiler' && item.schedule && typeof item.schedule === 'object') {
+    entry.schedule = Object.fromEntries(['save_script', 'delete_script'].flatMap(key =>
+      /^script\.[a-z0-9_]+$/.test(item.schedule[key] ?? '') ? [[key, item.schedule[key]]] : []));
+  }
+  if (typeof item.role === 'string') entry.role = item.role;
+  if (item.command === 'run_script') entry.command = item.command;
+  if (typeof item.confirmation === 'boolean' || typeof item.confirmation === 'string') entry.confirmation = item.confirmation;
+  if (Number.isInteger(item.graph_hours) && item.graph_hours >= 1 && item.graph_hours <= 336) entry.graph_hours = item.graph_hours;
   return entry;
 }
 
@@ -174,11 +197,18 @@ export function normalizeDashboardConfig(config = {}) {
   const toolbar = Array.isArray(config.toolbar) ? config.toolbar.flatMap(item => {
     if (!Object.hasOwn(toolbarIcons, item?.kind) || (item.kind === 'link' && !localPath.test(item.path))) return [];
     return [{ kind: item.kind, id: text(item.id), label: text(item.label), path: item.path,
+      ...(item.placement === 'settings' && item.kind !== 'settings' && {placement:'settings'}),
       icon: validIcon(item.icon, toolbarIcons[item.kind]),
-      ...(Array.isArray(item.entities) && { entities: item.entities.map(normalizeEntity) }) }];
+      ...(Array.isArray(item.entities) && { entities: item.entities.map(normalizeEntity) }),
+      ...(Array.isArray(item.sections) && { sections: item.sections.filter(section => Array.isArray(section?.entities)).map(section => ({
+        id: text(section.id), kind: text(section.kind), title: typeof section.title === 'string' ? section.title : undefined,
+        ...(section.filter === 'active' && {filter:'active'}),
+        entities: section.entities.map(normalizeEntity),
+      })) }) }];
   }) : null;
   return {
-    locale, rooms, overview, context, toolbar, page: config.page === true, title: text(config.title) || languages[locale].home,
+    locale, rooms, overview, context, toolbar, page: config.page === true, fullscreen: config.fullscreen === true,
+    title: text(config.title) || languages[locale].home,
     background: backgrounds.includes(config.background) ? config.background : 'aurora',
     layout: options.layout.includes(config.layout) ? config.layout : 'classic',
     shape: options.shape.includes(config.shape) ? config.shape : 'soft',
@@ -220,7 +250,8 @@ const layout = `
 export class BayitDashboard extends HTMLElement {
   constructor() {
     super();
-    this.attachShadow({ mode: 'open' }).innerHTML = '<style>' + styles + panelControlStyles + '</style>' + layout;
+    this.attachShadow({ mode: 'open' }).innerHTML = '<style>' + styles + panelControlStyles + toolbarPanelStyles +
+      wallpaperStyles + boilerHistoryStyles + '</style>' + layout;
     const get = selector => this.shadowRoot.querySelector(selector);
     const role = name => get('[data-role="' + name + '"]');
     this.nodes = {
@@ -240,6 +271,7 @@ export class BayitDashboard extends HTMLElement {
     n.confirm.setAttribute('aria-labelledby', n.confirmTitle.id);
     n.confirm.setAttribute('aria-describedby', n.confirmText.id);
     this.popupMotion = createPopupMotion({ dialog: n.modal, clip: n.roomScroll, toolbar: n.toolbar });
+    this.pageChrome = createPageChrome(this, { onChange: () => this.fitPage() });
     n.close.onclick = () => this.popupMotion.dismiss();
     n.abort.onclick = () => n.confirm.close();
     n.accept.onclick = () => this.acceptAction();
@@ -280,6 +312,8 @@ export class BayitDashboard extends HTMLElement {
     if (this.config?.storageKey !== next.storageKey) this.preferences = {};
     if (this.nodes.confirm.open) this.nodes.confirm.close();
     this.popupMotion.reset();
+    this.toolbarPanel?.dispose();
+    this.boilerView?.dispose();
     this.config = next;
     this.words = languages[next.locale];
     const n = this.nodes;
@@ -298,6 +332,7 @@ export class BayitDashboard extends HTMLElement {
     this.buildToolbar();
     this.buildRooms();
     this.applyPreferences();
+    this.pageChrome.update({ enabled: next.page && next.fullscreen });
     this.update();
     this.fitPage();
   }
@@ -316,6 +351,8 @@ export class BayitDashboard extends HTMLElement {
     window.addEventListener('storage', this.storageChange);
     window.addEventListener('resize', this.resize);
     window.visualViewport?.addEventListener('resize', this.resize);
+    if (this.config) this.applyPreferences();
+    this.pageChrome.update({ enabled: this.config?.page && this.config.fullscreen });
     this.fitPage();
     this.update();
   }
@@ -330,6 +367,11 @@ export class BayitDashboard extends HTMLElement {
     this.frame = this.ticker = 0;
     if (this.nodes.confirm.open) this.nodes.confirm.close();
     this.popupMotion.reset();
+    this.toolbarPanel?.dispose();
+    this.boilerView?.dispose();
+    this.pageChrome.dispose();
+    this.wallpaper?.destroy();
+    this.wallpaper = this.wallpaperKey = this.activeWallpaper = this.pendingWallpaper = undefined;
   }
 
   fitPage() {
@@ -351,20 +393,57 @@ export class BayitDashboard extends HTMLElement {
     catch { return; }
     this.preferences = {};
     for (const [key, choices] of Object.entries(options)) {
-      if (choices.includes(saved?.[key])) this.preferences[key] = saved[key];
+      if (choices.includes(saved?.[key]) || (key === 'background' && saved?.[key] === personalWallpaperId)) {
+        this.preferences[key] = saved[key];
+      }
     }
   }
 
   applyPreferences() {
-    for (const key of Object.keys(options)) this.nodes.shell.dataset[key] = this.preferences[key] || this.config[key];
+    for (const key of ['layout','shape']) this.nodes.shell.dataset[key] = this.preferences[key] || this.config[key];
+    this.applySavedWallpaper();
     for (const {article,heading} of this.roomViews.values()) {
       if (this.nodes.shell.dataset.layout === 'header' && article.firstElementChild !== heading) article.prepend(heading);
       if (this.nodes.shell.dataset.layout !== 'header' && article.lastElementChild !== heading) article.append(heading);
     }
+    this.wallpaper?.refresh();
     if (this.panel?.type !== 'settings') return;
+    this.wallpaperGallery?.select(this.activeWallpaper || this.config.background);
     for (const item of this.nodes.content.querySelectorAll('[data-preference]')) {
       item.setAttribute('aria-pressed', String(item.value === this.nodes.shell.dataset[item.dataset.preference]));
     }
+  }
+
+  applySavedWallpaper() {
+    const { storageKey, background } = this.config;
+    if (this.wallpaperKey !== storageKey) {
+      this.wallpaper?.destroy();
+      this.wallpaper = createWallpaperController(this.nodes.shell, { storageKey });
+      this.wallpaperKey = storageKey;
+      this.activeWallpaper = this.pendingWallpaper = undefined;
+    }
+    const saved = this.preferences.background || background;
+    if (this.activeWallpaper === saved || this.pendingWallpaper?.id === saved) return;
+    if (!this.activeWallpaper && saved === personalWallpaperId) {
+      void this.wallpaper.apply(background);
+      this.activeWallpaper = background;
+    }
+    void this.selectWallpaper(saved, { save: false });
+  }
+
+  async selectWallpaper(id, { save = true, file } = {}) {
+    const controller = this.wallpaper;
+    if (!controller) return false;
+    const request = { id };
+    this.pendingWallpaper = request;
+    const applied = file ? await controller.upload(file) : await controller.apply(id);
+    if (this.pendingWallpaper !== request || this.wallpaper !== controller) return false;
+    this.pendingWallpaper = undefined;
+    if (!applied) return false;
+    this.activeWallpaper = id;
+    if (save) this.setPreference('background', id);
+    this.wallpaperGallery?.select(id);
+    return true;
   }
 
   setPreference(key, value) {
@@ -387,13 +466,15 @@ export class BayitDashboard extends HTMLElement {
   buildToolbar() {
     const settings = this.config;
     const automatic = [settings.context.automations.length ? 'automations' : 'activity',
-      'security', 'presence', 'weather', 'energy', 'overview', 'settings'];
-    const items = settings.toolbar ?? automatic.map(kind => ({ kind, icon: toolbarIcons[kind] }));
+      ...automaticToolbarContext.slice(1), 'overview', 'settings'];
+    const items = settings.toolbar?.filter(item => item.placement !== 'settings') ?? automatic.map(kind => ({ kind, icon: toolbarIcons[kind] }));
+    if (settings.fullscreen && !items.some(item => item.kind === 'settings')) items.push({ kind:'settings', icon:toolbarIcons.settings });
     this.nodes.toolbarActions.replaceChildren();
     this.toolbarViews = items.map(item => {
       const { kind } = item;
       const name = item.label || this.t(kind);
-      const entities = item.entities ?? (kind === 'overview' ? settings.overview : settings.context[kind] ?? []);
+      const entities = item.sections?.flatMap(section => section.entities) ?? item.entities ??
+        (kind === 'overview' ? settings.overview : settings.context[kind] ?? []);
       const element = button('chrome-button', name, item.icon, true);
       element.dataset.role = kind;
       if (kind !== 'link') element.setAttribute('aria-haspopup', 'dialog');
@@ -405,7 +486,7 @@ export class BayitDashboard extends HTMLElement {
       }
       element.onclick = () => {
         if (kind === 'link') return location.assign(item.path);
-        this.openPanel(kind, element, undefined, undefined, { name, entities });
+        this.openPanel(kind, element, undefined, undefined, { name, entities, sections: item.sections });
       };
       const needsContent = !settings.toolbar && (kind === 'overview' || contextKeys.includes(kind));
       this.nodes.toolbarActions.append(element);
@@ -550,6 +631,8 @@ export class BayitDashboard extends HTMLElement {
       const activeTimer = this.updateDevices();
       countdown ||= activeTimer;
     }
+    this.toolbarPanel?.update(this._hass);
+    this.boilerView?.update(this._hass);
     if (panel === 'activity') this.paintActivity();
     for (const { kind, element, badge, entities, needsContent } of this.toolbarViews) {
       element.hidden = needsContent && !entities.length && (kind !== 'energy' || !this._hass?.panels?.energy);
@@ -572,18 +655,24 @@ export class BayitDashboard extends HTMLElement {
     const model = selected ? this.model(selected) : null;
     this.panel = { type, room };
     this.setup = null;
+    this.toolbarPanel?.dispose();
+    this.boilerView?.dispose();
+    this.toolbarPanel = this.wallpaperGallery = this.boilerView = undefined;
     this.deviceViews.clear();
     this.activitySignature = null;
     setText(n.modalNotice, '');
     const glyph = model?.icon || room?.icon || source.querySelector('ha-icon')?.getAttribute('icon');
     n.modalTitle.replaceChildren(icon(glyph), model?.name || room?.name || toolbar?.name || this.t(type));
     if (type === 'room') this.buildDevices(room.entities, room);
-    if (selected) this.buildDevices([selected]);
-    if (type === 'overview' || contextKeys.includes(type)) {
-      const devices = toolbar?.entities ?? (type === 'overview' ? this.config.overview : this.config.context[type]);
-      this.buildDevices(devices);
-      if (type === 'energy' && this._hass?.panels?.energy) this.appendEnergyLink(devices.length);
+    if (selected) {
+      this.buildDevices([selected]);
+      if (selected.kind === 'boiler') this.buildBoilerView(selected);
     }
+    if (type === 'overview') {
+      if (toolbar?.sections) this.openToolbarPanel('overview', toolbar);
+      else this.buildDevices(toolbar?.entities ?? this.config.overview);
+    }
+    if (contextKeys.includes(type)) this.openToolbarPanel(type, toolbar);
     if (type === 'settings') this.paintSettings();
     if (type === 'setup') void this.paintSetup();
     if (type === 'activity') this.paintActivity();
@@ -599,6 +688,9 @@ export class BayitDashboard extends HTMLElement {
     if (this.panel?.type === 'room') this.roomScroll.set(this.panel.room.id, n.modalBody.scrollTop);
     this.panel = null;
     this.setup = null;
+    this.toolbarPanel?.dispose();
+    this.boilerView?.dispose();
+    this.toolbarPanel = this.wallpaperGallery = this.boilerView = undefined;
     this.deviceViews.clear();
     clearInterval(this.ticker);
     this.ticker = 0;
@@ -679,12 +771,64 @@ export class BayitDashboard extends HTMLElement {
     this.deviceViews.add(view);
   }
 
-  appendEnergyLink(numberOfDevices) {
+  openToolbarPanel(type, toolbar) {
     const content = this.nodes.content;
-    if (!numberOfDevices) content.replaceChildren();
-    const link = make('a', 'control-button', this.t('open_energy'));
-    link.href = '/energy';
-    content.prepend(link);
+    content.className = 'toolbar-panes';
+    delete content.dataset.room;
+    content.replaceChildren();
+    this.toolbarPanel = createToolbarPanel(type, {
+      sections: toolbar?.sections, entities: toolbar?.entities ?? this.config.context[type] ?? [],
+    }, {
+      host: content, hass: this._hass, locale: this.config.locale,
+      make, button, icon, label, t: key => this.t(key),
+      modelFor: item => this.model(item), stateLabel: model => this.stateLabel(model),
+      moreInfo: item => this.moreInfo(item), pending: entity => this.pending.has(entity),
+      request: (item, action, value, source) => this.requestAction(item, action, value, source),
+      buildDevice: (item, slot) => this.buildDevice(item, slot),
+    });
+  }
+
+  buildBoilerView(config) {
+    const content = this.nodes.content;
+    const controls = make('div', 'boiler-pane');
+    controls.append(...content.childNodes);
+    const host = make('div', 'boiler-pane boiler-history-host');
+    host.hidden = true;
+    const tabs = make('div', 'boiler-tabs');
+    let panel;
+    const choices = [
+      {label:'timed', icon:'mdi:timer-outline', element:controls},
+      {label:'boiler_history', icon:'mdi:history', element:host,
+        open:() => openBoilerHistory({host, entity:config.entity, locale:this.config.locale, hass:this._hass, t:key=>this.t(key)})},
+    ];
+    if (isBoilerScheduleProfile(config) && (config.schedule || this._hass?.services?.scheduler)) {
+      const scheduleHost = make('div','boiler-pane boiler-schedule-host');
+      scheduleHost.hidden = true;
+      choices.splice(1,0,{label:'boiler_schedule',icon:'mdi:calendar-clock',element:scheduleHost,open:() => {
+        const schedule = createBoilerSchedulePanel(config, {host:scheduleHost,hass:this._hass,locale:this.config.locale});
+        return {update:schedule.update,dispose:schedule.destroy};
+      }});
+    }
+    for (const item of choices) {
+      const tab = button('control-button', this.t(item.label), item.icon);
+      tab.setAttribute('aria-pressed', String(!item.element.hidden));
+      tabs.append(tab);
+      item.tab = tab;
+      tab.onclick = () => {
+        if (!item.element.hidden) return;
+        panel?.dispose();
+        panel = undefined;
+        for (const choice of choices) {
+          choice.element.hidden = choice !== item;
+          choice.tab.setAttribute('aria-pressed', String(choice === item));
+        }
+        panel = item.open?.();
+        panel?.update(this._hass);
+      };
+    }
+    content.className = 'boiler-panel';
+    content.append(tabs, ...choices.map(item => item.element));
+    this.boilerView = {update:hass=>panel?.update(hass), dispose:()=>panel?.dispose()};
   }
 
   moreInfo(config) {
@@ -709,7 +853,9 @@ export class BayitDashboard extends HTMLElement {
       setText(view.name, model.name);
       setIcon(view.glyph, model.icon);
       if (model.timer?.state === 'active') countdown = true;
-      setText(view.state, this.stateLabel(model));
+      const media = model.domain === 'media_player' && typeof model.attributes.media_title === 'string'
+        ? model.attributes.media_title.trim().slice(0, 160) : '';
+      setText(view.state, this.stateLabel(model) + (media ? ' · ' + media : ''));
       view.state.dataset.tone = this.tone(model);
       const pending = this.pending.get(view.config.entity);
       if (view.tile) {
@@ -746,18 +892,35 @@ export class BayitDashboard extends HTMLElement {
       setup.onclick = () => this.openPanel('setup', setup);
       content.append(setup);
     }
-    for (const [key, values] of Object.entries(options)) {
+    const screens = make('div', 'settings-screens');
+    const extra = ['overview','sensors','calendar','media','vacuum'];
+    const configured = this.config.toolbar?.filter(item => item.placement === 'settings');
+    const automatic = extra.flatMap(kind => {
+      const entries = kind === 'overview' ? this.config.overview : this.config.context[kind];
+      return entries.length ? [{ kind, icon: toolbarIcons[kind], entities: entries }] : [];
+    });
+    for (const item of configured?.length ? configured : automatic) {
+      const route = button('control-button', item.label || this.t(item.kind), item.icon);
+      route.onclick = () => item.kind === 'link' ? location.assign(item.path)
+        : this.openPanel(item.kind, route, undefined, undefined, { ...item, name: item.label || this.t(item.kind) });
+      screens.append(route);
+    }
+    if (screens.childElementCount) {
+      const group = make('fieldset','prefs-group');
+      group.append(make('legend','',this.t('more_screens')),screens);
+      content.prepend(group);
+    }
+    this.wallpaperGallery = createWallpaperGallery({ locale: this.config.locale, controller: this.wallpaper,
+      selected: this.activeWallpaper || this.config.background,
+      onSelect: id => this.selectWallpaper(id), onUpload: file => this.selectWallpaper(personalWallpaperId, { file }) });
+    content.append(this.wallpaperGallery.element);
+    for (const key of ['shape','layout']) {
+      const values = options[key];
       const group = make('fieldset', 'prefs-group');
       group.append(make('legend', '', this.t(key)));
       const choices = make('div', 'prefs-options');
       for (const value of values) {
         const el = button('control-button', this.t(value));
-        if (key === 'background') {
-          const swatch = make('span', 'swatch');
-          swatch.style.background = swatches[value];
-          swatch.setAttribute('aria-hidden', 'true');
-          el.prepend(swatch);
-        }
         el.value = value;
         el.dataset.preference = key;
         el.onclick = () => this.setPreference(key, value);
@@ -767,6 +930,15 @@ export class BayitDashboard extends HTMLElement {
       content.append(group);
     }
     this.applyPreferences();
+    if (this.config.page && this.config.fullscreen) {
+      const bypass = new URL(location.href).searchParams.has('disable_km');
+      const menu = button('control-button', this.t(bypass ? 'fullscreen' : 'ha_menu'), 'mdi:menu');
+      menu.onclick = () => {
+        this.popupMotion.dismiss({ immediate: true, restoreFocus: false });
+        this.pageChrome.toggleHomeAssistantMenu();
+      };
+      content.append(menu);
+    }
   }
 
   async paintSetup() {
@@ -931,12 +1103,14 @@ export class BayitDashboard extends HTMLElement {
       input.value = String(attrs.target_temp_low ?? action.min ?? 18);
       second.value = String(attrs.target_temp_high ?? action.max ?? 25);
     } else if (id === 'set_hvac_mode') input.value = model.state;
+    else if (id === 'select_option') input.value = model.state;
     else if (id === 'start_timed') input.value = String(action.min ?? 15);
     else if (id === 'set_heating_level') input.value = String(number(model.level) ?? action.min);
     else if (id === 'set_brightness') {
       const brightness = number(attrs.brightness);
       input.value = String(brightness === null ? action.min ?? 0 : Math.round(brightness / 255 * 100));
-    } else if (input.localName === 'select') input.value = attrs[stateKeys[id]] ?? input.options[0]?.value ?? '';
+    } else if (id === 'volume_set') input.value = String(Math.round((number(attrs.volume_level) ?? 0) * 100));
+    else if (input.localName === 'select') input.value = attrs[stateKeys[id]] ?? input.options[0]?.value ?? '';
     else input.value = String(number(attrs[stateKeys[id]]) ?? action.min ?? 0);
     if (input.localName === 'select' && input.selectedIndex === -1) input.selectedIndex = 0;
     if (field.output) setText(field.output, input.value + '%');
@@ -952,11 +1126,10 @@ export class BayitDashboard extends HTMLElement {
     const model = this.model(config);
     const action = model.actions[id];
     if (!action) return;
-    if (action.requiresCode) return this.moreInfo(config);
-    if (!action.requiresConfirmation && !confirmShortcut) return this.send(config, id, value);
-    this.confirming = { config, id, value, source };
+    if (!action.requiresConfirmation && !confirmShortcut) return action.requiresCode ? this.moreInfo(config) : this.send(config, id, value);
+    this.confirming = { config, id, value, source, native: action.requiresCode };
     const n = this.nodes;
-    setText(n.confirmText, this.t('confirm_action').replace('{name}', model.name).replace('{action}', this.actionLabel(id)));
+    setText(n.confirmText, action.confirmationText || this.t('confirm_action').replace('{name}', model.name).replace('{action}', this.actionLabel(id)));
     if (!n.confirm.open) n.confirm.showModal();
     n.abort.focus({ preventScroll: true });
   }
@@ -965,6 +1138,7 @@ export class BayitDashboard extends HTMLElement {
     const request = this.confirming;
     if (!request || !this.nodes.confirm.open) return;
     this.nodes.confirm.close();
+    if (request.native) return this.moreInfo(request.config);
     return this.send(request.config, request.id, request.value, true);
   }
 

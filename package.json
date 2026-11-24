@@ -1,6 +1,6 @@
 {
   "name": "bayit-9",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "A room-based Liquid Glass dashboard for Home Assistant",
@@ -8,7 +8,7 @@
     "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.js",
     "check:dist": "node scripts/build.mjs --check",
-    "test:browser": "node test/dashboard-browser.mjs"
+    "test:browser": "node test/dashboard-browser.mjs && node test/page-chrome-browser.mjs"
   },
   "engines": {
     "node": ">=22"

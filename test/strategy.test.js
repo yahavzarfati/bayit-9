@@ -459,3 +459,84 @@ test('allows explicit linked-switch and fan-level adapters only for a named heat
   assert.equal(withSwitch.level_steps, undefined);
   assert.equal(withSwitch.timed.simple_timer_target, undefined);
 });
+
+test('limits optional dashboard destinations and excludes cameras from automatic context', () => {
+  const hass = home();
+  const contextRows = [
+    ['media_player.speaker', 'studio'], ['media_player.outside', 'lounge'], ['vacuum.floor', 'studio'],
+    ['calendar.area', 'studio'], ['calendar.unassigned', undefined], ['vacuum.hidden', 'studio', 'user'],
+    ['camera.private', 'studio'],
+  ];
+  for (const [entity, area_id, hidden_by] of contextRows) {
+    hass.states[entity] = { state: 'idle', attributes: {} };
+    hass.entities[entity] = { area_id, hidden_by };
+  }
+  const kinds = ['media', 'vacuum', 'calendar', 'sensors'];
+  const { context, toolbar } = generateDashboard({
+    area_ids: ['studio'],
+    show_unassigned: false,
+    toolbar: kinds.map(kind => ({ kind })),
+  }, hass).views[0].cards[0];
+  assert.deepEqual(context.media, [{ entity: 'media_player.speaker' }]);
+  assert.deepEqual(context.vacuum, [{ entity: 'vacuum.floor' }]);
+  assert.deepEqual(context.calendar, [{ entity: 'calendar.area' }]);
+  assert.equal(Object.values(context).flat().some(item => item.entity.startsWith('camera.')), false);
+  assert.deepEqual(toolbar.map(item => item.kind), kinds);
+});
+
+test('keeps curated toolbar sections ordered, visibly scoped and restricted to supported actions and presentation', () => {
+  const hass = home();
+  const known = ['weather.fixture', 'sun.sun', 'person.fixture', 'sensor.fixture', 'lock.fixture',
+    'sensor.hidden', 'sensor.disabled', 'sensor.omitted'];
+  for (const entity of known) {
+    hass.states[entity] = { state: 'on', attributes: {} };
+    hass.entities[entity] = {};
+  }
+  hass.entities['sensor.hidden'].hidden_by = 'user';
+  hass.entities['sensor.disabled'].disabled_by = 'user';
+  const { toolbar } = generateDashboard({
+    hidden_entities: ['sensor.omitted'],
+    toolbar: [
+      { kind: 'security', entities: ['lock.fixture'], sections: [
+        { id: 'curated', kind: 'actions', title: '', entities: [
+          { entity: 'script.demo_start', name: ' Close fixtures ', icon: ' mdi:lock ', role: 'action',
+            command: 'run_script', confirmation: ' Continue? ', service: 'homeassistant.restart' },
+          { entity: 'script.demo_start', role: 'status' },
+          { entity: 'lock.fixture', role: 'lock', command: 'run_script', confirmation: false },
+          'sensor.hidden', 'sensor.disabled', 'sensor.omitted', 'sensor.missing',
+        ] },
+        { id: 'curated', kind: 'status', entities: [
+          { entity: 'script.demo_start', role: 'action', command: 'run_script', confirmation: false },
+          { entity: 'sensor.fixture', role: 'lock' },
+          { entity: 'sensor.fixture', role: 'graph', graph_hours: 24 },
+        ] },
+        { kind: 'unknown', entities: ['script.demo_start'] },
+      ] },
+      { kind: 'weather', sections: [
+        { kind: 'forecast', entities: [{ entity: 'weather.fixture', role: 'forecast' }] },
+        { kind: 'sun', entities: [{ entity: 'sun.sun', role: 'sun' }] },
+        { kind: 'readings', entities: [{ entity: 'sensor.fixture', role: 'graph', graph_hours: 337 }] },
+      ] },
+      { kind: 'presence', sections: [{ kind: 'people', entities: [{ entity: 'person.fixture', role: 'person' }] }] },
+      { kind: 'energy', sections: [{ kind: 'electricity', entities: [] }, { kind: 'water', entities: [] }] },
+    ],
+  }, hass).views[0].cards[0];
+  assert.deepEqual(toolbar[0].entities, [{ entity: 'lock.fixture' }]);
+  assert.deepEqual(toolbar[0].sections, [
+    { id: 'curated', kind: 'actions', title: '', entities: [
+      { entity: 'script.demo_start', name: 'Close fixtures', icon: 'mdi:lock', role: 'action',
+        command: 'run_script', confirmation: 'Continue?' },
+      { entity: 'lock.fixture', role: 'lock' },
+    ] },
+    { id: 'section-2', kind: 'status', entities: [
+      { entity: 'script.demo_start', role: 'action', command: 'run_script', confirmation: false },
+      { entity: 'sensor.fixture', role: 'graph', graph_hours: 24 },
+    ] },
+  ]);
+  assert.deepEqual(toolbar[1].sections.map(section => section.entities[0]), [
+    { entity: 'weather.fixture', role: 'forecast' }, { entity: 'sun.sun', role: 'sun' },
+    { entity: 'sensor.fixture', role: 'graph' },
+  ]);
+  assert.deepEqual(toolbar[2].sections[0].entities, [{ entity: 'person.fixture', role: 'person' }]);
+  assert.deepEqual(toolbar[3].sections.map(section => section.kind), ['electricity', 'water']);
+});

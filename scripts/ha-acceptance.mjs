@@ -157,6 +157,24 @@ try {
   });
   await card.getByRole('heading', { name: 'Bayit 9 Test Home', exact: true, level: 1 }).waitFor();
   console.log('Dashboard title saved through the strategy editor');
+
+  await settings.click();
+  await appearance.getByRole('button', { name: 'Customize home', exact: true }).click();
+  await setup.getByText('Appearance', { exact: true }).click();
+  await setup.getByRole('checkbox', { name: 'Hide Home Assistant chrome on this dashboard' }).check();
+  await setup.getByRole('button', { name: 'Save dashboard', exact: true }).click();
+  await poll('full-screen preference persisted', async () => {
+    const saved = await api.command('lovelace/config', { url_path: dashboard.url_path, force: true });
+    return saved?.strategy?.fullscreen === true;
+  });
+  await settings.waitFor();
+  const nativeHeader = dashboardHeader.locator('.header').first();
+  await nativeHeader.waitFor({ state: 'hidden' });
+  await settings.click();
+  await appearance.getByRole('button', { name: 'Home Assistant menu', exact: true }).click();
+  await nativeHeader.waitFor({ state: 'visible' });
+  assert.equal(new URL(page.url()).searchParams.get('disable_km'), '1');
+  console.log('Full-screen layout and native menu recovery verified in Home Assistant');
 } catch (error) {
   await mkdir(artifacts, { recursive: true });
   if (page && !page.isClosed()) {

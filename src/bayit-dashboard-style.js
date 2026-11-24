@@ -346,6 +346,8 @@ export const styles = `
   .modal:is([data-kind=room],[data-kind=device]) {
     --panel-top: clamp(14px,var(--bayit-popup-area-top,142px),max(14px,calc(var(--panel-bottom) - 180px)));
   }
+  .modal:is([data-kind=room],[data-kind=toolbar]) { width: min(860px,calc(100% - 2 * var(--edge))); }
+  .modal[data-kind=device] { width: min(520px,calc(100% - 2 * var(--edge))); }
   .modal[data-kind=toolbar] {
     --panel-top: clamp(14px,calc(var(--bayit-popup-area-top,142px) - 78px),max(14px,calc(var(--panel-bottom) - 180px)));
   }
@@ -384,6 +386,7 @@ export const styles = `
   .modal-body { min-height: 0; padding: 0 15px 15px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
   @keyframes appear { from { opacity: 0; transform: scale(.92); } }
   .devices, .settings { display: grid; gap: 12px; }
+  .settings-screens { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
   .device-group { display: grid; gap: 7px; min-width: 0; }
   .device-group-title {
     margin: 1px 2px 0;

@@ -1,5 +1,6 @@
 import { BACKGROUNDS, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile, PROFILE_DOMAINS, roomSections, selectableRoomEntities, STRATEGY_NAME } from './strategy-model.js';
 import { languages } from './bayit-dashboard-i18n.js';
+import { buildToolbarEditor } from './toolbar-editor.js';
 
 const WORDS = {
   en: {
@@ -23,6 +24,8 @@ const WORDS = {
     atLeastOneRoom: 'Keep one room selected, or switch back to automatic.',
     discovery: 'Automatic device selection', controls: 'Controls only', allDevices: 'All supported devices',
     appearance: 'Appearance', background: 'Wallpaper', layout: 'Room titles', shape: 'Button shape',
+    toolbar: 'Toolbar and extra screens', fullscreen: 'Hide Home Assistant chrome on this dashboard',
+    scheduleSave: 'Boiler schedule save script (optional)', scheduleDelete: 'Boiler schedule delete script (optional)',
     classic: 'Alongside the controls', header: 'At the top', soft: 'Rounded', circle: 'Circle', square: 'Square',
     devices: 'Device visibility', hidden: 'Hide devices', included: 'Add other entities',
     overview: 'Home overview', overviewDevices: 'Devices and sensors to show',
@@ -66,6 +69,8 @@ const WORDS = {
     atLeastOneRoom: 'השאירו חדר אחד לפחות, או חזרו לבחירה אוטומטית.',
     discovery: 'בחירת מכשירים אוטומטית', controls: 'מכשירים נשלטים בלבד', allDevices: 'כל המכשירים הנתמכים',
     appearance: 'מראה', background: 'רקע', layout: 'שמות חדרים', shape: 'צורת כפתורים',
+    toolbar: 'סרגל ומסכים נוספים', fullscreen: 'הסתרת סרגל Home Assistant בדשבורד הזה',
+    scheduleSave: 'סקריפט לשמירת תזמון הדוד (אופציונלי)', scheduleDelete: 'סקריפט למחיקת תזמון הדוד (אופציונלי)',
     classic: 'לצד הכפתורים', header: 'בראש הכרטיס', soft: 'מעוגל', circle: 'עיגול', square: 'ריבוע',
     devices: 'הצגת מכשירים', hidden: 'הסתרת מכשירים', included: 'הוספת ישויות נוספות',
     overview: 'מבט על הבית', overviewDevices: 'מכשירים וחיישנים לתצוגה',
@@ -267,6 +272,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #hass = {};
   #config = { type: 'custom:' + STRATEGY_NAME };
   #open = {};
+  #toolbarView = {};
   #profileEditing;
   #shortcutRoom;
   #roomEditing;
@@ -798,6 +804,9 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const serverFields = node('div', { className: 'stack' }, [
       field(words.start, start), field(words.stop, stop), field(words.timer, timer), field(words.durationField, durationField),
     ]);
+    const scheduleSave = entityInput('script', current.schedule?.save_script);
+    const scheduleDelete = entityInput('script', current.schedule?.delete_script);
+    const schedule = node('div', { className:'stack' }, [field(words.scheduleSave,scheduleSave), field(words.scheduleDelete,scheduleDelete)]);
     const attributesFor = id => this.#hass.states?.[id]?.attributes;
     const simple = entityInput('sensor', timed.simple_timer_entity, id => {
       const attributes = attributesFor(id);
@@ -827,6 +836,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const usingSimple = timerSource.value === 'simple';
       serverFields.hidden = usingSimple;
       simpleFields.hidden = !usingSimple;
+      schedule.hidden = kind.value !== 'boiler' || !usingSimple;
       const prefix = kind.value === 'climate' && domain === 'climate' ? 'input_boolean.' : fanHeater ? 'switch.' : '';
       const linked = attributesFor(simple.value)?.switch_entity_id ?? (simple.value === timed.simple_timer_entity ? timed.simple_timer_target : undefined);
       const compatible = prefix && typeof linked === 'string' && linked.startsWith(prefix) && linked !== entity.value;
@@ -845,7 +855,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     children.push(
       field(words.entity, entity), field(words.kind, kind), field(words.displayName, title),
       field(words.level, level), fanLevels,
-      field(words.timerSource, timerSource), serverFields, simpleFields,
+      field(words.timerSource, timerSource), serverFields, simpleFields, schedule,
       field(words.dailyUsage, usage), field(words.presets, presets),
       node('div', { className: 'grid' }, [field(words.min, min), field(words.max, max), field(words.step, step)]),
       error,
@@ -864,6 +874,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
           const profile = normalizeProfile({
             entity: entity.value, kind: kind.value, name: title.value, level_entity: level.value,
             level_steps: levelSteps.valueAsNumber, level_read_entity: levelRead.value,
+            schedule: {save_script:scheduleSave.value,delete_script:scheduleDelete.value},
             timed: {
               ...(usingSimple
                 ? { simple_timer_entity: simple.value, simple_timer_target: target.value }
@@ -913,6 +924,13 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const backgrounds = Object.entries(BACKGROUNDS).map(([id, names]) => [id, names[language]]);
     const overviewOptions = discoverRooms(this.#config, this.#hass, language).flatMap(room =>
       room.entities.map(device => [device.entity, (device.name || device.entity) + ' · ' + room.name]));
+    const toolbar = node('div');
+    const showToolbar = () => {
+      if (toolbar.childElementCount) return;
+      toolbar.append(buildToolbarEditor({config:this.#config,hass:this.#hass,locale:language,viewState:this.#toolbarView,
+        onChange:value=>this.#commit({toolbar:value})}));
+    };
+    if (this.#open.toolbar) showToolbar();
     const form = node('form', { dir: language === 'he' ? 'rtl' : 'ltr' }, [
       field(words.title, title), field(words.language, locale),
       disclosure(words.areas, this.#open.rooms, open => { this.#open.rooms = open; }, this.#roomsPanel(words, language)),
@@ -921,7 +939,9 @@ export class Bayit9StrategyEditor extends HTMLElement {
           appearance(words.background, 'background', backgrounds, 'aurora'),
           appearance(words.layout, 'layout', [['classic', words.classic], ['header', words.header]], 'classic'),
           appearance(words.shape, 'shape', [['soft', words.soft], ['circle', words.circle], ['square', words.square]], 'soft'),
+          checkbox(words.fullscreen, this.#config.fullscreen === true, value => this.#commit({fullscreen:value})),
         ])]),
+      disclosure(words.toolbar, this.#open.toolbar, open => { this.#open.toolbar = open; if (open) showToolbar(); }, [toolbar]),
       disclosure(words.devices, this.#open.devices, open => { this.#open.devices = open; },
         [this.#entityMulti(words.hidden, 'hidden_entities', words), this.#entityMulti(words.included, 'included_entities', words)]),
       disclosure(words.overview, this.#open.overview, open => { this.#open.overview = open; },

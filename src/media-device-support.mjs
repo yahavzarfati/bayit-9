@@ -1,0 +1,64 @@
+const MEDIA = { pause: 1, volume: 4, mute: 8, previous: 16, next: 32, on: 128, off: 256,
+  volume_step: 1024, source: 2048, stop: 4096, play: 16384 };
+const VACUUM = { pause: 4, stop: 8, dock: 16, speed: 32, locate: 512, start: 8192 };
+
+export function addSpecialDeviceActions(config, record, supports, add, options) {
+  const attributes = record.attributes ?? {};
+  const state = record.state;
+  if (config.domain === 'media_player') {
+    if (state === 'off' || state === 'standby') {
+      if (supports(MEDIA.on)) add('turn_on');
+      return;
+    }
+    if (supports(MEDIA.off)) add('turn_off');
+    if (state === 'playing' && supports(MEDIA.pause)) add('media_pause');
+    if (state !== 'playing' && supports(MEDIA.play)) add('media_play');
+    if (supports(MEDIA.previous)) add('media_previous_track');
+    if (supports(MEDIA.next)) add('media_next_track');
+    if (['playing', 'paused', 'buffering'].includes(state) && supports(MEDIA.stop)) add('media_stop');
+    if (supports(MEDIA.volume_step)) {
+      add('volume_down');
+      add('volume_up');
+    }
+    if (supports(MEDIA.volume)) add('volume_set', { min: 0, max: 100, step: 1 });
+    if (supports(MEDIA.mute) && typeof attributes.is_volume_muted === 'boolean') {
+      add(attributes.is_volume_muted ? 'unmute' : 'mute', { service: 'volume_mute',
+        fixedData: { is_volume_muted: !attributes.is_volume_muted } });
+    }
+    if (supports(MEDIA.source)) options('select_source', attributes.source_list);
+  }
+  if (config.domain === 'vacuum') {
+    if (state !== 'cleaning' && supports(VACUUM.start)) add('vacuum_start', { service: 'start' });
+    if (state === 'cleaning' && supports(VACUUM.pause)) add('vacuum_pause', { service: 'pause' });
+    if (['cleaning', 'paused', 'returning'].includes(state) && supports(VACUUM.stop)) add('vacuum_stop', { service: 'stop' });
+    if (!['docked','returning'].includes(state) && supports(VACUUM.dock)) add('return_to_base');
+    if (supports(VACUUM.locate)) add('locate');
+    if (supports(VACUUM.speed)) options('set_fan_speed', attributes.fan_speed_list);
+  }
+  if (['input_select','select'].includes(config.domain)) options('select_option', attributes.options);
+  if (['input_button','button'].includes(config.domain)) add('press_button', { service: 'press', requiresConfirmation: true });
+}
+
+export function specialDeviceRequest(config, action, value) {
+  const entity = config.entity;
+  const state = result => ({ entity, state: result });
+  const anyState = (...values) => ({ entity, anyState: values });
+  const attribute = (name, target, tolerance) => ({ entity, attributes: { [name]: target }, tolerance });
+  switch (action.id) {
+    case 'turn_on': return config.domain === 'media_player' ? { expected: anyState('on','idle','playing','paused','buffering') } : null;
+    case 'turn_off': return config.domain === 'media_player' ? { expected: anyState('off','standby') } : null;
+    case 'media_play': return { expected: state('playing') };
+    case 'media_pause': return { expected: state('paused') };
+    case 'media_stop': return { expected: anyState('idle','off','standby') };
+    case 'vacuum_start': return { expected: state('cleaning') };
+    case 'vacuum_pause': return { expected: state('paused') };
+    case 'vacuum_stop': return { expected: anyState('idle','docked') };
+    case 'return_to_base': return { expected: anyState('returning','docked') };
+    case 'volume_set': return { data: { volume_level: value / 100 }, expected: attribute('volume_level',value / 100, .015) };
+    case 'mute': case 'unmute': return { expected: attribute('is_volume_muted', action.id === 'mute') };
+    case 'select_source': return { data: { source: value }, expected: attribute('source',value) };
+    case 'set_fan_speed': return { data: { fan_speed: value }, expected: attribute('fan_speed',value) };
+    case 'select_option': return { data: { option: value }, expected: state(value) };
+    default: return null;
+  }
+}

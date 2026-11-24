@@ -6,6 +6,12 @@ An existing Simple Timer instance can supply the countdown, preset durations and
 
 Set `timed.min_minutes`, `timed.max_minutes`, and `timed.step_minutes` to match the limits for the installation. `timed.presets` lists the durations shown on the panel. `timed.daily_usage_entity` can read a separate duration sensor that reports seconds, minutes or hours. A profile uses either Simple Timer or the native timer and scripts below.
 
+## Boiler schedule and usage history
+
+Open the dedicated boiler panel to see the last seven days of usage. Home Assistant Recorder supplies the running intervals, and the Activity log supplies the attributed source when it is available. The list shows confirmed runs of at least two minutes.
+
+When Scheduler is installed, a bound Simple Timer boiler profile can list and manage simple schedules that belong to that boiler. Complex schedules can be viewed in Scheduler. Optional `schedule.save_script` and `schedule.delete_script` enable server-side revision checks for existing schedules. Choose those scripts only when they are configured for this boiler’s scheduler records and return a success response.
+
 ## Using native Home Assistant timers
 
 The optional blueprints control a single dedicated heater switch using Home Assistant's built-in Timer. The dashboard calls the scripts and reads the timer state. The cutoff automation runs on Home Assistant while the dashboard is closed.

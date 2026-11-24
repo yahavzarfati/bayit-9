@@ -1,5 +1,6 @@
 import { Bayit9StrategyEditor } from './strategy-editor.js';
 import { generateDashboard, STRATEGY_NAME, suggestedDashboard } from './strategy-model.js';
+import { preparePageChrome } from './page-chrome.js';
 
 const TAG = 'll-strategy-dashboard-' + STRATEGY_NAME;
 const EDITOR = 'bayit-9-strategy-editor';
@@ -8,6 +9,7 @@ export class Bayit9DashboardStrategy extends HTMLElement {
   static registryDependencies = ['areas', 'devices', 'entities'];
 
   static generate(config, hass) {
+    preparePageChrome({ enabled: config?.fullscreen === true, hass });
     return generateDashboard(config, hass);
   }
 

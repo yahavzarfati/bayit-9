@@ -7,6 +7,27 @@ const config = (id, fields) => ({ entity: id, ...fields });
 const code = value => error => error instanceof DeviceControlError && error.code === value;
 const actionIds = model => Object.keys(model.actions).sort();
 
+test('media and vacuum issue only available native commands and validate their source and volume', () => {
+  const media = config('media_player.speaker');
+  const vacuum = config('vacuum.robot');
+  const reset = config('button.robot_filter');
+  const states = {
+    [media.entity]:entity('playing',{supported_features:18445,is_volume_muted:false,source_list:['Aux','Radio']}),
+    [vacuum.entity]:entity('idle',{supported_features:8244,fan_speed_list:['quiet','normal']}),
+    [reset.entity]:entity('unknown'),
+  };
+  assert.equal(planDeviceAction(media,states,'media_pause').expected.state,'paused');
+  assert.deepEqual(planDeviceAction(media,states,'volume_set',48).data,{volume_level:.48});
+  assert.deepEqual(planDeviceAction(media,states,'mute').data,{is_volume_muted:true});
+  assert.throws(()=>planDeviceAction(media,states,'select_source','invented'),code('invalid_value'));
+  assert.equal(planDeviceAction(vacuum,states,'vacuum_start').service,'start');
+  assert.deepEqual(planDeviceAction(vacuum,states,'return_to_base').expected.anyState,['returning','docked']);
+  assert.throws(()=>planDeviceAction(vacuum,states,'vacuum_pause'),code('action_unavailable'));
+  assert.throws(()=>planDeviceAction(reset,states,'press_button'),code('confirmation_required'));
+  assert.equal(planDeviceAction(reset,states,'press_button',undefined,{confirmed:true}).service,'press');
+  assert.throws(()=>planDeviceAction(reset,{[reset.entity]:entity('unavailable')},'press_button',undefined,{confirmed:true}),code('action_unavailable'));
+});
+
 test("light brightness appears only when the light supports it", () => {
   const dim = config("light.task");
   const simple = config("light.basic");
@@ -372,4 +393,29 @@ test("mapped heating level obeys the reported range and requires an active timer
   states[c.level_entity] = entity("unavailable");
   assert.equal(getDeviceModel(c, states).actions.set_heating_level, undefined);
   assert.throws(() => getDeviceModel({ ...c, level_entity: "switch.other" }, states), code("invalid_config"));
+});
+
+test("curated actions preserve native confirmation and lock PIN, and passive roles cannot actuate", () => {
+  const script = config("script.fixture_close", { role: "action", command: "run_script", confirmation: " Close now? " });
+  const lock = config("lock.fixture_entry", { role: "lock", confirmation: false });
+  const states = { [script.entity]: entity("off"), [lock.entity]: entity("locked", { code_format: "^\\d{4}$" }) };
+  const actions = getDeviceModel(script, states).actions;
+  assert.equal(actions.run_script.confirmationText, "Close now?");
+  assert.equal(actions.more_info.requiresConfirmation, false);
+  assert.throws(() => planDeviceAction(script, states, "run_script", null, { confirmed: "true" }), code("confirmation_required"));
+  assert.deepEqual(planDeviceAction(script, states, "run_script", null, { confirmed: true }), {
+    kind: "service", domain: "script", service: "turn_on", target: { entity_id: script.entity }, data: {}, expected: null,
+  });
+  const unguardedScript = { ...script, confirmation: false };
+  assert.equal(planDeviceAction(unguardedScript, states, "run_script").service, "turn_on");
+  assert.throws(() => planDeviceAction({ ...unguardedScript, command: "restart" }, states, "run_script"), code("confirmation_required"));
+  assert.throws(() => planDeviceAction({ ...unguardedScript, role: "device" }, states, "run_script"), code("confirmation_required"));
+  assert.throws(() => planDeviceAction(unguardedScript, { [script.entity]: entity("unavailable") }, "run_script"), code("action_unavailable"));
+  for (const role of ["status", "forecast", "sun", "graph", "person"]) {
+    assert.deepEqual(actionIds(getDeviceModel({ ...script, role }, states)), ["more_info"]);
+    assert.throws(() => planDeviceAction({ ...script, role }, states, "run_script", null, { confirmed: true }), code("action_unavailable"));
+  }
+  assert.equal(getDeviceModel({ ...lock, confirmation: "Lock the entry?" }, states).actions.lock.confirmationText, "Lock the entry?");
+  assert.throws(() => planDeviceAction(lock, states, "unlock"), code("confirmation_required"));
+  assert.throws(() => planDeviceAction(lock, states, "unlock", null, { confirmed: true }), code("pin_required"));
 });

@@ -29,7 +29,9 @@ Use **Room shortcuts** to choose up to six controls for a room’s home-screen c
 - The optional home overview brings selected locks, people, calendars and sensors together on the toolbar.
 - Other entities can open their native Home Assistant controls from the room.
 - Timed climate and heating controls can read the countdown and daily use from an existing Simple Timer integration or use mapped Home Assistant timers and scripts for heating.
-- In-dashboard appearance choices live in the browser. Set shared defaults in the dashboard editor.
+- Configure the toolbar and additional screens in **Customize home**. These can include household presence, weather and sun, electricity and water, native media and vacuum controls, and a combined agenda.
+- The appearance panel has a wallpaper gallery and a personal photo option. The photo stays in the current browser. Choose a built-in background as the shared dashboard default.
+- An optional full-screen dashboard hides the Home Assistant chrome on that view. The **Home Assistant menu** button in Bayit 9 Settings brings it back.
 
 Home Assistant manages room assignment and access to devices. Bayit 9 runs in the frontend and uses the same connection as other dashboards.
 

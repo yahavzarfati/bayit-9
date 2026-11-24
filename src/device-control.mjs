@@ -1,4 +1,6 @@
 // Portable Home Assistant device models and commands used by the dashboard UI.
+import { addSpecialDeviceActions, specialDeviceRequest } from './media-device-support.mjs';
+
 const ENTITY_ID = /^[a-z][a-z0-9_]*\.[a-z0-9_]+$/;
 const VARIABLE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export const HEATING_DOMAINS = Object.freeze(["switch", "climate", "fan", "water_heater"]);
@@ -31,6 +33,7 @@ const PARAMETER = {
   set_temperature: "temperature",
 };
 
+const READ_ONLY_ROLES = new Set(["status", "forecast", "sun", "graph", "person"]);
 const REQUEST_TIMED_OUT = Symbol("request-timed-out");
 
 export class DeviceControlError extends Error {
@@ -152,7 +155,12 @@ function readSimpleTimer(entity, device, states, nowMs) {
 
 function supportedActions(config, states, record, timer, nowMs) {
   const actions = {};
-  const add = (id, fields) => { actions[id] = { id, requiresConfirmation: false, ...fields }; };
+  const confirmationText = typeof config.confirmation === "string" ? config.confirmation.trim().slice(0, 200) : "";
+  const add = (id, fields) => {
+    const guarded = id !== "more_info" && (config.confirmation === true || !!confirmationText);
+    actions[id] = { id, ...fields, requiresConfirmation: guarded || !!fields?.requiresConfirmation };
+    if (guarded && confirmationText) actions[id].confirmationText = confirmationText;
+  };
   const power = () => { add("turn_on"); add("turn_off"); };
   const options = (id, values, allowed) => {
     if (!Array.isArray(values)) return;
@@ -162,7 +170,8 @@ function supportedActions(config, states, record, timer, nowMs) {
   };
   const timing = config.timed;
   if (record) add("more_info");
-  if (!isAvailable(record)) return actions;
+  const readyButton = ["button","input_button"].includes(config.domain) && record?.state === "unknown";
+  if ((!isAvailable(record) && !readyButton) || READ_ONLY_ROLES.has(config.role)) return actions;
   const attributes = record.attributes ?? {};
   const flags = Number.isSafeInteger(attributes.supported_features) && attributes.supported_features >= 0
     ? attributes.supported_features : 0;
@@ -179,9 +188,11 @@ function supportedActions(config, states, record, timer, nowMs) {
     case "automation":
       power();
       break;
-    case "script":
-      add("run_script", { requiresConfirmation: true });
+    case "script": {
+      const explicitlyUnconfirmed = config.role === "action" && config.command === "run_script" && config.confirmation === false;
+      add("run_script", { requiresConfirmation: !explicitlyUnconfirmed });
       break;
+    }
     case "light":
       power();
       if ((Array.isArray(attributes.supported_color_modes) && attributes.supported_color_modes.some(mode =>
@@ -223,6 +234,9 @@ function supportedActions(config, states, record, timer, nowMs) {
       add("unlock", { requiresCode, requiresConfirmation: true });
       break;
     }
+    default:
+      addSpecialDeviceActions(config, record, supports, add, options);
+      break;
   }
 
   const timedStart = timing?.start_script || timing?.simple_timer_entity;
@@ -440,7 +454,8 @@ export function planDeviceAction(config, states, actionId, value, { confirmed = 
       expected,
     };
   }
-  const expected = expectedState(config, actionId, value, states);
+  const special = specialDeviceRequest(config, action, value);
+  const expected = special?.expected ?? expectedState(config, actionId, value, states);
   if (actionId === "start_timed" || actionId === "stop_timed") {
     const start = actionId === "start_timed";
     const script = start ? config.timed.start_script : config.timed.stop_script;
@@ -453,9 +468,9 @@ export function planDeviceAction(config, states, actionId, value, { confirmed = 
       expected,
     };
   }
-  const data = actionId === "set_temperature_range" ? {
+  const data = special?.data ?? (actionId === "set_temperature_range" ? {
     target_temp_low: value.low, target_temp_high: value.high,
-  } : PARAMETER[actionId] ? { [PARAMETER[actionId]]: value } : { ...action.fixedData };
+  } : PARAMETER[actionId] ? { [PARAMETER[actionId]]: value } : { ...action.fixedData });
   if (action.requiresCode) data.code = code;
   return {
     kind: "service",
