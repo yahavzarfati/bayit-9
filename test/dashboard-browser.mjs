@@ -19,6 +19,8 @@ const states = {
   'timer.demo_heater': { state: 'idle', attributes: { friendly_name: 'Demo timer' } },
 };
 const calls = [];
+const moreInfoCalls = [];
+document.addEventListener('hass-more-info', event => moreInfoCalls.push(event.detail.entityId));
 let finishLevel;
 const query = new URL(location.href).searchParams;
 const storedKey = 'bayit9-browser-fixture';
@@ -196,6 +198,8 @@ const selected = query.has('configuration') ? stored().strategy : query.has('cur
     level_read_entity: helper, level_select_script: heaterScript,
     timed: { simple_timer_entity: heaterTimer, simple_timer_target: heaterRelay } }],
 } : query.has('toolbar-panels') ? {
+  ...(query.has('room-link') && { room_overrides: { studio: { entities:['light.demo_lamp','media_player.demo_tv'],
+    media_panel_links:{'media_player.demo_tv':'media-panel'} } } }),
   toolbar:[
     {kind:'automations',sections:[{kind:'actions',entities:[{entity:'script.demo_scene',role:'action',command:'run_script',confirmation:'Run the evening scene?'},
       {entity:'lock.demo_entry',role:'lock',confirmation:'Open the front door?'}]}]},
@@ -203,7 +207,7 @@ const selected = query.has('configuration') ? stored().strategy : query.has('cur
     {kind:'weather',sections:[{kind:'forecast',entities:['weather.demo_home']},{kind:'sun',entities:['sun.sun']}]},
     {kind:'energy',sections:[{kind:'electricity',entities:[{entity:'sensor.demo_meter',role:'graph',graph_hours:168}]}]},
     {kind:'settings'},
-    {kind:'media',placement:'settings',sections:[
+    {id:'media-panel',kind:'media',placement:'settings',sections:[
       {kind:'media',title:'Speaker',entities:[{entity:'media_player.demo_speaker',role:'now_playing'}]},
       {kind:'media',title:'TV',entities:[{entity:'media_player.demo_tv',role:'device'}]},
     ]},
@@ -228,7 +232,7 @@ if (query.has('editor')) {
   document.querySelector('#editor').append(editor);
 }
 window.bayitTest = {
-  registrations: window.customStrategies, calls, config,
+  registrations: window.customStrategies, calls, moreInfoCalls, config,
   setRoomState(entity, state) {
     states[entity] = { ...states[entity], state };
     card.hass = { ...hass, states: { ...states } };
@@ -376,7 +380,7 @@ try {
       mediaPage.setDefaultTimeout(8000);
       const mediaErrors = [];
       mediaPage.on('pageerror', error => mediaErrors.push(error.message));
-      await mediaPage.goto(base + '?toolbar-panels');
+      await mediaPage.goto(base + '?toolbar-panels&room-link');
       await mediaPage.getByRole('button', { name: 'Appearance', exact: true }).click();
       await mediaPage.getByRole('button', { name: 'Media', exact: true }).click();
       const media = mediaPage.getByRole('dialog');
@@ -405,7 +409,33 @@ try {
       await mediaPage.getByRole('button', { name:'Appearance', exact:true }).click();
       await mediaPage.getByRole('button', { name:'Robot vacuum', exact:true }).click();
       await mediaPage.getByRole('button', { name:'Start cleaning', exact:true }).waitFor();
-      await mediaPage.goto(base + '?toolbar-panels&editor');
+      await mediaPage.getByRole('button', { name:'Close', exact:true }).click();
+      const studio = mediaPage.getByRole('button', {name:'Studio',exact:true});
+      const tvHeader = mediaPage.getByRole('button', {name:'Television · More info',exact:true});
+      await studio.click();
+      await tvHeader.click();
+      await mediaPage.waitForFunction(() => window.bayitTest.moreInfoCalls[0] === 'media_player.demo_tv');
+      await studio.click();
+      const bounds = await tvHeader.boundingBox();
+      await mediaPage.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+      await mediaPage.mouse.down();
+      await mediaPage.getByRole('heading', {name:'Media',exact:true}).waitFor();
+      await mediaPage.mouse.up();
+      assert.deepEqual(await mediaPage.evaluate(() => window.bayitTest.moreInfoCalls), ['media_player.demo_tv']);
+      await mediaPage.getByRole('button', {name:'Back to room',exact:true}).click();
+      assert.equal(await tvHeader.evaluate(element => element.getRootNode().activeElement === element), true);
+      await tvHeader.press('Shift+Enter');
+      await mediaPage.getByRole('heading', {name:'Media',exact:true}).waitFor();
+      await mediaPage.getByRole('button', {name:'Close',exact:true}).click();
+      assert.deepEqual(await mediaPage.evaluate(() => window.bayitTest.calls.map(request => request.service)),
+        ['media_next_track','media_pause','volume_up']);
+      await mediaPage.goto(base + '?toolbar-panels&room-link&editor');
+      await mediaPage.getByText('Rooms', {exact:true}).click();
+      await mediaPage.getByLabel('Room to customize', {exact:true}).selectOption('studio');
+      const roomMediaLink = mediaPage.getByLabel('Open on media press and hold · Television', {exact:true});
+      assert.equal(await roomMediaLink.inputValue(),'media-panel');
+      await roomMediaLink.selectOption('');
+      assert.equal(await mediaPage.evaluate(() => window.latest.room_overrides.studio.media_panel_links), undefined);
       await mediaPage.getByText('Toolbar and extra screens', { exact:true }).click();
       await mediaPage.getByRole('button', {name:'Media',exact:true}).click();
       await mediaPage.getByRole('button', {name:'TV',exact:true}).click();
@@ -415,7 +445,7 @@ try {
         .sections[1].entities[0].role), 'now_playing');
       assert.deepEqual(mediaErrors, []);
       await mediaPage.close();
-      console.log(engine + ': curated media and vacuum controls, local artwork and playback progress');
+      console.log(engine + ': curated media and vacuum controls, Now Playing, and the room media shortcut');
 
       const editorPage = await browser.newPage({ viewport: {width: 390, height: 844} });
       await editorPage.goto(base + '?editor&heater-level');

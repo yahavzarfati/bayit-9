@@ -1,4 +1,4 @@
-import { BACKGROUNDS, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile, PROFILE_DOMAINS, roomSections, selectableRoomEntities, STRATEGY_NAME } from './strategy-model.js';
+import { BACKGROUNDS, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, mediaPanelOptions, normalizeProfile, PROFILE_DOMAINS, roomSections, selectableRoomEntities, STRATEGY_NAME } from './strategy-model.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { buildToolbarEditor } from './toolbar-editor.js';
 import { activityKinds, activitySources, normalizeRoomActivities } from './room-appliance.mjs';
@@ -21,6 +21,7 @@ const WORDS = {
     applianceMissing: 'Choose the required sources to save this badge.',
     applianceFields: { operation_entity: 'Operating state', finish_entity: 'Expected finish time',
       power_entity: 'Power state', done_entity: 'Completion sensor', progress_entity: 'Progress (%)' },
+    roomMediaLink: 'Open on media press and hold', roomMediaNone: 'No panel', roomMediaDefault: 'Media',
     sections: 'Room sections', sectionMode: 'Section arrangement', automaticSections: 'Automatic grouping',
     manualSections: 'Arrange sections manually', automaticDevicesAndSections: 'Automatic devices and sections',
     editSection: 'Section to customize', addSection: 'Add section', removeSection: 'Delete section',
@@ -72,6 +73,7 @@ const WORDS = {
     applianceMissing: 'בחרו את מקורות הנתונים הנדרשים לשמירת החיווי.',
     applianceFields: { operation_entity: 'מצב פעולה', finish_entity: 'זמן סיום צפוי',
       power_entity: 'מצב הפעלה', done_entity: 'חיישן סיום', progress_entity: 'התקדמות (%)' },
+    roomMediaLink: 'פתיחה בלחיצה ארוכה על מכשיר מדיה', roomMediaNone: 'ללא חלונית', roomMediaDefault: 'מדיה',
     sections: 'קבוצות בחדר', sectionMode: 'סידור הקבוצות', automaticSections: 'קיבוץ אוטומטי',
     manualSections: 'סידור ידני של הקבוצות', automaticDevicesAndSections: 'בחירה אוטומטית של מכשירים וקבוצות',
     editSection: 'קבוצה לעריכה', addSection: 'הוספת קבוצה', removeSection: 'מחיקת קבוצה',
@@ -516,6 +518,29 @@ export class Bayit9StrategyEditor extends HTMLElement {
       });
       children.push(field(words.readOnlyRoom, selected));
     }
+    const media = chosen.filter(id => id.startsWith('media_player.'));
+    const targets = media.length ? mediaPanelOptions(this.#config, this.#hass) : [];
+    if (targets.length) {
+      const options = [['', words.roomMediaNone], ...targets.map(({ id, label }) =>
+        [id, label || (targets.length === 1 ? words.roomMediaDefault : id)])];
+      for (const id of media) {
+        const chosenPanel = override.media_panel_links?.[id];
+        const input = select(options, targets.some(target => target.id === chosenPanel) ? chosenPanel : '');
+        const focusKey = 'room-media-' + id;
+        input.dataset.roomFocus = focusKey;
+        input.addEventListener('change', () => {
+          const next = { ...override };
+          const links = { ...next.media_panel_links };
+          if (input.value) links[id] = input.value;
+          else delete links[id];
+          if (Object.keys(links).length) next.media_panel_links = links;
+          else delete next.media_panel_links;
+          this.#setRoomOverride(room.id, next, focusKey);
+        });
+        const name = this.#hass.states?.[id]?.attributes?.friendly_name ?? id;
+        children.push(field(words.roomMediaLink + ' · ' + name, input));
+      }
+    }
     if (!manual) return children;
 
     const areaNames = new Map(areas.map(area => [area.id, area.name]));
@@ -531,6 +556,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
       if (Array.isArray(next.read_only_entities)) {
         next.read_only_entities = next.read_only_entities.filter(id => entities.includes(id));
         if (!next.read_only_entities.length) delete next.read_only_entities;
+      }
+      if (next.media_panel_links) {
+        next.media_panel_links = Object.fromEntries(Object.entries(next.media_panel_links)
+          .filter(([id]) => entities.includes(id)));
+        if (!Object.keys(next.media_panel_links).length) delete next.media_panel_links;
       }
       if (sections && entities.length < chosen.length) {
         const kept = new Set(entities);

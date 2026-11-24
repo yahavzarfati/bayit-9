@@ -42,3 +42,17 @@ test('curated toolbar only applies Now Playing to an explicitly chosen media ent
   const items = generateDashboard(config,{states}).views[0].cards[0].toolbar[0].sections[0].entities;
   assert.deepEqual(items,[{ entity, role:'now_playing' }]);
 });
+
+test('room media links require a selected media player and an existing Media panel', () => {
+  const states = { [entity]: { state:'playing', attributes:{} },
+    'media_player.unassigned': { state:'idle', attributes:{} }, 'light.fixture': { state:'on', attributes:{} } };
+  const config = {
+    toolbar: [{ id:'media-one', kind:'media' }, { id:'security-one', kind:'security' }],
+    room_overrides: { bayit_room_fixture: { name:'Fixture', entities:[entity,'light.fixture'],
+      media_panel_links: { [entity]:'media-one', 'light.fixture':'media-one', 'media_player.unassigned':'media-one' } } },
+  };
+  const room = () => generateDashboard(config,{states}).views[0].cards[0].rooms.find(item => item.id === 'bayit_room_fixture');
+  assert.deepEqual(room().entities.map(item => item.media_panel_id), ['media-one', undefined]);
+  config.room_overrides.bayit_room_fixture.media_panel_links[entity] = 'security-one';
+  assert.deepEqual(room().entities.map(item => item.media_panel_id), [undefined, undefined]);
+});
