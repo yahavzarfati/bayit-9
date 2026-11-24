@@ -97,6 +97,26 @@ function label(el, text) {
   }
 }
 
+function roomBadge(kind, glyph) {
+  const element = make('span', 'room-status');
+  element.dataset.badge = kind;
+  element.setAttribute('role', 'img');
+  element.hidden = true;
+  const symbol = icon(glyph);
+  const text = make('span');
+  element.append(symbol, text);
+  return { element, symbol, text };
+}
+
+function updateRoomBadge(badge, value) {
+  badge.element.hidden = !value;
+  if (!value) return;
+  setText(badge.text, value.text || '');
+  label(badge.element, value.label);
+  if (value.glyph) setIcon(badge.symbol, value.glyph);
+  if (value.tone) badge.element.dataset.tone = value.tone;
+}
+
 function button(className, text, glyph, iconOnly = false) {
   const el = make('button', className);
   el.type = 'button';
@@ -327,6 +347,7 @@ export class BayitDashboard extends HTMLElement {
     n.shell.dir = next.locale === 'he' ? 'rtl' : 'ltr';
     n.shell.dataset.page = String(next.page);
     n.shell.style.setProperty('--bayit-room-rows', String(Math.max(1, Math.ceil(next.rooms.length / 2))));
+    n.shell.style.setProperty('--bayit-room-rows-wide', String(Math.max(1, Math.ceil(next.rooms.length / 4))));
     setText(n.title, next.title);
     setText(n.empty, this.t('empty'));
     label(n.back, this.t('back_to_room'));
@@ -534,10 +555,11 @@ export class BayitDashboard extends HTMLElement {
       article.onclick = event => {
         if (!event.target.closest('button')) this.openPanel('room', heading, room);
       };
-      const status = make('div', 'room-status');
-      const statusIcon = icon('mdi:power-standby');
-      const statusText = make('span');
-      status.append(statusIcon, statusText);
+      const status = make('div', 'room-status-strip');
+      const temperature = roomBadge('temperature', 'mdi:thermometer');
+      const activity = roomBadge('activity', 'mdi:timer-outline');
+      const availability = roomBadge('availability', 'mdi:alert-circle-outline');
+      status.append(temperature.element, activity.element, availability.element);
       const quick = make('div', 'quick');
       const shortcut = new Map();
       const byId = new Map(room.entities.map(config => [config.entity, config]));
@@ -555,7 +577,7 @@ export class BayitDashboard extends HTMLElement {
       }
       article.append(status, quick, heading);
       n.rooms.append(article);
-      this.roomViews.set(room.id, { room, article, heading, count, status, statusIcon, statusText, shortcut });
+      this.roomViews.set(room.id, { room, article, heading, count, temperature, activity, availability, shortcut });
     }
     n.empty.hidden = this.roomViews.size > 0;
   }
@@ -590,31 +612,66 @@ export class BayitDashboard extends HTMLElement {
     return String((record && this._hass?.formatEntityState?.(record)) || state || this.t('unknown'));
   }
 
+  temperatureBadge(value, unit) {
+    const temperature = number(value);
+    if (temperature === null) return undefined;
+    const suffix = unit || this._hass?.config?.unit_system?.temperature || '°';
+    const shown = typeof suffix === 'string' && suffix.trim().length <= 3 ? suffix.trim() : '°';
+    return ltr(Number(temperature.toFixed(1)) + shown);
+  }
+
+  roomClimateBadge(model, tone) {
+    const heating = ['heater', 'boiler'].includes(model.kind) || model.domain === 'water_heater';
+    if (heating && tone === 'warm') return {
+      text: this.t('on'), label: model.name + ' · ' + this.stateLabel(model),
+      glyph: model.kind === 'boiler' || model.domain === 'water_heater' ? 'mdi:water-boiler' : 'mdi:radiator', tone,
+    };
+    if (model.domain !== 'climate' || heating || tone !== 'moving') return undefined;
+    const mode = statusNames.has(model.state) ? this.t(model.state) : model.state;
+    const target = ['cool','heat','heat_cool','auto'].includes(model.state)
+      ? this.temperatureBadge(model.attributes?.temperature) : undefined;
+    return {
+      text: target || mode, label: [model.name, mode, target && this.t('target_short') + ' ' + target].filter(Boolean).join(' · '),
+      glyph: 'mdi:air-conditioner', tone,
+    };
+  }
+
   update() {
     if (!this.config) return;
     const n = this.nodes;
     const active = new Map();
+    const haveStates = !!this._hass?.states;
     let countdown = false;
     for (const [id, view] of this.roomViews) {
       let lit = 0;
-      let unavailable = false;
+      const unavailable = [];
+      let lightUnavailable = false;
       let temperature;
-      let climateTemperature;
+      let ambient;
+      let climate;
       let timing;
       for (const config of view.room.entities) {
         const model = this.model(config);
         const tone = this.tone(model);
-        unavailable ||= !model.available;
+        if (haveStates && !model.available) {
+          unavailable.push(model.name);
+          lightUnavailable ||= model.domain === 'light' || domainFor(config) === 'light';
+        }
         if (model.domain === 'light' && model.state === 'on') lit++;
         if (tone !== 'quiet' && !active.has(config.entity)) active.set(config.entity, { config, model, room: view.room });
-        if (!temperature && model.available && model.attributes?.device_class === 'temperature') temperature = this.stateLabel(model);
-        if (!climateTemperature && model.available && model.domain === 'climate') {
-          const value = number(model.attributes.current_temperature);
-          if (value !== null) climateTemperature = ltr(value + (this._hass?.config?.unit_system?.temperature || '°'));
+        if (model.available) {
+          if (model.attributes?.device_class === 'temperature') {
+            temperature ||= this.temperatureBadge(model.state, model.attributes.unit_of_measurement);
+          }
+          if (model.domain === 'climate') ambient ||= this.temperatureBadge(model.attributes?.current_temperature);
+          climate ||= this.roomClimateBadge(model, tone);
         }
         if (model.timer?.state === 'active') {
           countdown = true;
-          if (!timing) timing = this.timerLabel(model.timer);
+          timing ||= {
+            text: this.timerLabel(model.timer, true), label: model.name + ' · ' + this.timerLabel(model.timer),
+            glyph: 'mdi:timer-outline', tone: 'warm',
+          };
         }
         const shortcut = view.shortcut.get(config.entity);
         if (!shortcut) continue;
@@ -625,11 +682,14 @@ export class BayitDashboard extends HTMLElement {
         const busy = this.pending.has(config.entity);
         shortcut.setAttribute('aria-busy', String(busy));
       }
-      const reading = timing || temperature || climateTemperature;
-      view.status.hidden = !reading && !unavailable;
-      setText(view.statusText, reading || this.t('unavailable'));
-      setIcon(view.statusIcon, timing ? 'mdi:timer-outline' : reading ? 'mdi:thermometer' : 'mdi:alert-circle-outline');
-      setText(view.count, lit || this.t('off'));
+      const reading = temperature || ambient;
+      updateRoomBadge(view.temperature, reading && { text: reading, label: this.t('room_temperature') + ' · ' + reading });
+      updateRoomBadge(view.activity, timing || climate);
+      updateRoomBadge(view.availability, unavailable.length && {
+        text: unavailable.length > 1 ? unavailable.length : '',
+        label: this.t('unavailable') + ' · ' + unavailable.join(', '),
+      });
+      setText(view.count, lit || (lightUnavailable ? '—' : this.t('off')));
       view.count.dataset.tone = lit ? 'warm' : 'quiet';
       view.article.toggleAttribute('data-current', this.panel?.type === 'room' && this.panel.room?.id === id);
     }
@@ -864,11 +924,12 @@ export class BayitDashboard extends HTMLElement {
     }));
   }
 
-  timerLabel(timer) {
+  timerLabel(timer, compact = false) {
     if (!timer || ['idle','unavailable'].includes(timer.state)) return '';
-    if (timer.remainingMs === null) return this.t(timer.state);
+    if (timer.remainingMs === null) return this.t(compact && timer.state === 'active' ? 'timed' : timer.state);
     const seconds = Math.max(0, Math.ceil(timer.remainingMs / 1000));
-    return this.t('timed') + ' · ' + ltr(Math.floor(seconds/60) + ':' + String(seconds%60).padStart(2,'0'));
+    const remaining = ltr(Math.floor(seconds/60) + ':' + String(seconds%60).padStart(2,'0'));
+    return compact ? remaining : this.t('timed') + ' · ' + remaining;
   }
 
   updateDevices() {

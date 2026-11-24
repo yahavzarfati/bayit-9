@@ -75,6 +75,29 @@ if (query.has('device-panel')) {
   } };
   hass.entities['climate.demo_air'] = { area_id: 'studio' };
 }
+const roomStatusSelected = {
+  area_ids: ['bayit_room_status', ...Array.from({ length: 9 }, (_, index) => 'bayit_room_fixture_' + index)],
+  room_overrides: {
+    bayit_room_status: {
+      name: hass.locale.language === 'he' ? 'חדר הפנאי' : 'Family room',
+      entities: ['climate.demo_room', 'cover.demo_window', 'sensor.demo_temperature', 'light.demo_unavailable'],
+    },
+    ...Object.fromEntries(Array.from({ length: 9 }, (_, index) =>
+      ['bayit_room_fixture_' + index, { name: 'Room ' + index, entities: [] }])),
+  },
+  profiles: [{ entity: 'climate.demo_room', kind: 'climate', timed: { timer_entity: 'timer.demo_room' } }],
+};
+if (query.has('room-status')) {
+  hass.config = { unit_system: { temperature: '°C' } };
+  Object.assign(states, {
+    'climate.demo_room': { state: 'cool', attributes: { friendly_name: 'Cooling', temperature: 26, current_temperature: 19 } },
+    'cover.demo_window': { state: 'opening', attributes: { friendly_name: 'Window shade', current_position: 57 } },
+    'sensor.demo_temperature': { state: '23.5', attributes: { device_class: 'temperature', unit_of_measurement: '°C' } },
+    'sensor.demo_unmapped': { state: '99', attributes: { device_class: 'temperature', unit_of_measurement: '°C' } },
+    'light.demo_unavailable': { state: 'unavailable', attributes: { friendly_name: 'Desk light' } },
+    'timer.demo_room': { state: 'active', attributes: { finishes_at: new Date(Date.now() + 3660000).toISOString() } },
+  });
+}
 if (query.has('toolbar-panels')) {
   Object.assign(states, {
     'script.demo_scene': {state:'off', attributes:{friendly_name:'Evening scene'}},
@@ -109,7 +132,7 @@ const selected = query.has('configuration') ? stored().strategy : query.has('cur
     simple_timer_entity: 'sensor.demo_air_usage', simple_timer_target: 'input_boolean.demo_air_timer',
     min_minutes: 15, max_minutes: 120, step_minutes: 15, presets: [30,60,90,120],
   } }],
-} : query.has('toolbar-panels') ? {
+} : query.has('room-status') ? roomStatusSelected : query.has('toolbar-panels') ? {
   toolbar:[
     {kind:'automations',sections:[{kind:'actions',entities:[{entity:'script.demo_scene',role:'action',command:'run_script',confirmation:'Run the evening scene?'},
       {entity:'lock.demo_entry',role:'lock',confirmation:'Open the front door?'}]}]},
@@ -138,7 +161,13 @@ if (query.has('editor')) {
   editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
   document.querySelector('#editor').append(editor);
 }
-window.bayitTest = { registrations: window.customStrategies, calls, config };
+window.bayitTest = { registrations: window.customStrategies, calls, config,
+  setRoomState(entity, state) {
+    states[entity] = { ...states[entity], state };
+    card.hass = { ...hass, states: { ...states } };
+  },
+  setRoomLayout(layout) { card.setConfig({ ...cardConfig, layout }); },
+};
 </script></html>`;
 
 const server = http.createServer((req, res) => {
@@ -186,6 +215,65 @@ try {
         assert.deepEqual(errors, []);
         await page.close();
         console.log(engine + ' ' + locale + ' ' + width + ': strategy, room modal, light command, close');
+      }
+
+      for (const locale of ['en', 'he']) {
+        const statusPage = await browser.newPage({ viewport: { width: 320, height: 844 }, reducedMotion: 'reduce' });
+        await statusPage.goto(base + '?room-status&locale=' + locale);
+        const fixtureRoom = statusPage.locator('.room[data-room="bayit_room_status"]');
+        const strip = fixtureRoom.locator('.room-status-strip');
+        const active = strip.locator('[data-badge="activity"]');
+        await active.locator('ha-icon[icon="mdi:timer-outline"]').waitFor();
+        await strip.locator('[data-badge="availability"]:not([hidden])').waitFor();
+        assert.equal(await strip.locator('.room-status:not([hidden])').count(), 3);
+        assert.match(await strip.locator('[data-badge="temperature"]').innerText(), /23\.5°C/);
+        assert.match(await active.innerText(), /\d+:\d{2}/);
+        assert.match(await strip.locator('[data-badge="availability"]').getAttribute('aria-label'), /Desk light/);
+        assert.equal(await fixtureRoom.locator('.room-count').innerText(), '—');
+        assert.equal(await fixtureRoom.locator('.quick-button[data-entity="cover.demo_window"]').getAttribute('data-tone'), 'moving');
+        const fits320 = await strip.evaluate(group => [...group.querySelectorAll('.room-status:not([hidden])')].every(chip => {
+          const bounds = group.getBoundingClientRect();
+          const tile = chip.getBoundingClientRect();
+          const text = chip.querySelector('span');
+          return tile.left >= bounds.left && tile.right <= bounds.right + 1 && text.scrollWidth <= text.clientWidth + 1;
+        }));
+        assert.equal(fits320, true, 'The combined readings fit at 320px');
+        const oldHeight = (await fixtureRoom.boundingBox()).height;
+        await statusPage.evaluate(() => window.bayitTest.setRoomState('timer.demo_room', 'idle'));
+        await active.locator('ha-icon[icon="mdi:air-conditioner"]').waitFor();
+        assert.match(await active.innerText(), /26°C/);
+        assert.equal((await fixtureRoom.boundingBox()).height, oldHeight);
+        await statusPage.evaluate(() => window.bayitTest.setRoomState('cover.demo_window', 'closed'));
+        await fixtureRoom.locator('.quick-button[data-entity="cover.demo_window"][data-tone="quiet"]').waitFor();
+        await statusPage.evaluate(() => window.bayitTest.setRoomState('light.demo_unavailable', 'on'));
+        await strip.locator('[data-badge="availability"]').waitFor({ state: 'hidden' });
+        assert.equal(await fixtureRoom.locator('.room-count').innerText(), '1');
+        await statusPage.evaluate(() => window.bayitTest.setRoomState('sensor.demo_temperature', 'unavailable'));
+        await strip.locator('[data-badge="temperature"]').filter({ hasText: '19°C' }).waitFor();
+        await strip.locator('[data-badge="availability"]:not([hidden])').waitFor();
+        assert.match(await active.innerText(), /26°C/);
+        await statusPage.evaluate(() => window.bayitTest.setRoomLayout('header'));
+        const headingY = await fixtureRoom.locator('.room-title').boundingBox();
+        assert.ok(headingY.y < (await strip.boundingBox()).y);
+        await statusPage.evaluate(() => window.bayitTest.setRoomLayout('classic'));
+        for (const [width, columns, gridWidth] of [[860, 2, 430], [900, 4, 804], [1280, 4, 900]]) {
+          await statusPage.setViewportSize({ width, height: 844 });
+          const measured = await statusPage.locator('.rooms').evaluate(grid => {
+            const box = grid.getBoundingClientRect();
+            return [getComputedStyle(grid).gridTemplateColumns.split(' ').length, Math.round(box.width), Math.round(box.left)];
+          });
+          assert.deepEqual(measured, [columns, gridWidth, (width - gridWidth) / 2]);
+          const alignment = await fixtureRoom.locator('.room-title').evaluate(title => {
+            const glyph = title.querySelector('ha-icon').getBoundingClientRect();
+            const range = document.createRange();
+            range.selectNodeContents(title.querySelector('.room-name'));
+            const text = range.getBoundingClientRect();
+            return Math.abs((text.left + text.width / 2) - (glyph.left + glyph.width / 2));
+          });
+          assert.ok(alignment < 45, 'Classic room labels stay close to their icon on wide screens');
+        }
+        assert.equal(await statusPage.evaluate(() => window.bayitTest.calls.length), 0);
+        await statusPage.close();
       }
 
       const editorPage = await browser.newPage({ viewport: {width: 390, height: 844} });
