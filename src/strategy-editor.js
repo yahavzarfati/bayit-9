@@ -1,6 +1,7 @@
 import { BACKGROUNDS, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile, PROFILE_DOMAINS, roomSections, selectableRoomEntities, STRATEGY_NAME } from './strategy-model.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { buildToolbarEditor } from './toolbar-editor.js';
+import { activityKinds, activitySources, normalizeRoomActivities } from './room-appliance.mjs';
 
 const WORDS = {
   en: {
@@ -16,6 +17,10 @@ const WORDS = {
     automaticDevices: 'Automatic', manualDevices: 'Choose devices and order',
     roomDevices: 'Devices in this room', deviceToAdd: 'Available devices', addDevice: 'Add device',
     readOnlyRoom: 'Show status only for selected room devices',
+    applianceBadges: 'Appliance activity badges', applianceKind: 'Appliance', saveAppliance: 'Save badge', removeAppliance: 'Remove badge',
+    applianceMissing: 'Choose the required sources to save this badge.',
+    applianceFields: { operation_entity: 'Operating state', finish_entity: 'Expected finish time',
+      power_entity: 'Power state', done_entity: 'Completion sensor', progress_entity: 'Progress (%)' },
     sections: 'Room sections', sectionMode: 'Section arrangement', automaticSections: 'Automatic grouping',
     manualSections: 'Arrange sections manually', automaticDevicesAndSections: 'Automatic devices and sections',
     editSection: 'Section to customize', addSection: 'Add section', removeSection: 'Delete section',
@@ -63,6 +68,10 @@ const WORDS = {
     automaticDevices: 'בחירה אוטומטית', manualDevices: 'בחירת מכשירים וסדר',
     roomDevices: 'מכשירים בחדר', deviceToAdd: 'מכשירים זמינים', addDevice: 'הוספת מכשיר',
     readOnlyRoom: 'הצגת מצב בלבד למכשירים שנבחרו',
+    applianceBadges: 'חיווי פעילות מכשירים', applianceKind: 'מכשיר', saveAppliance: 'שמירת חיווי', removeAppliance: 'הסרת חיווי',
+    applianceMissing: 'בחרו את מקורות הנתונים הנדרשים לשמירת החיווי.',
+    applianceFields: { operation_entity: 'מצב פעולה', finish_entity: 'זמן סיום צפוי',
+      power_entity: 'מצב הפעלה', done_entity: 'חיישן סיום', progress_entity: 'התקדמות (%)' },
     sections: 'קבוצות בחדר', sectionMode: 'סידור הקבוצות', automaticSections: 'קיבוץ אוטומטי',
     manualSections: 'סידור ידני של הקבוצות', automaticDevicesAndSections: 'בחירה אוטומטית של מכשירים וקבוצות',
     editSection: 'קבוצה לעריכה', addSection: 'הוספת קבוצה', removeSection: 'מחיקת קבוצה',
@@ -281,6 +290,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #shortcutRoom;
   #roomEditing;
   #sectionEditing;
+  #applianceRooms = new Map();
   #roomDeviceQuery = '';
   #newRoomName = '';
   #emptyRoomSelection = false;
@@ -605,6 +615,63 @@ export class Bayit9StrategyEditor extends HTMLElement {
       ])]);
   }
 
+  #roomAppliancePanel(room, override, words, language) {
+    const activities = normalizeRoomActivities(override.activities);
+    const memory = this.#applianceRooms.get(room.id) ?? { open: false, kind: activities[0]?.kind ?? 'oven' };
+    this.#applianceRooms.set(room.id, memory);
+    const body = node('div', { className: 'stack' });
+    const paint = () => {
+      if (body.childElementCount) return;
+      const titles = languages[language];
+      const kind = select(Object.keys(activityKinds).map(key => [key, titles['activity_' + key]]), memory.kind);
+      kind.dataset.roomFocus = 'appliance-kind';
+      const form = node('div', { className: 'stack' });
+      const options = selectableRoomEntities(this.#config, this.#hass);
+      const save = next => {
+        const updated = { ...override };
+        if (next.length) updated.activities = next;
+        else delete updated.activities;
+        this.#setRoomOverride(room.id, updated, 'appliance-kind');
+      };
+      const choose = () => {
+        memory.kind = kind.value;
+        const current = activities.find(item => item.kind === kind.value);
+        const { required, optional } = activityKinds[kind.value];
+        const fields = [...required, ...(optional ?? [])].map(key => {
+          const items = options.filter(item => activitySources[key].includes(item.entity.split('.')[0]))
+            .map(item => [item.entity, item.name && item.name !== item.entity ? item.name + ' · ' + item.entity : item.entity])
+            .sort((a, b) => a[1].localeCompare(b[1], language));
+          if (current?.[key] && !items.some(([id]) => id === current[key])) items.unshift([current[key], current[key]]);
+          const input = select([['', words.none], ...items], current?.[key] ?? '');
+          input.required = required.includes(key);
+          return { key, input, label: field(words.applianceFields[key], input) };
+        });
+        const error = node('p', { className: 'error', textContent: words.applianceMissing, hidden: true });
+        error.setAttribute('role', 'alert');
+        const controls = node('div', { className: 'actions' }, [button(words.saveAppliance, () => {
+          const [next] = normalizeRoomActivities([{ kind: kind.value,
+            ...Object.fromEntries(fields.map(({ key, input }) => [key, input.value])) }]);
+          if (!next) {
+            error.hidden = false;
+            fields.find(({ input }) => input.required && !input.value)?.input.focus();
+            return;
+          }
+          save(current ? activities.map(item => item.kind === next.kind ? next : item) : [...activities, next]);
+        })]);
+        if (current) controls.append(button(words.removeAppliance, () => save(activities.filter(item => item.kind !== current.kind))));
+        form.replaceChildren(...fields.map(item => item.label), error, controls);
+      };
+      kind.addEventListener('change', choose);
+      choose();
+      body.append(field(words.applianceKind, kind), form);
+    };
+    if (memory.open) paint();
+    return disclosure(words.applianceBadges, memory.open, open => {
+      memory.open = open;
+      if (open) paint();
+    }, [body]);
+  }
+
   #roomsPanel(words, language) {
     const rooms = dashboardRoomOptions(this.#config, this.#hass).sort((a, b) => a.name.localeCompare(b.name, language));
     const byId = new Map(rooms.map(room => [room.id, room]));
@@ -696,6 +763,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         this.#roomIconPicker(active, override, words, language),
         ...this.#roomDevicePanel(active, words, language, rooms),
         this.#roomSectionsPanel(active, override, words, language),
+        this.#roomAppliancePanel(active, override, words, language),
       ];
       if (active.custom) {
         const remove = button(words.deleteRoom, () => {

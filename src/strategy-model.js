@@ -1,3 +1,4 @@
+import { normalizeRoomActivities } from './room-appliance.mjs';
 import { HEATING_DOMAINS } from './device-control.mjs';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
@@ -174,6 +175,7 @@ function dashboardAreas(config, hass) {
       entityIds,
       sections,
       readOnly: new Set(idList(override.read_only_entities)),
+      activities: override.activities,
       entityIcons: entityIcons && typeof entityIcons === 'object' && !Array.isArray(entityIcons) ? entityIcons : null,
       custom: !area,
     });
@@ -306,6 +308,8 @@ export function discoverRooms(config, hass, locale) {
       }
     }
     const room = { id, name: area.name, icon: area.icon, entities };
+    const activities = normalizeRoomActivities(area.activities, visible);
+    if (activities.length) room.activities = activities;
     for (const device of entities) if (area.readOnly?.has(device.entity)) device.role = 'status';
     if (area.sections !== undefined) {
       const byId = new Map(entities.map(entity => [entity.entity, entity]));

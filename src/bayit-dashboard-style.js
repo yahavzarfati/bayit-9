@@ -276,6 +276,11 @@ export const styles = `
     white-space: nowrap;
     overflow: hidden;
   }
+  .room[data-appliance-status] { grid-template-rows: minmax(17px,auto) minmax(0,1fr); }
+  .shell[data-layout=header] .room[data-appliance-status] { grid-template-rows: auto minmax(20px,auto) minmax(0,1fr); }
+  .room[data-appliance-status] .room-status-strip { flex-wrap: wrap; overflow: visible; }
+  .room[data-appliance-status] .room-status { flex: none; max-width: 100%; }
+  .room-status[data-tone=finished] { color: #bcead0; border-color: rgba(160,224,188,.4); }
   .room-status ha-icon { --mdc-icon-size: 12px; width: 12px; height: 12px; }
   .room-status span { overflow: hidden; text-overflow: ellipsis; }
   .room-status span:empty { display: none; }
@@ -644,6 +649,9 @@ export const styles = `
       grid-template-areas: "status" "quick" "title";
       grid-template-columns: minmax(0,1fr);
       grid-template-rows: minmax(17px,1fr) auto 31px;
+    }
+    .shell[data-page=true][data-layout=classic] .room[data-appliance-status] {
+      grid-template-rows: minmax(17px,auto) auto 31px;
     }
     .shell[data-page=true][data-layout=classic] .quick {
       grid-template-columns: repeat(3,minmax(0,1fr));

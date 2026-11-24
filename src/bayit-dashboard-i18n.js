@@ -1,5 +1,8 @@
 export const languages = {
   en: {
+    activity_oven: 'Oven', activity_hob: 'Cooktop', activity_dishwasher: 'Dishwasher', activity_washer: 'Washing machine',
+    activity_remaining: 'Time remaining', activity_elapsed: 'Time running', activity_short_minutes: 'min',
+    activity_finished: 'Done', activity_running: 'Running',
     home: 'Home', overview: 'Home overview', settings: 'Appearance', close: 'Close', activity: 'Active devices', rooms: 'Rooms',
     automations: 'Automations', security: 'Security', presence: 'People at home', weather: 'Weather', energy: 'Energy',
     open_energy: 'Open energy dashboard',
@@ -63,6 +66,9 @@ export const languages = {
     available_option: 'Choose an option',
   },
   he: {
+    activity_oven: 'תנור', activity_hob: 'כיריים', activity_dishwasher: 'מדיח כלים', activity_washer: 'מכונת כביסה',
+    activity_remaining: 'זמן שנותר', activity_elapsed: 'זמן פעולה', activity_short_minutes: 'דק׳',
+    activity_finished: 'סיים', activity_running: 'רץ',
     home: 'בית', overview: 'מבט על הבית', settings: 'מראה', close: 'סגירה', activity: 'מכשירים פעילים', rooms: 'חדרים',
     automations: 'אוטומציות', security: 'אבטחה', presence: 'מי בבית', weather: 'מזג אוויר', energy: 'אנרגיה',
     open_energy: 'פתיחת דשבורד האנרגיה',
