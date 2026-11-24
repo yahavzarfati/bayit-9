@@ -1331,8 +1331,8 @@ export class BayitDashboard extends HTMLElement {
         editor.inert = true;
         status.textContent = this.t('setup_saving');
         try {
+          if (page.routeHash) this.popupHistory?.close(page.routeHash);
           await saveConfiguration(this._hass, current, draft);
-          if (this.panel === page && page.routeHash) this.popupHistory?.close(page.routeHash);
           location.reload();
         } catch (error) {
           if (this.panel !== page) return;

@@ -168,6 +168,7 @@ try {
   await setup.getByText('Appearance', { exact: true }).click();
   await setup.getByRole('checkbox', { name: 'Hide Home Assistant chrome on this dashboard' }).check();
   await setup.getByRole('button', { name: 'Save dashboard', exact: true }).click();
+  assert.equal(new URL(page.url()).hash, '', 'Saving setup removes the inherited Appearance route');
   await poll('full-screen preference persisted', async () => {
     const saved = await api.command('lovelace/config', { url_path: dashboard.url_path, force: true });
     return saved?.strategy?.fullscreen === true;

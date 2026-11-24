@@ -53,6 +53,7 @@ const hass = {
     if (request.type === 'lovelace/config') return Promise.resolve(stored());
     if (request.type === 'lovelace/config/save') {
       sessionStorage.setItem(storedKey, JSON.stringify(request.config));
+      sessionStorage.setItem(storedKey + '-hash-at-save', location.hash);
       return Promise.resolve();
     }
     if (request.domain === 'light') {
@@ -1335,6 +1336,7 @@ try {
       const setupPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
       await setupPage.goto(base + '/fixture-home/home?configuration&large-setup');
       await setupPage.getByRole('button', { name: 'Appearance', exact: true }).click();
+      assert.equal(new URL(setupPage.url()).hash, '#panel/settings');
       await setupPage.getByRole('button', { name: 'Customize home', exact: true }).click();
       const setup = setupPage.getByRole('dialog', { name: 'Customize home', exact: true });
       const setupEditor = setup.locator('.setup-editor');
@@ -1390,6 +1392,7 @@ try {
       await setup.getByRole('button', { name: 'Save dashboard', exact: true }).click();
       await setupPage.getByRole('button', { name: 'Reading nook', exact: true }).waitFor();
       const persisted = await setupPage.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')));
+      assert.equal(await setupPage.evaluate(() => sessionStorage.getItem('bayit9-browser-fixture-hash-at-save')), '');
       assert.deepEqual(Object.values(persisted.strategy.room_overrides), [{ name: 'Reading nook',
         entities: ['light.demo_lamp'], read_only_entities: ['light.demo_lamp'] }]);
       assert.deepEqual(persisted.strategy.hidden_entities, ['sensor.scale_entity_6']);
