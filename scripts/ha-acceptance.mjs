@@ -107,8 +107,14 @@ try {
   await room.getByRole('button', { name: 'Close', exact: true }).click();
 
   await page.setViewportSize({ width: 1200, height: 900 });
-  const edit = page.getByRole('button', { name: 'Edit dashboard', exact: true });
-  await edit.click();
+  const dashboardHeader = page.locator('hui-root');
+  const edit = dashboardHeader.getByRole('button', { name: 'Edit dashboard', exact: true });
+  if (await edit.isVisible()) {
+    await edit.click();
+  } else {
+    await dashboardHeader.locator('#dashboardmenu').click();
+    await dashboardHeader.locator('ha-dropdown-item').filter({ hasText: /^\s*Edit dashboard\s*$/ }).click();
+  }
   const editor = page.locator('dialog-dashboard-strategy-editor');
   const editorTitle = editor.getByLabel('Dashboard title', { exact: true });
   await editorTitle.fill('Bayit 9 Test Home');
