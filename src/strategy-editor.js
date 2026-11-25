@@ -511,10 +511,16 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #roomDeviceQuery = '';
   #newRoomName = '';
   #lastConfig;
+  #registryRefreshPending = false;
 
   constructor() {
     super();
-    this.attachShadow({ mode: 'open' });
+    this.attachShadow({ mode: 'open' }).addEventListener('focusout', () => {
+      if (!this.#registryRefreshPending) return;
+      requestAnimationFrame(() => {
+        if (this.#registryRefreshPending && !this.shadowRoot.activeElement) this.render();
+      });
+    });
   }
 
   set hass(value) {
@@ -523,7 +529,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
     if (previous.areas !== this.#hass.areas || previous.entities !== this.#hass.entities || previous.devices !== this.#hass.devices
         || (!hasStates(previous.states) && hasStates(this.#hass.states))
         || (previous.locale?.language ?? previous.language) !== (value?.locale?.language ?? value?.language)) {
-      this.render();
+      // Removing a focused control can dispatch a change and rebuild the editor again.
+      // Let the field finish editing before replacing the form.
+      if (this.shadowRoot.activeElement) this.#registryRefreshPending = true;
+      else this.render();
     } else this.#refreshLightEffects?.();
   }
 
@@ -2387,7 +2396,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
 
   render() {
     if (!this.isConnected) return;
-    const focused = this.shadowRoot.activeElement;
+    this.#registryRefreshPending = false;
     const language = languageFor(this.#config.locale, this.#hass);
     const words = WORDS[language];
     const title = node('input', { value: this.#config.title ?? '', maxLength: 80 });
@@ -2455,6 +2464,5 @@ export class Bayit9StrategyEditor extends HTMLElement {
     ]);
     form.addEventListener('submit', event => event.preventDefault());
     this.shadowRoot.replaceChildren(node('style', { textContent: CSS + ROOM_CSS + GLASS_EDITOR_CSS }), form);
-    if (focused && this.shadowRoot.contains(focused)) focused.focus({ preventScroll: true });
   }
 }

@@ -2013,6 +2013,73 @@ async function assertSetupDrafts(browser) {
   }
 }
 
+
+async function assertSetupRegistryRefreshKeepsField(browser) {
+  const labels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', choose:'Room to customize',
+      name:'Room display name', title:'Dashboard title', save:'Save dashboard' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים', choose:'חדר להתאמה אישית',
+      name:'שם החדר לתצוגה', title:'שם הדשבורד', save:'שמירת הדשבורד' },
+  ];
+  for (const words of labels) {
+    const page = await browser.newPage({ viewport:{ width:390, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      const refreshAreaName = name => page.evaluate(name => {
+        const card = document.querySelector('bayit-dashboard');
+        const hass = card._hass;
+        card.hass = { ...hass, areas:{ ...hass.areas, spare:{ ...hass.areas.spare, name } } };
+      }, name);
+      const writes = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'lovelace/config/save').length);
+      await page.goto(base + '/fixture-home/home?configuration&room-selection&locale=' + words.locale);
+      await page.getByRole('button', { name:words.appearance, exact:true }).tap();
+      await page.getByRole('button', { name:words.setup, exact:true }).tap();
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      await setup.getByText(words.rooms, { exact:true }).tap();
+      const chooser = setup.getByLabel(words.choose, { exact:true });
+      const roomName = setup.getByLabel(words.name, { exact:true });
+      const dashboardTitle = setup.getByLabel(words.title, { exact:true });
+      const save = setup.getByRole('button', { name:words.save, exact:true });
+      const otherRoom = chooser.locator('option[value=spare]');
+      const originalAreaName = await otherRoom.textContent();
+      const typedRoomName = 'Renamed fixture studio';
+      await chooser.selectOption('studio');
+      await roomName.fill(' ' + typedRoomName + ' ');
+      await roomName.evaluate(input => input.setSelectionRange(2, 8));
+      await refreshAreaName('Registry refresh one');
+      assert.equal(await roomName.inputValue(), ' ' + typedRoomName + ' ');
+      assert.deepEqual(await roomName.evaluate(input =>
+        [input.getRootNode().activeElement === input, input.selectionStart, input.selectionEnd]), [true,2,8]);
+      assert.equal(await chooser.inputValue(), 'studio');
+      assert.equal(await otherRoom.textContent(), originalAreaName);
+      assert.equal(await save.isEnabled(), false);
+      assert.equal(await writes(), 0);
+
+      await roomName.press('Enter');
+      assert.equal(await roomName.inputValue(), typedRoomName);
+      assert.equal(await chooser.locator('option[value=studio]').textContent(), typedRoomName);
+      assert.equal(await otherRoom.textContent(), 'Registry refresh one');
+      assert.equal(await roomName.evaluate(input => input.getRootNode().activeElement === input), true);
+      assert.equal(await save.isEnabled(), true);
+
+      await dashboardTitle.fill('Registry-ready fixture home');
+      await refreshAreaName('Registry refresh two');
+      assert.equal(await dashboardTitle.inputValue(), 'Registry-ready fixture home');
+      assert.equal(await dashboardTitle.evaluate(input => input.getRootNode().activeElement === input), true);
+      await dashboardTitle.blur();
+      await otherRoom.filter({ hasText:'Registry refresh two' }).waitFor({ state:'attached' });
+      assert.equal(await writes(), 0);
+      await save.tap();
+      await setup.waitFor({ state:'hidden' });
+      const stored = await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      assert.equal(stored.title, 'Registry-ready fixture home');
+      assert.equal(stored.room_overrides.studio.name, typedRoomName);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertCompactSettings(browser) {
   const page = await browser.newPage({ viewport: { width:391, height:845 }, isMobile:true, hasTouch:true, reducedMotion:'reduce' });
   page.setDefaultTimeout(8000);
@@ -5456,6 +5523,7 @@ try {
       await assertSetupFooterLayout(browser);
       console.log(engine + ': setup footer stays clear of the scrollable editor');
       await assertSetupDrafts(browser);
+      await assertSetupRegistryRefreshKeepsField(browser);
       console.log(engine + ': setup drafts survive closing, preserve conflicts, and retry safely');
       await assertHomeMaterial(browser);
       console.log(engine + ': Home glass, accessibility material, cover states and room labels');
