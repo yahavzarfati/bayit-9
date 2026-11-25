@@ -276,12 +276,19 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     focusWithoutScroll(focusTarget);
   }
 
+  function finishDismissal(context) {
+    dialog.close();
+    // The browser queues the close event. Release focus before another
+    // control can open a panel against this previous context.
+    if (current === context) resetContext(context, context?.restoreFocus !== false);
+  }
+
   function dismiss({ immediate = false, restoreFocus = true } = {}) {
     if (!dialog.open) return;
     const context = current;
     if (!context?.source || immediate || media.matches) {
       if (context) context.restoreFocus = restoreFocus;
-      dialog.close();
+      finishDismissal(context);
       return;
     }
     if (context.closing) return;
@@ -294,7 +301,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     if (isConnected(clip) && !context.externalScroll && context.originalScroll !== undefined) {
       scrollByAnimation(context, context.originalScroll, CLOSE_MS);
     }
-    runAnimation(context, from, { transform: 'scale(.35)', opacity: 0 }, CLOSE_MS, () => dialog.close());
+    runAnimation(context, from, { transform: 'scale(.35)', opacity: 0 }, CLOSE_MS, () => finishDismissal(context));
   }
 
   function reset() {

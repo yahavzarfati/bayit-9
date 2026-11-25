@@ -2353,7 +2353,19 @@ try {
       await panelPage.getByRole('button', { name: 'Den', exact: true }).tap();
       const other = panelPage.getByRole('dialog', { name: 'Den', exact: true });
       await other.getByRole('button', { name: 'Desk lamp · Turn on', exact: true }).waitFor();
+      await other.evaluate(dialog => {
+        window.fixtureDismissalCleanup = new Promise(resolve => {
+          const observer = new MutationObserver(() => {
+            if (dialog.open) return;
+            observer.disconnect();
+            resolve(!dialog.hasAttribute('data-kind') && !dialog.hasAttribute('data-closing'));
+          });
+          observer.observe(dialog, { attributes: true, attributeFilter: ['open'] });
+        });
+      });
       await panelPage.keyboard.press('Escape');
+      assert.equal(await panelPage.evaluate(() => window.fixtureDismissalCleanup), true,
+        'Closed dialogs must release their previous origin and focus in the same transition');
       await other.waitFor({ state: 'hidden' });
 
       const shortcut = panelPage.locator('.room[data-room="studio"] .quick-button[data-entity="light.demo_lamp"]');
