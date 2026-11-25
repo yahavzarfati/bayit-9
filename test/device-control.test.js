@@ -589,6 +589,43 @@ test("off-only heater preselection writes only its dedicated helper and keeps th
     target: { entity_id: c.level_preselect_entity }, service_data: { value: 8 } }]);
 });
 
+test("combined heater controls wait for the shared level selector to be idle", async () => {
+  const c = { ...levelSelector, level_preselect_entity: levelSelector.level_read_entity };
+  const script = c.level_select_script;
+  const preselect = "preselect_heating_level";
+  const select = "set_heating_level";
+  const idleOff = selectorStates();
+  const idleOn = selectorStates("on");
+  for (const power of ["on", "off"]) {
+    const action = power === "on" ? select : preselect;
+    for (const state of ["on", "unknown", "unavailable"]) {
+      const states = { ...selectorStates(power), [script]: entity(state) };
+      assert.equal(getDeviceModel(c, states).levelChanging, state === "on");
+      assert.throws(() => planDeviceAction(c, states, action, 8), code("action_unavailable"));
+    }
+  }
+  const differentHelper = { ...c, level_preselect_entity:"input_number.fixture_next_level" };
+  const withSeparateHelper = { ...idleOff, [script]:entity("on"),
+    [differentHelper.level_preselect_entity]:selectorLevel(4) };
+  assert.ok(getDeviceModel(differentHelper,withSeparateHelper).actions[preselect]);
+  assert.equal(getDeviceModel(differentHelper,withSeparateHelper).levelChanging,false);
+
+  const completed = harness(idleOn, {onSleep(_elapsed,hass) {
+    hass.states = { ...hass.states, [c.level_read_entity]:selectorLevel(8) };
+  }});
+  assert.equal((await completed.controller.execute(c,select,8)).status,"confirmed");
+  assert.deepEqual(completed.calls,[{type:"call_service",domain:"script",service:"fixture_select_step",
+    service_data:{target_step:8}}]);
+  const wrongLevel = harness(idleOn, {onSleep(_elapsed,hass) {
+    hass.states = { ...hass.states, [c.level_read_entity]:selectorLevel(7) };
+  }});
+  assert.equal((await wrongLevel.controller.execute(c,select,8)).reason,"state_timeout");
+  const off = planDeviceAction(c,idleOff,preselect,6);
+  assert.deepEqual([off.domain,off.service,off.target,off.data],
+    ["input_number","set_value",{entity_id:c.level_read_entity},{value:6}]);
+  assert.throws(() => planDeviceAction(c,idleOff,select,8),code("action_unavailable"));
+});
+
 test("lock unlock requires explicit confirmation and an optional PIN stays in its one request", () => {
   const c = config("lock.entry");
   const states = { [c.entity]: entity("locked", { supported_features: 1, code_format: "^\\d{4}$" }) };

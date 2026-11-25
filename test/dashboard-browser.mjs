@@ -28,6 +28,7 @@ document.addEventListener('hass-more-info', event => {
 });
 const coverRequests = [];
 let finishLevel;
+let rejectLevel = false;
 let finishPreselect;
 let finishClimatePreset;
 let finishUsageReset;
@@ -372,6 +373,10 @@ const hass = {
       observeScript(request.service === 'turn_on' ? 'on' : 'off');
     }
     if (request.domain === 'script' && request.service === 'demo_select_heat_step') {
+      if (rejectLevel) {
+        rejectLevel = false;
+        return Promise.reject(new Error('Fixture rejected heater level'));
+      }
       states['script.demo_select_heat_step'] = { state: 'on', attributes: {} };
       card.hass = { ...hass, states: { ...states } };
       return new Promise(resolve => {
@@ -619,7 +624,7 @@ const helper = 'input_number.demo_heat_step';
 const heaterTimer = 'sensor.demo_step_runtime';
 const heaterRelay = 'switch.demo_step_power';
 const heaterScript = 'script.demo_select_heat_step';
-const nextLevel = 'input_number.demo_next_step';
+const nextLevel = query.has('shared-heater-level') ? helper : 'input_number.demo_next_step';
 if (query.has('heater-level')) {
   Object.assign(states, {
     [heaterFan]: { state: 'off', attributes: { friendly_name: 'Fixture step heater', supported_features: 49 } },
@@ -1157,6 +1162,7 @@ window.bayitTest = {
     card.hass = { ...hass, states: { ...states } };
   },
   finishLevel: () => finishLevel(),
+  rejectNextLevel: () => { rejectLevel = true; },
   finishPreselect: () => finishPreselect(),
   finishClimatePreset: () => finishClimatePreset(),
   finishUsageReset: () => finishUsageReset(),
@@ -2279,6 +2285,81 @@ async function assertCompactInlineLightLayout(browser) {
       assert.equal(await card.locator('output:visible').textContent(), '3000 K');
       assert.equal((await card.boundingBox()).height, tile.height);
       assert.deepEqual(await page.evaluate(() => window.bayitTest.calls), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+async function assertSharedHeaterLevelInterop(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const script = 'script.demo_select_heat_step';
+    const helper = 'input_number.demo_heat_step';
+    const relay = 'switch.demo_step_power';
+    const panel = page.getByRole('dialog',{name:'Fixture step heater',exact:true});
+    const choice = number => panel.locator('.heat-level-choice').getByText(String(number),{exact:true});
+    const changing = panel.getByText(he ? 'משנה את עוצמת החימום…' : 'Changing heating level…',{exact:true});
+    const state = (entity,value) => page.evaluate(([entity,value])=>window.bayitTest.setRoomState(entity,value),[entity,value]);
+    const power = current => page.evaluate(current=>window.bayitTest.setHeaterPower(current),current);
+    const calls = () => page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service'));
+    const activeChoice = number => panel.locator('.heat-level-choice[aria-pressed=true]:enabled').getByText(String(number),{exact:true});
+    try {
+      await page.goto(base + '/?heater-level&preselect&shared-heater-level&locale=' + locale);
+      await page.locator('.quick-button[data-entity="fan.demo_step_heater"]').tap();
+      await activeChoice(5).waitFor();
+      await state(script,'on');
+      await changing.waitFor();
+      assert.ok(await choice(7).isDisabled());
+      await choice(7).evaluate(button=>button.click());
+      assert.deepEqual(await calls(),[]);
+      await state(helper,'4');
+      await state(script,'off');
+      await activeChoice(4).waitFor();
+
+      await choice(7).tap();
+      await page.waitForFunction(()=>window.bayitTest.calls.length === 1);
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.heatingState()),['off','off','idle']);
+      await page.evaluate(()=>window.bayitTest.finishPreselect());
+      await activeChoice(7).waitFor();
+
+      await power('on');
+      await panel.locator('[data-action=set_heating_level]:enabled').first().waitFor();
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.heatingState()),['on','on','idle']);
+      await state(script,'on');
+      await changing.waitFor();
+      assert.ok(await choice(2).isDisabled());
+      await state(helper,'8');
+      await state(script,'off');
+      await activeChoice(8).waitFor();
+      assert.deepEqual(await calls(),[{type:'call_service',domain:'input_number',service:'set_value',
+        target:{entity_id:helper},service_data:{value:7}}]);
+
+      await choice(2).tap();
+      assert.ok(await choice(2).isDisabled());
+      assert.equal(await choice(2).getAttribute('data-changing'),'');
+      await page.evaluate(()=>window.bayitTest.finishLevel());
+      await activeChoice(2).waitFor();
+      await page.evaluate(()=>window.bayitTest.rejectNextLevel());
+      await choice(6).tap();
+      await panel.getByText(he ? 'הפעולה לא הושלמה.' : 'Could not complete the action.',{exact:true}).waitFor();
+      await activeChoice(2).waitFor();
+
+      const blocked = panel.locator('.heat-level-choice:disabled').getByText('6',{exact:true});
+      await state(relay,'off');
+      await blocked.waitFor();
+      await blocked.evaluate(button=>button.click());
+      await state(relay,'on');
+      await activeChoice(2).waitFor();
+      await state(script,'unavailable');
+      await blocked.waitFor();
+      await blocked.evaluate(button=>button.click());
+      assert.deepEqual(await calls(),[
+        {type:'call_service',domain:'input_number',service:'set_value',target:{entity_id:helper},service_data:{value:7}},
+        ...[2,6].map(target_step=>({type:'call_service',domain:'script',service:'demo_select_heat_step',service_data:{target_step}})),
+      ]);
     } finally {
       await page.close();
     }
@@ -4366,6 +4447,7 @@ try {
       await assertShortcutDetailRoutes(browser);
       await assertCompactInlineLightLayout(browser);
       await assertCompactRoomHeater(browser);
+      await assertSharedHeaterLevelInterop(browser);
       console.log(engine + ': compact room heater, confirmed idle and safe active controls');
       console.log(engine + ': scoped panel and native shortcut destinations, safe taps, focus return and editor persistence');
       console.log(engine + ': independent browser appearance and admin household defaults');

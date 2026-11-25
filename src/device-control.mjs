@@ -202,6 +202,12 @@ function verifiedLevel(record, steps) {
     max >= steps && step === 1 && value >= min && value <= steps ? value : null;
 }
 
+function sharedHeaterLevelSelector(config) {
+  if (config.level_preselect_entity && config.level_preselect_entity === config.level_read_entity) {
+    return config.level_select_script;
+  }
+}
+
 function supportedActions(config, states, record, timer, nowMs, roomBoilerQuickPower) {
   const actions = {};
   const confirmationText = typeof config.confirmation === "string" ? config.confirmation.trim().slice(0, 200) : "";
@@ -368,7 +374,9 @@ function supportedActions(config, states, record, timer, nowMs, roomBoilerQuickP
     add("set_heating_level", { min: 1, max: config.level_steps, step: 1 });
     delete actions.set_percentage;
   }
+  const sharedSelector = sharedHeaterLevelSelector(config);
   if (config.level_preselect_entity && record.state === "off" && timer?.state === "idle" &&
+      (!sharedSelector || states?.[sharedSelector]?.state === "off") &&
       states?.[timing.simple_timer_target]?.state === "off" &&
       verifiedLevel(states?.[config.level_preselect_entity], config.level_steps) !== null) {
     add("preselect_heating_level", { min: 1, max: config.level_steps, step: 1 });
@@ -418,7 +426,8 @@ function deviceModel(config, states, nowMs, roomBoilerQuickPower) {
     ...(config.level_steps && !isReadOnlyRole(config.role) && {
       levelRange: { min: 1, max: config.level_steps, step: 1 },
       levelAction: preselect ? "preselect_heating_level" : "set_heating_level",
-      levelChanging: !!config.level_select_script && states?.[config.level_select_script]?.state === "on",
+      levelChanging: !!config.level_select_script && (!preselect || !!sharedHeaterLevelSelector(config)) &&
+        states?.[config.level_select_script]?.state === "on",
     }),
     timer,
     ...(usageSource && { usageSource }),

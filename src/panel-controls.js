@@ -272,7 +272,7 @@ export function buildPanelControls(model, {
       changing.hidden = true;
       changing.setAttribute('role', 'status');
       updates.push((current, pending) => {
-        changing.hidden = levelId !== 'set_heating_level' || pending?.id === levelId || !current.levelChanging;
+        changing.hidden = pending?.id === levelId || !current.levelChanging;
       });
       const choices = make('div', 'heat-level-options');
       for (let i = 0; i < count; i++) {
