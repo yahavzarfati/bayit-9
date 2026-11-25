@@ -4,7 +4,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   isCompactAutomationActions, isEnergyReadingCards, isWeatherReadingsList,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeRoomIcon, normalizeShortcutDetailEntities,
   normalizeRoomVacuumSummary, normalizeToolbarReadout, normalizeRoomTemperatureGraphColor, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
-  ROOM_PANEL_KINDS, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomCompactDevice, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
+  ROOM_PANEL_KINDS, normalizeShortcutPowerEntities, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomCompactDevice, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
   sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
@@ -357,6 +357,7 @@ export function normalizeDashboardConfig(config = {}) {
       parsed.shortcutNoDetails = new Set(roomShortcutDevices(parsed).filter(device =>
         supportsShortcutWithoutDetails(device) && excluded.has(device.entity)).map(device => device.entity));
     }
+    parsed.shortcutPower = new Set(normalizeShortcutPowerEntities(parsed, room.shortcut_power_entities));
     parsed.shortcutDetailEntities = normalizeShortcutDetailEntities(parsed, room.shortcut_detail_entities, parsed.shortcutNoDetails);
     if (Array.isArray(room.sections)) {
       parsed.sections = room.sections.filter(section => roomSectionKinds.has(section?.kind)).map(section => ({
@@ -1090,6 +1091,13 @@ export class BayitDashboard extends HTMLElement {
     } else if (details) this.openDeviceDetails(config, source, room);
   }
 
+  homeShortcutPowerAction(config) {
+    if (!isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities)) return;
+    if (config.room_boiler_quick_power) return this.roomPowerTileAction(config);
+    const action = roomClimatePowerAction(this.model(config));
+    if (climatePowerServiceRegistered(this._hass, action)) return action;
+  }
+
   roomPowerTileAction(config, reported = null) {
     if (config.room_boiler_quick_power) {
       const model = this.model(config, { roomBoilerQuickPower: true });
@@ -1188,9 +1196,32 @@ export class BayitDashboard extends HTMLElement {
         const el = button('quick-button', config.name || config.entity, config.icon || 'mdi:information-outline', true);
         el.dataset.entity = config.entity;
         const details = !room.shortcutNoDetails?.has(config.entity);
-        el.onclick = () => this.quickAction(config, el, room, { details });
-        bindDeviceDetails(el, details ? () => this.openShortcutDetails(config, el, room) : undefined);
-        shortcut.set(config.entity, el);
+        let powerConfig;
+        if (room.shortcutPower.has(config.entity)) {
+          const flag = domainFor(config) === 'climate' ? 'room_climate_power' : 'room_boiler_quick_power';
+          powerConfig = { ...config, [flag]: true };
+        }
+        const showDetails = () => this.openShortcutDetails(config, el, room);
+        if (powerConfig) {
+          let armedAction;
+          bindDeviceDetails(el, () => {
+            armedAction = undefined;
+            showDetails();
+          }, { requireShortTap: true, activationStart: () => { armedAction = el.dataset.action ?? ''; } });
+          el.onclick = () => {
+            if (!el.isConnected || this.panel || this.roomViews.get(room.id)?.room !== room) return;
+            const armed = armedAction ?? el.dataset.action;
+            armedAction = undefined;
+            const action = this.homeShortcutPowerAction(powerConfig);
+            if (action && action === armed && action === el.dataset.action) {
+              this.requestAction(powerConfig, action, undefined, el, { roomPowerTile: powerConfig.room_boiler_quick_power });
+            } else if (!action) showDetails();
+          };
+        } else {
+          el.onclick = () => this.quickAction(config, el, room, { details });
+          bindDeviceDetails(el, details ? showDetails : undefined);
+        }
+        shortcut.set(config.entity, { el, powerConfig });
         quick.append(el);
       }
       article.append(status, quick, heading);
@@ -1401,15 +1432,19 @@ export class BayitDashboard extends HTMLElement {
           const activity = this.roomClimateBadge(model, tone);
           if (activity) activities.push(activity);
         }
-        const shortcut = view.shortcut.get(config.entity);
-        if (!shortcut) continue;
+        const quickControl = view.shortcut.get(config.entity);
+        if (!quickControl) continue;
+        const { el: shortcut, powerConfig } = quickControl;
         const pending = this.pending.get(config.entity);
         const feedback = this.coverFeedback(model, pending);
         const stop = model.domain === 'cover' && model.actions.stop && this.coverIsMoving(model) &&
           this.canRequest(config.entity, 'stop');
         setIcon(shortcut.firstElementChild, model.icon);
         const status = feedback?.requestLabel || this.stateLabel(model);
-        label(shortcut, model.name + ' · ' + status + (stop ? ' · ' + this.t('stop') : ''));
+        const powerAction = powerConfig && this.homeShortcutPowerAction(powerConfig);
+        if (powerConfig) shortcut.dataset.action = powerAction || '';
+        const actionLabel = stop ? this.t('stop') : powerAction ? this.actionLabel(powerAction) : '';
+        label(shortcut, model.name + ' · ' + status + (actionLabel ? ' · ' + actionLabel : ''));
         shortcut.dataset.tone = feedback ? 'moving' : tone;
         shortcut.dataset.transition = feedback?.direction || '';
         shortcut.toggleAttribute('data-unavailable',

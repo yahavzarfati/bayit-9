@@ -2007,3 +2007,32 @@ test('native light holds apply only to writable tiles in the opted-in room', () 
   assert.deepEqual(optedIn(studio), [explicitTile, automaticTile]);
   assert.deepEqual(optedIn(lounge), []);
 });
+
+test('projects power only for selected supported Home shortcuts in their configured room', () => {
+  const hass = home();
+  const ac = 'climate.demo_air';
+  const boiler = 'switch.demo_boiler';
+  const monitor = 'climate.monitor';
+  hass.entities[ac] = {};
+  hass.states[monitor] = { state: 'cool', attributes: {} };
+  hass.entities[monitor] = {};
+  const devices = [ac, boiler, monitor, 'fan.demo_fan'];
+  const config = {
+    area_ids: ['studio', 'lounge'], show_unassigned: false,
+    room_overrides: {
+      studio: { entities: devices, read_only_entities: [monitor], shortcut_power_entities: [...devices, ac, 'switch.other'] },
+      lounge: { entities: devices },
+    },
+    room_shortcuts: { studio: devices, lounge: devices },
+    profiles: [{ entity: ac, kind: 'climate' }, { entity: monitor, kind: 'climate' },
+      { entity: boiler, kind: 'boiler', timed: { simple_timer_entity: 'sensor.fixture_runtime' } }],
+  };
+  const rooms = () => discoverRooms(config, hass, 'en');
+  assert.deepEqual(rooms()[0].shortcut_power_entities, [ac, boiler]);
+  assert.equal(rooms()[1].shortcut_power_entities, undefined);
+  assert.ok(rooms()[0].entities.every(device => !device.room_boiler_quick_power && !device.room_climate_power));
+  config.room_shortcuts.studio = [monitor, ac];
+  assert.deepEqual(rooms()[0].shortcut_power_entities, [ac]);
+  config.profiles[0].timed = { start_script: 'script.demo_start' };
+  assert.equal(rooms()[0].shortcut_power_entities, undefined);
+});

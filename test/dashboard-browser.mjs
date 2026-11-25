@@ -1209,6 +1209,82 @@ window.bayitTest = {
 };
 </script></html>`;
 
+const homePowerFixture = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<script type="module">
+import '/bayit-9.js';
+const params = new URLSearchParams(location.search);
+const climate = 'climate.fixture_air';
+const boiler = 'switch.fixture_boiler';
+const runtime = 'sensor.fixture_runtime';
+const ids = [climate, boiler];
+const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
+const settings = {
+  type: 'custom:bayit-9', locale: params.get('locale'), area_ids: ['studio', 'den'],
+  room_overrides: {
+    studio: { entities: ids, shortcut_power_entities: ids, shortcut_detail_routes: { [climate]: 'native' } },
+    den: { entities: ids },
+  },
+  room_shortcuts: { studio: ids, den: ids },
+  profiles: [{ entity: climate, kind: 'climate' }, { entity: boiler, kind: 'boiler',
+    timed: { simple_timer_entity: runtime, min_minutes: 15, max_minutes: 60, step_minutes: 15 } }],
+};
+const calls = [], details = [];
+const states = {
+  [climate]: { state: 'off', attributes: { friendly_name: 'Fixture air', supported_features: 384 } },
+  [boiler]: { state: 'off', attributes: { friendly_name: 'Fixture boiler' } },
+  [runtime]: { state: '0', attributes: {
+    entry_id: 'fixture', switch_entity_id: boiler, timer_state: 'idle', device_active: false, reverse_mode: false,
+  } },
+};
+const services = { climate: { turn_on: {}, turn_off: {} }, switch: { turn_on: {}, turn_off: {} },
+  simple_timer: { start_timer: {}, cancel_timer: {} } };
+const card = document.createElement('bayit-dashboard');
+const hass = {
+  areas: { studio: { name: 'Studio' }, den: { name: 'Den' } }, states, services, entities: { [runtime]: { platform: 'simple_timer' } },
+  callWS(request) {
+    if (request.type !== 'call_service') return Promise.resolve({});
+    calls.push(request);
+    const powered = request.service === 'turn_on';
+    if (request.domain === 'climate') states[climate].state = powered ? 'cool' : 'off';
+    if (request.domain === 'switch' || request.service === 'cancel_timer') {
+      states[boiler].state = powered ? 'on' : 'off';
+      Object.assign(states[runtime].attributes, { timer_state: 'idle', device_active: powered, reverse_mode: false });
+    }
+    card.hass = { ...hass };
+    return Promise.resolve({});
+  },
+};
+window.fixture = {
+  calls, details,
+  state(entity, state) {
+    states[entity].state = state;
+    card.hass = { ...hass };
+  },
+  service(domain, name, enabled) {
+    if (enabled) services[domain][name] = {};
+    else delete services[domain][name];
+    card.hass = { ...hass };
+  },
+  runtime(powered, updates) {
+    states[boiler].state = powered ? 'on' : 'off';
+    Object.assign(states[runtime].attributes, { timer_state: 'idle', switch_entity_id: boiler,
+      reverse_mode: false, device_active: powered, ...updates });
+    card.hass = { ...hass };
+  },
+};
+if (params.has('editor')) {
+  const editor = Strategy.getConfigElement();
+  editor.setConfig(settings);
+  editor.hass = hass;
+  editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
+  document.body.append(editor);
+} else {
+  card.setConfig(Strategy.generate(settings, hass).views[0].cards[0]);
+  card.hass = hass;
+  card.addEventListener('hass-more-info', event => details.push(event.detail.entityId));
+  document.body.append(card);
+}
+</script>`;
 const sharedFixtureDefaults = { strategy: { type: 'custom:bayit-9', show_unassigned: false }, fixture: true };
 const sharedFixtures = new Map();
 const server = http.createServer(async (req, res) => {
@@ -1216,6 +1292,9 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/bayit-9.js') {
     res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
     res.end(bundle);
+  } else if (url.pathname === '/fixture-home/quick-power') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(homePowerFixture);
   } else if (/^[/]fixture-shared-dashboard[/][a-z]+$/.test(url.pathname)) {
     if (req.method === 'POST') {
       const body = [];
@@ -5563,6 +5642,106 @@ async function assertRoomCoverColumns(browser) {
   }
 }
 
+async function assertHomeShortcutPower(browser) {
+  for (const locale of ['en', 'he']) {
+    const page = await browser.newPage({ viewport: { width: 390, height: 846 }, hasTouch: true, reducedMotion: 'reduce' });
+    page.setDefaultTimeout(10000);
+    const he = locale === 'he';
+    const climate = 'climate.fixture_air';
+    const boiler = 'switch.fixture_boiler';
+    const ready = command => page.locator('.room[data-room="studio"] .quick-button[data-action="' + command + '"]').first().waitFor();
+    const calls = () => page.evaluate(() => window.fixture.calls);
+    const shortcut = (room, entity) => page.locator('.room[data-room="' + room + '"] .quick-button[data-entity="' + entity + '"]');
+    const air = shortcut('studio', climate);
+    const relay = shortcut('studio', boiler);
+    const airDetails = page.getByRole('dialog', { name: 'Fixture air', exact: true });
+    const boilerDetails = page.getByRole('dialog', { name: 'Fixture boiler', exact: true });
+    const url = base + '/fixture-home/quick-power?locale=' + locale;
+    const close = async dialog => {
+      await dialog.getByRole('button', { name: he ? 'סגירה' : 'Close', exact: true }).press('Enter');
+      await dialog.waitFor({ state: 'hidden' });
+    };
+    const changeAir = state => page.evaluate(value => window.fixture.state('climate.fixture_air', value), state);
+    const changeRuntime = (powered, attrs) => page.evaluate(([on, next]) => window.fixture.runtime(on, next), [powered, attrs]);
+    try {
+      await page.goto(url);
+      await air.waitFor();
+      assert.equal(await air.getAttribute('data-action'), 'turn_on');
+      assert.deepEqual(await calls(), []);
+      await air.evaluate(button => button.click());
+      assert.deepEqual(await calls(), []);
+      await air.press('Shift+Enter');
+      assert.deepEqual(await page.evaluate(() => window.fixture.details), [climate]);
+      assert.deepEqual(await calls(), []);
+      await ready('turn_on');
+      await air.tap();
+      await page.waitForFunction(() => window.fixture.calls.length === 1);
+      assert.deepEqual((await calls()).map(request => [request.domain, request.service, request.target.entity_id]),
+        [['climate', 'turn_on', climate]]);
+      await page.locator('.quick-button[data-entity="climate.fixture_air"][data-action="turn_off"]').waitFor();
+      const box = await air.boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await changeAir('off');
+      await page.locator('.quick-button[data-entity="climate.fixture_air"][data-action="turn_on"]').waitFor();
+      await page.mouse.up();
+      assert.equal((await calls()).length, 1);
+      await air.press('Enter');
+      await page.waitForFunction(() => window.fixture.calls.length === 2);
+      assert.equal((await calls())[1].service, 'turn_on');
+
+      await page.evaluate(() => window.fixture.service('climate', 'turn_off', false));
+      await page.locator('.quick-button[data-entity="climate.fixture_air"][data-action=""]').waitFor();
+      await air.tap();
+      assert.deepEqual(await page.evaluate(() => window.fixture.details), [climate, climate]);
+      assert.equal((await calls()).length, 2);
+      const denAir = shortcut('den', climate);
+      assert.equal(await denAir.getAttribute('data-action'), null);
+      await denAir.press('Shift+Enter');
+      await airDetails.waitFor();
+      await close(airDetails);
+      assert.equal((await calls()).length, 2);
+
+      await relay.click({ delay: 625 });
+      await boilerDetails.waitFor();
+      assert.equal((await calls()).length, 2);
+      await close(boilerDetails);
+      await relay.tap();
+      await page.waitForFunction(() => window.fixture.calls.length === 3);
+      assert.equal((await calls())[2].service, 'turn_on');
+      await changeRuntime(true, { timer_state: 'active', reverse_mode: true });
+      await page.locator('.quick-button[data-entity="switch.fixture_boiler"][data-action=""]').waitFor();
+      await relay.tap();
+      await boilerDetails.waitFor();
+      await close(boilerDetails);
+      assert.equal((await calls()).length, 3);
+      await changeRuntime(true, { timer_state: 'active' });
+      await relay.locator('xpath=self::*[@data-action="stop_timed"]').waitFor();
+      await relay.tap();
+      await page.waitForFunction(() => window.fixture.calls.length === 4);
+      assert.deepEqual((await calls())[3].service_data, { entity_id: 'sensor.fixture_runtime', turn_off_entity: true });
+      await changeRuntime(false, { switch_entity_id: 'switch.other' });
+      await relay.locator('xpath=self::*[@data-action=""]').waitFor();
+      await relay.tap();
+      await boilerDetails.waitFor();
+      assert.equal((await calls()).length, 4);
+
+      await page.goto(url + '&editor');
+      await page.getByText(he ? 'קיצורים בחדרים' : 'Room shortcuts', { exact: true }).click();
+      const cb = page.getByRole('checkbox', { name: (he ? 'הפעלה וכיבוי בלחיצה קצרה' : 'Switch power with a short tap') + ' · Fixture boiler', exact: true });
+      assert.equal(await cb.isChecked(), true);
+      await cb.uncheck();
+      assert.deepEqual(await page.evaluate(() => window.latest.room_overrides.studio.shortcut_power_entities), [climate]);
+      await cb.check();
+      assert.deepEqual(await page.evaluate(() => window.latest.room_overrides.studio.shortcut_power_entities), [climate, boiler]);
+      assert.equal(await page.evaluate(() => window.latest.room_overrides.den.shortcut_power_entities), undefined);
+      assert.deepEqual(await calls(), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
@@ -5585,6 +5764,7 @@ try {
       await assertOverviewClimateDiscovery(browser);
       console.log(engine + ': editable active climate discovery, passive rows and live scope');
       await assertShortcutDetailRoutes(browser);
+      await assertHomeShortcutPower(browser);
       await assertCompactInlineLightLayout(browser);
       await assertCompactRoomHeater(browser);
       await assertSharedHeaterLevelInterop(browser);

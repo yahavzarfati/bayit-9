@@ -63,6 +63,8 @@ In **Room shortcuts**, turn off **Open details with a long press** for an indivi
 
 In **Room shortcuts**, choose a **Long-press destination** for each shortcut. Choose another device in the room, Home Assistant details for the shortcut device, or a configured screen outside Settings. The quick tap keeps its existing action. In YAML, set `shortcut_detail_entities` under the room’s `room_overrides` to map shortcuts to same-room entity IDs. Use `shortcut_detail_routes` to map a shortcut to `native` or `panel:<toolbar-id>`. A valid route takes precedence when both maps name the same shortcut. The ordinary-switch opt-out applies to all destinations.
 
+In **Room shortcuts**, enable **Switch power with a short tap** for a climate device or a compatible Simple Timer boiler. A short tap acts on the reported power and timer state. A long press opens the chosen details. If there is no safe power action, the shortcut opens details. In YAML, list the selected IDs in `shortcut_power_entities` under the room override.
+
 Enable **Show brightness and temperature in this room** to add a light's supported sliders to its room tile. Adjustments apply when the slider is released. The same light keeps its default presentation in other rooms. The YAML field `inline_light_entities` lists the lights with inline controls.
 
 Use **Open Home Assistant details from the cover header** in **Room device display** to open the selected cover's native details with a tap or hold. The room remains open underneath. The YAML field `native_cover_header_entities` lists the covers with this behavior.

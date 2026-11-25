@@ -338,6 +338,18 @@ export function supportsRoomBoilerQuickPower(device) {
     !timing.start_script && !timing.stop_script && (!timing.simple_timer_target || timing.simple_timer_target === device.entity));
 }
 
+export function supportsHomeShortcutPower(device) {
+  const climate = domainOf(device.entity) === 'climate' && (!device.kind || device.kind === 'climate') &&
+    !device.timed?.start_script && !device.timed?.stop_script;
+  return !isReadOnlyRole(device.role) && (climate || supportsRoomBoilerQuickPower(device));
+}
+
+export function normalizeShortcutPowerEntities(room, value) {
+  const requested = new Set(idList(value));
+  return roomShortcutDevices(room).filter(device =>
+    requested.has(device.entity) && supportsHomeShortcutPower(device)).map(device => device.entity);
+}
+
 export function supportsNativeShortcutDetails(device) {
   return !isReadOnlyRole(device.role);
 }
@@ -386,6 +398,7 @@ function dashboardAreas(config, hass) {
       readOnly: new Set(idList(override.read_only_entities)),
       panelHidden: idList(override.panel_hidden_entities),
       shortcutNoDetails: new Set(idList(override.shortcut_no_details)),
+      shortcutPowerEntities: override.shortcut_power_entities,
       shortcutDetailEntities: override.shortcut_detail_entities,
       shortcutDetailRoutes: override.shortcut_detail_routes,
       inlineLights: new Set(idList(override.inline_light_entities)),
@@ -760,6 +773,8 @@ export function discoverRooms(config, hass, locale) {
         supportsShortcutWithoutDetails(device) && area.shortcutNoDetails.has(device.entity));
       if (excluded.length) room.shortcut_no_details = excluded.map(device => device.entity);
     }
+    const quickPower = normalizeShortcutPowerEntities(room, area.shortcutPowerEntities);
+    if (quickPower.length) room.shortcut_power_entities = quickPower;
     const detailEntities = normalizeShortcutDetailEntities(room, area.shortcutDetailEntities, room.shortcut_no_details);
     if (Object.keys(detailEntities).length) room.shortcut_detail_entities = detailEntities;
     const routes = normalizeShortcutDetailRoutes(room, area.shortcutDetailRoutes, detailPanels, room.shortcut_no_details);

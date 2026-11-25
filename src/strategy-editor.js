@@ -6,7 +6,7 @@ import {
   normalizeRoomVacuumSummary, normalizeUnreportedSwingMode,
   popupAliasDestinations, PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, roomShortcutDevices, roomVacuumPresentation, ROOM_VACUUM_SUMMARY_DOMAINS,
   selectableRoomEntities, selectedRoomIds,
-  shortcutPanelOptions, STRATEGY_NAME, supportsNativeShortcutDetails, supportsShortcutWithoutDetails,
+  shortcutPanelOptions, STRATEGY_NAME, supportsHomeShortcutPower, supportsNativeShortcutDetails, supportsShortcutWithoutDetails,
   supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomCompactDevice, usesAutomaticRoomDevices,
 } from './strategy-model.js';
 import { languages } from './bayit-dashboard-i18n.js';
@@ -119,6 +119,7 @@ const WORDS = {
     overviewHint: 'Choose devices for the overview button, such as a lock, people, a calendar or an energy sensor.',
     shortcuts: 'Room shortcuts', shortcutRoom: 'Room', automaticShortcuts: 'Choose shortcuts automatically',
     shortcut: 'Shortcut', shortcutHint: 'Pick up to six devices in display order.',
+    shortcutPower: 'Short tap', shortcutPowerDevice: 'Switch power with a short tap · {name}',
     shortcutDetails: 'Long-press gesture', shortcutDetailsDevice: 'Open details with a long press · {name}',
     shortcutDestination: 'Long-press destination · {name}', shortcutBayitDetails: 'Device details in Bayit 9',
     shortcutNativeDetails: 'Device details in Home Assistant', shortcutPanel: 'Screen · {name}',
@@ -243,6 +244,7 @@ const WORDS = {
     overviewHint: 'בחרו מה יוצג במבט על הבית, למשל מנעול, אנשים, יומן או חיישן צריכת חשמל.',
     shortcuts: 'קיצורים בחדרים', shortcutRoom: 'חדר', automaticShortcuts: 'בחירת קיצורים אוטומטית',
     shortcut: 'קיצור', shortcutHint: 'אפשר לבחור עד שישה מכשירים לפי סדר התצוגה.',
+    shortcutPower: 'לחיצה קצרה', shortcutPowerDevice: 'הפעלה וכיבוי בלחיצה קצרה · {name}',
     shortcutDetails: 'פעולה בלחיצה ארוכה', shortcutDetailsDevice: 'פתיחת פרטי מכשיר בלחיצה ארוכה · {name}',
     shortcutDestination: 'יעד לחיצה ארוכה · {name}', shortcutBayitDetails: 'פרטי המכשיר בבית 9',
     shortcutNativeDetails: 'פרטי המכשיר ב־Home Assistant', shortcutPanel: 'מסך · {name}',
@@ -1378,7 +1380,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         delete next.room_temperature_fallback_entity;
       }
       for (const key of ['keep_in_automatic_room_entities', 'read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
-        'inline_light_entities', 'dual_light_detail_entities', 'compact_light_reading_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details',
+        'inline_light_entities', 'dual_light_detail_entities', 'compact_light_reading_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details', 'shortcut_power_entities',
         'vacuum_panel_hold_entities', 'climate_power_entities', 'media_compact_entities', 'appliance_tile_entities',
         'boiler_quick_power_entities', 'compact_device_entities', 'compact_climate_controls_entities']) {
         if (!Array.isArray(next[key])) continue;
@@ -1758,6 +1760,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     roomInput.dataset.shortcutRoom = '';
     const list = node('div', { className: 'grid', hidden: true });
     const details = node('fieldset', { className: 'stack' });
+    const power = node('fieldset', { className: 'stack' });
     const nameCounts = new Map();
     for (const device of room.entities) {
       const name = device.name || device.entity;
@@ -1780,6 +1783,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const panelChoices = panels.map(({ id, label, kind }) =>
         ['panel:' + id, words.shortcutPanel.replace('{name}', label || languages[language][kind] || id)]);
       const controls = [];
+      const powerControls = [];
       const commit = next => {
         const overrides = { ...this.#config.room_overrides };
         if (Object.keys(next).length) overrides[room.id] = next;
@@ -1790,6 +1794,18 @@ export class Bayit9StrategyEditor extends HTMLElement {
         const id = device.entity;
         const name = deviceName(device);
         const suppressible = supportsShortcutWithoutDetails(device);
+        if (supportsHomeShortcutPower(device)) {
+          powerControls.push(checkbox(words.shortcutPowerDevice.replace('{name}', name),
+            configuredIds(override.shortcut_power_entities).includes(id), enabled => {
+              const next = { ...this.#roomOverride(room.id) };
+              const selected = new Set(configuredIds(next.shortcut_power_entities));
+              if (enabled) selected.add(id);
+              else selected.delete(id);
+              if (selected.size) next.shortcut_power_entities = [...selected];
+              else delete next.shortcut_power_entities;
+              commit(next);
+            }));
+        }
         const options = [['', words.shortcutBayitDetails],
           ...(supportsNativeShortcutDetails(device) ? [['native', words.shortcutNativeDetails]] : []),
           ...panelChoices,
@@ -1826,6 +1842,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
         });
         controls.push(field(words.shortcutDestination.replace('{name}', name), input));
       }
+      power.hidden = !powerControls.length;
+      power.replaceChildren(node('legend', { textContent: words.shortcutPower }), ...powerControls);
       details.hidden = !controls.length;
       details.replaceChildren(node('legend', { textContent: words.shortcutDetails }), ...controls);
     };
@@ -1879,7 +1897,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         save();
       }
     });
-    return [node('p', { textContent: words.shortcutHint }), field(words.shortcutRoom, roomInput), automatic, list, details];
+    return [node('p', { textContent: words.shortcutHint }), field(words.shortcutRoom, roomInput), automatic, list, power, details];
   }
 
   #profilePanel(words) {
