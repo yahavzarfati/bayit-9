@@ -4216,7 +4216,7 @@ async function assertCompactSecurityLocks(browser) {
     const page = await browser.newPage({ viewport:{width:320,height:756}, hasTouch:true, reducedMotion:'reduce' });
     page.setDefaultTimeout(8000);
     try {
-      const url = base + '/fixture-home/home?configuration&security-compact-locks&native-more-info=modern&locale=' + locale;
+      const url = base + '/fixture-home/home?configuration&security-compact-locks&toolbar-panels&security-cover-rail&native-more-info=modern&locale=' + locale;
       await page.addInitScript(toolbar => {
         const key = 'bayit9-browser-fixture';
         if (!sessionStorage.getItem(key)) sessionStorage.setItem(key,
@@ -4225,6 +4225,11 @@ async function assertCompactSecurityLocks(browser) {
         sections:[{id:'entry-lock',kind:'locks',title:words.section,entities:[
           {entity:'lock.fixture_security',role:'lock',confirmation:true},
           {entity:'sensor.fixture_lock_battery',role:'status'},
+        ]},{id:'secure-action',kind:'actions',title:'',entities:[
+          {entity:'script.demo_start',role:'action',confirmation:true},
+        ]},{id:'window-covers',kind:'covers',entities:[
+          {entity:'cover.demo_security_first',role:'cover'},
+          {entity:'cover.demo_security_second',role:'cover'},
         ]}] }, { id:'settings',kind:'settings' }]);
 
       const button = (surface, name) => surface.getByRole('button', {name, exact:true});
@@ -4265,6 +4270,26 @@ async function assertCompactSecurityLocks(browser) {
       assert.equal(await command.getAttribute('aria-label'), words.unlock + ' · Fixture lock');
       assert.ok(await command.evaluate(command=>command.offsetWidth >= 44 && command.offsetHeight >= 44));
       assert.deepEqual(await calls(),[]);
+
+      for (const width of [320,391]) {
+        await page.setViewportSize({width,height:756});
+        const geometry = await panel.evaluate(el => {
+          const lock = el.querySelector('.compact-status-lock').getBoundingClientRect();
+          const battery = el.querySelector('[data-section=locks] .toolbar-section-items > .tile-row').getBoundingClientRect();
+          const actionGrid = el.querySelector('[data-section=actions] .toolbar-section-items').getBoundingClientRect();
+          const action = el.querySelector('[data-section=actions] .tile-row').getBoundingClientRect();
+          const covers = [...el.querySelectorAll('[data-section=covers] [data-cover-rail]')].map(item=>item.getBoundingClientRect());
+          return {
+            pairedLock: Math.abs(lock.y - battery.y) < 1 && lock.right < battery.left,
+            fullAction: Math.abs(action.width - actionGrid.width) < 1 && action.height >= 44,
+            orderedCovers: covers.length === 2 && (covers[0].y < covers[1].y || covers[0].x < covers[1].x),
+            sideBySideCovers: covers.length === 2 && Math.abs(covers[0].y - covers[1].y) < 1,
+          };
+        });
+        assert.ok(geometry.pairedLock && geometry.fullAction && geometry.orderedCovers, JSON.stringify({locale,width,geometry}));
+        if (width === 391) assert.equal(geometry.sideBySideCovers, true);
+      }
+      await page.setViewportSize({width:320,height:756});
 
       for (const state of ['locking','unlocking']) {
         await patchState(state);

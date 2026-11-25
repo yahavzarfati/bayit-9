@@ -738,6 +738,7 @@ export function createToolbarPanel(kind, configuration, context) {
     if (calendarItems.length && section.entities.every(item => domain(item) === 'calendar')) continue;
     const panel = make('section', 'toolbar-section');
     panel.dataset.section = section.kind;
+    panel.toggleAttribute('data-security-section', kind === 'security');
     const compactStatus = isCompactToolbarStatus(kind, section);
     const readouts = isToolbarReadouts(kind, section);
     const weatherReadings = isWeatherReadingsList(kind, section);
@@ -940,6 +941,17 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
     grid-template-columns: repeat(auto-fit,minmax(min(100%,max(110px,calc((100% - 8px) / 2))),1fr));
   }
   .shell[dir=rtl] .toolbar-section[data-layout=compact] > .toolbar-section-items > * { direction: rtl; }
+  .toolbar-section[data-security-section][data-section=actions]:has(> .toolbar-section-items > .tile-row:only-child) {
+    border: 0; padding: 0;
+  }
+  .toolbar-section[data-security-section][data-section=actions] > .toolbar-section-items > .tile-row:only-child {
+    grid-column: 1 / -1; min-height: 60px; gap: 2px;
+  }
+  .toolbar-section[data-security-section][data-section=actions] .tile-row:only-child > .tile-mark {
+    width: 24px; height: 24px; background: transparent;
+  }
+  .toolbar-section[data-security-section][data-section=covers] > .toolbar-section-items { direction: ltr; }
+  .shell[dir=rtl] .toolbar-section[data-security-section][data-section=covers] > .toolbar-section-items > * { direction: rtl; }
   .toolbar-section[data-layout=reading-cards] > .toolbar-section-items { direction: ltr; }
   .toolbar-section[data-section=readings][data-layout=reading-cards] { border: 0; padding: 0; }
   .shell[dir=rtl] .toolbar-section[data-layout=reading-cards] > .toolbar-section-items > * { direction: rtl; }
@@ -985,7 +997,23 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .compact-status-lock > .tile-row { min-width: 0; padding-inline: 2px; border: 0; background: transparent; }
   .compact-status-lock .tile-mark { width: 28px; height: 28px; }
   .compact-lock-action { padding: 4px; }
-  .toolbar-section[data-section=locks][data-layout=compact] .compact-status-lock { grid-column: 1 / -1; }
+  .toolbar-section[data-security-section][data-section=locks][data-layout=compact] .compact-status-lock {
+    grid-template-columns: minmax(0,1fr); grid-template-rows: minmax(44px,auto) auto; gap: 3px; padding: 5px;
+  }
+  .toolbar-section[data-security-section][data-section=locks][data-layout=compact] .compact-status-lock > .tile-row {
+    direction: ltr; grid-template-columns: 32px minmax(0,1fr); grid-template-areas: "icon label" "icon state";
+    justify-items: start; align-content: center; align-items: center; gap: 3px 6px; min-height: 44px;
+    padding: 3px 2px; text-align: left;
+  }
+  .toolbar-section[data-security-section][data-section=locks] .compact-status-lock > .tile-row > .tile-mark { grid-area: icon; }
+  .toolbar-section[data-security-section][data-section=locks] .compact-status-lock > .tile-row > .tile-label { grid-area: label; }
+  .toolbar-section[data-security-section][data-section=locks] .compact-status-lock > .tile-row > .tile-state { grid-area: state; }
+  .toolbar-section[data-security-section][data-section=locks] .compact-status-lock > .tile-row > :is(.tile-label,.tile-state) {
+    unicode-bidi: plaintext;
+  }
+  .toolbar-section[data-security-section][data-section=locks] .compact-status-lock > .compact-lock-action {
+    width: 100%; border-radius: 10px; background: var(--glass);
+  }
   .compact-lock-action[data-lock-transition]:disabled { color: var(--lock-pending-ink,#fbbf24); opacity: 1; }
   .tile-row { display: grid; justify-items: center; align-content: center; gap: 5px; min-height: 80px; width: 100%;
     padding: 8px 6px; border: 1px solid var(--soft-line); border-radius: 12px; background: var(--control); text-align: center; }
