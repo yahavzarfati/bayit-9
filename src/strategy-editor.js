@@ -29,6 +29,7 @@ const WORDS = {
     title: 'Dashboard title', language: 'Language', automatic: 'Home Assistant language',
     areas: 'Rooms', unassigned: 'Include devices without a room',
     roomSelection: 'Rooms on the dashboard', allRooms: 'Automatic', selectedRooms: 'Choose rooms and order',
+    shownRoomOrder: 'Displayed rooms and order',
     roomToAdd: 'Available rooms', addRoom: 'Show room', createRoom: 'New dashboard-only room',
     newRoomName: 'New room name', newRoomHint: 'This room exists only on this dashboard.',
     roomName: 'Room display name', roomToEdit: 'Room to customize', roomIcon: 'Room icon', defaultRoomIcon: 'Default icon',
@@ -159,6 +160,7 @@ const WORDS = {
     title: 'שם הדשבורד', language: 'שפה', automatic: 'שפת Home Assistant',
     areas: 'חדרים', unassigned: 'הצגת מכשירים ללא חדר',
     roomSelection: 'חדרים בדשבורד', allRooms: 'בחירה אוטומטית', selectedRooms: 'בחירת חדרים וסדר',
+    shownRoomOrder: 'חדרים מוצגים וסדר',
     roomToAdd: 'חדרים זמינים', addRoom: 'הצגת חדר', createRoom: 'חדר חדש לדשבורד',
     newRoomName: 'שם החדר החדש', newRoomHint: 'החדר יופיע בדשבורד הזה בלבד.',
     roomName: 'שם החדר לתצוגה', roomToEdit: 'חדר להתאמה אישית', roomIcon: 'סמל החדר', defaultRoomIcon: 'סמל ברירת המחדל',
@@ -1644,18 +1646,20 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const unassigned = checkbox(words.unassigned, this.#config.show_unassigned !== false,
       checked => this.#commitRooms({ show_unassigned: checked }, 'room-unassigned'));
     unassigned.firstElementChild.dataset.roomFocus = 'room-unassigned';
-    const children = [field(words.roomSelection, mode), field(words.discovery, discovery), unassigned];
+    const children = [field(words.roomSelection, mode), this.#customRoomForm(rooms, selection, words)];
+    const roomManagement = [];
 
     if (customSelection) {
       const ordered = selected.map(id => ({
         id, name: byId.get(id)?.name ?? id,
         secondary: byId.get(id)?.custom ? words.customRoom : byId.has(id) ? '' : words.missing,
       }));
-      if (ordered.length) children.push(
-        orderedList(ordered, (items, focusKey) => this.#commitRooms({
-          room_selection: 'manual', area_ids: items.map(item => item.id),
-        }, focusKey ?? 'room-mode'), words, words.hideRoom, false, 'rooms'),
-      );
+      if (ordered.length) roomManagement.push(disclosure(words.shownRoomOrder + ' · ' + ordered.length,
+        this.#open.roomOrder, open => { this.#open.roomOrder = open; }, () => [
+          orderedList(ordered, (items, focusKey) => this.#commitRooms({
+            room_selection: 'manual', area_ids: items.map(item => item.id),
+          }, focusKey ?? 'room-mode'), words, words.hideRoom, false, 'rooms'),
+        ]));
       const shown = new Set(selected);
       const available = rooms.filter(room => !shown.has(room.id));
       if (available.length) {
@@ -1664,9 +1668,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
           this.#roomDeviceQuery = '';
           this.#commitRooms({ room_selection: 'manual', area_ids: [...selected, id] }, 'room-edit');
         });
-        children.push(picker.wrapper);
+        roomManagement.push(picker.wrapper);
       }
     }
+    roomManagement.push(field(words.discovery, discovery), unassigned);
 
     const editable = customSelection ? selected.map(id => byId.get(id)).filter(Boolean) : rooms;
     const active = editable.find(room => room.id === this.#roomEditing) ?? editable[0];
@@ -1704,7 +1709,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
         const at = index + 1;
         return [String(at), classicRoomTitle(active.name, at).replace('\n', ' ↵ ')];
       });
-      const fields = [field(words.roomToEdit, picker), field(words.roomName, input)];
+      children.push(field(words.roomToEdit, picker), field(words.roomName, input), ...roomManagement);
+      const fields = [];
       if (titleBreaks.length) {
         const currentBreak = classicRoomTitle(active.name, override.classic_title_break) ? String(override.classic_title_break) : '';
         const titleBreak = select([['', words.roomTitleAuto], ...titleBreaks], currentBreak);
@@ -1752,9 +1758,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
         fields.push(remove);
       }
       children.push(...fields);
-    } else children.push(node('p', { textContent: words.noRooms }));
+    } else children.push(...roomManagement, node('p', { textContent: words.noRooms }));
 
-    children.push(this.#customRoomForm(rooms, selection, words));
     return [node('div', { className: 'stack' }, children)];
   }
 

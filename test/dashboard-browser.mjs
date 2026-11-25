@@ -2246,6 +2246,8 @@ async function assertManualRoomOrderRestored(browser) {
       await setup.getByRole('button', { name:words.remove, exact:true }).tap();
       await mode.selectOption('custom');
       assert.deepEqual(await ids(), ['spare','studio']);
+      const orderLabel = words.locale === 'he' ? 'חדרים מוצגים וסדר' : 'Displayed rooms and order';
+      await setup.getByText(orderLabel + ' · 2', { exact:true }).tap();
       for (const name of ['Spare room','Studio']) {
         await setup.getByRole('button', { name:words.hide + ' · ' + name, exact:true }).tap();
       }
@@ -2271,6 +2273,83 @@ async function assertManualRoomOrderRestored(browser) {
       await openRooms();
       await mode.selectOption('custom');
       assert.deepEqual(await ids(), ['lounge','studio']);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+
+async function assertRoomEditorQuickPaths(browser) {
+  for (const words of [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', chooser:'Room to customize',
+      create:'New dashboard-only room', order:'Displayed rooms and order', name:'Room display name', up:'Move up',
+      newName:'New room name', add:'Create room', save:'Save dashboard' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים', chooser:'חדר להתאמה אישית',
+      create:'חדר חדש לדשבורד', order:'חדרים מוצגים וסדר', name:'שם החדר לתצוגה', up:'העברה למעלה',
+      newName:'שם החדר החדש', add:'יצירת חדר', save:'שמירת הדשבורד' },
+  ]) {
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      const items = Array.from({ length:12 }, (_, index) => ['bayit_room_many' + index, {
+        name: (words.locale === 'he' ? 'חדר מספר ' : 'Fixture room ') + (index + 1), entities:[],
+      }]);
+      const manual = items.map(([id]) => id);
+      await page.addInitScript(config => {
+        const key = 'bayit9-browser-fixture';
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy:config }));
+      }, { type:'custom:bayit-9', show_unassigned:false, room_selection:'manual', area_ids:manual,
+        room_overrides:Object.fromEntries(items) });
+      await page.goto(base + '/fixture-home/home?configuration&room-selection&locale=' + words.locale);
+      await page.getByRole('button', { name:words.appearance, exact:true }).tap();
+      await page.getByRole('button', { name:words.setup, exact:true }).tap();
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      await setup.getByText(words.rooms, { exact:true }).tap();
+      const chooser = setup.getByLabel(words.chooser, { exact:true });
+      const creation = setup.getByText(words.create, { exact:true });
+      const ordered = count => setup.getByText(words.order + ' · ' + count, { exact:true });
+      const orderingRows = setup.locator('[data-room-focus^="rooms:"][data-room-focus$=":remove"]');
+      const allIds = () => chooser.locator('option').evaluateAll(options => options.map(option => option.value));
+      const body = await setup.locator('.modal-body').boundingBox();
+      for (const shortcut of [chooser, creation]) {
+        const bounds = await shortcut.boundingBox();
+        assert.ok(bounds.y >= body.y - 1 && bounds.y + bounds.height <= body.y + body.height + 1,
+          words.locale + ' quick room action is visible without scrolling');
+      }
+      assert.equal(await orderingRows.count(), 0);
+      assert.deepEqual(await allIds(), manual);
+
+      await ordered(12).press('Enter');
+      assert.equal(await orderingRows.count(), 12);
+      const lastName = items.at(-1)[1].name;
+      const move = setup.getByRole('button', { name:words.up + ' · ' + lastName, exact:true });
+      await move.press('Enter');
+      const reordered = [...manual.slice(0, -2), manual.at(-1), manual.at(-2)];
+      assert.deepEqual(await allIds(), reordered);
+      assert.equal(await move.evaluate(button => button.getRootNode().activeElement === button), true);
+      await ordered(12).press('Enter');
+      assert.equal(await orderingRows.count(), 0);
+      await chooser.selectOption(manual.at(-1));
+      const displayName = setup.getByLabel(words.name, { exact:true });
+      await displayName.fill('Updated fixture label');
+      await displayName.press('Enter');
+      assert.equal(await chooser.locator('option:checked').innerText(), 'Updated fixture label');
+
+      await creation.tap();
+      await setup.getByLabel(words.newName, { exact:true }).fill('New fixture room');
+      await setup.getByRole('button', { name:words.add, exact:true }).tap();
+      const created = await chooser.inputValue();
+      assert.match(created, /^bayit_room_[a-f0-9]{24}$/);
+      assert.deepEqual(await allIds(), [...reordered, created]);
+      assert.equal(await orderingRows.count(), 0);
+      await ordered(13).waitFor();
+      await setup.getByRole('button', { name:words.save, exact:true }).tap();
+      await setup.waitFor({ state:'hidden' });
+      await page.getByRole('button', { name:'New fixture room', exact:true }).waitFor();
+      const stored = await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      assert.deepEqual(stored.area_ids, [...reordered, created]);
+      assert.equal(stored.room_overrides[manual.at(-1)].name, 'Updated fixture label');
     } finally {
       await page.close();
     }
@@ -6410,6 +6489,7 @@ try {
       await assertSetupDrafts(browser);
       await assertSetupRegistryRefreshKeepsField(browser);
       await assertManualRoomOrderRestored(browser);
+      await assertRoomEditorQuickPaths(browser);
       console.log(engine + ': setup drafts survive closing, preserve conflicts, and retry safely');
       await assertHomeMaterial(browser);
       console.log(engine + ': Home glass, accessibility material, cover states and room labels');
@@ -9525,6 +9605,7 @@ try {
       await roomName.press('Enter');
       const nameBreak = roomSetup.getByLabel('Room name line break in classic layout', { exact: true });
       await nameBreak.selectOption('1');
+      await roomSetup.getByText('Displayed rooms and order · 3', { exact:true }).tap();
       const moveUp = roomSetup.getByRole('button', { name: 'Move up · Guest room', exact: true });
       await moveUp.press('Enter');
       assert.equal(await moveUp.evaluate(control => control.getRootNode().activeElement === control), true);
@@ -9959,6 +10040,7 @@ try {
       roomSetup = await openRoomEditor(lastRoomPage);
       await roomSetup.getByLabel('Available rooms', { exact: true }).selectOption('studio');
       await roomSetup.getByRole('button', { name: 'Show room', exact: true }).tap();
+      await roomSetup.getByText('Displayed rooms and order · 1', { exact:true }).tap();
       await roomSetup.getByRole('button', { name: 'Hide room · Studio', exact: true }).press('Enter');
       assert.equal(await roomMode(roomSetup).evaluate(control => control.getRootNode().activeElement === control), true);
       await roomMode(roomSetup).selectOption('auto');
