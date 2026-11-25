@@ -604,8 +604,14 @@ async function assertBoilerScheduleLinks(browser, locale) {
     assert.equal(await history.getAttribute('aria-pressed'),'true');
     await page.goto(stacked + regular + '/schedule');
     await morning.waitFor();
+    await panel.getByRole('button',{name:he ? '\u05d4\u05d5\u05e1\u05e4\u05ea \u05ea\u05d6\u05de\u05d5\u05df' : 'Add schedule',exact:true}).tap();
+    await form.waitFor();
+    assert.equal(await morning.isVisible(), false);
     await page.evaluate(()=>history.back());
     await panel.locator('.boiler-history-host').waitFor();
+    await page.evaluate(()=>history.forward());
+    await morning.waitFor();
+    assert.equal(await form.isVisible(), false, 'A reopened schedule route shows the list before opening a new draft');
     await noWrite();
 
     await page.goto(base + regular + '/schedule');
@@ -1058,7 +1064,8 @@ try {
       const startingPageScroll = await rootScroll();
       const add = stackedDialog.getByRole('button', { name: english ? 'Add schedule' : 'הוספת תזמון', exact: true });
       const heading = form.getByRole('heading');
-      const choices = form.locator('select');
+      const durationControl = form.getByRole('slider', { name:english ? 'Duration' : '\u05de\u05e9\u05da \u05d7\u05d9\u05de\u05d5\u05dd', exact:true });
+      const durationValue = form.locator('.schedule-duration-value');
       const cancel = form.getByRole('button', { name: english ? 'Cancel' : 'ביטול', exact: true });
       const save = form.getByRole('button', { name: english ? 'Save schedule' : 'שמירת תזמון', exact: true });
       async function openScheduleForm(trigger) {
@@ -1072,11 +1079,12 @@ try {
           const body = node.closest('.modal-body').getBoundingClientRect();
           return heading.top >= body.top && heading.bottom <= body.bottom;
         }), true, 'The form heading is inside the visible dialog immediately after tapping');
-        assert.ok(await dialogViewport.evaluate(node => node.scrollTop) > start);
+        assert.equal(await scheduleRows.isVisible(), false, 'The disabled listing is hidden during editing');
+        assert.equal(await stackedDialog.locator('.schedule-compact > .schedule-toolbar').isVisible(), false);
         assert.deepEqual(await rootScroll(), startingPageScroll);
         return start;
       }
-      async function expectFormReturn(trigger) {
+      async function expectFormReturn(trigger, originalOffset) {
         await form.waitFor({ state: 'hidden' });
         await trigger.waitFor();
         await stackedPage.waitForFunction(selector => {
@@ -1090,28 +1098,50 @@ try {
           const body = node.closest('.modal-body').getBoundingClientRect();
           return control.top >= body.top - 1 && control.bottom <= body.bottom + 1;
         }), true, 'The originating control is revealed again');
+        await scheduleRows.waitFor();
+        if (originalOffset !== undefined) {
+          assert.ok(Math.abs(await dialogViewport.evaluate(node => node.scrollTop) - originalOffset) < 1,
+            'Cancel restores the original schedule list offset');
+        }
         assert.deepEqual(await rootScroll(), startingPageScroll);
       }
-      await openScheduleForm(add);
-      assert.deepEqual(await choices.locator('option').evaluateAll(nodes => nodes.map(node => Number(node.value))),
-        Array.from({ length: 20 }, (_, index) => (index + 1) * 15));
-      assert.equal(await choices.inputValue(), '90');
+      const initialListOffset = await openScheduleForm(add);
+      const durationState = () => durationControl.evaluate(node => ({
+        min:node.min, max:node.max, step:node.step, value:node.value,
+        height:node.getBoundingClientRect().height, width:node.getBoundingClientRect().width,
+      }));
+      const initial = await durationState();
+      assert.deepEqual([initial.min, initial.max, initial.step, initial.value], ['15','300','15','90']);
+      assert.ok(initial.height >= 44 && initial.width >= 160);
+      assert.equal(await durationControl.getAttribute('aria-valuetext'), await durationValue.textContent());
+      const visited = [];
+      await durationControl.press('Home');
+      for (let step = 0; step < 20; step++) {
+        visited.push(Number(await durationControl.inputValue()));
+        await durationControl.press('ArrowRight');
+      }
+      assert.deepEqual(visited, Array.from({ length:20 }, (_, index) => (index + 1) * 15));
+      assert.equal(await durationControl.inputValue(), '300');
+      assert.equal(await durationControl.getAttribute('aria-valuetext'), await durationValue.textContent());
+      assert.deepEqual(await stackedPage.evaluate(() => window.fixture.scheduleCalls), []);
       await cancel.tap();
-      await expectFormReturn(add);
+      await expectFormReturn(add, initialListOffset);
       assert.deepEqual(await stackedPage.evaluate(() => window.fixture.scheduleCalls), []);
 
-      await openScheduleForm(edit);
-      assert.equal(await choices.inputValue(), '30');
+      const editListOffset = await openScheduleForm(edit);
+      assert.equal(await durationControl.inputValue(), '30');
       await cancel.tap();
-      await expectFormReturn(edit);
+      await expectFormReturn(edit, editListOffset);
       await openScheduleForm(edit);
-      await choices.selectOption('45');
+      await durationControl.press('ArrowRight');
+      assert.equal(await durationControl.inputValue(), '45');
       await save.tap();
       await expectFormReturn(edit);
       assert.equal(await stackedPage.evaluate(() => window.fixture.scheduleCalls[0].service_data.duration), 45);
       await openScheduleForm(add);
       await form.locator('input[type=text]').fill('New fixture');
-      await choices.selectOption('15');
+      await durationControl.press('Home');
+      assert.equal(await durationControl.inputValue(), '15');
       await form.getByRole('button', { name: english ? 'Every day' : 'כל יום', exact: true }).tap();
       await save.tap();
       await expectFormReturn(add);

@@ -336,6 +336,7 @@ const styles = [
   '.bayit-boiler-schedules .schedule-is-enabled { color:var(--warm,currentColor); }',
   '.schedule-compact { gap:6px; margin-block-start:8px; padding:6px; border:1px solid var(--soft-line); border-radius:12px; }',
   '.schedule-compact .schedule-list { gap:5px; }',
+  '.schedule-compact:has(> .schedule-form:not([hidden])) > :is(.schedule-toolbar,.schedule-list) { display:none; }',
   '.schedule-compact .schedule-toolbar > .schedule-add { flex:1; }',
   '.schedule-compact .schedule-row { display:flex; align-items:stretch; gap:0; padding:0; border:1px solid var(--soft-line); border-radius:8px; background:var(--room-tile-fill); }',
   '.schedule-compact .schedule-summary { flex:1; min-width:0; display:flex; flex-wrap:wrap; align-content:center; align-items:center; gap:2px 5px; min-height:44px; padding:4px 7px; font-size:12px; text-align:start; }',
@@ -349,6 +350,10 @@ const styles = [
   '.bayit-boiler-schedules .schedule-form label { display:grid; gap:5px; flex:1; min-width:0; }',
   '.bayit-boiler-schedules .schedule-form input,.bayit-boiler-schedules .schedule-form select { width:100%; box-sizing:border-box; min-height:44px; font:inherit; color:inherit; border:1px solid var(--edge,rgba(255,255,255,.28)); border-radius:10px; background:transparent; padding:6px 9px; }',
   '.bayit-boiler-schedules .schedule-form select option { color:CanvasText; background:Canvas; }',
+  '.schedule-compact .schedule-duration { gap:2px; }',
+  '.schedule-compact .schedule-duration-heading { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:4px 8px; }',
+  '.schedule-compact .schedule-duration-value { color:var(--secondary,currentColor); font-size:.88em; }',
+  '.schedule-compact .schedule-form input.schedule-duration-range { direction:ltr; margin:0; padding:0; border:0; accent-color:var(--boiler-heat,auto); }',
   '.bayit-boiler-schedules .schedule-form-title { margin:0; font-size:1em; }',
   '.bayit-boiler-schedules .schedule-day-group { margin:0; min-width:0; border:0; padding:0; display:grid; gap:7px; }',
   '.bayit-boiler-schedules .schedule-description { margin:0; }',
@@ -573,14 +578,41 @@ export function createBoilerSchedulePanel(config, {
     time.step = '300';
     time.required = true;
     time.value = row?.time ?? '14:30';
-    const duration = make('select');
-    for (let minutes = schedule.limits.min; minutes <= schedule.limits.max; minutes += schedule.limits.step) {
-      const option = make('option', '', durationName(minutes, locale));
-      option.value = minutes;
-      duration.append(option);
+    const { min, max, step } = schedule.limits;
+    const duration = make(compact ? 'input' : 'select');
+    const initialDuration = row?.duration ?? schedule.defaultDuration;
+    fields.append(field(t.name, title), field(t.time, time));
+    let durationField;
+    if (compact) {
+      duration.type = 'range';
+      duration.className = 'schedule-duration-range';
+      duration.setAttribute('aria-label', t.duration);
+      duration.min = min;
+      duration.max = min + Math.floor((max - min) / step) * step;
+      duration.step = step;
+      duration.value = initialDuration;
+      const value = make('output', 'schedule-duration-value');
+      value.setAttribute('aria-hidden', 'true');
+      const updateDuration = () => {
+        const caption = durationName(duration.valueAsNumber, locale);
+        value.value = caption;
+        duration.setAttribute('aria-valuetext', caption);
+      };
+      duration.addEventListener('input', updateDuration);
+      updateDuration();
+      durationField = make('label', 'schedule-duration');
+      const label = make('span', 'schedule-duration-heading');
+      label.append(make('span', '', t.duration), value);
+      durationField.append(label, duration);
+    } else {
+      for (let minutes = min; minutes <= max; minutes += step) {
+        const option = make('option', '', durationName(minutes, locale));
+        option.value = minutes;
+        duration.append(option);
+      }
+      duration.value = initialDuration;
+      fields.append(field(t.duration, duration));
     }
-    duration.value = row?.duration ?? schedule.defaultDuration;
-    fields.append(field(t.name, title), field(t.time, time), field(t.duration, duration));
 
     const group = make('fieldset', 'schedule-day-group');
     group.append(make('legend', '', t.days));
@@ -649,7 +681,9 @@ export function createBoilerSchedulePanel(config, {
       void operate(stillCurrent => row ? schedule.update(draft, payload, stillCurrent)
         : schedule.create(payload, stillCurrent), t.saved);
     };
-    form.append(heading, fields, group, commands, confirmation);
+    form.append(heading, fields, group);
+    if (durationField) form.append(durationField);
+    form.append(commands, confirmation);
     form.hidden = false;
     syncButtons();
     focusInPanel(heading, true);
