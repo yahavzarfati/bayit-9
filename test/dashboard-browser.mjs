@@ -53,6 +53,9 @@ if (query.has('overview-climate-discovery')) {
       temperature: 24, current_temperature: 22, hvac_modes: ['off', 'cool', 'heat'] } };
   }
 }
+if (query.has('lock-status-palette')) states['lock.fixture_entry'] = {
+  state: 'locked', attributes: { friendly_name: 'Fixture lock' },
+};
 const linkedPanels = query.has('linked-only-panels');
 const compactOverview = query.has('compact-overview-status');
 if (query.has('native-more-info')) document.addEventListener('hass-more-info', event => {
@@ -117,6 +120,25 @@ const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection'
   ] }),
   ...(query.has('legacy-room-order') && { area_ids: ['lounge', 'studio'] }),
   ...(query.has('cross-area-room-device') && { room_overrides: { lounge: { entities: ['light.demo_lamp'] } } }),
+  ...(query.has('lock-status-palette') && {
+    room_overrides: { studio: { entities: ['lock.fixture_entry'] } },
+    room_shortcuts: { studio: ['lock.fixture_entry'] },
+    toolbar: [
+      { kind: 'automations', label: 'Fixture actions', sections: [
+        { kind: 'actions', entities: [{ entity: 'lock.fixture_entry', role: 'lock', confirmation: true }] },
+      ] },
+      { kind: 'security', label: 'Fixture security', sections: [
+        { kind: 'locks', entities: [{ entity: 'lock.fixture_entry', role: 'lock', confirmation: true }] },
+      ] },
+      { kind: 'overview', label: 'Fixture overview', sections: [
+        { kind: 'status', layout: 'compact', entities: [{ entity: 'lock.fixture_entry', role: 'lock' }] },
+      ] },
+      { kind: 'devices', label: 'Fixture entrance', placement: 'settings', sections: [
+        { kind: 'status', layout: 'compact', entities: [{ entity: 'lock.fixture_entry', role: 'status' }] },
+      ] },
+      { kind: 'settings' },
+    ],
+  }),
   ...(query.has('overview-climate-discovery') && {
     profiles: [{ entity: 'climate.fixture_lounge', kind: 'climate', name: 'Lounge HVAC' }],
     toolbar: [
@@ -1996,6 +2018,62 @@ async function assertCompactWeatherReadings(browser) {
   }
 }
 
+async function assertToolbarLockPalette(browser) {
+  const page = await browser.newPage({ viewport: { width: 360, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+  page.setDefaultTimeout(8000);
+  try {
+    await page.goto(base + '/fixture-home/home?configuration&lock-status-palette');
+    const lock = page.locator('.quick-button[data-entity="lock.fixture_entry"]');
+    const setState = state => page.evaluate(async value => {
+      window.bayitTest.setRoomState('lock.fixture_entry', value);
+      await new Promise(requestAnimationFrame);
+    }, state);
+    await setState('unlocked');
+    assert.equal(await lock.getAttribute('data-tone'), 'critical');
+    assert.equal(await lock.getAttribute('data-lock-state'), null);
+
+    for (const [name, stateNode, glyphSelector] of [
+      ['Fixture overview', '.compact-status-lock .tile-row', '.tile-mark > ha-icon'],
+      ['Fixture security', '.toolbar-device', '.device-icon'],
+      ['Fixture entrance', '.tile-row', '.tile-mark > ha-icon'],
+    ]) {
+      if (name === 'Fixture entrance') await page.getByRole('button', { name: 'Appearance', exact: true }).tap();
+      await page.getByRole('button', { name, exact: true }).tap();
+      const panel = page.getByRole('dialog', { name, exact: true });
+      const row = panel.locator(stateNode);
+      const glyph = row.locator(glyphSelector);
+      const colorOnInk = ink => glyph.evaluate((icon, value) => {
+        icon.closest('.modal').dataset.wallpaperInk = value;
+        return getComputedStyle(icon).color;
+      }, ink);
+      for (const [state, color] of [
+        ['locked', 'rgb(96, 165, 250)'], ['unlocked', 'rgb(239, 68, 68)'],
+        ['locking', 'rgb(251, 191, 36)'], ['unlocking', 'rgb(251, 191, 36)'],
+      ]) {
+        await setState(state);
+        assert.equal(await row.getAttribute('data-lock-state'), state);
+        assert.equal(await colorOnInk('light'), color);
+      }
+      for (const state of ['unknown', 'unavailable', 'jammed']) {
+        await setState(state);
+        assert.equal(await row.getAttribute('data-lock-state'), null);
+      }
+      await setState('locked');
+      assert.equal(await colorOnInk('dark'), 'rgb(0, 63, 104)');
+      await panel.getByRole('button', { name: 'Close', exact: true }).tap();
+      await panel.waitFor({ state: 'hidden' });
+    }
+
+    await page.getByRole('button', { name: 'Fixture actions', exact: true }).tap();
+    const actions = page.getByRole('dialog', { name: 'Fixture actions', exact: true });
+    await setState('unlocked');
+    assert.equal(await actions.locator('.tile-row').getAttribute('data-lock-state'), null);
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertOverviewClimateDiscovery(browser) {
   const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
   page.setDefaultTimeout(8000);
@@ -2384,6 +2462,8 @@ try {
       await assertHomePreferenceAliases(browser);
       await assertSharedAppearance(browser);
       await assertCompactSettings(browser);
+      await assertToolbarLockPalette(browser);
+      console.log(engine + ': semantic toolbar lock colors, contrast and scope');
       await assertOverviewClimateDiscovery(browser);
       console.log(engine + ': editable active climate discovery, passive rows and live scope');
       await assertShortcutDetailRoutes(browser);

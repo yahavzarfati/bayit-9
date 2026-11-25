@@ -108,12 +108,20 @@ export function sensorGraphConfig(item, { moreInfo = false } = {}) {
     hours_to_show:item.graph_hours || 24, tap_action:{action:moreInfo ? 'more-info' : 'none'} };
 }
 
+const lockPaletteStates = new Set(['locked', 'unlocked', 'locking', 'unlocking']);
+
+function paintLockStatus(node, model) {
+  if (model.available && lockPaletteStates.has(model.state)) node.dataset.lockState = model.state;
+  else delete node.dataset.lockState;
+}
+
 export function createToolbarPanel(kind, configuration, context) {
   const { make, icon, button, label, t, modelFor, stateLabel, moreInfo, buildDevice,
     request, pending, host, dialog, graphDestination, openGraphDestination } = context;
   const handlers = [];
   const mediaViews = [];
   const comparisons = [];
+  const useLockPalette = ['overview', 'devices', 'security'].includes(kind);
   let live = true;
   let currentHass = context.hass;
   const native = createNativeCards(host, currentHass, make);
@@ -168,6 +176,7 @@ export function createToolbarPanel(kind, configuration, context) {
       state.textContent = showState ? value.state : '';
       state.hidden = !showState;
       tile.dataset.tone = model.state === 'home' ? 'home' : model.state === 'on' ? 'active' : '';
+      if (useLockPalette && model.domain === 'lock') paintLockStatus(tile, model);
       tile.disabled = (itemKind === 'action' && pending(item.entity)) || (!action && !model.actions.more_info);
       tile.setAttribute('aria-busy', String(pending(item.entity)));
       label(tile, model.name + (showState ? ' · ' + value.state : ''));
@@ -588,6 +597,7 @@ export function createToolbarPanel(kind, configuration, context) {
         handlers.push(() => player.update(modelFor(item)));
       }
       buildDevice(item, row, { toolbarLightTile, toolbarCoverRail });
+      if (useLockPalette && domain(item) === 'lock') handlers.push(() => paintLockStatus(row, modelFor(item)));
       return row;
     }
     return renderTile(item, 'status');
@@ -857,6 +867,14 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .tile-mark { display: grid; place-items: center; position: relative; border-radius: 50%; width: 34px; height: 34px; background: var(--glass); }
   .tile-portrait { position: absolute; inset: 0; object-fit: cover; width: 100%; height: 100%; border-radius: inherit; }
   .tile-row:is([data-tone=home],[data-tone=active]) .tile-mark { color: var(--warm); }
+  .modal[data-wallpaper-ink=dark] {
+    --lock-locked-ink: var(--moving); --lock-unlocked-ink: var(--critical); --lock-pending-ink: var(--warm);
+  }
+  [data-lock-state=locked] { --lock-state-ink: var(--lock-locked-ink,#60a5fa); }
+  [data-lock-state=unlocked] { --lock-state-ink: var(--lock-unlocked-ink,#ef4444); }
+  :is([data-lock-state=locking],[data-lock-state=unlocking]) { --lock-state-ink: var(--lock-pending-ink,#fbbf24); }
+  .tile-row[data-lock-state] .tile-mark > ha-icon,
+  .toolbar-device[data-lock-state] .device-icon { color: var(--lock-state-ink); }
   .tile-label { font-size: 13px; font-weight: 740; width: 100%; overflow-wrap: anywhere; }
   .tile-state { font-size: 12px; color: var(--secondary); overflow-wrap: anywhere; min-width: 0; }
   [data-overview-active-rows] > .toolbar-section-items { gap: 4px; }
