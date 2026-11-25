@@ -1009,6 +1009,27 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
       ]}]}] : []),
   ],
 } : {};
+if (query.has('home-room-sizing')) {
+  const count = Number(query.get('home-room-sizing'));
+  const he = hass.locale.language === 'he';
+  const preferredBreak = he ? 'חדר פנאי' : 'Media Room';
+  const long = he ? 'חדר העבודה והמשחקים בקומה העליונה' : 'Upstairs Office and Guest Bedroom';
+  hass.areas = {};
+  hass.entities = {};
+  hass.states = {};
+  for (let i = 0; i < count; i++) {
+    const room = 'fixture_room_' + i;
+    const name = i === 0 ? (count === 3 ? long : preferredBreak) : (he ? 'חדר ' : 'Room ') + (i + 1);
+    hass.areas[room] = { area_id:room, name };
+    for (let j = 0; j < [6,1,2,6,3,4,5,2,6,3][i]; j++) {
+      const entity = 'light.' + room + '_' + j;
+      hass.entities[entity] = { area_id:room };
+      hass.states[entity] = { state:'off', attributes:{friendly_name:'Fixture light ' + j,supported_color_modes:['onoff']} };
+    }
+  }
+  if (count !== 3) selected.room_overrides = { fixture_room_0:{classic_title_break:1} };
+  if (query.has('header')) selected.layout = 'header';
+}
 const config = Strategy.generate(selected, query.has('empty') ? { ...hass, states: {} } : hass);
 const cardConfig = { ...config.views[0].cards[0],
   ...(query.has('embedded-popup-card') && { page: false }),
@@ -2019,6 +2040,79 @@ async function assertShortcutDetailRoutes(browser) {
     await cover.press('Shift+Enter');
     await security.waitFor();
     assert.deepEqual(await commands(), []);
+  } finally {
+    await page.close();
+  }
+}
+
+async function assertClassicRoomTitleLanes(browser) {
+  const page = await browser.newPage({ viewport:{width:320,height:800}, hasTouch:true, reducedMotion:'reduce' });
+  const cards = page.locator('.room');
+  const grid = () => cards.evaluateAll(rooms => {
+    const rowWidth = rooms[0].parentElement.clientWidth;
+    const gap = Number.parseFloat(getComputedStyle(rooms[0].parentElement).columnGap);
+    return { rowWidth, gap, cards:rooms.map(room => {
+      const box = room.getBoundingClientRect();
+      const title = room.querySelector('.room-name');
+      const titleButton = title.closest('.room-title').getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(title);
+      const words = [...range.getClientRects()];
+      const buttons = [...room.querySelectorAll('.quick-button')].map(button => button.getBoundingClientRect());
+      const overlaps = (first, second) => first.left < second.right && first.right > second.left &&
+        first.top < second.bottom && first.bottom > second.top;
+      return {
+        id:room.dataset.room, x:box.x, top:box.top, width:box.width, height:box.height,
+        titleHeight:titleButton.height, titleText:title.textContent,
+        labelLines:new Set(words.map(word => Math.round(word.top))).size,
+        titleContained:words.every(word => word.top >= titleButton.top - 1 && word.bottom <= box.bottom + 1),
+        buttonOverlap:words.some(word => buttons.some(button => overlaps(word,button))),
+        buttonCount:buttons.length,
+      };
+    }) };
+  });
+  try {
+    for (const locale of ['en','he']) {
+      const source = base + '?locale=' + locale + '&home-room-sizing=';
+      for (const width of [320,390]) {
+        await page.setViewportSize({ width, height:800 });
+        await page.goto(source + '3');
+        await cards.nth(2).waitFor();
+        const mixed = await grid();
+        const long = mixed.cards.find(room => room.id === 'fixture_room_0');
+        assert.equal(long.buttonCount,6);
+        assert.ok(long.labelLines >= 3 && long.titleHeight > 31, JSON.stringify(long));
+        assert.ok(long.titleContained && !long.buttonOverlap, JSON.stringify(long));
+        assert.equal(mixed.cards.length,3);
+        assert.deepEqual(mixed.cards.map(item=>item.buttonCount).sort(),[1,2,6]);
+        assert.ok(mixed.cards.every(item=>Math.abs(item.width * 2 + mixed.gap - mixed.rowWidth) < 2));
+
+        await page.goto(source + '1');
+        await cards.first().waitFor();
+        const single = await grid();
+        assert.equal(single.cards.length,1);
+        assert.ok(Math.abs(single.rowWidth - single.cards[0].width) < 1);
+        assert.equal(single.cards[0].titleText,locale === 'he' ? 'חדר\nפנאי' : 'Media\nRoom');
+
+        await page.goto(source + '10');
+        await cards.nth(9).waitFor();
+        const regular = await grid();
+        assert.equal(regular.cards.length,10);
+        assert.equal(new Set(regular.cards.map(item=>item.x)).size,2);
+        assert.equal(new Set(regular.cards.map(item=>item.top)).size,5);
+        assert.equal(new Set(regular.cards.map(item=>item.height)).size,1);
+        assert.ok(regular.cards.every(item=>item.titleHeight === 31 && !item.buttonOverlap));
+        const split = regular.cards.find(room=>room.id === 'fixture_room_0');
+        assert.equal(split.labelLines,2);
+        assert.equal(split.titleText,locale === 'he' ? 'חדר\nפנאי' : 'Media\nRoom');
+      }
+
+      await page.goto(source + '1&header');
+      await cards.first().waitFor();
+      const singleHeader = await grid();
+      assert.ok(Math.abs(singleHeader.rowWidth - singleHeader.cards[0].width) < 1);
+      assert.equal(singleHeader.cards[0].labelLines,1);
+    }
   } finally {
     await page.close();
   }
@@ -3910,7 +4004,8 @@ try {
       await assertRoomDeviceIcons(browser);
       console.log(engine + ': per-room device icon editing, native picker, fallback and reset');
       await assertHeaderRoomLayout(browser);
-      console.log(engine + ': top-title room layout, shortcut lanes and keyboard focus');
+      await assertClassicRoomTitleLanes(browser);
+      console.log(engine + ': room titles, responsive shortcut lanes and keyboard focus');
       await assertSetupFooterLayout(browser);
       console.log(engine + ': setup footer stays clear of the scrollable editor');
       await assertSetupDrafts(browser);

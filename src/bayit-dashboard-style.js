@@ -65,6 +65,7 @@ export const styles = `
     padding-inline: var(--edge);
   }
   .shell[data-page=true] .rooms { max-width: 430px; margin-inline: auto; grid-auto-rows: var(--room-block); }
+  .shell[data-page=true] .rooms > .room:only-child { grid-column: 1 / -1; }
   .shell[data-page=true] .room { --shortcut-height: clamp(24px,calc((var(--room-block) - 46px) / 3),34px); }
   .shell[data-background=lagoon] {
     --wallpaper: radial-gradient(ellipse at 98% 28%, #335c79 0, transparent 45%),
@@ -943,14 +944,15 @@ export const styles = `
   @container (max-width: 420px) {
     .shell[data-page=true][data-layout=classic] .room-scroll { padding-inline: 16px; }
     .shell[data-page=true][data-layout=classic] .toolbar { margin-inline: 16px; }
+    .shell[data-page=true][data-layout=classic] .rooms { grid-auto-rows: minmax(var(--room-block), auto); }
     .shell[data-page=true][data-layout=classic] .room {
       --shortcut-width: clamp(32px,calc((100cqi - 98px) / 6),42px);
       grid-template-areas: "status" "quick" "title";
       grid-template-columns: minmax(0,1fr);
-      grid-template-rows: minmax(17px,1fr) auto 31px;
+      grid-template-rows: minmax(17px,1fr) auto minmax(31px,max-content);
     }
     .shell[data-page=true][data-layout=classic] .room:is([data-appliance-status],[data-concurrent-activities]) {
-      grid-template-rows: minmax(17px,auto) auto 31px;
+      grid-template-rows: minmax(17px,auto) auto minmax(31px,max-content);
     }
     .shell[data-page=true][data-layout=classic] .quick {
       grid-template-columns: repeat(3,minmax(0,1fr));
