@@ -19,7 +19,7 @@ const fixture = function () {
   const selected = { locale: language, toolbar: [
     { kind:'settings' },
     { kind:'calendar', id:'demo-calendar', placement:'settings',
-      calendar_agenda:{ enabled:true, weather_entity: weather },
+      calendar_agenda:{ enabled:true, weather_entity: weather, ...(query.has('month') && { show_month:true }) },
       sections:[{ kind:'devices', entities: [
         { entity:primary, icon:'mdi:account', accent_color:'#AABBCC' },
         { entity:secondary, icon:'mdi:star', accent_color:'#ABCDEF' },
@@ -135,6 +135,10 @@ try {
       assert.equal(new Date(requests[0].end).getTime(), new Date(requests[1].end).getTime());
       await page.evaluate(() => window.fixture.populate());
       await dialog.getByText(names.partial,{exact:true}).waitFor();
+      const warning = dialog.locator('.calendar-agenda-status[data-warning]');
+      assert.equal(await warning.getAttribute('role'),'status');
+      assert.ok(await warning.evaluate(element => element.getBoundingClientRect().height >= 44));
+      assert.equal(await dialog.locator('.calendar-agenda-date').count(),0);
       await dialog.getByText('26°C',{exact:true}).waitFor();
       assert.equal(await dialog.getByText('12°C',{exact:true}).count(),0);
       assert.equal(await dialog.locator('.calendar-agenda-day').count(),4);
@@ -183,15 +187,55 @@ try {
       assert.ok(rest.every(request => request.method === 'GET' &&
         /^calendars\/calendar\.demo_.*\?start=.*&end=/.test(request.path)));
       assert.equal(await page.evaluate(() => window.fixture.mutations.length),0);
+
+      // Verify chronological days, localized labels and usability across a year boundary in both layouts.
+      await page.clock.setFixedTime(new Date('2026-12-30T17:00:00Z'));
+      await page.goto(base + '?month&locale=' + locale);
+      const monthDialog = await open();
+      await page.waitForFunction(() => window.fixture.requests().length === 4);
+      await page.evaluate(() => window.fixture.populate());
+      await monthDialog.getByText(names.partial,{exact:true}).waitFor();
+      await monthDialog.getByText('26°C',{exact:true}).waitFor();
+      const dates = monthDialog.locator('time.calendar-agenda-date');
+      const isoDates = () => dates.evaluateAll(items => items.map(item => item.dateTime));
+      assert.deepEqual(await isoDates(), ['2026-12-30','2026-12-31','2027-01-01','2027-01-02']);
+      const dateText = await dates.evaluateAll(items => items.map(item => ({
+        month:item.querySelector('.calendar-agenda-month').textContent,
+        year:item.querySelector('.calendar-agenda-year').textContent,
+        heading:item.parentElement.getAttribute('aria-label'),
+      })));
+      assert.equal(dateText[0].month,dateText[1].month);
+      assert.notEqual(dateText[0].month,dateText[2].month);
+      assert.deepEqual(dateText.map(item => item.year),['2026','2026','2027','2027']);
+      assert.ok(dateText.every(item => item.heading.includes(item.year)));
+      const columns = await dates.first().evaluate(date => {
+        const group = date.closest('.calendar-agenda-day');
+        const list = group.querySelector('.calendar-agenda-list');
+        return [date.getBoundingClientRect().right,list.getBoundingClientRect().left,getComputedStyle(list).direction];
+      });
+      assert.ok(columns[0] <= columns[1] && columns[2] === (hebrew ? 'rtl' : 'ltr'));
+      assert.equal(await monthDialog.locator('.calendar-agenda-event').count(),6);
+      await monthDialog.getByRole('button',{name:names.show,exact:true}).tap();
+      assert.equal((await isoDates()).at(-1),'2027-01-05');
+      assert.equal(await monthDialog.locator('.calendar-agenda-event').count(),9);
+      assert.equal(await monthDialog.locator('.calendar-agenda').evaluate(el => el.scrollWidth <= el.clientWidth + 1),true);
+      assert.equal(await page.evaluate(() => window.fixture.mutations.length),0);
+
       if (!hebrew) {
         await page.goto(base + '?editor');
         await page.getByText('Toolbar and extra screens',{exact:true}).click();
         await page.getByRole('button',{name:'Calendar',exact:true}).click();
         assert.equal(await page.getByLabel('Compact agenda',{exact:true}).isChecked(),true);
         const forecast = page.getByLabel('Daily forecast beside dates',{exact:true});
+        const showMonth = page.getByLabel('Show month in the date column',{exact:true});
         assert.equal(await forecast.inputValue(),'weather.demo_daily');
         assert.equal(await forecast.locator('option[value="weather.demo_hourly"]').count(),0);
+        await showMonth.check();
+        assert.deepEqual(await page.evaluate(() => window.draft.toolbar[1].calendar_agenda),
+          {enabled:true, weather_entity:'weather.demo_daily', show_month:true});
         await forecast.selectOption('');
+        assert.deepEqual(await page.evaluate(() => window.draft.toolbar[1].calendar_agenda),{enabled:true,show_month:true});
+        await showMonth.uncheck();
         assert.deepEqual(await page.evaluate(() => window.draft.toolbar[1].calendar_agenda),{enabled:true});
         await page.getByRole('button',{name:'Devices',exact:true}).click();
         await page.getByRole('button',{name:'Primary',exact:true}).click();
@@ -200,7 +244,7 @@ try {
         await accent.press('Tab');
         assert.equal(await page.evaluate(() => window.draft.toolbar[1].sections[0].entities[0].accent_color),'#4755aa');
       }
-      console.log(label + ': scoped calendars with compact/expanded agenda, merged accents, weather, and cleanup');
+      console.log(label + ': scoped calendars with compact/expanded agenda, date columns, availability, weather, and cleanup');
     } finally { await browser.close(); }
   }
 } finally { await new Promise(resolve => server.close(resolve)); }

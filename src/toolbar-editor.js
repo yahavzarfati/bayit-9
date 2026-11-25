@@ -49,6 +49,7 @@ const WORDS = {
     floorOption: 'Map option', floorImage: 'Calibrated map image', floorName: 'Display name',
     addFloor: 'Add floor', removeFloor: 'Remove floor',
     calendarAgenda: 'Compact agenda', calendarAgendaHint: 'Choose the calendars to show. Tap to expand to seven days.',
+    calendarMonth: 'Show month in the date column',
     calendarWeather: 'Daily forecast beside dates', calendarNoWeather: 'No forecast',
     calendarAccent: 'Calendar accent', calendarInvalidAccent: 'Enter a six-digit color such as #80BFFF.',
     compactStatus: 'Show status items side by side',
@@ -100,6 +101,7 @@ const WORDS = {
     floorOption: 'אפשרות מפה', floorImage: 'תמונת מפה מכוילת', floorName: 'שם לתצוגה',
     addFloor: 'הוספת קומה', removeFloor: 'הסרת קומה',
     calendarAgenda: 'יומן בתצוגה מקוצרת', calendarAgendaHint: 'בחרו אילו יומנים להציג. לחיצה מציגה שבעה ימים.',
+    calendarMonth: 'הצגת החודש בטור התאריך',
     calendarWeather: 'תחזית יומית ליד התאריך', calendarNoWeather: 'ללא תחזית',
     calendarAccent: 'צבע היומן', calendarInvalidAccent: 'הזינו צבע בן שש ספרות, למשל ‎#80BFFF‎.',
     compactStatus: 'הצגת פריטי הסטטוס זה לצד זה',
@@ -694,15 +696,17 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     const controls = [node('label', { className:'check' }, [enabled, words.calendarAgenda])];
     if (settings) {
       controls.push(node('small', { textContent: words.calendarAgendaHint }));
+      const updateAgenda = edits => changeEntry({ calendar_agenda: patch(toolbar[entryIndex].calendar_agenda, edits) });
+      const showMonth = node('input', { type:'checkbox', checked: settings.show_month === true });
+      showMonth.addEventListener('change', () => updateAgenda({ show_month: showMonth.checked || undefined }));
+      controls.push(node('label', { className:'check' }, [showMonth, words.calendarMonth]));
       const weather = candidates.filter(item => item.entity.startsWith('weather.') && supportsDailyForecast(hass.states?.[item.entity]))
         .map(item => [item.entity, item.name || item.entity]);
       if (settings.weather_entity && !weather.some(([id]) => id === settings.weather_entity)) {
         weather.push([settings.weather_entity, words.unavailable + ' · ' + settings.weather_entity]);
       }
       const forecast = select([['', words.calendarNoWeather], ...weather], settings.weather_entity ?? '');
-      forecast.addEventListener('change', () => changeEntry({ calendar_agenda: {
-        enabled:true, ...(forecast.value && { weather_entity: forecast.value }),
-      } }));
+      forecast.addEventListener('change', () => updateAgenda({ weather_entity: forecast.value || undefined }));
       controls.push(field(words.calendarWeather, forecast));
     }
     return node('div', { className:'toolbar-editor-stack' }, controls);

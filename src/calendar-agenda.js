@@ -11,7 +11,8 @@ export function calendarAccent(value) {
 export function normalizeCalendarAgenda(value, visibleWeather = () => true) {
   if (value?.enabled !== true) return undefined;
   const weather = value.weather_entity;
-  return { enabled: true, ...(typeof weather === 'string' && weatherId.test(weather) &&
+  return { enabled: true, ...(value.show_month === true && { show_month: true }),
+    ...(typeof weather === 'string' && weatherId.test(weather) &&
     visibleWeather(weather) && { weather_entity: weather }) };
 }
 
@@ -103,12 +104,16 @@ const words = {
   en: {
     loading: 'Loading calendars…', empty: 'No upcoming events in the next 7 days.',
     unavailable: 'Calendars are unavailable right now.', partial: 'Some calendars are unavailable right now.',
+    partialDetail: 'Events from available calendars are shown below.',
+    partialEmpty: 'No upcoming events in the available calendars.',
     choose: 'Choose calendars in the dashboard settings.', show: 'Show the full week', hide: 'Show less',
     allDay: 'All day', until: 'Until',
   },
   he: {
     loading: 'טוען יומנים…', empty: 'אין אירועים ב־7 הימים הקרובים.',
     unavailable: 'היומנים אינם זמינים כרגע.', partial: 'חלק מהיומנים אינם זמינים כרגע.',
+    partialDetail: 'מוצגים כאן האירועים מהיומנים הזמינים.',
+    partialEmpty: 'אין אירועים קרובים ביומנים הזמינים.',
     choose: 'אפשר לבחור יומנים בהגדרות הדשבורד.', show: 'הצגת השבוע המלא', hide: 'תצוגה מקוצרת',
     allDay: 'כל היום', until: 'עד',
   },
@@ -149,8 +154,15 @@ export function createCalendarAgenda({ host, context, items, settings }) {
   const sources = calendarSourceConfig(items);
   const weather = settings.weather_entity;
   const panel = make('section', 'calendar-agenda');
+  panel.toggleAttribute('data-date-rail', settings.show_month === true);
   const status = make('p', 'calendar-agenda-status');
   status.setAttribute('role', 'status');
+  const alertIcon = icon('mdi:alert-outline');
+  const statusCopy = make('span', 'calendar-agenda-status-copy');
+  const statusText = make('span');
+  const statusDetail = make('span', 'calendar-agenda-status-detail');
+  statusCopy.append(statusText, statusDetail);
+  status.append(alertIcon, statusCopy);
   const content = make('div', 'calendar-agenda-days');
   content.id = 'bayit-agenda-' + ++nextAgendaId;
   const expand = button('control-button', labels.show);
@@ -159,6 +171,10 @@ export function createCalendarAgenda({ host, context, items, settings }) {
   panel.append(status, content, expand);
   host.append(panel);
   const dayFormat = new Intl.DateTimeFormat(locale, { weekday:'long', month:'long', day:'numeric' });
+  const weekdayFormat = new Intl.DateTimeFormat(locale, { weekday:'short' });
+  const monthFormat = new Intl.DateTimeFormat(locale, { month:'short' });
+  const fullDateFormat = new Intl.DateTimeFormat(locale, { weekday:'long', month:'long', day:'numeric', year:'numeric' });
+  const dateNumber = new Intl.NumberFormat(locale, { useGrouping:false });
   const subscriptions = new Map();
   let range;
   let hass;
@@ -262,10 +278,22 @@ export function createCalendarAgenda({ host, context, items, settings }) {
       });
   }
 
-  function renderDay({ day, rows }, timeFormat, forecastByDay, unit) {
+  function renderDay({ day, rows }, timeFormat, forecastByDay, unit, showYear) {
     const group = make('section', 'calendar-agenda-day');
     const title = make('div', 'calendar-agenda-day-head');
-    const heading = make('h3', '', dayFormat.format(new Date(day + 'T12:00:00')));
+    const date = new Date(day + 'T12:00:00');
+    const heading = make('h3');
+    if (settings.show_month) {
+      const rail = make('time', 'calendar-agenda-date');
+      rail.dateTime = day;
+      rail.setAttribute('aria-hidden', 'true');
+      heading.setAttribute('aria-label', fullDateFormat.format(date));
+      rail.append(make('span', 'calendar-agenda-weekday', weekdayFormat.format(date)),
+        make('bdi', 'calendar-agenda-day-number', dateNumber.format(date.getDate())),
+        make('span', 'calendar-agenda-month', monthFormat.format(date)));
+      if (showYear) rail.append(make('bdi', 'calendar-agenda-year', dateNumber.format(date.getFullYear())));
+      heading.append(rail);
+    } else heading.textContent = dayFormat.format(date);
     title.append(heading);
     const forecast = forecastByDay.get(day);
     if (forecast && Number.isFinite(forecast.temperature)) {
@@ -328,6 +356,7 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     const model = buildCalendarAgenda(entries, now, range);
     const text = !sources.length ? labels.choose : !ready ? (pending ? labels.loading : labels.unavailable)
       : partial ? labels.partial : !model.count ? (pending ? labels.loading : labels.empty) : '';
+    const detail = text === labels.partial ? (model.count ? labels.partialDetail : pending ? labels.loading : labels.partialEmpty) : '';
     if (!model.canExpand) expanded = false;
     const shown = expanded ? model.full : model.compact;
     const forecastByDay = new Map();
@@ -339,7 +368,7 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     const unit = ['°C','°F','K'].includes(unitValue) ? unitValue : '°';
     const timePreference = hass?.locale?.time_format;
     const hourCycle = timePreference === '24' ? 'h23' : timePreference === '12' ? 'h12' : undefined;
-    const order = JSON.stringify([text, shown, [...forecastByDay], expanded, model.canExpand, unit, hourCycle]);
+    const order = JSON.stringify([text, detail, shown, [...forecastByDay], expanded, model.canExpand, unit, hourCycle]);
     if (alarmAt !== model.nextChange) {
       view.clearTimeout(alarm);
       alarmAt = model.nextChange;
@@ -350,14 +379,20 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     }
     if (order === signature) return;
     signature = order;
-    status.textContent = text;
+    const warning = text === labels.partial || text === labels.unavailable;
+    status.toggleAttribute('data-warning', warning);
+    alertIcon.hidden = !warning;
+    statusText.textContent = text;
+    statusDetail.hidden = !detail;
+    statusDetail.textContent = detail;
     status.hidden = !text;
     expand.hidden = !model.canExpand;
     expand.textContent = expanded ? labels.hide : labels.show;
     expand.setAttribute('aria-expanded', String(expanded));
     content.dataset.expandable = String(model.canExpand);
     const timeFormat = new Intl.DateTimeFormat(locale, { hour:'numeric', minute:'2-digit', hourCycle });
-    content.replaceChildren(...shown.map(group => renderDay(group, timeFormat, forecastByDay, unit)));
+    const showYear = shown[0]?.day.slice(0, 4) !== shown.at(-1)?.day.slice(0, 4);
+    content.replaceChildren(...shown.map(group => renderDay(group, timeFormat, forecastByDay, unit, showYear)));
   }
 
   function update(next) {
@@ -405,6 +440,22 @@ export const calendarAgendaStyles = `
   .calendar-agenda-day { border-block-start: 1px solid var(--soft-line); padding-block-start: 9px; }
   .calendar-agenda-day-head { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin-block-end: 6px; }
   .calendar-agenda-day-head h3 { margin: 0; font-size: 14px; }
+  .calendar-agenda[data-date-rail] .calendar-agenda-days:not(:empty) {
+    padding: 12px; border: 1px solid var(--soft-line); border-radius: 12px;
+  }
+  .calendar-agenda[data-date-rail] .calendar-agenda-day {
+    display: grid; grid-template-columns: 50px minmax(0,1fr); gap: 8px; direction: ltr;
+  }
+  .calendar-agenda[data-date-rail] .calendar-agenda-day:first-child { border: 0; padding-block-start: 0; }
+  .calendar-agenda[data-date-rail] .calendar-agenda-day-head {
+    display: grid; align-content: start; justify-items: center; justify-content: center; gap: 3px; margin: 0;
+  }
+  .shell[dir=rtl] .calendar-agenda[data-date-rail] .calendar-agenda-list { direction: rtl; }
+  .calendar-agenda-date {
+    display: grid; justify-items: center; gap: 1px; font-size: 11px; line-height: 1.2; color: var(--secondary);
+  }
+  .calendar-agenda-day-number { color: var(--ink); font-size: 20px; font-weight: 760; }
+  .calendar-agenda[data-date-rail] .calendar-agenda-forecast { gap: 3px; }
   .calendar-agenda-forecast, .calendar-agenda-event-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .calendar-agenda-forecast ha-icon, .calendar-agenda-source ha-icon { --mdc-icon-size: 17px; }
   .calendar-agenda-forecast, .calendar-agenda-time, .calendar-agenda-status { color: var(--secondary); font-size: 12px; }
@@ -414,5 +465,13 @@ export const calendarAgendaStyles = `
   .calendar-agenda-event-title { flex-wrap: wrap; font-size: 13px; font-weight: 680; }
   .calendar-agenda-event-title bdi { flex: 1 1 130px; min-width: 0; overflow-wrap: anywhere; }
   .calendar-agenda-status { margin: 0; }
+  .calendar-agenda-status[data-warning] {
+    display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px;
+    border: 1px solid var(--soft-line); border-radius: 8px; background: var(--room-tile-fill);
+    color: var(--ink); font-size: 13px;
+  }
+  .calendar-agenda-status[data-warning] > ha-icon { flex: none; color: var(--warm); --mdc-icon-size: 18px; }
+  .calendar-agenda-status-copy { display: grid; gap: 3px; min-width: 0; }
+  .calendar-agenda-status-detail { color: var(--secondary); }
   .calendar-agenda-expand { justify-self: center; }
 `;

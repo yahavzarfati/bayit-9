@@ -72,7 +72,7 @@ test('projects only explicitly enabled calendar settings with safe visible daily
     entities: {'calendar.hidden': {disabled_by:'user'}, 'weather.hidden': {hidden_by:'user'}},
   };
   const entry = {id:'calendar',kind:'calendar',placement:'settings',
-    calendar_agenda:{enabled:true, weather_entity:'weather.allowed', url:'https://external.invalid/'},
+    calendar_agenda:{enabled:true, weather_entity:'weather.allowed', show_month:true, url:'https://external.invalid/'},
     sections:[{kind:'devices', entities:[
       {entity:'calendar.first', icon:'mdi:calendar', accent_color:'#D9AAD2'},
       {entity:'calendar.hidden', accent_color:'#112233'},
@@ -81,14 +81,15 @@ test('projects only explicitly enabled calendar settings with safe visible daily
   };
   const build = (item, options) => generateDashboard({ toolbar:[item], ...options }, hass).views[0].cards[0].toolbar[0];
   const first = build(entry);
-  assert.deepEqual(first.calendar_agenda, {enabled:true, weather_entity:'weather.allowed'});
+  assert.deepEqual(first.calendar_agenda, {enabled:true, show_month:true, weather_entity:'weather.allowed'});
   assert.deepEqual(first.sections[0].entities.map(item => [item.entity,item.accent_color]), [
     ['calendar.first','#D9AAD2'], ['weather.allowed', undefined],
   ]);
   for (const weather_entity of ['weather.missing','weather.hidden','weather.hourly','calendar.first']) {
     assert.deepEqual(build({...entry, calendar_agenda:{enabled:true,weather_entity}}).calendar_agenda, {enabled:true});
   }
-  assert.deepEqual(build(entry, {hidden_entities:['weather.allowed']}).calendar_agenda, {enabled:true});
+  assert.deepEqual(build(entry, {hidden_entities:['weather.allowed']}).calendar_agenda, {enabled:true,show_month:true});
+  assert.deepEqual(build({...entry,calendar_agenda:{enabled:true,show_month:'true'}}).calendar_agenda,{enabled:true});
   assert.equal(build({...entry, kind:'weather'}).calendar_agenda, undefined);
   assert.equal(build({...entry, calendar_agenda:{enabled:'true'}}).calendar_agenda, undefined);
 });
