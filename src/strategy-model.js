@@ -369,16 +369,20 @@ export function isVisibleEntity(entity, states, registry, hidden) {
 }
 
 const overviewIdFragment = /^[a-z0-9_]{1,64}$/;
+const validOverviewFragments = value => Array.isArray(value) && value.length <= 16 &&
+  value.every(part => typeof part === 'string' && overviewIdFragment.test(part));
 
 export function normalizeOverviewDiscovery(value) {
-  if (!value || !['light', 'cover'].includes(value.domain) || Array.isArray(value)) return undefined;
+  if (!value || !['light', 'cover', 'climate'].includes(value.domain) || Array.isArray(value)) return undefined;
   const { domain, exclude_entities = [], exclude_id_contains = [] } = value;
   if (!Array.isArray(exclude_entities) || exclude_entities.some(id => !idForDomain(id, domain)) ||
-      !Array.isArray(exclude_id_contains) || exclude_id_contains.length > 16 ||
-      exclude_id_contains.some(fragment => typeof fragment !== 'string' || !overviewIdFragment.test(fragment))) {
-    return undefined;
-  }
-  return { domain, exclude_entities: [...new Set(exclude_entities)], exclude_id_contains: [...new Set(exclude_id_contains)] };
+      !validOverviewFragments(exclude_id_contains)) return undefined;
+  const source = { domain, exclude_entities: [...new Set(exclude_entities)], exclude_id_contains: [...new Set(exclude_id_contains)] };
+  if (domain !== 'climate') return source;
+  const { include_entities = [], include_id_prefixes = [] } = value;
+  if (!Array.isArray(include_entities) || include_entities.some(id => !idForDomain(id, domain)) ||
+      !validOverviewFragments(include_id_prefixes)) return undefined;
+  return { ...source, include_entities: [...new Set(include_entities)], include_id_prefixes: [...new Set(include_id_prefixes)] };
 }
 
 export function supportsOverviewLightsOff(kind, section) {
@@ -406,12 +410,18 @@ export function isActiveOverviewEntity(entity, source, hass, hidden, includeClos
   const states = hass?.states ?? {};
   const state = states[entity]?.state;
   const prefix = source.domain + '.';
-  const active = source.domain === 'light' ? state === 'on' :
-    Boolean(state) && !['closed', 'unknown', 'unavailable'].includes(state) && (state !== 'closing' || includeClosing);
-  return hass?.entities != null && entity.startsWith(prefix) && active &&
-    isVisibleEntity(entity, states, hass?.entities, hidden) &&
-    !source.exclude_entities.includes(entity) &&
-    !source.exclude_id_contains.some(fragment => entity.slice(prefix.length).includes(fragment));
+  if (hass?.entities == null || !entity.startsWith(prefix) || !isVisibleEntity(entity, states, hass.entities, hidden) ||
+      source.exclude_entities.includes(entity)) return false;
+  const slug = entity.slice(prefix.length);
+  if (source.exclude_id_contains.some(fragment => slug.includes(fragment))) return false;
+  if (source.domain === 'light') return state === 'on';
+  if (source.domain === 'climate') {
+    const { include_entities: ids, include_id_prefixes: prefixes } = source;
+    const matches = ids?.includes(entity) || prefixes?.some(part => slug.startsWith(part)) ||
+      (!ids?.length && !prefixes?.length);
+    return matches && Boolean(state) && !['off', 'unknown', 'unavailable'].includes(state);
+  }
+  return Boolean(state) && !['closed', 'unknown', 'unavailable'].includes(state) && (state !== 'closing' || includeClosing);
 }
 
 export function discoverOverviewEntities(source, hass, hidden, locale, includeClosing) {

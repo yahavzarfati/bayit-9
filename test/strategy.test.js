@@ -87,6 +87,56 @@ test('Overview discovers active covers as status rows, honoring exclusions, visi
   assert.deepEqual(visible(true), ['added_later','closing','open','opening','stopped'].map(name => ['cover.' + name, 'status']));
 });
 
+test('Overview climate discovery is status-only and restricts matches by exact ID or a literal prefix', () => {
+  const hass = home();
+  const record = (id, state, name = id, metadata = {}) => {
+    hass.states[id] = { state, attributes: { friendly_name: name, hvac_action: 'idle' } };
+    hass.entities[id] = metadata;
+  };
+  record('climate.family_studio', 'cool', 'Zulu');
+  record('climate.lounge', 'heat', 'Alpha');
+  record('climate.unrelated_family', 'auto');
+  record('climate.family_off', 'off');
+  record('climate.family_unknown', 'unknown');
+  record('climate.family_unavailable', 'unavailable');
+  record('climate.family_omitted', 'heat');
+  record('climate.family_test', 'cool');
+  record('climate.family_registry_hidden', 'cool', 'Hidden', { hidden_by: 'user' });
+  record('climate.family_dashboard_hidden', 'cool');
+  record('switch.family_studio', 'on');
+
+  const discover = {
+    domain: 'climate', include_entities: ['climate.lounge'], include_id_prefixes: ['family_', 'family_'],
+    exclude_entities: ['climate.family_omitted'], exclude_id_contains: ['test'],
+  };
+  const normalized = normalizeOverviewDiscovery(discover);
+  assert.deepEqual(normalized.include_id_prefixes, ['family_']);
+  const hidden = new Set(['climate.family_dashboard_hidden']);
+  const matched = () => discoverOverviewEntities(normalized, hass, hidden, 'en').map(({ entity, role }) => [entity, role]);
+  assert.deepEqual(matched(), [['climate.lounge', 'status'], ['climate.family_studio', 'status']]);
+  record('climate.family_added', 'dry', 'Beta');
+  assert.deepEqual(matched(), [
+    ['climate.lounge', 'status'], ['climate.family_added', 'status'], ['climate.family_studio', 'status'],
+  ]);
+  assert.ok(discoverOverviewEntities(normalizeOverviewDiscovery({ domain: 'climate' }), hass, hidden, 'en')
+    .some(item => item.entity === 'climate.unrelated_family'));
+  assert.equal(normalizeOverviewDiscovery({ ...discover, include_entities: ['light.other'] }), undefined);
+  assert.equal(normalizeOverviewDiscovery({ ...discover, include_id_prefixes: ['family.*'] }), undefined);
+  assert.equal(normalizeOverviewDiscovery({ ...discover, include_id_prefixes: ['climate.family_'] }), undefined);
+
+  const section = { kind: 'status', discover, entities: ['climate.lounge'], include_closing: true, turn_off_active_lights: true };
+  const { toolbar } = generateDashboard({ toolbar: [
+    { kind: 'overview', sections: [section, { ...section, kind: 'covers' }, { ...section, kind: 'devices' }] },
+    { kind: 'security', sections: [section] },
+  ] }, hass).views[0].cards[0];
+  const [overview, security] = toolbar.map(entry => entry.sections);
+  assert.equal(overview[0].filter, 'active');
+  assert.deepEqual(overview[0].discover, normalized);
+  assert.equal(overview[0].include_closing, undefined);
+  assert.equal(overview[0].turn_off_active_lights, undefined);
+  assert.ok([...overview.slice(1), ...security].every(item => !item.discover));
+});
+
 test('Overview group off is opt-in for active light discovery or selected light actions only', () => {
   const hass = home();
   const setting = { turn_off_active_lights: true };

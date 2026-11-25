@@ -31,6 +31,8 @@ const WORDS = {
     showHeading: 'Show section title', addSection: 'Add section', editSection: 'Edit section', sectionDisplay: 'Section display',
     overviewSource: 'Device source', overviewDiscover: 'Discover active lights', overviewExcluded: 'Exclude these lights',
     overviewDiscoverCovers: 'Discover active covers', overviewExcludedCovers: 'Exclude these covers',
+    overviewDiscoverClimate: 'Discover active climate devices', overviewExcludedClimate: 'Exclude these climate devices',
+    overviewIncludeClimate: 'Include specific climate devices', overviewClimatePrefixes: 'Include climate devices by ID prefix',
     overviewLightsOff: 'Show a button to turn off these lights',
     overviewExcludedIds: 'Exclude by text in entity ID', overviewInvalidIds: 'Enter up to 16 comma-separated ID fragments.',
     overviewActiveOnly: 'Show active devices only', overviewClosing: 'Include closing covers',
@@ -97,6 +99,8 @@ const WORDS = {
     showHeading: 'הצגת כותרת הקבוצה', addSection: 'הוספת קבוצה', editSection: 'עריכת קבוצה', sectionDisplay: 'תצוגת הקבוצה',
     overviewSource: 'מקור המכשירים', overviewDiscover: 'גילוי אורות דולקים', overviewExcluded: 'אורות להחרגה',
     overviewDiscoverCovers: 'גילוי תריסים ווילונות פעילים', overviewExcludedCovers: 'תריסים ווילונות להחרגה',
+    overviewDiscoverClimate: 'גילוי מזגנים פעילים', overviewExcludedClimate: 'מזגנים להחרגה',
+    overviewIncludeClimate: 'בחירת מזגנים מסוימים', overviewClimatePrefixes: 'הכללת מזגנים לפי תחילת מזהה הישות',
     overviewLightsOff: 'הצגת כפתור לכיבוי המנורות בקבוצה',
     overviewExcludedIds: 'החרגה לפי חלק ממזהה הישות', overviewInvalidIds: 'הזינו עד 16 קטעי מזהה מופרדים בפסיקים.',
     overviewActiveOnly: 'הצגת מכשירים פעילים בלבד', overviewClosing: 'הצגת תריסים בזמן סגירה',
@@ -553,7 +557,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
   function overviewFilters(active, discovery) {
     const fields = [];
     const sources = [['manual', words.deviceList]];
-    if (active.kind === 'status') sources.push(['light', words.overviewDiscover]);
+    if (active.kind === 'status') sources.push(['light', words.overviewDiscover], ['climate', words.overviewDiscoverClimate]);
     sources.push(['cover', words.overviewDiscoverCovers]);
     const source = select(sources, discovery?.domain ?? 'manual');
     source.dataset.toolbarFocus = 'overview-source';
@@ -567,21 +571,29 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         const next = normalizeOverviewDiscovery({ ...current, ...edits });
         if (next) changeSection({ discover: next });
       };
-      const chosen = new Set(discovery.exclude_entities);
-      const prefix = discovery.domain + '.';
-      const choices = new Set(candidates.filter(item => item.entity.startsWith(prefix)).map(item => item.entity));
-      for (const id of chosen) choices.add(id);
-      const exclusionOptions = [...choices].map(id => {
-        const name = available.get(id)?.name;
-        return node('option', { value: id, textContent: name && name !== id ? name + ' · ' + id : id, selected: chosen.has(id) });
-      });
-      const exclusions = node('select', { multiple: true, size: Math.min(5, Math.max(2, choices.size)) }, exclusionOptions);
-      exclusions.addEventListener('change', () => save({ exclude_entities: [...exclusions.selectedOptions].map(option => option.value) }));
-      const fragments = textField(words.overviewExcludedIds, discovery.exclude_id_contains.join(', '), value => {
-        save({ exclude_id_contains: value ? value.split(',').map(fragment => fragment.trim().toLowerCase()) : [] });
+      const domainIds = candidates.filter(item => item.entity.startsWith(discovery.domain + '.')).map(item => item.entity);
+      const entityList = (key, label) => {
+        const chosen = new Set(discovery[key]);
+        const choices = [...new Set([...domainIds, ...chosen])];
+        const options = choices.map(id => {
+          const name = available.get(id)?.name;
+          return node('option', { value: id, textContent: name && name !== id ? name + ' · ' + id : id, selected: chosen.has(id) });
+        });
+        const select = node('select', { multiple: true, size: Math.min(5, Math.max(2, choices.length)) }, options);
+        select.addEventListener('change', () => save({ [key]: [...select.selectedOptions].map(option => option.value) }));
+        return field(label, select);
+      };
+      const idFragments = (key, label, placeholder) => textField(label, discovery[key].join(', '), value => {
+        save({ [key]: value ? value.split(',').map(fragment => fragment.trim().toLowerCase()) : [] });
       }, { pattern: /^[a-z0-9_]{1,64}(?:\s*,\s*[a-z0-9_]{1,64}){0,15}$/i, maxLength: 1054,
-        dir: 'ltr', error: words.overviewInvalidIds, placeholder: 'helper, test' });
-      fields.push(field(discovery.domain === 'cover' ? words.overviewExcludedCovers : words.overviewExcluded, exclusions), fragments.field);
+        dir: 'ltr', error: words.overviewInvalidIds, placeholder }).field;
+      if (discovery.domain === 'climate') {
+        fields.push(entityList('include_entities', words.overviewIncludeClimate),
+          idFragments('include_id_prefixes', words.overviewClimatePrefixes, 'ac_, thermostat_'));
+      }
+      const excludeLabel = discovery.domain === 'climate' ? words.overviewExcludedClimate
+        : discovery.domain === 'cover' ? words.overviewExcludedCovers : words.overviewExcluded;
+      fields.push(entityList('exclude_entities', excludeLabel), idFragments('exclude_id_contains', words.overviewExcludedIds, 'helper, test'));
     } else {
       const activeOnly = node('input', { type: 'checkbox', checked: active.filter === 'active' });
       activeOnly.dataset.toolbarFocus = 'overview-active';

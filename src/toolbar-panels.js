@@ -407,8 +407,9 @@ export function createToolbarPanel(kind, configuration, context) {
     };
   }
 
-  function discoveredOverviewSection(panel, items, { discover: source, include_closing: includeClosing }, lightsOff) {
+  function discoveredOverviewSection(panel, items, { discover: source, include_closing: includeClosing, entities }, lightsOff) {
     const tiles = new Map();
+    const climateLabels = source.domain === 'climate' ? new Map(entities.map(item => [item.entity, item])) : undefined;
     const allowed = entity => isActiveOverviewEntity(entity, source, context.getHass(), context.hiddenEntities, includeClosing);
     handlers.push(() => {
       const devices = discoverOverviewEntities(source, currentHass, context.hiddenEntities, context.locale, includeClosing);
@@ -419,7 +420,9 @@ export function createToolbarPanel(kind, configuration, context) {
         tiles.delete(id);
       }
       let cursor = items.firstElementChild;
-      for (const item of devices) {
+      for (const device of devices) {
+        const curated = climateLabels?.get(device.entity);
+        const item = curated ? { ...device, name: curated.name ?? device.name, icon: curated.icon ?? device.icon } : device;
         let view = tiles.get(item.entity);
         if (!view) {
           view = { item };

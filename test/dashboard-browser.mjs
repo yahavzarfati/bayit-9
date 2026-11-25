@@ -42,6 +42,17 @@ function observeScript(state) {
   card.hass = { ...hass, states: { ...states } };
 }
 const query = new URL(location.href).searchParams;
+if (query.has('overview-climate-discovery')) {
+  for (const [id, name, state] of [
+    ['fixture_lounge', 'Alpha thermostat', 'cool'],
+    ['fixture_room_upstairs', 'Zulu thermostat', 'heat'],
+    ['fixture_room_excluded', 'Excluded thermostat', 'cool'],
+    ['other_fixture_room', 'Unrelated thermostat', 'cool'],
+  ]) {
+    states['climate.' + id] = { state, attributes: { friendly_name: name, hvac_action: 'idle',
+      temperature: 24, current_temperature: 22, hvac_modes: ['off', 'cool', 'heat'] } };
+  }
+}
 const linkedPanels = query.has('linked-only-panels');
 const compactOverview = query.has('compact-overview-status');
 if (query.has('native-more-info')) document.addEventListener('hass-more-info', event => {
@@ -106,6 +117,16 @@ const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection'
   ] }),
   ...(query.has('legacy-room-order') && { area_ids: ['lounge', 'studio'] }),
   ...(query.has('cross-area-room-device') && { room_overrides: { lounge: { entities: ['light.demo_lamp'] } } }),
+  ...(query.has('overview-climate-discovery') && {
+    profiles: [{ entity: 'climate.fixture_lounge', kind: 'climate', name: 'Lounge HVAC' }],
+    toolbar: [
+      { id: 'overview', kind: 'overview', sections: [{
+        id: 'climate', kind: 'status', title: 'Air conditioning',
+        entities: [{ entity: 'climate.fixture_lounge', role: 'action', icon: 'mdi:air-conditioner' }],
+      }] },
+      { id: 'appearance', kind: 'settings' },
+    ],
+  }),
   ...(query.has('sole-room') && { area_ids: ['bayit_room_only'],
     room_overrides: { bayit_room_only: { name: 'Reading nook', entities: [] } } }),
   ...(query.has('swing-unreported') && {
@@ -1933,6 +1954,72 @@ async function assertCompactWeatherReadings(browser) {
   }
 }
 
+async function assertOverviewClimateDiscovery(browser) {
+  const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+  page.setDefaultTimeout(8000);
+  try {
+    await page.goto(base + '/fixture-home/home?configuration&overview-climate-discovery');
+    await page.getByRole('button', { name: 'Appearance', exact: true }).tap();
+    await page.getByRole('button', { name: 'Customize home', exact: true }).tap();
+    const editor = page.getByRole('dialog', { name: 'Customize home', exact: true });
+    await editor.getByText('Toolbar and extra screens', { exact: true }).tap();
+    await editor.getByRole('button', { name: 'Overview', exact: true }).tap();
+    await editor.getByRole('button', { name: 'Air conditioning', exact: true }).tap();
+    await editor.getByLabel('Device source', { exact: true }).selectOption('climate');
+    await editor.getByLabel('Include specific climate devices', { exact: true }).selectOption(['climate.fixture_lounge']);
+    await editor.getByLabel('Exclude these climate devices', { exact: true }).selectOption(['climate.fixture_room_excluded']);
+    const prefixes = editor.getByLabel('Include climate devices by ID prefix', { exact: true });
+    await prefixes.fill('fixture_room.*');
+    await prefixes.blur();
+    assert.equal(await prefixes.getAttribute('aria-invalid'), 'true');
+    await prefixes.fill('FIXTURE_ROOM_');
+    await prefixes.blur();
+    assert.equal(await prefixes.getAttribute('aria-invalid'), 'false');
+    assert.equal(await editor.getByLabel('Include closing covers', { exact: true }).count(), 0);
+    assert.equal(await editor.getByLabel('Show a button to turn off these lights', { exact: true }).count(), 0);
+    await editor.getByRole('button', { name: 'Save dashboard', exact: true }).tap();
+    await editor.waitFor({ state: 'hidden' });
+    await page.waitForURL(url => url.hash === '');
+    const persisted = await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.toolbar[0].sections[0]);
+    assert.deepEqual(persisted.discover, {
+      domain: 'climate', exclude_entities: ['climate.fixture_room_excluded'], exclude_id_contains: [],
+      include_entities: ['climate.fixture_lounge'], include_id_prefixes: ['fixture_room_'],
+    });
+    assert.deepEqual(persisted.entities, [{ entity: 'climate.fixture_lounge', role: 'action', icon: 'mdi:air-conditioner' }]);
+
+    await page.getByRole('button', { name: 'Home overview', exact: true }).tap();
+    const panel = page.getByRole('dialog', { name: 'Home overview', exact: true });
+    const row = name => panel.getByRole('button', { name: new RegExp(name) });
+    const names = () => panel.locator('.tile-row:visible .tile-label').allTextContents();
+    const curated = row('Lounge HVAC');
+    await curated.waitFor();
+    assert.deepEqual(await names(), ['Lounge HVAC', 'Zulu thermostat']);
+    assert.equal(await curated.locator('ha-icon').getAttribute('icon'), 'mdi:air-conditioner');
+    const reading = (await curated.locator('.tile-state').innerText()).replace(/[\u2066\u2069]/gu, '');
+    assert.match(reading, /24/);
+    assert.match(reading, /22/);
+    await curated.tap();
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), ['climate.fixture_lounge']);
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+
+    await page.evaluate(() => {
+      window.bayitTest.setRoomState('climate.fixture_room_new', 'dry');
+      window.bayitTest.setFixtureAttributes('climate.fixture_room_new', { friendly_name: 'New thermostat' });
+    });
+    await row('New thermostat').waitFor();
+    assert.deepEqual(await names(), ['Lounge HVAC', 'New thermostat', 'Zulu thermostat']);
+    await page.evaluate(() => {
+      window.bayitTest.setRoomState('climate.fixture_lounge', 'off');
+      window.bayitTest.setRoomState('climate.fixture_room_upstairs', 'unavailable');
+      window.bayitTest.setFixtureRegistry('climate.fixture_room_new', { hidden_by: 'user' });
+    });
+    await row('Lounge HVAC').waitFor({ state: 'hidden' });
+    assert.deepEqual(await names(), []);
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertMediaRemotePower(browser) {
   for (const locale of ['en', 'he']) {
     const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
@@ -2118,6 +2205,8 @@ try {
       await assertHomePreferenceAliases(browser);
       await assertSharedAppearance(browser, engine);
       await assertCompactSettings(browser);
+      await assertOverviewClimateDiscovery(browser);
+      console.log(engine + ': editable active climate discovery, passive rows and live scope');
       await assertShortcutDetailRoutes(browser);
       await assertCompactInlineLightLayout(browser);
       await assertCompactRoomHeater(browser);
