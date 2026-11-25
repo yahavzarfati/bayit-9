@@ -1371,7 +1371,7 @@ try {
         if (width === 390) {
           const transparent = 'rgba(0, 0, 0, 0)';
           const material = () => covers.first().evaluate(tile => {
-            const icon = tile.querySelector('.device-head .round-action');
+            const icon = tile.querySelector('.device-panel-launch .device-icon');
             const command = tile.querySelector('[data-action="open"]');
             return {
               fallback: matchMedia('(prefers-reduced-transparency: reduce), (prefers-contrast: more)').matches ||
@@ -1415,13 +1415,43 @@ try {
         assert.equal(await curtain.locator('[data-action="open"] ha-icon').getAttribute('icon'), 'mdi:arrow-expand-horizontal');
         assert.equal(await curtain.locator('[data-action="close"] ha-icon').getAttribute('icon'), 'mdi:arrow-collapse-horizontal');
         assert.equal(await dialog.locator('[data-entity="cover.demo_shade"] [data-action="open"] ha-icon').getAttribute('icon'), 'mdi:arrow-up');
+        if (width === 375) {
+          const name = 'Long living room curtain';
+          const header = curtain.getByRole('button', { name: name + ' · Device controls', exact: true });
+          const details = coverGridPage.getByRole('dialog', { name, exact: true });
+          const back = details.getByRole('button', { name: 'Back to room', exact: true });
+          assert.ok((await header.boundingBox()).height >= 44);
+          assert.equal(await curtain.locator('input[type=range]').count(), 0);
+          assert.equal(await header.locator('button').count(), 0);
+          const hold = () => header.getByText(name, { exact: true }).dispatchEvent('pointerdown',
+            { pointerType:'touch', pointerId:5, button:0, isPrimary:true });
+          const triggers = [() => header.getByText(name, { exact: true }).tap(), hold, () => header.press('Shift+Enter')];
+          for (const trigger of triggers) {
+            await trigger();
+            await details.waitFor();
+            if (trigger === hold) await coverGridPage.evaluate(() => document.dispatchEvent(
+              new PointerEvent('pointerup', { pointerType:'touch', pointerId:5 })));
+            await coverGridPage.waitForFunction(() => location.hash === '#device/studio/cover.demo_curtain');
+            assert.equal(await details.locator('input[type=range]').inputValue(), '0');
+            await back.tap();
+            await coverGridPage.waitForFunction(() => location.hash === '#room-studio');
+            await header.waitFor();
+            assert.equal(await header.evaluate(button => button.getRootNode().activeElement === button), true);
+            assert.deepEqual(await coverGridPage.evaluate(() => window.bayitTest.calls), []);
+          }
+          await coverGridPage.evaluate(() => history.back());
+          await dialog.waitFor({ state:'hidden' });
+          await coverGridPage.locator('[data-popup-origin]').waitFor({ state:'detached' });
+          await coverGridPage.getByRole('button', { name: 'Studio', exact: true }).tap();
+          await header.waitFor();
+        }
         await dialog.locator('[data-entity="cover.demo_shade"] [data-action="open"]').tap();
         assert.deepEqual(await coverGridPage.evaluate(() => window.bayitTest.calls), [
           { type: 'call_service', domain: 'cover', service: 'open_cover', service_data: {}, target: { entity_id: 'cover.demo_shade' } },
         ]);
         await coverGridPage.close();
       }
-      console.log(engine + ': room cover rails stay on one line at 320–390 px');
+      console.log(engine + ': cover rails at 320–390 px, room detail tap/hold/keyboard, Back and zero movement');
 
       for (const [locale, width] of [['he', 320], ['en', 390]]) {
         const effectsPage = await browser.newPage({ viewport: { width, height: 760 }, hasTouch: true });

@@ -540,7 +540,8 @@ export const styles = `
   }
   .device:is([data-compact=tile],[data-compact=cover]) { background: var(--room-tile-fill); }
   .device[data-compact=cover] .device-head:has(> .round-action:not([hidden])) > .device-icon { display: none; }
-  .device[data-compact=cover] .device-head > .round-action {
+  .device[data-compact=cover] .device-head > .round-action,
+  .device[data-compact=cover] .device-panel-launch > .device-icon {
     grid-area: 1 / 1;
     width: 36px;
     height: 36px;
@@ -550,6 +551,7 @@ export const styles = `
     border-radius: 999px;
     background: var(--room-icon-fill);
   }
+  .device[data-compact=cover] .device-panel-launch > .device-icon { color: var(--ink); place-items: center; }
   .device[data-compact=cover] .device-detail { grid-column: 2; }
   .device[data-compact=cover] .device-name { font-size: 13px; font-weight: 650; }
   .shell[dir=rtl] .device[data-compact=cover] .device-detail { direction: rtl; text-align: left; }

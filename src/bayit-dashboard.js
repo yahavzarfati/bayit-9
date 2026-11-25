@@ -1045,11 +1045,12 @@ export class BayitDashboard extends HTMLElement {
     if (type === 'device' && !selected) return;
     const model = selected ? this.model(selected) : null;
     const boilerControls = selected?.kind === 'boiler' && selected.role !== 'status';
-    const fromBoilerRoom = boilerControls && this.panel?.type === 'room' &&
+    const coverControls = model?.domain === 'cover' && selected.role !== 'status';
+    const fromRoomDetail = (boilerControls || coverControls) && this.panel?.type === 'room' &&
       this.panel.room === room && n.modal.open && n.content.contains(source);
     const fromLinkedRoom = (type === 'media' || type === 'vacuum') && returnFromRoom && this.panel?.type === 'room' &&
       this.panel.room === returnFromRoom.room && n.modal.open && n.content.contains(source);
-    const returnTo = fromBoilerRoom ? { room, entity: selected.entity } : fromLinkedRoom ? returnFromRoom : undefined;
+    const returnTo = fromRoomDetail ? { room, entity: selected.entity } : fromLinkedRoom ? returnFromRoom : undefined;
     if (this.panel?.type === 'room' && n.modal.open) {
       this.roomScroll.set(this.panel.room.id, n.modalBody.scrollTop);
     }
@@ -1211,8 +1212,10 @@ export class BayitDashboard extends HTMLElement {
     const panelId = config[panelKind + '_panel_id'];
     const panelTarget = room && panelId && this.config.toolbar?.find(
       entry => entry.kind === panelKind && entry.id === panelId);
+    const cover = !!room && domain === 'cover';
+    const coverPanel = cover && config.role !== 'status';
     const boilerPanel = !!room && config.kind === 'boiler' && config.role !== 'status';
-    const launchFromHeader = !!panelTarget || boilerPanel;
+    const launchFromHeader = !!panelTarget || boilerPanel || coverPanel;
     item.dataset.entity = config.entity;
     item.dataset.treatment = config.kind || domain;
     item.toggleAttribute('data-inline-climate', inlineClimate);
@@ -1239,7 +1242,6 @@ export class BayitDashboard extends HTMLElement {
     } else {
       const details = make(launchFromHeader ? 'span' : 'div', 'device-detail');
       details.append(name, state);
-      const cover = !!room && domain === 'cover';
       const hasPanel = cover || boilerPanel;
       if (cover) item.dataset.compact = 'cover';
       const more = launchFromHeader ? button('device-head device-panel-launch')
@@ -1265,9 +1267,10 @@ export class BayitDashboard extends HTMLElement {
         bindDeviceDetails(more, vacuum ? () => this.moreInfo(config) : open);
         view.panelLaunch = { action: vacuum ? this.t('vacuum_room_open').replace('{name}', targetName)
           : this.t('more_info'), hint };
-      } else if (boilerPanel) {
+      } else if (boilerPanel || coverPanel) {
         bindDeviceDetails(more, more.onclick);
-        head.append(glyph, details, icon('mdi:arrow-top-right'));
+        head.append(glyph, details);
+        if (boilerPanel) head.append(icon('mdi:arrow-top-right'));
         view.panelLaunch = { action: this.t('device_controls') };
       } else head.append(glyph, details, more);
       const group = make('div', 'action-list');
