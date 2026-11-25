@@ -2678,9 +2678,16 @@ export class BayitDashboard extends HTMLElement {
     content.append(deviceAppearance);
     this.applyPreferences();
 
+    const settingsAction = (name, glyph) => {
+      const control = button('control-button settings-action', '', glyph);
+      const caption = make('span', '', name);
+      caption.dir = 'auto';
+      control.append(caption);
+      return control;
+    };
     const screens = make('div', 'settings-screens');
     for (const item of this.settingsScreens()) {
-      const route = button('control-button', item.name, item.icon);
+      const route = settingsAction(item.name, item.icon);
       route.onclick = () => item.kind === 'link' ? location.assign(item.path)
         : this.openPanel(item.kind, route, undefined, undefined, item);
       screens.append(route);
@@ -2693,7 +2700,7 @@ export class BayitDashboard extends HTMLElement {
     const system = make('div', 'settings-system');
     if (this.config.page && this.config.fullscreen) {
       const bypass = new URL(location.href).searchParams.has('disable_km');
-      const menu = button('control-button', this.t(bypass ? 'fullscreen' : 'ha_menu'), 'mdi:menu');
+      const menu = settingsAction(this.t(bypass ? 'fullscreen' : 'ha_menu'), 'mdi:menu');
       menu.onclick = () => {
         this.dismissPanel({ immediate: true, restoreFocus: false });
         this.pageChrome.toggleHomeAssistantMenu();
@@ -2701,7 +2708,8 @@ export class BayitDashboard extends HTMLElement {
       system.append(menu);
     }
     if (this._hass?.user?.is_admin) {
-      const setup = button('control-button setup-entry', this.t('setup'), 'mdi:tune-variant');
+      const setup = settingsAction(this.t('setup'), 'mdi:tune-variant');
+      setup.classList.add('setup-entry');
       setup.onclick = () => this.openSetup(setup);
       system.append(setup);
     }

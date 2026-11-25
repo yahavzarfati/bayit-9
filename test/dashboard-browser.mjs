@@ -2836,10 +2836,21 @@ async function assertCompactSettings(browser) {
       const rect = node => node.getBoundingClientRect();
       const disclosures = [...settings.querySelectorAll('details')];
       const systems = [...settings.querySelectorAll('.settings-system > button')];
+      const shortcuts = [...settings.querySelectorAll('.settings-screens > button')];
+      const rows = [...shortcuts, ...systems].map(button => {
+        const glyph = button.querySelector('ha-icon');
+        const caption = button.querySelector('span');
+        return {
+          x:rect(button).x, y:rect(button).y, height:rect(button).height,
+          iconFirst:!!glyph && rect(glyph).right < rect(caption).left,
+          direction:getComputedStyle(caption).direction,
+        };
+      });
       const preview = settings.querySelector('.wallpaper-current-preview');
       return { height:rect(element).height, blocks:[...settings.children].map(child => child.className),
         rows:disclosures.map(detail => [detail.open, rect(detail.querySelector('summary')).height]),
-        systemPositions:systems.map(button => rect(button).y), shortcutCount:settings.querySelectorAll('.settings-screens > button').length,
+        systemPositions:systems.map(button => rect(button).y), shortcutCount:shortcuts.length,
+        actions:rows, menuCaptionHeight:rect(systems[0].querySelector('span')).height,
         previewWidth:rect(preview).width, previewHeight:rect(preview).height,
         hasOverflow:settings.scrollWidth > settings.clientWidth };
     });
@@ -2849,6 +2860,13 @@ async function assertCompactSettings(browser) {
     assert.equal(geometry.shortcutCount, 6);
     assert.equal(geometry.systemPositions.length, 2);
     assert.equal(geometry.systemPositions[0], geometry.systemPositions[1]);
+    assert.ok(geometry.menuCaptionHeight <= 23);
+    assert.ok(geometry.actions.every(action => action.height >= 44 && action.iconFirst && action.direction === 'rtl'));
+    for (let index = 0; index < geometry.actions.length; index += 2) {
+      const [first, second] = geometry.actions.slice(index, index + 2);
+      assert.equal(first.y, second.y);
+      assert.ok(first.x < second.x);
+    }
     assert.equal(geometry.hasOverflow, false);
     assert.ok(geometry.height <= 442, JSON.stringify(geometry));
     assert.equal(await dialog.locator('[data-preference]:visible').count(), 0);
@@ -2861,6 +2879,38 @@ async function assertCompactSettings(browser) {
     await page.getByRole('dialog', { name:'כניסה', exact:true }).waitFor();
     assert.equal(new URL(page.url()).hash, '#panel/devices');
     assert.deepEqual(await page.evaluate(() => window.bayitTest.calls), []);
+
+    for (const locale of ['en', 'he']) {
+      await page.setViewportSize({ width: 320, height: 845 });
+      await page.goto(base + '/fixture-home/home?configuration&compact-settings&locale=' + locale);
+      await open.tap();
+      const system = dialog.locator('.settings-system');
+      const menu = system.getByRole('button', { name: locale === 'he' ? 'תפריט Home Assistant' : 'Home Assistant menu' });
+      await menu.waitFor();
+      const layout = await system.evaluate(group => {
+        const [menu, setup] = group.children;
+        const caption = menu.querySelector('span');
+        const area = group.getBoundingClientRect();
+        const rows = [...group.children].map(button => button.getBoundingClientRect());
+        return {
+          fits:rows.every(row => row.left >= area.left && row.right <= area.right && row.height >= 44),
+          readable:caption.getBoundingClientRect().height <= 23,
+          nextRow:rows[0].y < rows[1].y,
+          direction:getComputedStyle(caption).direction,
+          keyboardOrder:menu.nextElementSibling === setup,
+        };
+      });
+      assert.deepEqual(layout, { fits:true, readable:true, nextRow:true, direction:locale === 'he' ? 'rtl' : 'ltr', keyboardOrder:true });
+
+      await page.emulateMedia({ contrast:'more' });
+      const hasContrast = await page.evaluate(() => matchMedia('(prefers-contrast: more)').matches);
+      if (hasContrast) assert.notEqual(await menu.evaluate(button => getComputedStyle(button).borderTopColor), 'rgba(0, 0, 0, 0)');
+      await page.emulateMedia({ contrast:'no-preference' });
+      await menu.press('Tab');
+      await page.keyboard.press('Shift+Tab');
+      assert.equal(await menu.evaluate(button => button.matches(':focus-visible') && getComputedStyle(button).outlineStyle === 'solid'), true);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls), []);
+    }
   } finally {
     await page.close();
   }

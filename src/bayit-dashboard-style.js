@@ -590,7 +590,25 @@ export const styles = `
   .settings { gap: 8px; }
   .settings-screens { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
   .settings-shortcuts-title { margin: 0 0 5px; text-align: center; font-size: 13px; font-weight: 760; }
-  .settings-system { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(132px,100%),1fr)); gap: 7px; }
+  .settings-system { display: flex; flex-wrap: wrap; gap: 7px; }
+  /* Keep the authored screen order and let each caption resolve its own direction. */
+  .settings-screens, .settings-system { direction: ltr; }
+  .settings-system > button { flex: 1 1 auto; }
+  button.settings-action {
+    justify-content: flex-start; padding: 5px 10px; gap: 9px; border-radius: 14px;
+    border-color: var(--settings-action-line,var(--line)); background: var(--settings-action-fill,var(--control));
+  }
+  .settings-action > ha-icon { flex: none; --mdc-icon-size: 21px; }
+  .settings-action > span { min-width: 0; text-align: start; overflow-wrap: anywhere; }
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .settings { --settings-action-line: transparent; --settings-action-fill: transparent; }
+  }
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    .settings { --settings-action-line: var(--line); --settings-action-fill: var(--control); }
+  }
+  @media (forced-colors: active) {
+    .settings { --settings-action-line: ButtonText; --settings-action-fill: ButtonFace; }
+  }
   .appearance-preferences { display: grid; gap: 8px; }
   .appearance-disclosure { min-inline-size: 0; margin: 0; border: 1px solid var(--soft-line); border-radius: 16px; }
   .appearance-disclosure > summary {
