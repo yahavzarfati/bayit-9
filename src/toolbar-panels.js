@@ -341,16 +341,18 @@ export function createToolbarPanel(kind, configuration, context) {
     }
     const nowPlaying = itemKind === 'now_playing' && domain(item) === 'media_player';
     const toolbarLightTile = isToolbarLightTile(kind, section, item);
+    const toolbarCoverRail = kind === 'security' && section === 'covers' && domain(item) === 'cover' && itemKind !== 'status';
     if (nowPlaying || toolbarLightTile || itemKind === 'device' ||
         (['locks','covers','devices','media','vacuum'].includes(section) && itemKind !== 'status')) {
       const row = make('div', 'toolbar-device');
       row.toggleAttribute('data-light-tile', toolbarLightTile);
+      row.toggleAttribute('data-cover-rail', toolbarCoverRail);
       if (nowPlaying) {
         const player = createNowPlaying({ host: row, dialog, make, icon, t });
         mediaViews.push(player);
         handlers.push(() => player.update(modelFor(item)));
       }
-      buildDevice(item, row, { toolbarLightTile });
+      buildDevice(item, row, { toolbarLightTile, toolbarCoverRail });
       return row;
     }
     return renderTile(item, 'status');
@@ -506,6 +508,19 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
   .native-panel-card { min-width: 0; --ha-card-background: transparent; --ha-card-box-shadow: none;
     --ha-card-border-color: var(--soft-line); --primary-text-color: var(--ink); --secondary-text-color: var(--secondary); }
   .toolbar-device, .toolbar-link { min-width: 0; }
+  .toolbar-section[data-section=covers] .toolbar-section-items:has(> [data-cover-rail] ~ [data-cover-rail]) {
+    grid-template-columns: repeat(auto-fit,minmax(min(100%,max(150px,calc((100% - 8px) / 2))),1fr));
+  }
+  .toolbar-section[data-section=covers] .toolbar-section-items:has(> [data-cover-rail]) > :not([data-cover-rail]) {
+    grid-column: 1 / -1;
+  }
+  [data-cover-rail] > .device[data-compact=cover] { padding: 5px; }
+  [data-cover-rail] .device[data-compact=cover] .basic-actions {
+    grid-template-columns: repeat(auto-fit,minmax(44px,1fr));
+  }
+  [data-cover-rail] .device[data-compact=cover] .basic-actions .control-button:has(ha-icon) {
+    min-width: 44px;
+  }
   @media (min-width: 300px) {
     .toolbar-section[data-section=devices] .toolbar-section-items:has(> [data-light-tile]) {
       grid-template-columns: repeat(2,minmax(0,1fr));

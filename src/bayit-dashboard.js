@@ -1291,7 +1291,9 @@ export class BayitDashboard extends HTMLElement {
     return groups.values();
   }
 
-  buildDevice(config, parent, room, groupKey, { titleInDialog = false, inlineClimate = false, toolbarLightTile = false } = {}) {
+  buildDevice(config, parent, room, groupKey, {
+    titleInDialog = false, inlineClimate = false, toolbarLightTile = false, toolbarCoverRail = false,
+  } = {}) {
     const item = make('section', 'device');
     const domain = domainFor(config);
     const tileMode = toolbarLightTile || groupKey === 'room_lights' && ['light', 'switch'].includes(domain) && !config.kind;
@@ -1299,7 +1301,7 @@ export class BayitDashboard extends HTMLElement {
     const panelId = config[panelKind + '_panel_id'];
     const panelTarget = room && panelId && this.config.toolbar?.find(
       entry => entry.kind === panelKind && entry.id === panelId);
-    const cover = !!room && domain === 'cover';
+    const cover = domain === 'cover' && (!!room || toolbarCoverRail);
     const coverPanel = cover && config.role !== 'status';
     const boilerPanel = !!room && config.kind === 'boiler' && config.role !== 'status';
     const launchFromHeader = !!panelTarget || boilerPanel || coverPanel;
@@ -1311,7 +1313,7 @@ export class BayitDashboard extends HTMLElement {
     const name = make(tileMode || launchFromHeader ? 'span' : room ? 'h4' : 'h3', 'device-name');
     const state = make('span', 'current');
     const inlineLight = tileMode && domain === 'light' && config.role !== 'status' && config.room_light_controls === true;
-    const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight };
+    const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactCover: cover };
     if (tileMode) {
       item.dataset.compact = 'tile';
       const tile = button('device-tile');
@@ -1329,7 +1331,7 @@ export class BayitDashboard extends HTMLElement {
     } else {
       const details = make(launchFromHeader ? 'span' : 'div', 'device-detail');
       details.append(name, state);
-      const hasPanel = cover || boilerPanel;
+      const hasPanel = (cover && !!room) || boilerPanel;
       if (cover) item.dataset.compact = 'cover';
       const more = launchFromHeader ? button('device-head device-panel-launch')
         : button('round-action', this.t(hasPanel ? 'device_controls' : 'more_info'),
@@ -1358,7 +1360,7 @@ export class BayitDashboard extends HTMLElement {
         bindDeviceDetails(more, more.onclick);
         head.append(glyph, details);
         if (boilerPanel) head.append(icon('mdi:arrow-top-right'));
-        view.panelLaunch = { action: this.t('device_controls') };
+        view.panelLaunch = { action: this.t(toolbarCoverRail ? 'more_info' : 'device_controls'), native: toolbarCoverRail };
       } else head.append(glyph, details, more);
       const group = make('div', 'action-list');
       item.append(head, group);
@@ -1491,6 +1493,7 @@ export class BayitDashboard extends HTMLElement {
       }
       if (view.panelLaunch) {
         label(view.more, labelName + ' · ' + view.panelLaunch.action);
+        if (view.panelLaunch.native) view.more.disabled = !model.actions.more_info;
         if (view.panelLaunch.hint && view.more.title !== view.panelLaunch.hint) view.more.title = view.panelLaunch.hint;
       } else if (view.more) {
         view.more.hidden = !model.actions.more_info;
@@ -1687,7 +1690,7 @@ export class BayitDashboard extends HTMLElement {
       request: (id, value, control) => this.requestAction(view.config, id, value, control) });
     for (const id of actionsInOrder) {
       const action = model.actions[id];
-      if (!action || view.special.used.has(id) || (view.room && model.domain === 'cover' && id === 'set_position')) continue;
+      if (!action || view.special.used.has(id) || (view.compactCover && id === 'set_position')) continue;
       if (view.inlineLight && !inlineLightActions.has(id)) continue;
       if (action.color && this.panel?.type !== 'device') continue;
       if (id === 'set_effect' && this.panel?.type === 'device') {

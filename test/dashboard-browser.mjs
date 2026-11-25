@@ -140,6 +140,14 @@ const hass = {
         coverRequests.push(failed => failed ? reject(new Error('Fixture rejection')) : resolve({}));
       });
     }
+    if (request.domain === 'cover' && query.has('security-cover-rail')) {
+      const id = request.target.entity_id;
+      const value = { open_cover: ['open', 100], stop_cover: ['stopped', 50], close_cover: ['closed', 0] }[request.service];
+      if (value) {
+        states[id] = { ...states[id], state: value[0], attributes: { ...states[id].attributes, current_position: value[1] } };
+        card.hass = { ...hass, states: { ...states } };
+      }
+    }
     if (request.domain === 'script' && request.target?.entity_id === 'script.demo_toggle') {
       observeScript(request.service === 'turn_on' ? 'on' : 'off');
     }
@@ -328,6 +336,12 @@ if (query.has('heater-level')) {
   hass.entities[heaterFan] = { area_id: 'studio' };
 }
 if (query.has('toolbar-panels')) {
+  if (query.has('security-cover-rail')) Object.assign(states, {
+    'cover.demo_security_first': { state: 'closed', attributes: { friendly_name: 'West shade', supported_features: 15, current_position: 0 } },
+    'cover.demo_security_second': { state: 'opening', attributes: { friendly_name: 'East curtain', supported_features: 15,
+      current_position: 43, device_class: 'curtain' } },
+    'cover.demo_security_passive': { state: 'open', attributes: { friendly_name: 'Status shade', supported_features: 15, current_position: 100 } },
+  });
   if (query.has('entrance-light-tiles')) Object.assign(states, {
     'light.demo_entry_second': { state: 'off', attributes: { friendly_name: 'Porch light' } },
     'light.demo_entry_guarded': { state: 'on', attributes: { friendly_name: 'Guarded light' } },
@@ -477,6 +491,16 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     vacuum_panel_links:{'vacuum.demo_robot':'vacuum-panel'},
   } } }),
   toolbar:[
+    ...(query.has('security-cover-rail') ? [
+      {id:'fixture-security',kind:'security',sections:[{kind:'covers',entities:[
+        {entity:'cover.demo_security_first',role:'cover'},
+        {entity:'cover.demo_security_second',role:'cover'},
+        {entity:'cover.demo_security_passive',role:'status'},
+      ]}]},
+      {id:'fixture-other-controls',kind:'devices',label:'Other controls',placement:'settings',sections:[{kind:'devices',entities:[
+        {entity:'cover.demo_security_first',role:'device'},
+      ]}]},
+    ] : []),
     {kind:'automations',sections:[{kind:'actions',entities:[{entity:'script.demo_scene',role:'action',command:'run_script',confirmation:'Run the evening scene?'},
       {entity:'lock.demo_entry',role:'lock',confirmation:'Open the front door?'},
       ...(query.has('automation-toggle') ? [{entity:'script.demo_toggle',role:'action',command:'toggle_script',confirmation:'Run the arrival scene?'}] : [])]}]},
@@ -2352,6 +2376,74 @@ try {
         .sections[0].entities.find(item => item.entity === 'light.demo_entry_generic').role), 'light_tile');
       await entranceEditor.close();
       console.log(engine + ': configured entry light tiles, guarded commands, exact native details, and visual editor');
+
+      for (const width of [320, 390]) {
+        const securityPage = await browser.newPage({ viewport: { width, height: 844 }, hasTouch: true, isMobile: true, reducedMotion: 'reduce' });
+        securityPage.setDefaultTimeout(8000);
+        await securityPage.goto(base + '/fixture-home/home?toolbar-panels&security-cover-rail');
+        const securityDialog = securityPage.getByRole('dialog', { name: 'Security', exact: true });
+        const openSecurity = async () => {
+          await securityPage.getByRole('button', { name: 'Security', exact: true }).tap();
+          await securityDialog.waitFor();
+        };
+        const securityCalls = () => securityPage.evaluate(() => window.bayitTest.calls);
+        await openSecurity();
+        const securityRails = securityDialog.locator('[data-cover-rail]');
+        assert.equal(await securityRails.count(), 2);
+        assert.equal(await securityDialog.locator('[data-action="set_position"]').count(), 0);
+        const layout = await securityRails.evaluateAll(cards => {
+          const top = cards.map(card => card.getBoundingClientRect().top);
+          const bounds = cards.flatMap(card => [...card.querySelectorAll('.device-panel-launch, .basic-actions button')]
+            .map(button => button.getBoundingClientRect().toJSON()));
+          return { top, bounds, noOverflow: cards.every(card => card.scrollWidth <= card.clientWidth) };
+        });
+        assert.equal(Math.abs(layout.top[0] - layout.top[1]) < 1, width === 390);
+        assert.equal(layout.noOverflow, true);
+        assert.equal(layout.bounds.length, 8);
+        assert.ok(layout.bounds.every(({ width, height }) => width >= 44 && height >= 44));
+        const west = securityDialog.locator('[data-entity="cover.demo_security_first"]');
+        const east = securityDialog.locator('[data-entity="cover.demo_security_second"]');
+        const westHeader = west.getByRole('button', { name: 'West shade · More info', exact: true });
+        const eastHeader = east.getByRole('button', { name: 'East curtain · More info', exact: true });
+        await westHeader.tap();
+        await securityDialog.waitFor({ state: 'hidden' });
+        await openSecurity();
+        const curtainBounds = await eastHeader.boundingBox();
+        await securityPage.mouse.move(curtainBounds.x + curtainBounds.width / 2, curtainBounds.y + curtainBounds.height / 2);
+        await securityPage.mouse.down();
+        await securityPage.waitForFunction(() => window.bayitTest.moreInfoCalls.length === 2);
+        await securityPage.mouse.up();
+        await securityDialog.waitFor({ state: 'hidden' });
+        await openSecurity();
+        await westHeader.press('Shift+Enter');
+        await securityDialog.waitFor({ state: 'hidden' });
+        assert.deepEqual(await securityPage.evaluate(() => window.bayitTest.moreInfoCalls),
+          ['cover.demo_security_first', 'cover.demo_security_second', 'cover.demo_security_first']);
+        assert.deepEqual(await securityCalls(), []);
+
+        await openSecurity();
+        assert.equal(await securityDialog.getByRole('button', { name: /^Status shade/ }).count(), 1);
+        await west.locator('[data-action=open]').tap();
+        await west.locator('.device-panel-launch').getByText(/100%/).waitFor();
+        await east.locator('[data-action=stop]').tap();
+        await west.locator('[data-action=close]').tap();
+        assert.deepEqual(await securityCalls(), [
+          ['open_cover', 'cover.demo_security_first'], ['stop_cover', 'cover.demo_security_second'],
+          ['close_cover', 'cover.demo_security_first'],
+        ].map(([service, entity_id]) => ({
+          type: 'call_service', domain: 'cover', service, service_data: {}, target: { entity_id },
+        })));
+        assert.equal(new URL(securityPage.url()).hash, '#panel/fixture-security');
+        await securityDialog.getByRole('button', { name: 'Close', exact: true }).first().tap();
+        await securityDialog.waitFor({ state: 'hidden' });
+        await securityPage.getByRole('button', { name: 'Appearance', exact: true }).tap();
+        await securityPage.getByRole('button', { name: 'Other controls', exact: true }).tap();
+        const unmodifiedPanel = securityPage.getByRole('dialog', { name: 'Other controls', exact: true });
+        await unmodifiedPanel.locator('input[data-action="set_position"]').waitFor();
+        assert.equal(await unmodifiedPanel.locator('[data-cover-rail]').count(), 0);
+        await securityPage.close();
+      }
+      console.log(engine + ': Security cover rails at 320–390 px, exact native details and independent controls');
 
       const overviewPage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
       overviewPage.setDefaultTimeout(8000);
