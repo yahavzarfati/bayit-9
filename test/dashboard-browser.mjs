@@ -1353,7 +1353,35 @@ async function assertRoomDeviceIcons(browser) {
     try {
       if (nativePicker) {
         await page.addInitScript(() => {
-          customElements.define('ha-icon-picker', class extends HTMLElement {});
+          document.addEventListener('DOMContentLoaded', () => {
+            const theme = document.createElement('style');
+            theme.textContent = 'html { --primary-text-color: #141414; --secondary-text-color: #404040;' +
+              '--ha-color-text-secondary: var(--secondary-text-color); --ha-color-neutral-60: #595959;' +
+              '--wa-form-control-value-color: var(--primary-text-color);' +
+              '--wa-form-control-placeholder-color: var(--ha-color-text-secondary);' +
+              '--wa-color-neutral-on-normal: var(--ha-color-text-secondary);' +
+              '--wa-color-neutral-on-quiet: var(--ha-color-text-secondary); }';
+            document.head.append(theme);
+          }, { once: true });
+          customElements.define('ha-icon-picker', class extends HTMLElement {
+            constructor() {
+              super();
+              let root = this.attachShadow({ mode: 'open' });
+              for (const tag of ['ha-generic-picker', 'ha-bottom-sheet', 'ha-picker-combo-box', 'ha-input-search']) {
+                const child = document.createElement(tag);
+                root.append(child);
+                root = child.attachShadow({ mode: 'open' });
+              }
+              root.innerHTML = '<style>wa-input::part(input)::placeholder { color: var(--ha-color-neutral-60); }</style>' +
+                '<wa-input><ha-svg-icon slot="start"></ha-svg-icon></wa-input>';
+              root.querySelector('wa-input').attachShadow({ mode: 'open' }).innerHTML =
+                '<style>.text-field { color: var(--wa-form-control-value-color); background: var(--card-background-color); }' +
+                '.control { color: inherit; } .control::placeholder { color: var(--wa-form-control-placeholder-color); }' +
+                '.clear { color: var(--wa-color-neutral-on-normal); }</style>' +
+                '<div class="text-field"><slot name="start"></slot><input class="control" part="input" ' +
+                'placeholder="Search | Add custom item"><button class="clear" type="button">Clear</button></div>';
+            }
+          });
         });
       }
       await page.goto(base + '/fixture-home/home?configuration&room-control-names');
@@ -1397,6 +1425,44 @@ async function assertRoomDeviceIcons(browser) {
         assert.match(colors.selection, /color-mix/);
         assert.ok(colors.input);
         assert.equal(colors.input, colors.text);
+        const search = input.getByPlaceholder('Search | Add custom item');
+        await search.fill('mdi:light-recessed');
+        for (const [ink, muted, surface, expected] of [
+          ['#fff', '#ccc', '#282828', ['rgb(255, 255, 255)', 'rgb(204, 204, 204)', 'rgb(40, 40, 40)']],
+          ['#161616', '#434343', '#f2f2f2', ['rgb(22, 22, 22)', 'rgb(67, 67, 67)', 'rgb(242, 242, 242)']],
+        ]) {
+          await input.evaluate((picker, palette) => {
+            const editor = picker.getRootNode().host;
+            editor.style.setProperty('--ink', palette.ink);
+            editor.style.setProperty('--secondary', palette.muted);
+            editor.style.setProperty('--surface', palette.surface);
+          }, { ink, muted, surface });
+          const [foreground, secondary, background] = expected;
+          const { placeholder, placeholderTokens, ...actual } = await search.evaluate(control => {
+            const box = control.parentElement;
+            const style = getComputedStyle(box);
+            const text = control.value;
+            control.value = '';
+            const placeholder = getComputedStyle(control, '::placeholder').color;
+            control.value = text;
+            return {
+              value: getComputedStyle(control).color,
+              field: style.color,
+              background: style.backgroundColor,
+              placeholder,
+              placeholderTokens: ['--ha-color-neutral-60', '--wa-form-control-placeholder-color']
+                .map(token => style.getPropertyValue(token).trim()),
+              search: getComputedStyle(box.querySelector('slot').assignedElements()[0]).color,
+              clear: getComputedStyle(box.querySelector('.clear')).color,
+            };
+          });
+          assert.deepEqual(actual, {
+            value: foreground, field: foreground, background, search: foreground, clear: secondary,
+          });
+          assert.deepEqual(placeholderTokens, [muted, muted]);
+          // WebKit can report the inherited value color from getComputedStyle on this pseudo-element.
+          assert.ok([secondary, foreground].includes(placeholder));
+        }
         await input.evaluate((element, value) => element.dispatchEvent(new CustomEvent('value-changed', { detail: { value } })), icon);
       } else {
         await input.fill('invalid-icon-prefix');

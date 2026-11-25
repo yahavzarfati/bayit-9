@@ -273,7 +273,14 @@ const ROOM_CSS = `
 .room-icon-field { display: grid; grid-template-columns: minmax(0,1fr) 44px; gap: 8px; align-items: end; }
 .room-icon-field ha-icon-picker {
   --ha-color-on-surface-default: var(--primary-text-color, currentColor);
+  --ha-color-text-secondary: var(--secondary-text-color, currentColor);
   --ha-color-fill-primary-quiet-resting: color-mix(in srgb, var(--primary-text-color, currentColor) 16%, transparent);
+  /* Web Awesome's inherited tokens are resolved against the outer Home Assistant theme. */
+  --wa-form-control-value-color: var(--ha-color-on-surface-default);
+  --wa-form-control-placeholder-color: var(--ha-color-text-secondary);
+  --ha-color-neutral-60: var(--ha-color-text-secondary);
+  --wa-color-neutral-on-normal: var(--ha-color-text-secondary);
+  --wa-color-neutral-on-quiet: var(--ha-color-text-secondary);
 }
 .room-icon-preview { box-sizing: border-box; inline-size: 44px; block-size: 44px; display: grid; place-items: center; border: 1px solid var(--divider-color,#999); border-radius: 8px; }
 .room-danger { justify-self: start; color: var(--error-color,#b00020); border-color: currentColor; }
