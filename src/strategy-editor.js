@@ -8,7 +8,7 @@ import {
   popupAliasDestinations, PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, supportsRoomSectionColumns, roomShortcutDevices, roomShortcutSettings, roomVacuumPresentation, ROOM_VACUUM_SUMMARY_DOMAINS,
   selectableRoomEntities, selectedRoomIds,
   shortcutPanelOptions, STRATEGY_NAME, supportsHomeShortcutPower, supportsNativeShortcutDetails, supportsShortcutWithoutDetails,
-  supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomCompactDevice, usesAutomaticRoomDevices,
+  supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomBoilerScheduleEntry, supportsRoomCompactDevice, usesAutomaticRoomDevices,
 } from './strategy-model.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { climateOptionLabel } from './panel-controls.js';
@@ -52,6 +52,7 @@ const WORDS = {
     roomApplianceTile: 'Show as an appliance tile',
     roomBoilerQuickPower: 'Boiler quick power',
     roomBoilerQuickPowerHint: 'Tap for manual power. Hold to choose a timer duration.',
+    roomBoilerScheduleEntry: 'Open the schedule from the room boiler header',
     roomClimatePower: 'Show quick power for this climate device',
     roomCompactClimateControls: 'Arrange thermostat controls in a compact row',
     climatePresetShortcut: 'Preset shortcut', climatePresetNone: 'No shortcut', climatePresetLabel: 'Shortcut label',
@@ -202,6 +203,7 @@ const WORDS = {
     roomApplianceTile: 'הצגה כאריח מכשיר חשמלי',
     roomBoilerQuickPower: 'הפעלה מהירה של הדוד',
     roomBoilerQuickPowerHint: 'לחיצה קצרה להפעלה או לכיבוי ידני. לחיצה ארוכה לבחירת משך הטיימר.',
+    roomBoilerScheduleEntry: 'פתיחת תזמון מכותרת כרטיס הדוד בחדר',
     roomClimatePower: 'הצגת כפתור הפעלה וכיבוי מהיר למזגן',
     roomCompactClimateControls: 'סידור פקדי המזגן בשורה קומפקטית',
     climatePresetShortcut: 'קיצור לתוכנית מזגן', climatePresetNone: 'ללא קיצור', climatePresetLabel: 'שם הקיצור',
@@ -1215,6 +1217,22 @@ export class Bayit9StrategyEditor extends HTMLElement {
           power.firstElementChild.dataset.roomFocus = 'room-boiler-quick-power';
           fields.append(power, node('small', { textContent: words.roomBoilerQuickPowerHint }));
         }
+        if (shown && supportsRoomBoilerScheduleEntry(profile) &&
+            !configuredIds(override.read_only_entities).includes(id) &&
+            !configuredIds(override.boiler_quick_power_entities).includes(id)) {
+          const schedule = checkbox(words.roomBoilerScheduleEntry,
+            configuredIds(override.boiler_schedule_entry_entities).includes(id), checked => {
+              const next = { ...this.#roomOverride(room.id) };
+              const ids = new Set(configuredIds(next.boiler_schedule_entry_entities));
+              if (checked) ids.add(id);
+              else ids.delete(id);
+              if (ids.size) next.boiler_schedule_entry_entities = [...ids];
+              else delete next.boiler_schedule_entry_entities;
+              this.#setRoomOverride(room.id, next, 'room-boiler-schedule-entry');
+            });
+          schedule.firstElementChild.dataset.roomFocus = 'room-boiler-schedule-entry';
+          fields.append(schedule);
+        }
         if (supportsRoomCompactDevice({ entity:id }) && !configuredIds(override.read_only_entities).includes(id)) {
           const compact = checkbox(words.roomCompactDevice, configuredIds(override.compact_device_entities).includes(id), checked => {
             const next = { ...this.#roomOverride(room.id) };
@@ -1597,7 +1615,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         'inline_light_entities', 'compact_inline_light_entities', 'dual_light_detail_entities', 'compact_light_reading_entities',
         'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details', 'shortcut_power_entities',
         'vacuum_panel_hold_entities', 'climate_power_entities', 'media_compact_entities', 'appliance_tile_entities',
-        'boiler_quick_power_entities', 'compact_device_entities', 'compact_climate_controls_entities']) {
+        'boiler_quick_power_entities', 'boiler_schedule_entry_entities', 'compact_device_entities', 'compact_climate_controls_entities']) {
         if (!Array.isArray(next[key])) continue;
         next[key] = next[key].filter(id => entities.includes(id));
         if (!next[key].length) delete next[key];

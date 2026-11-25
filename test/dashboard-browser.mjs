@@ -8339,8 +8339,15 @@ async function assertKitchenBoilerQuickPower(browser) {
       const option = page.getByRole('checkbox',{name:he ? 'הפעלה מהירה של הדוד' : 'Boiler quick power',exact:true});
       await device.selectOption(relay);
       assert.ok(await option.isChecked());
+      const scheduleEntry = page.getByRole('checkbox', {name:he ? 'פתיחת תזמון מכותרת כרטיס הדוד בחדר'
+        : 'Open the schedule from the room boiler header', exact:true});
+      assert.equal(await scheduleEntry.count(),0);
       await option.uncheck();
       assert.equal(await page.evaluate(()=>window.latest.room_overrides.studio.boiler_quick_power_entities),undefined);
+      await scheduleEntry.check();
+      assert.deepEqual(await page.evaluate(()=>window.latest.room_overrides.studio.boiler_schedule_entry_entities),[relay]);
+      await scheduleEntry.uncheck();
+      assert.equal(await page.evaluate(()=>window.latest.room_overrides.studio.boiler_schedule_entry_entities),undefined);
       await option.check();
       assert.deepEqual(await page.evaluate(()=>window.latest.room_overrides.studio.boiler_quick_power_entities),[relay]);
       assert.deepEqual(await calls(),[]);

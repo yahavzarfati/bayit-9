@@ -5,7 +5,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeRoomIcon, normalizeShortcutDetailEntities,
   normalizeRoomVacuumSummary, normalizeToolbarReadout, normalizeRoomTemperatureGraphColor, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
   supportsRoomSectionColumns,
-  ROOM_PANEL_KINDS, normalizeShortcutPowerEntities, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomCompactDevice, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
+  ROOM_PANEL_KINDS, normalizeShortcutPowerEntities, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomBoilerScheduleEntry, supportsRoomCompactDevice, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
   sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, supportsHorizonCard, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
   toolbarPlacement, toolbarPopupPosition, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
@@ -304,6 +304,7 @@ function normalizeEntity(item) {
   if (domain === 'media_player' && entry.role !== 'status' && item.room_media_compact === true) entry.room_media_compact = true;
   if (item.room_appliance_tile === true && supportsRoomApplianceTile(entry)) entry.room_appliance_tile = true;
   if (item.room_boiler_quick_power === true && supportsRoomBoilerQuickPower(entry)) entry.room_boiler_quick_power = true;
+  if (item.room_boiler_schedule_entry === true && supportsRoomBoilerScheduleEntry(entry)) entry.room_boiler_schedule_entry = true;
   if (item.room_device_compact === true && supportsRoomCompactDevice(entry)) entry.room_device_compact = true;
   if (domain === 'calendar') {
     const accent = calendarAccent(item.accent_color);
@@ -1794,7 +1795,7 @@ export class BayitDashboard extends HTMLElement {
     this.update();
     if (!navigation.hash && this.popupHistory) {
       const route = type === 'room' ? { kind: type, room: room.id }
-        : type === 'device' ? { kind: type, room: room.id, entity }
+        : type === 'device' ? { kind: type, room: room.id, entity, detail:navigation.detail }
         : toolbar ? { kind: 'panel', panel: toolbar.id || type } : null;
       const hash = popupRouteFragment(route);
       if (hash) {
@@ -2051,9 +2052,12 @@ export class BayitDashboard extends HTMLElement {
         : button('round-action', this.t(hasPanel ? 'device_controls' : 'more_info'),
           cover ? roomIcon || config.icon || DEVICE_ICONS.cover : 'mdi:information-outline', true);
       if (hasPanel || nativeRoomCover || compactDevice) more.setAttribute('aria-haspopup', 'dialog');
+      const openDetails = detail => this.openPanel('device', more, room, config.entity, undefined, undefined, { detail });
       more.onclick = () => {
-        if (hasPanel) this.openPanel('device', more, room, config.entity);
-        else if (!(nativeRoomCover || compactDevice) || isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities,
+        if (hasPanel) {
+          const schedule = view.boilerScheduleLink && canOpenBoilerSchedule(config, this._hass, this.config.hiddenEntities);
+          openDetails(schedule ? 'schedule' : undefined);
+        } else if (!(nativeRoomCover || compactDevice) || isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities,
           this.config.hiddenEntities)) this.moreInfo(config, more);
       };
       const head = launchFromHeader ? more : make('header', 'device-head');
@@ -2068,9 +2072,20 @@ export class BayitDashboard extends HTMLElement {
         if (!compactDevice) head.append(icon(panelOpensOnTap ? 'mdi:arrow-top-right' : 'mdi:information-outline'));
         bindPanelLaunch(more);
       } else if (boilerPanel || coverPanel || compactDevice) {
-        bindDeviceDetails(more, more.onclick);
         head.append(glyph, details);
-        if (boilerPanel) head.append(icon('mdi:arrow-top-right'));
+        if (boilerPanel) {
+          const arrow = icon('mdi:arrow-top-right');
+          if (config.room_boiler_schedule_entry) {
+            const indicator = make('span', 'boiler-room-entry');
+            indicator.setAttribute('aria-hidden', 'true');
+            const caption = make('span', '', this.t('boiler_schedule'));
+            caption.hidden = true;
+            indicator.append(arrow, caption);
+            head.append(indicator);
+            view.boilerScheduleLink = { glyph:arrow, caption };
+          } else head.append(arrow);
+        }
+        bindDeviceDetails(more, view.boilerScheduleLink ? () => openDetails() : more.onclick);
         const native = toolbarCoverRail || nativeRoomCover || compactDevice;
         view.panelLaunch = { action: this.t(native ? 'more_info' : 'device_controls'), native };
       } else {
@@ -2597,7 +2612,17 @@ export class BayitDashboard extends HTMLElement {
       }
       if (view.panelLaunch) {
         const launch = view.more ?? view.tile;
-        label(launch, labelName + ' · ' + view.panelLaunch.action);
+        const scheduleEntry = view.boilerScheduleLink;
+        const schedule = scheduleEntry && canOpenBoilerSchedule(view.config, this._hass, this.config.hiddenEntities);
+        if (scheduleEntry) {
+          launch.toggleAttribute('data-room-boiler-schedule', schedule);
+          setIcon(scheduleEntry.glyph, schedule ? 'mdi:calendar-clock' : 'mdi:arrow-top-right');
+          scheduleEntry.caption.hidden = !schedule;
+          if (schedule) launch.setAttribute('aria-description',
+            this.t('room_panel_hold').replace('{name}', this.t('device_controls')));
+          else launch.removeAttribute('aria-description');
+        }
+        label(launch, labelName + ' · ' + (schedule ? this.t('boiler_schedule') : view.panelLaunch.action));
         if (view.panelLaunch.native) launch.disabled = !model.actions.more_info;
         if (view.panelLaunch.hint && launch.title !== view.panelLaunch.hint) launch.title = view.panelLaunch.hint;
         if (view.tile) continue;

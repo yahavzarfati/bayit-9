@@ -61,7 +61,9 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     card.setConfig({ locale, page: params.has('routed'),
       ...(params.has('hide-runtime') && {hidden_entities:['sensor.fixture_runtime']}),
       popup_aliases:{ '#former-boiler-form':'#device/bath/switch.fixture_boiler/schedule' }, rooms: [
-      { id: 'kitchen', name: 'Kitchen', entities: [...sensors, boiler], shortcuts: [] },
+      { id: 'kitchen', name: 'Kitchen', entities: [...sensors,
+        { ...boiler, ...(params.has('room-schedule-entry') && { room_boiler_schedule_entry: true }) }],
+        shortcuts: [] },
       { id: 'bath', name: 'Bath', entities: [boiler], shortcuts: [boiler.entity] },
       { id: 'monitor', name: 'Monitor', entities: [{ ...boiler, role: 'status' }], shortcuts: [boiler.entity] },
     ] });
@@ -588,6 +590,64 @@ async function assertBoilerScheduleLinks(browser, locale) {
   }
 }
 
+async function assertRoomBoilerScheduleEntry(browser, locale) {
+  const he = locale === 'he';
+  const page = await browser.newPage({ viewport:{width:320,height:680}, hasTouch:true, reducedMotion:'reduce' });
+  page.setDefaultTimeout(8000);
+  const url = 'http://127.0.0.1:' + server.address().port +
+    '?routed&stacked&schedule-link&room-schedule-entry&locale=' + locale;
+  const room = page.getByRole('dialog', { name:'Kitchen', exact:true });
+  const details = page.getByRole('dialog', { name:'Fixture boiler', exact:true });
+  const title = he ? 'תזמון' : 'Schedule';
+  const boiler = room.locator('[data-entity="switch.fixture_boiler"]');
+  const entry = boiler.getByRole('button', { name:'Fixture boiler · ' + title, exact:true });
+  const controls = boiler.getByRole('button', { name:'Fixture boiler · ' + (he ? 'פקדי המכשיר' : 'Device controls'), exact:true });
+  const body = room.locator('.modal-body');
+  const route = '#device/kitchen/switch.fixture_boiler';
+  const noWrite = async () => assert.equal(await page.evaluate(() => window.fixture.requests.includes('call_service')), false);
+  try {
+    for (const width of [320,391]) {
+      await page.setViewportSize({width,height:680});
+      await page.goto(url);
+      await page.getByRole('button', {name:'Kitchen',exact:true}).tap();
+      await entry.scrollIntoViewIfNeeded();
+      const caption = entry.getByText(title, {exact:true});
+      await caption.waitFor();
+      assert.equal(await entry.locator('.boiler-room-entry ha-icon').getAttribute('icon'),'mdi:calendar-clock');
+      assert.ok((await entry.boundingBox()).height >= 44);
+      assert.equal(await boiler.locator('.device-timer').count(),1);
+      const before = await body.evaluate(element => element.scrollTop);
+      assert.ok(before > 0);
+
+      await entry.tap();
+      const schedule = details.getByRole('button', {name:title,exact:true});
+      await details.locator('.schedule-list').getByText('Morning',{exact:true}).waitFor();
+      await page.waitForURL(value => value.hash === route + '/schedule');
+      assert.equal(await schedule.getAttribute('aria-pressed'),'true');
+      assert.equal(await details.locator('.device-timer').count(),1);
+      await noWrite();
+      await details.locator('[data-role=back]').tap();
+      await page.waitForURL(value => value.hash === '#room-kitchen');
+      await entry.waitFor();
+      assert.ok(Math.abs(await body.evaluate(element => element.scrollTop) - before) < 2);
+      assert.equal(await entry.evaluate(button => button.getRootNode().activeElement === button),true);
+
+      await entry.press('Shift+Enter');
+      await page.waitForURL(value => value.hash === route);
+      await details.locator('[data-role=back]').tap();
+      await entry.waitFor();
+      await page.evaluate(() => window.fixture.setupState('off','unavailable'));
+      await controls.waitFor();
+      assert.equal(await entry.count(),0);
+      await controls.tap();
+      await page.waitForURL(value => value.hash === route);
+      await noWrite();
+    }
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertClosedBoilerSchedulePreflight(browser, locale) {
   const page = await browser.newPage({viewport:{width:320,height:680},hasTouch:true,reducedMotion:'reduce'});
   page.setDefaultTimeout(8000);
@@ -682,6 +742,7 @@ try {
       await reopenedBoiler.locator('[data-role=back]').waitFor({ state: 'hidden' });
       await routed.close();
       await assertBoilerScheduleLinks(browser, locale);
+      await assertRoomBoilerScheduleEntry(browser, locale);
       await assertClosedBoilerSchedulePreflight(browser, locale);
 
       const page = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true });

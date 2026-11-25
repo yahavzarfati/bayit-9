@@ -9,7 +9,7 @@ import { normalizeSharedWallpapers } from './shared-wallpapers.js';
 import { normalizeAppearanceHelpers } from './appearance-helpers.js';
 import { normalizeLightEffectCategorySource, normalizeLightEffectFavoriteLights, normalizeLightEffectGroups, normalizeLightModeSource } from './light-effects.js';
 import { normalizePopupAliases, popupRouteFragment } from './popup-routes.js';
-import { canOpenBoilerSchedule } from './boiler-schedule.js';
+import { canOpenBoilerSchedule, isBoilerScheduleProfile } from './boiler-schedule.js';
 import { calendarAccent, normalizeCalendarAgenda, supportsDailyForecast } from './calendar-agenda.js';
 
 export const CARD_TYPE = 'custom:bayit-dashboard';
@@ -362,6 +362,10 @@ export function supportsRoomBoilerQuickPower(device) {
     !timing.start_script && !timing.stop_script && (!timing.simple_timer_target || timing.simple_timer_target === device.entity));
 }
 
+export function supportsRoomBoilerScheduleEntry(device) {
+  return isBoilerScheduleProfile(device) && !isReadOnlyRole(device.role) && !device.room_boiler_quick_power;
+}
+
 export function supportsHomeShortcutPower(device) {
   const climate = domainOf(device.entity) === 'climate' && (!device.kind || device.kind === 'climate') &&
     !device.timed?.start_script && !device.timed?.stop_script;
@@ -445,6 +449,7 @@ function dashboardAreas(config, hass) {
       compactDevices: new Set(idList(override.compact_device_entities)),
       applianceTiles: new Set(idList(override.appliance_tile_entities)),
       boilerQuickPower: new Set(idList(override.boiler_quick_power_entities)),
+      boilerScheduleEntries: new Set(idList(override.boiler_schedule_entry_entities)),
       vacuumPanelHolds: new Set(idList(override.vacuum_panel_hold_entities)),
       vacuumPanelPresentations: override.vacuum_panel_presentation,
       vacuumPanelSummaries: override.vacuum_panel_summary,
@@ -763,6 +768,8 @@ export function discoverRooms(config, hass, locale) {
           !room.panel_hidden_entities?.includes(device.entity)) device.room_appliance_tile = true;
       if (area.boilerQuickPower?.has(device.entity) && supportsRoomBoilerQuickPower(device) &&
           !room.panel_hidden_entities?.includes(device.entity)) device.room_boiler_quick_power = true;
+      if (area.boilerScheduleEntries?.has(device.entity) && supportsRoomBoilerScheduleEntry(device) &&
+          !room.panel_hidden_entities?.includes(device.entity)) device.room_boiler_schedule_entry = true;
       const panelKind = ROOM_PANEL_KINDS.get(domainOf(device.entity));
       const links = area.panelLinks?.[panelKind];
       if (links && Object.hasOwn(links, device.entity)) {

@@ -782,6 +782,11 @@ export const styles = `
     font:inherit; text-align:start; padding:0; border-radius:10px;
   }
   .device-panel-launch > ha-icon:last-child { place-self:center; color:var(--secondary); }
+  .device-panel-launch[data-room-boiler-schedule] { grid-template-columns:32px minmax(0,1fr) auto; }
+  .boiler-room-entry {
+    display:inline-flex; align-items:center; justify-self:center; gap:4px;
+    color:var(--secondary); font-size:11px; font-weight:700; white-space:nowrap;
+  }
   .device-icon { color: var(--secondary); place-self: center; }
   .device-name { margin: 0; font-size: 14px; line-height: 1.2; overflow-wrap: anywhere; }
   .device-name[data-room-name-hidden] {

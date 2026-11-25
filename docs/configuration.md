@@ -124,6 +124,8 @@ On a standalone Bayit 9 dashboard, opening a room, device or screen updates the 
 
 A dashboard-only room keeps its links when renamed or reordered. Deleting the room removes aliases that point to it or to one of its devices. Newly created rooms receive their own IDs.
 
+For a room boiler bound to a Simple Timer and a scheduler, **Open the schedule from the room boiler header** shows a Schedule label in the existing header. Tap the header to open the guarded schedule and hold it for device controls. Back restores the room and returns focus to the header. In YAML, list the boiler in `boiler_schedule_entry_entities` on that room's override.
+
 In **Rooms → Device display**, enable **Show as a compact device card** for a lock or media player. Adjacent compact cards in a room's **Devices** section share a row. The lock shows one action for its reported state and keeps the usual unlock confirmation. Media shows supported playback, power and mute controls. Tap either header for Home Assistant details, or hold a media header to open its linked Media panel. In YAML, list the selected entity IDs in `compact_device_entities` on that room's override.
 
 In **Rooms → Device display**, choose **Show as an appliance tile** for an ordinary switch. Tap a writable tile to switch it on or off and hold for Home Assistant details. A switch marked read-only keeps the details gesture. In YAML, list the switches in `appliance_tile_entities` on their room override.

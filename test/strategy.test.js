@@ -325,6 +325,29 @@ test('boiler quick power is selected per room for exact writable Simple Timer pr
   assert.equal(rooms[1].entities.find(entry=>entry.entity===boiler).room_boiler_quick_power,undefined);
 });
 
+test('room boiler schedule entry is scoped to a selected writable Simple Timer card', () => {
+  const hass = home();
+  const targets = ['boiler', 'readonly', 'ordinary', 'hidden', 'quick']
+    .map(name => 'switch.fixture_schedule_' + name);
+  const [boiler, readonly, ordinary, hidden, quick] = targets;
+  const timer = 'sensor.fixture_schedule_runtime';
+  for (const entity of [...targets,timer]) {
+    hass.states[entity] = { state:'off', attributes:{} };
+    hass.entities[entity] = {};
+  }
+  const profiles = targets.map(entity => ({ entity, kind:'boiler', timed:entity === ordinary
+    ? {timer_entity:'timer.local'} : {simple_timer_entity:timer} }));
+  const { rooms } = generateDashboard({ area_ids:['studio','lounge'], show_unassigned:false, profiles,
+    room_overrides:{
+      studio:{ entities:targets, boiler_schedule_entry_entities:targets,
+        read_only_entities:[readonly], panel_hidden_entities:[hidden], boiler_quick_power_entities:[quick] },
+      lounge:{ entities:[boiler] },
+    },
+  },hass).views[0].cards[0];
+  assert.deepEqual(rooms[0].entities.filter(item => item.room_boiler_schedule_entry).map(item=>item.entity),[boiler]);
+  assert.equal(rooms[1].entities[0].room_boiler_schedule_entry,undefined);
+});
+
 test('reported compact light readings are projected only for selected writable room lights', () => {
   const hass = home();
   const light = 'light.demo_lamp';
