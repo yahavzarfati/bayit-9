@@ -345,15 +345,24 @@ try {
         const root = room.getRootNode();
         const color = element => getComputedStyle(element).color;
         const toolbar = mode => root.querySelector('.toolbar .chrome-button[data-wallpaper-ink=' + mode + '] > ha-icon');
+        const shell = root.querySelector('.shell').getBoundingClientRect();
+        const card = room.getBoundingClientRect();
+        const split = shell.left + shell.width / 2;
+        const name = room.querySelector('.room-name');
+        const title = document.createRange();
+        title.selectNodeContents(name);
         return {
           reduced: matchMedia('(prefers-reduced-transparency: reduce)').matches,
-          values: [color(room.querySelector('.room-name')), color(room.querySelector('.quick-button > ha-icon')),
+          spansBothHalves: card.left < split && card.right > split,
+          titleOnLightSide: title.getBoundingClientRect().right < split,
+          values: [color(name), color(room.querySelector('.quick-button > ha-icon')),
             color(toolbar('dark')), color(toolbar('light'))],
         };
       });
       const white = 'rgb(255, 255, 255)';
       const dark = 'rgb(16, 18, 23)';
       if (engine === 'Chromium') assert.equal(colors.reduced, false);
+      assert.ok(colors.spansBothHalves && colors.titleOnLightSide, 'The full-width card crosses the split, but the title is on the light half');
       assert.deepEqual(colors.values, colors.reduced ? [dark, 'rgb(32, 36, 43)', dark, white] : [dark, white, white, white]);
       for (const name of ['Missing photo','Redirected photo']) {
         await familyGallery.getByRole('button',{name,exact:true}).tap();

@@ -188,6 +188,18 @@ function darkInkOn(raster, area, frame, shade = 0) {
   return levels[Math.floor(levels.length * .36)] > .19;
 }
 
+function visibleRoomNameBounds(name) {
+  const range = name.ownerDocument.createRange();
+  range.selectNodeContents(name);
+  const text = range.getBoundingClientRect();
+  const clip = name.getBoundingClientRect();
+  const left = Math.max(text.left, clip.left);
+  const right = Math.min(text.right, clip.right);
+  const top = Math.max(text.top, clip.top);
+  const bottom = Math.min(text.bottom, clip.bottom);
+  if (right > left && bottom > top) return { left, top, bottom, width: right - left, height: bottom - top };
+}
+
 function setInk(node, dark) {
   const ink = dark ? 'dark' : 'light';
   if (node.dataset.wallpaperInk !== ink) node.dataset.wallpaperInk = ink;
@@ -223,7 +235,10 @@ export function createWallpaperController(shell, {
     setInk(shell, darkInkOn(raster, box, box));
     const scroller = shell.querySelector('.room-scroll')?.getBoundingClientRect();
     for (const node of shell.querySelectorAll('.toolbar .chrome-button:not([hidden]), .room')) {
-      const region = (node.querySelector('.room-title') ?? node).getBoundingClientRect();
+      const title = node.querySelector('.room-title');
+      // An expanded single-room button can reach far beyond its visible caption.
+      const name = shell.dataset.page === 'true' && node.matches('.room:only-child') ? title?.querySelector('.room-name') : null;
+      const region = (name && visibleRoomNameBounds(name)) || (title ?? node).getBoundingClientRect();
       if (scroller && node.classList.contains('room') && (region.bottom < scroller.top || region.top > scroller.bottom)) continue;
       setInk(node, darkInkOn(raster, region, box));
       themedNodes.add(node);
