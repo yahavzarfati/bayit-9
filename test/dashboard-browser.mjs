@@ -150,8 +150,10 @@ if (query.has('room-grid')) {
   }
 }
 if (query.has('cover-grid')) {
-  for (const [id, name] of [['cover.demo_shade', 'Window shade'], ['cover.demo_curtain', 'Long living room curtain']]) {
-    states[id] = { state: 'closed', attributes: { friendly_name: name, current_position: 0, supported_features: 15 } };
+  for (const [id, name, device_class] of [
+    ['cover.demo_shade', 'Window shade', 'blind'], ['cover.demo_curtain', 'Long living room curtain', 'curtain'],
+  ]) {
+    states[id] = { state: 'closed', attributes: { friendly_name: name, device_class, current_position: 0, supported_features: 15 } };
     hass.entities[id] = { area_id: 'studio' };
   }
 }
@@ -992,6 +994,10 @@ try {
           assert.equal(new Set(tile.buttons.map(([, top]) => top)).size, 1, 'Cover actions stay on one line');
           assert.ok(tile.buttons.every(([, , width, height]) => width >= 28 && height >= 44));
         }
+        const curtain = dialog.locator('[data-entity="cover.demo_curtain"]');
+        assert.equal(await curtain.locator('[data-action="open"] ha-icon').getAttribute('icon'), 'mdi:arrow-expand-horizontal');
+        assert.equal(await curtain.locator('[data-action="close"] ha-icon').getAttribute('icon'), 'mdi:arrow-collapse-horizontal');
+        assert.equal(await dialog.locator('[data-entity="cover.demo_shade"] [data-action="open"] ha-icon').getAttribute('icon'), 'mdi:arrow-up');
         await dialog.locator('[data-entity="cover.demo_shade"] [data-action="open"]').tap();
         assert.deepEqual(await coverGridPage.evaluate(() => window.bayitTest.calls), [
           { type: 'call_service', domain: 'cover', service: 'open_cover', service_data: {}, target: { entity_id: 'cover.demo_shade' } },

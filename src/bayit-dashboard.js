@@ -32,6 +32,7 @@ const controlIcons = {
   vacuum_start: 'mdi:play', vacuum_pause: 'mdi:pause', vacuum_stop: 'mdi:stop', return_to_base: 'mdi:home-map-marker',
   locate: 'mdi:map-marker-radius-outline', press_button: 'mdi:gesture-tap-button', run_script: 'mdi:play',
 };
+const curtainControlIcons = { open: 'mdi:arrow-expand-horizontal', close: 'mdi:arrow-collapse-horizontal' };
 const deviceIcons = {
   light:'mdi:lightbulb-outline', switch:'mdi:toggle-switch-outline', fan:'mdi:fan',
   cover:'mdi:blinds', climate:'mdi:thermostat', lock:'mdi:lock-outline',
@@ -1394,6 +1395,7 @@ export class BayitDashboard extends HTMLElement {
     view.effectGallery = null;
     const basic = make('div', 'basic-actions');
     const complex = new Map();
+    const curtain = model.domain === 'cover' && model.attributes.device_class === 'curtain';
     view.special = buildPanelControls(model, { make, button, icon, label, t: key => this.t(key),
       request: (id, value, control) => this.requestAction(view.config, id, value, control) });
     for (const id of actionsInOrder) {
@@ -1414,7 +1416,7 @@ export class BayitDashboard extends HTMLElement {
         continue;
       }
       const name = this.actionLabel(id);
-      const control = button('control-button', name, controlIcons[id]);
+      const control = button('control-button', name, (curtain && curtainControlIcons[id]) || controlIcons[id]);
       label(control, name);
       control.dataset.action = id;
       control.onclick = () => this.requestAction(view.config, id, undefined, control);
