@@ -14,7 +14,8 @@ import { climateOptionLabel } from './panel-controls.js';
 import { buildToolbarEditor } from './toolbar-editor.js';
 import { activityKinds, activitySources, normalizeRoomActivities } from './room-appliance.mjs';
 import { getDeviceModel, isPairedLightCompanion, isPairedLightStatusRefresh, supportsRoomShutdown } from './device-control.mjs';
-import { normalizeLightEffectFavoriteLights, normalizeLightEffectGroups, normalizeLightModeSource } from './light-effects.js';
+import { lightEffectCategoryOptions, lightEffectCategoryTitles, normalizeLightEffectCategorySource,
+  normalizeLightEffectFavoriteLights, normalizeLightEffectGroups, normalizeLightModeSource } from './light-effects.js';
 import { isPopupFragment, normalizePopupAliases, parsePopupRoute } from './popup-routes.js';
 
 const WORDS = {
@@ -22,6 +23,8 @@ const WORDS = {
     lightEffects: 'Light effect categories', effectLight: 'Light', effectGroup: 'Category',
     effectFavorites: 'Allow personal favorites on this device', lightStatusRefresh: 'Light status refresh button',
     lightModeSource: 'Light opening mode source', lightFixedColorOption: 'Fixed-color option',
+    lightCategorySource: 'Shared category helper', lightCategoryAll: 'Helper option for All effects',
+    lightCategoryMatching: 'Category names must match the helper’s option names.',
     newEffectGroup: 'New category', effectGroupName: 'Category name', addEffectGroup: 'Add category',
     removeEffectGroup: 'Delete category', availableEffect: 'Available effect', chooseEffect: 'Select an effect',
     addEffect: 'Add effect', removeEffect: 'Remove effect',
@@ -155,6 +158,8 @@ const WORDS = {
     lightEffects: 'קטגוריות אפקטים לתאורה', effectLight: 'תאורה', effectGroup: 'קטגוריה',
     effectFavorites: 'אפשר סימון מועדפים אישיים במכשיר', lightStatusRefresh: 'כפתור לרענון מצב המנורה',
     lightModeSource: 'מקור למצב הפתיחה של התאורה', lightFixedColorOption: 'אפשרות לצבע קבוע',
+    lightCategorySource: 'בורר לקטגוריה משותפת', lightCategoryAll: 'אפשרות בורר לכל האפקטים',
+    lightCategoryMatching: 'שמות הקטגוריות צריכים להתאים לשמות האפשרויות בבורר.',
     newEffectGroup: 'קטגוריה חדשה', effectGroupName: 'שם קטגוריה', addEffectGroup: 'הוספת קטגוריה',
     removeEffectGroup: 'מחיקת קטגוריה', availableEffect: 'אפקט זמין', chooseEffect: 'בחירת אפקט',
     addEffect: 'הוספת אפקט', removeEffect: 'הסרת אפקט',
@@ -2314,6 +2319,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const groupsFor = id => normalizeLightEffectGroups(Object.hasOwn(configured(), id) ? configured()[id] : []);
     const configuredRefresh = () => this.#config.light_status_refresh_buttons ?? {};
     const configuredModes = () => this.#config.light_mode_sources ?? {};
+    const configuredCategories = () => this.#config.light_effect_category_sources ?? {};
+    const helperOptions = id => isVisibleEntity(id, this.#hass.states ?? {}, this.#hass.entities,
+      new Set(Array.isArray(this.#config.hidden_entities) ? this.#config.hidden_entities : []))
+      ? lightEffectCategoryOptions(this.#hass.states[id]) : [];
     const selectedLight = () => this.#lightEffectEntity;
     let signature;
 
@@ -2322,7 +2331,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const normalized = normalizeLightEffectGroups(groups);
       if (normalized.length) next[selectedLight()] = normalized;
       else delete next[selectedLight()];
-      this.#commit({ light_effect_groups: next });
+      const sources = { ...configuredCategories() };
+      if (!normalized.length && Object.hasOwn(sources, selectedLight())) {
+        delete sources[selectedLight()];
+        this.#commit({ light_effect_groups: next, light_effect_category_sources: sources });
+      } else this.#commit({ light_effect_groups: next });
     };
     const focus = key => {
       if (!key) return;
@@ -2349,9 +2362,16 @@ export class Bayit9StrategyEditor extends HTMLElement {
       });
       const entity = selectedLight();
       const source = eligible.find(item => item.device.entity === entity);
+      const groups = source ? groupsFor(entity) : [];
+      const categoryTitles = lightEffectCategoryTitles(groups);
+      const matchesCategory = id => helperOptions(id).some(option => categoryTitles.has(option));
+      const categoryHelpers = categoryTitles.size
+        ? entityOptions(this.#hass, new Set(['input_select'])).filter(([id]) => matchesCategory(id)) : [];
+      const categorySource = normalizeLightEffectCategorySource(configuredCategories()[entity], groups);
       const nextSignature = JSON.stringify([eligible.map(({ device, options }) => [device.entity, !!options.length]),
         source?.options, source?.refreshButtons, source?.modeSources,
-        this.#hass.states?.[configuredModes()[entity]?.entity]?.attributes?.options]);
+        this.#hass.states?.[configuredModes()[entity]?.entity]?.attributes?.options,
+        categoryHelpers, categorySource && helperOptions(categorySource.entity)]);
       if (!force && (signature === nextSignature || panel.contains(this.shadowRoot.activeElement) &&
           this.shadowRoot.activeElement?.matches('input[type=text]'))) return;
       signature = nextSignature;
@@ -2395,7 +2415,6 @@ export class Bayit9StrategyEditor extends HTMLElement {
         fields.push(field(words.lightStatusRefresh, picker));
       }
 
-      const groups = groupsFor(entity);
       const modeSource = normalizeLightModeSource(configuredModes()[entity]);
       if (modeSource || (groups.length && source.modeSources.length)) {
         const sources = [['', words.none], ...source.modeSources];
@@ -2435,6 +2454,49 @@ export class Bayit9StrategyEditor extends HTMLElement {
         });
         showFixedOptions();
         fields.push(field(words.lightModeSource, sourcePicker), fixedField);
+      }
+
+      if (categoryHelpers.length || categorySource) {
+        const validHelper = id => {
+          const titles = lightEffectCategoryTitles(groupsFor(entity));
+          return /^input_select\.[a-z0-9_]+$/.test(id) && helperOptions(id).some(option => titles.has(option));
+        };
+        const choices = [['', words.none], ...categoryHelpers];
+        if (categorySource && !validHelper(categorySource.entity)) {
+          choices.push([categorySource.entity, categorySource.entity + ' · ' + words.unavailableEffect]);
+        }
+        const picker = mark(select(choices, categorySource?.entity ?? ''), 'category-source');
+        const save = (value, focusKey) => {
+          const next = { ...configuredCategories() };
+          if (value) next[entity] = value;
+          else delete next[entity];
+          this.#commit({ light_effect_category_sources: next });
+          refresh(true, focusKey);
+        };
+        picker.addEventListener('change', () => {
+          if (!picker.value) save(undefined, 'category-source');
+          else if (validHelper(picker.value)) save({ entity:picker.value }, 'category-source');
+          else refresh(true, 'category-source');
+        });
+        fields.push(field(words.lightCategorySource, picker));
+        if (categorySource) {
+          fields.push(node('p', { textContent:words.lightCategoryMatching }));
+          const availableAll = () => validHelper(categorySource.entity)
+            ? helperOptions(categorySource.entity).filter(value => !groupsFor(entity).some(group => value === group.title)) : [];
+          const choices = [['', words.none], ...availableAll().map(value => [value, value])];
+          if (categorySource.all_option && !availableAll().includes(categorySource.all_option)) {
+            choices.push([categorySource.all_option, categorySource.all_option + ' · ' + words.unavailableEffect]);
+          }
+          if (choices.length > 1) {
+            const picker = mark(select(choices, categorySource.all_option ?? ''), 'category-all');
+            picker.addEventListener('change', () => {
+              if (!picker.value || availableAll().includes(picker.value)) {
+                save({ entity:categorySource.entity, ...(picker.value && { all_option:picker.value }) }, 'category-all');
+              } else refresh(true, 'category-all');
+            });
+            fields.push(field(words.lightCategoryAll, picker));
+          }
+        }
       }
 
       if (groups.length) {

@@ -578,6 +578,28 @@ test('projects a light mode source only for a writable light with a visible pair
   assert.equal(projected()[0].light_mode_source,undefined);
 });
 
+test('projects shared effect categories only for explicitly bound writable grouped lights', () => {
+  const light = 'light.fixture_lamp';
+  const passive = 'light.fixture_passive';
+  const helper = 'input_select.fixture_category';
+  const states = { [light]:{state:'off'}, [passive]:{state:'off'}, [helper]:{state:'Sleep'} };
+  const entities = { [light]:{di:'lamp'}, [passive]:{di:'lamp'}, [helper]:{} };
+  const source = { entity:helper, all_option:'All' };
+  const groups = [{ title:'Sleep', effects:['Calm'] }];
+  const config = { area_ids:['bayit_room_demo'], room_overrides:{ bayit_room_demo:{
+    name:'Demo', entities:[light,passive], read_only_entities:[passive],
+  } }, light_effect_groups:{ [light]:groups, [passive]:groups }, light_effect_category_sources:{ [light]:source, [passive]:source } };
+  const card = overrides => generateDashboard({ ...config, ...overrides },{states,entities}).views[0].cards[0];
+  const projected = overrides => card(overrides).rooms[0].entities.map(device=>device.effect_category_source);
+  assert.deepEqual(projected(),[source,undefined]);
+  assert.deepEqual(card({hidden_entities:[helper]}).hidden_entities,[helper]);
+  assert.deepEqual(projected({light_effect_category_sources:{ [light]:{ ...source, entity:'select.fixture_other' } }}),[undefined,undefined]);
+  assert.deepEqual(projected({light_effect_groups:{}}),[undefined,undefined]);
+  assert.deepEqual(projected({light_effect_groups:{[light]:[...groups,...groups]}}),[undefined,undefined]);
+  assert.deepEqual(projected({light_effect_category_sources:{ [light]:{ ...source, all_option:'Sleep' } }}),
+    [{entity:helper},undefined]);
+});
+
 test('projects an optional light refresh only to its registered paired light', () => {
   const lamp = 'light.fixture_lamp';
   const status = 'light.fixture_status';

@@ -6,7 +6,7 @@ import { normalizeMediaStage } from './now-playing.js';
 import { normalizeMediaRemote } from './media-device-support.mjs';
 import { wallpaperChoices } from './wallpapers.js';
 import { normalizeSharedWallpapers } from './shared-wallpapers.js';
-import { normalizeLightEffectFavoriteLights, normalizeLightEffectGroups, normalizeLightModeSource } from './light-effects.js';
+import { normalizeLightEffectCategorySource, normalizeLightEffectFavoriteLights, normalizeLightEffectGroups, normalizeLightModeSource } from './light-effects.js';
 import { normalizePopupAliases, popupRouteFragment } from './popup-routes.js';
 import { canOpenBoilerSchedule } from './boiler-schedule.js';
 import { calendarAccent, normalizeCalendarAgenda, supportsDailyForecast } from './calendar-agenda.js';
@@ -793,6 +793,9 @@ export function discoverRooms(config, hass, locale) {
       if (groups.length) {
         device.effect_groups = groups;
         if (favoriteLights.has(device.entity)) device.effect_favorites = true;
+        const categorySource = !isReadOnlyRole(device.role) &&
+          normalizeLightEffectCategorySource(config.light_effect_category_sources?.[device.entity], groups);
+        if (categorySource) device.effect_category_source = categorySource;
       }
     }
     if (area.sections !== undefined) {
@@ -1205,11 +1208,10 @@ export function generateDashboard(config = {}, hass = {}) {
   const context = dashboardContext(config, hass, locale);
   if (Object.keys(context).length) card.context = context;
   const toolbar = dashboardToolbar(config, hass, new Set(card.rooms.map(room => room.id)));
-  if (toolbar !== undefined) {
-    card.toolbar = toolbar;
-    const hidden = idList(config.hidden_entities);
-    if (hidden.length && toolbar.some(entry => entry.sections?.some(section => section.discover))) card.hidden_entities = hidden;
-  }
+  if (toolbar !== undefined) card.toolbar = toolbar;
+  const hidden = idList(config.hidden_entities);
+  if (hidden.length && (toolbar?.some(entry => entry.sections?.some(section => section.discover)) ||
+      card.rooms.some(room => room.entities.some(device => device.effect_category_source)))) card.hidden_entities = hidden;
   const sharedWallpapers = normalizeSharedWallpapers(config.shared_wallpapers);
   if (sharedWallpapers.length) card.shared_wallpapers = sharedWallpapers;
   if (Object.hasOwn(BACKGROUNDS, config.background) || sharedWallpapers.some(item => item.id === config.background)) {

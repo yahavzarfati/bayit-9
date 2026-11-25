@@ -20,6 +20,7 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 | `light_effect_favorites` | Lights with configured effect categories that allow personal favorites. |
 | `light_status_refresh_buttons` | Optional mapping from a light to a status request button registered to the same Home Assistant device. |
 | `light_mode_sources` | Optional mapping from a grouped light to a same-device select and its fixed-color option for opening the light details. |
+| `light_effect_category_sources` | Optional per-light `input_select` for a category shared across the home. |
 | `background` | A built-in wallpaper ID such as `aurora` or the ID of a shared photo listed in the same dashboard. |
 | `shared_wallpapers` | Ordered shared photos with an `id`, `name`, local image `path` and optional local `preview` path. |
 | `fullscreen` | Set to `true` to hide the Home Assistant header and sidebar on this standalone dashboard. Use **Home Assistant menu** in Bayit 9 Settings, or add `?disable_km=1` to the dashboard address, to restore them. |
@@ -120,6 +121,8 @@ In a grouped gallery, **Effects**, **Fixed color**, and **White** switch between
 Under **Light effect categories**, choose a **Light status refresh button** when the integration provides a button that requests the light's current state. The light details show a refresh icon that presses the selected button. The light and button must belong to the same Home Assistant device.
 
 For a light with effect categories, choose a **Light opening mode source** and its **Fixed-color option** when the integration exposes the last light mode on a separate select. If the light does not report an effect or color mode, a matching select opens the fixed-color controls. Bayit 9 reads this source when the panel opens. In YAML, map the light ID in `light_mode_sources` to `{ entity: select.lamp_mode, fixed_color_option: Fixed color }`.
+
+Choose a **Shared category helper** in the effect editor to save category selection in a Home Assistant dropdown helper. Unique category names must match the helper’s option names. You can also choose a separate helper option for **All effects**, which includes every effect the light currently reports. After Home Assistant reports the new selection, the same category appears on other devices and on reopening. A category with no available matching helper option is temporary. Choose a helper dedicated to browsing effects. Use the separate **Apply** button to change the light. In YAML, map the light ID in `light_effect_category_sources` to `{ entity: input_select.lamp_categories, all_option: All }`. The `all_option` is optional.
 
 For a grouped light, enable **Allow personal favorites on this device** under **Light effect categories**. Use the star to save or remove the active effect, and use the Favorites button to browse saved effects across all categories. The list belongs to the signed-in Home Assistant account in that browser. If an effect is temporarily unavailable, it reappears in Favorites when the light reports it again.
 

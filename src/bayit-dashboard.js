@@ -19,7 +19,8 @@ import { preserveMoreInfoReturn } from './native-more-info.js';
 import { buildPanelControls, climateOptionLabel, panelControlStyles } from './panel-controls.js';
 import { lightColorHex, lightWhiteRailColor, parseLightColor } from './light-color.mjs';
 import { activityKinds, applianceActivity, normalizeRoomActivities } from './room-appliance.mjs';
-import { createLightEffectGallery, lightEffectStyles, normalizeLightEffectGroups, normalizeLightModeSource, organizeLightModes } from './light-effects.js';
+import { createLightEffectGallery, lightEffectCategoryOptions, lightEffectCategoryTitles, lightEffectStyles,
+  normalizeLightEffectCategorySource, normalizeLightEffectGroups, normalizeLightModeSource, organizeLightModes } from './light-effects.js';
 import { createLightColorPalette, lightColorPaletteStyles } from './light-color-palette.js';
 import { createToolbarPanel, toolbarPanelStyles } from './toolbar-panels.js';
 import { createRoomGraphs, roomTemperatureChartStyles } from './room-temperature-chart.js';
@@ -311,6 +312,8 @@ function normalizeEntity(item) {
     if (groups.length) {
       entry.effect_groups = groups;
       if (item.effect_favorites === true) entry.effect_favorites = true;
+      const categorySource = supportsNativeShortcutDetails(entry) && normalizeLightEffectCategorySource(item.effect_category_source, groups);
+      if (categorySource) entry.effect_category_source = categorySource;
     }
   }
   if (item.command === 'run_script') entry.command = item.command;
@@ -2112,6 +2115,37 @@ export class BayitDashboard extends HTMLElement {
       [config.entity, entity].every(id => isVisibleEntity(id, states, entities, this.config.hiddenEntities));
   }
 
+  lightEffectCategoryState(config) {
+    const source = config.effect_category_source;
+    if (!source) return;
+    const { entity } = source;
+    const { states = {}, entities, services, callWS } = this._hass ?? {};
+    if (![config.entity, entity].every(id => isVisibleEntity(id, states, entities, this.config.hiddenEntities))) return;
+    const record = states[entity];
+    const options = lightEffectCategoryOptions(record);
+    if (!options.includes(record.state)) return;
+    return { options, selected: record.state, pending: !this.canRequest(entity, 'select_option'),
+      canWrite: typeof callWS === 'function' && Object.hasOwn(services?.input_select ?? {}, 'select_option') };
+  }
+
+  requestLightEffectCategory(view, option, control) {
+    if (!this.deviceViews.has(view) || !this.nodes.modal.open || this.nodes.modal.hasAttribute('data-closing') ||
+        !this.nodes.modal.contains(control) || this.panel?.type !== 'device') return false;
+    const config = view.config;
+    const source = config.effect_category_source;
+    const current = this.lightEffectCategoryState(config);
+    if (!current?.canWrite || current.pending || current.selected === option || !current.options.includes(option)) return false;
+    const effects = this.model(config).actions.set_effect?.options;
+    const groups = config.effect_groups;
+    const isAll = option === source.all_option;
+    if (!effects?.length || (!isAll && !lightEffectCategoryTitles(groups).has(option)) ||
+        !groups.some(group => (isAll || group.title === option) && group.effects.some(item => effects.includes(item.effect)))) return false;
+    const target = { entity: source.entity, role: 'action' };
+    if (!this.model(target).actions.select_option?.options.includes(option)) return false;
+    this.requestAction(target, 'select_option', option, control);
+    return true;
+  }
+
   lightStatusRefreshTarget(config) {
     const entity = config.light_status_refresh_button;
     const { states = {}, entities, services } = this._hass ?? {};
@@ -2658,6 +2692,11 @@ export class BayitDashboard extends HTMLElement {
       if (id === 'set_effect' && this.panel?.type === 'device') {
         view.effectGallery = createLightEffectGallery(view.config.effect_groups, action.options, { make, button, icon,
           t: key => this.t(key), request: (value, control) => this.requestAction(view.config, id, value, control),
+          ...(view.config.effect_category_source && { categorySource: {
+            allOption: view.config.effect_category_source.all_option,
+            read: () => this.lightEffectCategoryState(view.config),
+            request: (option, control) => this.requestLightEffectCategory(view, option, control),
+          } }),
           ...(view.config.effect_favorites && { personalFavorites: {
             entity: view.config.entity, view: this.ownerDocument.defaultView, user: () => this._hass?.user?.id,
             restore: view.effectGallerySession,

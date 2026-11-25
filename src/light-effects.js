@@ -33,6 +33,34 @@ export function normalizeLightEffectFavoriteLights(value) {
   return Array.isArray(value) ? [...new Set(value.filter(entity => typeof entity === 'string' && /^light\.[a-z0-9_]+$/.test(entity)))] : [];
 }
 
+export function lightEffectCategoryOptions(record) {
+  const options = record?.attributes?.options;
+  return Array.isArray(options) ? [...new Set(options.filter(validCategoryOption))] : [];
+}
+
+function validCategoryOption(value) {
+  return typeof value === 'string' && value.trim() && value.length <= 255 &&
+    value !== 'unknown' && value !== 'unavailable';
+}
+
+export function lightEffectCategoryTitles(groups) {
+  const unique = new Set();
+  const repeated = new Set();
+  for (const { title } of groups) {
+    if (unique.has(title)) repeated.add(title);
+    unique.add(title);
+  }
+  return new Set([...unique].filter(title => !repeated.has(title)));
+}
+
+export function normalizeLightEffectCategorySource(value, groups) {
+  const { entity, all_option } = value ?? {};
+  if (typeof entity !== 'string' || !/^input_select\.[a-z0-9_]+$/.test(entity) ||
+      !lightEffectCategoryTitles(groups).size) return;
+  const all = validCategoryOption(all_option) && !groups.some(({ title }) => title === all_option) ? all_option : undefined;
+  return { entity, ...(all && { all_option: all }) };
+}
+
 function favoritesFor(view, key) {
   try {
     const raw = view.localStorage.getItem(key);
@@ -42,19 +70,26 @@ function favoritesFor(view, key) {
   } catch { return new Set(); }
 }
 
-export function createLightEffectGallery(groups, advertised, { make, button, icon, t, request, personalFavorites }) {
+export function createLightEffectGallery(groups, advertised, { make, button, icon, t, request, personalFavorites, categorySource }) {
   if (!groups?.length) return null;
   const available = new Set(advertised);
   const assigned = new Set();
+  const mappedTitles = categorySource ? lightEffectCategoryTitles(groups) : new Set();
   const categories = groups.flatMap(({ title, effects }) => {
     const matches = effects.filter(({ effect }) => available.has(effect));
     for (const { effect } of matches) assigned.add(effect);
-    return matches.length ? [{ title, effects: matches }] : [];
+    return matches.length ? [{ title, effects: matches, option: mappedTitles.has(title) ? title : undefined }] : [];
   });
   if (!categories.length) return null;
   const remaining = [...available].filter(effect => !assigned.has(effect));
   if (remaining.length) {
     categories.push({ title: t('other_effects'), effects: remaining.map(effect => ({ effect })) });
+  }
+
+  const effectDetails = new Map(categories.flatMap(({ effects }) => effects.map(effect => [effect.effect, effect])));
+  if (categorySource?.allOption) {
+    categories.push({ title: t('all_light_effects'), option: categorySource.allOption, all: true,
+      effects: [...available].map(effect => effectDetails.get(effect)) });
   }
 
   const name = t(effectAction);
@@ -89,6 +124,11 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
   const categoryBar = make('div', 'light-effect-categories');
   categoryBar.setAttribute('role', 'group');
   categoryBar.setAttribute('aria-label', t('effect_categories'));
+  const categoryNotice = categorySource && make('p', 'light-effect-category-message');
+  if (categoryNotice) {
+    categoryNotice.setAttribute('role', 'status');
+    categoryNotice.hidden = true;
+  }
   const choices = make('div', 'light-effect-choices');
   choices.setAttribute('role', 'group');
   choices.setAttribute('aria-label', t('available_effects'));
@@ -104,9 +144,14 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
   const pageLabel = make('span');
   pageLabel.setAttribute('aria-live', 'polite');
   pager.append(previous, pageLabel, next);
-  gallery.append(personalFavorites ? heading : caption, categoryBar, pager, choices, favoriteMessage, footer);
+  gallery.append(personalFavorites ? heading : caption, categoryBar);
+  if (categoryNotice) gallery.append(categoryNotice);
+  gallery.append(pager, choices, favoriteMessage, footer);
 
   let categoryIndex = 0;
+  let sharedCategory = -1;
+  let categoryState;
+  let localCategoryChosen = false;
   let pageIndex = 0;
   let draft;
   let current;
@@ -119,14 +164,25 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
   const displayNames = new Map(categories.flatMap(({ effects }) =>
     effects.filter(({ name }) => name).map(({ effect, name }) => [effect, name])));
   const displayName = effect => displayNames.get(effect) ?? effect;
-  const effectDetails = new Map(categories.flatMap(({ effects }) => effects.map(effect => [effect.effect, effect])));
   const favoriteEffects = () => [...available].filter(effect => favorites.has(effect)).map(effect => effectDetails.get(effect));
   const categoryEffects = () => favoritesOnly ? favoriteEffects() : categories[categoryIndex].effects;
   let choiceButtons = [];
-  const chooseCategory = index => {
-    if (!categories[index] || !favoritesOnly && categoryIndex === index) return;
+  const displayCategory = ({ all, option }) => !all || categoryState?.options.includes(option);
+  const chooseCategory = (index, control) => {
+    const next = categories[index];
+    categoryState = categorySource?.read();
+    if (!next || !canRequest || categoryState?.pending || !displayCategory(next) ||
+        (!favoritesOnly && categoryIndex === index)) {
+      refresh();
+      return;
+    }
     favoritesOnly = false;
+    if (next.option && categoryState?.canWrite && categoryState.options.includes(next.option) &&
+        next.option !== categoryState.selected && categorySource.request(next.option, control)) {
+      return;
+    }
     categoryIndex = index;
+    localCategoryChosen = !!categorySource && categoryIndex !== sharedCategory;
     pageIndex = 0;
     renderChoices();
   };
@@ -134,24 +190,27 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
   const categoryButtons = categorySelect ? [] : categories.map(({ title }, index) => {
     const control = button('control-button', title);
     control.dataset.action = effectAction;
-    control.onclick = () => chooseCategory(index);
+    control.onclick = () => chooseCategory(index, control);
     return control;
   });
+  let allChoice;
+  let selectedFavorites;
   if (categorySelect) {
     categorySelect.dataset.action = effectAction;
     categorySelect.setAttribute('aria-label', t('effect_categories'));
-    for (const [index, { title }] of categories.entries()) {
+    for (const [index, { title, all }] of categories.entries()) {
       const option = make('option', '', title);
       option.value = String(index);
-      categorySelect.append(option);
+      if (all) allChoice = option;
+      else categorySelect.append(option);
     }
     if (personalFavorites) {
-      const selectedFavorites = make('option', '', t('light_favorites'));
+      selectedFavorites = make('option', '', t('light_favorites'));
       selectedFavorites.value = 'favorites';
       selectedFavorites.disabled = selectedFavorites.hidden = true;
       categorySelect.append(selectedFavorites);
     }
-    categorySelect.onchange = () => chooseCategory(Number(categorySelect.value));
+    categorySelect.onchange = () => chooseCategory(Number(categorySelect.value), categorySelect);
     categoryBar.append(categorySelect);
   } else if (categoryButtons.length > 1) categoryBar.append(...categoryButtons);
   else categoryBar.hidden = true;
@@ -167,13 +226,28 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
   }
 
   function refresh() {
+    const categoryDisabled = !canRequest || categoryState?.pending === true;
+    if (categorySource) {
+      categoryBar.hidden = categories.filter(displayCategory).length < 2;
+      categoryBar.setAttribute('aria-busy', String(categoryState?.pending === true));
+      const local = !favoritesOnly && localCategoryChosen;
+      const message = local ? t('light_effect_category_local') : '';
+      if (categoryNotice.textContent !== message) categoryNotice.textContent = message;
+      categoryNotice.hidden = !message;
+    }
     if (categorySelect) {
-      categorySelect.disabled = !canRequest;
+      categorySelect.disabled = categoryDisabled;
+      if (allChoice) {
+        const showAll = displayCategory(categories[Number(allChoice.value)]);
+        if (showAll && !allChoice.parentNode) categorySelect.insertBefore(allChoice, selectedFavorites ?? null);
+        else if (!showAll) allChoice.remove();
+      }
       categorySelect.value = favoritesOnly ? 'favorites' : String(categoryIndex);
     }
     categoryButtons.forEach((control, index) => {
       control.setAttribute('aria-pressed', String(!favoritesOnly && categoryIndex === index));
-      control.disabled = !canRequest;
+      control.hidden = !displayCategory(categories[index]);
+      control.disabled = categoryDisabled;
     });
     for (const { control, effect } of choiceButtons) {
       control.setAttribute('aria-pressed', String(draft === effect));
@@ -283,6 +357,29 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
     pageIndex = restore.pageIndex;
     if (available.has(restore.draft)) draft = restore.draft;
   }
+  function syncCategory() {
+    if (!categorySource) return false;
+    categoryState = categorySource.read();
+    const next = categories.findIndex(category => !!category.option && category.option === categoryState?.selected);
+    if (next !== sharedCategory) {
+      sharedCategory = next;
+      if (next >= 0) {
+        categoryIndex = next;
+        localCategoryChosen = false;
+        if (!favoritesOnly) pageIndex = 0;
+        return !favoritesOnly;
+      }
+    }
+    if (!displayCategory(categories[categoryIndex])) {
+      categoryIndex = 0;
+      localCategoryChosen = false;
+      if (!favoritesOnly) pageIndex = 0;
+      return !favoritesOnly;
+    }
+    return false;
+  }
+
+  syncCategory();
   renderChoices();
   return {
     content: gallery,
@@ -294,7 +391,8 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
         (available.has(effect) || effect !== 'off') ? effect : undefined;
       canRequest = enabled;
       if (draft === current) draft = undefined;
-      if (syncFavorites()) renderChoices();
+      const categoryChanged = syncCategory();
+      if (syncFavorites() || categoryChanged) renderChoices();
       else refresh();
     },
   };
@@ -364,10 +462,11 @@ export const lightEffectStyles = `
   .light-effect-caption { margin:0; font-size:.87rem; font-weight:650; }
   .light-effect-heading { display:flex; justify-content:space-between; align-items:center; gap:6px; }
   .light-effect-personal-actions { display:flex; gap:6px; }
-  .light-effect-personal-actions[hidden], .light-effect-favorite-message[hidden] { display:none; }
+  .light-effect-personal-actions[hidden], .light-effect-favorite-message[hidden], .light-effect-category-message[hidden],
+  .light-effect-categories[hidden], .light-effect-categories button[hidden] { display:none; }
   .light-effect-gallery .light-effect-personal-actions .control-button { min-width:44px; min-height:44px; justify-content:center; }
   .light-effect-personal-actions ha-icon { --mdc-icon-size:20px; }
-  .light-effect-favorite-message { margin:0; font-size:.78rem; color:var(--secondary); }
+  .light-effect-favorite-message, .light-effect-category-message { margin:0; font-size:.78rem; color:var(--secondary); }
   .light-effect-categories { display:flex; flex-wrap:wrap; gap:6px; }
   .light-effect-categories[hidden] { display:none; }
   .light-effect-categories select { width:100%; font-size:16px; }
