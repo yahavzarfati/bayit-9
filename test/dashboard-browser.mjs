@@ -4167,6 +4167,9 @@ try {
       const detailTemperature = inlineDetail.getByRole('slider', { name: 'White temperature', exact: true });
       const temperatureMode = inlineDetail.getByRole('button', { name: 'White temperature', exact: true });
       await detailBrightness.waitFor();
+      await inlineDetail.evaluate(async modal => {
+        await Promise.allSettled(modal.getAnimations().map(animation => animation.finished));
+      });
       assert.equal(await inlineDetail.getByRole('button', { name: /^Apply/ }).count(), 0);
       assert.equal(await detailTemperature.count(), 0);
       assert.equal(await detailBrightness.inputValue(), '41');
