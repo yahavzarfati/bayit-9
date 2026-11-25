@@ -588,17 +588,21 @@ export const styles = `
   .shell[dir=rtl] .modal[data-kind=room] .modal-body > :is(.devices,.notice) { direction: rtl; }
   @keyframes appear { from { opacity: 0; transform: scale(.92); } }
   .devices, .settings { display: grid; gap: 12px; }
-  .settings { gap: 8px; }
+  .settings { gap: 8px; container: settings / inline-size; }
   .settings-screens { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
   .settings-shortcuts-title { margin: 0 0 5px; text-align: center; font-size: 13px; font-weight: 760; }
-  .settings-system { display: flex; flex-wrap: wrap; gap: 7px; }
+  .settings-system { display: grid; grid-template-columns: minmax(0,max-content) minmax(44px,1fr); gap: 7px; }
+  .settings-system > button:only-child { grid-column: 1 / -1; }
+  @container settings (max-width: 300px) {
+    .settings-system { grid-template-columns: minmax(0,1fr); }
+  }
   /* Keep the authored screen order and let each caption resolve its own direction. */
   .settings-screens, .settings-system { direction: ltr; }
-  .settings-system > button { flex: 1 1 auto; }
   button.settings-action {
     justify-content: flex-start; padding: 5px 10px; gap: 9px; border-radius: 14px;
     border-color: var(--settings-action-line,var(--line)); background: var(--settings-action-fill,var(--control));
   }
+  .settings-system > button.settings-action { padding-inline: 7px; gap: 6px; }
   .settings-action > ha-icon { flex: none; --mdc-icon-size: 21px; }
   .settings-action > span { min-width: 0; text-align: start; overflow-wrap: anywhere; }
   @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
