@@ -9,7 +9,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, supportsHorizonCard, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
   supportsToolbarVacuumSummary, toolbarPlacement, toolbarPopupPosition, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
-import { allowsCoverRailAction, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
+import { allowsCoverRailAction, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, isReadOnlyRole, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
   simpleTimerStatusEntity, simpleTimerUsageResetAvailable, supportsHomeHeaterPower, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupScrollMemory } from './popup-scroll.js';
@@ -27,7 +27,7 @@ import { createRoomGraphs, roomTemperatureChartStyles } from './room-temperature
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
 import { normalizeMediaStage } from './now-playing.js';
-import { compactMediaMutePlaceholder, compactRoomMediaCommands, normalizeMediaRemote } from './media-device-support.mjs';
+import { compactMediaMutePlaceholder, compactRoomMediaCommands, normalizeMediaRemote, returningVacuumLocate } from './media-device-support.mjs';
 import { calendarAccent, normalizeCalendarAgenda } from './calendar-agenda.js';
 import { createWallpaperController, createWallpaperGallery, personalWallpaperId, wallpaperChoices, wallpaperStyles } from './wallpapers.js';
 import { normalizeSharedWallpapers } from './shared-wallpapers.js';
@@ -2680,7 +2680,7 @@ export class BayitDashboard extends HTMLElement {
       view.filledWhiteLightRail = Boolean((view.compactInlineLight || filledStandaloneRail) && model.actions.set_color_temp_kelvin);
       const signature = JSON.stringify([actionsInOrder.map(id => model.actions[id] || null), timerLayout,
         model.levelAction, coverClass, hideIdleTimedOff, compactCommands, mutePlaceholder, mutePlaceholder && model.attributes.is_volume_muted === true,
-        view.filledWhiteLightRail, view.onlyPresetShortcut]);
+        view.filledWhiteLightRail, view.onlyPresetShortcut, returningVacuumLocate(model)]);
 
       if (signature !== view.signature) {
         view.signature = signature;
@@ -2703,7 +2703,7 @@ export class BayitDashboard extends HTMLElement {
         if (control.dataset.lightMode || control.hasAttribute('data-room-mute-placeholder') ||
             control.classList.contains('target-reading')) continue;
         const id = control.dataset.action;
-        control.disabled = !coverVisible || !this.canRequest(view.config.entity, id) ||
+        control.disabled = !coverVisible || !this.canRequest(view.config.entity, id) || (id === 'locate' && !model.actions.locate) ||
           (view.compactCover && !allowsCoverRailAction(model, id));
       }
       view.special.update(model, pending);
@@ -3036,7 +3036,8 @@ export class BayitDashboard extends HTMLElement {
       if (view.climatePower && (id === 'turn_on' || id === 'turn_off')) continue;
       if (view.vacuumCleaningControls && !roomVacuumCleaningActions.has(id)) continue;
       if (view.compactMedia && !roomCompactMediaActions.has(id)) continue;
-      const action = actions[id];
+      const locatePlaceholder = id === 'locate' && !isReadOnlyRole(view.config.role) && returningVacuumLocate(model);
+      const action = actions[id] ?? (locatePlaceholder ? {} : undefined);
       if (!action || view.special.used.has(id) || (view.compactCover && id === 'set_position')) continue;
       if (hideIdleTimedOff && id === 'turn_off') continue;
       if (view.inlineLight && !inlineLightActions.has(id)) continue;
@@ -3082,8 +3083,13 @@ export class BayitDashboard extends HTMLElement {
         compactIcon || (curtain && curtainControlIcons[id]) || controlIcons[id]);
       label(control, name);
       control.dataset.action = id;
-      control.onclick = () => this.requestAction(view.config, id, undefined, control,
-        { compactCover: view.compactCover, compactDevice: view.compactDevice });
+      if (locatePlaceholder) {
+        control.disabled = true;
+        control.setAttribute('aria-description', this.t('returning'));
+      } else {
+        control.onclick = () => this.requestAction(view.config, id, undefined, control,
+          { compactCover: view.compactCover, compactDevice: view.compactDevice });
+      }
       basic.append(control);
     }
     if (mutePlaceholder) {
@@ -3123,9 +3129,9 @@ export class BayitDashboard extends HTMLElement {
     if (vacuumSummaryFocused) (advancedVacuum?.querySelector('summary') || view.more)?.focus({ preventScroll: true });
     if (focused?.action || focused?.lightMode || focused?.effectFavoriteControl) {
       const successor = [...view.group.querySelectorAll('[data-action], [data-light-mode], [data-effect-favorite-control]')].find(el =>
-        !el.closest('[hidden]') && (focused.action && el.dataset.action === focused.action ||
+        !el.disabled && !el.closest('[hidden]') && (focused.action && el.dataset.action === focused.action ||
           focused.lightMode && el.dataset.lightMode === focused.lightMode ||
-          focused.effectFavoriteControl && !el.disabled && el.dataset.effectFavoriteControl === focused.effectFavoriteControl));
+          focused.effectFavoriteControl && el.dataset.effectFavoriteControl === focused.effectFavoriteControl));
       (successor || view.more || view.tile).focus({ preventScroll: true });
     }
   }

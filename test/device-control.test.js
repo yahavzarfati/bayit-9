@@ -200,6 +200,17 @@ test('media and vacuum issue only available native commands and validate their s
   assert.throws(()=>planDeviceAction(reset,{[reset.entity]:entity('unavailable')},'press_button',undefined,{confirmed:true}),code('action_unavailable'));
 });
 
+test('vacuum locate is unavailable while returning, then restores at the dock', () => {
+  const vacuum = config('vacuum.robot');
+  const states = state => ({ [vacuum.entity]:entity(state,{supported_features:8716}) });
+  for (const state of ['idle', 'cleaning', 'paused', 'docked']) {
+    assert.equal(planDeviceAction(vacuum, states(state), 'locate').service, 'locate');
+  }
+  assert.throws(() => planDeviceAction(vacuum, states('returning'), 'locate'), code('action_unavailable'));
+  assert.equal(planDeviceAction(vacuum, states('returning'), 'vacuum_stop').service, 'stop');
+  assert.throws(() => planDeviceAction(vacuum, states('unavailable'), 'locate'), code('action_unavailable'));
+});
+
 test('a selected vacuum program uses one native press with explicit confirmation taking precedence', async () => {
   const program = config('button.fixture_clean', { role: 'action', command: 'vacuum_program' });
   const helper = { ...program, entity: 'input_button.fixture_clean' };

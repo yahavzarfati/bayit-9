@@ -7420,7 +7420,30 @@ async function assertRoomVacuumPresentation(browser) {
       assert.equal(await device.getByLabel(he ? 'עוצמת שאיבה' : 'Suction',{exact:true}).count(), 0);
       await header.press('Shift+Enter');
       await vacuum.waitFor();
-      await vacuum.locator('[data-action=locate]').waitFor();
+      const locate = vacuum.locator('button[data-action=locate]');
+      await locate.and(page.locator(':enabled')).waitFor();
+
+      // The visible button must consult the latest reported state before the next paint.
+      assert.equal(await locate.evaluate(button => {
+        window.bayitTest.setRoomState('vacuum.demo_robot', 'returning');
+        button.click();
+        return window.bayitTest.calls.length;
+      }), 0);
+      await locate.and(page.locator(':disabled')).waitFor();
+      assert.equal(await locate.getAttribute('aria-description'), he ? 'חוזר לעמדה' : 'Returning to dock');
+      await vacuum.locator('button[data-action=vacuum_stop]:enabled').waitFor();
+      await locate.evaluate(button => button.click());
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls), []);
+
+      await page.evaluate(() => window.bayitTest.setRoomState('vacuum.demo_robot', 'unavailable'));
+      await locate.waitFor({ state:'hidden' });
+      await page.evaluate(() => window.bayitTest.setRoomState('vacuum.demo_robot', 'docked'));
+      await locate.and(page.locator(':enabled')).waitFor();
+      await locate.tap();
+      await page.waitForFunction(() => window.bayitTest.calls.length === 1);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls), [
+        {type:'call_service',domain:'vacuum',service:'locate',service_data:{},target:{entity_id:'vacuum.demo_robot'}},
+      ]);
 
       await open('');
       await device.locator('[data-action=locate]').waitFor();

@@ -26,6 +26,12 @@ export function compactMediaMutePlaceholder(model) {
     Number.isSafeInteger(features) && features >= 0 && (features & MEDIA.mute) === MEDIA.mute;
 }
 
+export function returningVacuumLocate(model) {
+  const features = model.attributes.supported_features;
+  return model.domain === 'vacuum' && model.state === 'returning' &&
+    Number.isSafeInteger(features) && features >= 0 && (features & VACUUM.locate) === VACUUM.locate;
+}
+
 export function compactRoomMediaCommands(model) {
   const { actions, state } = model;
   if (!model.available || !(MEDIA_ON_STATES.includes(state) || MEDIA_STANDBY_STATES.includes(state))) return [];
@@ -93,7 +99,7 @@ export function addSpecialDeviceActions(config, record, supports, add, options) 
     if (state === 'cleaning' && supports(VACUUM.pause)) add('vacuum_pause', { service: 'pause' });
     if (['cleaning', 'paused', 'returning'].includes(state) && supports(VACUUM.stop)) add('vacuum_stop', { service: 'stop' });
     if (!['docked','returning'].includes(state) && supports(VACUUM.dock)) add('return_to_base');
-    if (supports(VACUUM.locate)) add('locate');
+    if (state !== 'returning' && supports(VACUUM.locate)) add('locate');
     if (supports(VACUUM.speed)) options('set_fan_speed', attributes.fan_speed_list);
   }
   if (['input_select','select'].includes(config.domain)) options('select_option', attributes.options);
