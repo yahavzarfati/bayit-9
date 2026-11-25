@@ -1598,7 +1598,8 @@ async function assertCompactRoomHeater(browser) {
       assert.deepEqual(layout.rows, [5, 4]);
       assert.equal(layout.accessible, true);
       assert.equal(layout.fits, true);
-      assert.ok(layout.height <= 345, JSON.stringify(layout));
+      // The compact card can wrap labels differently in the host's system font.
+      assert.ok(layout.height <= 360, JSON.stringify(layout));
       assert.equal(layout.groupHeight, layout.height, 'An untitled single-heater group has one frame');
 
       await range.press('ArrowLeft');
