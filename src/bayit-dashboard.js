@@ -1345,7 +1345,9 @@ export class BayitDashboard extends HTMLElement {
     const name = make(tileMode || launchFromHeader ? 'span' : room ? 'h4' : 'h3', 'device-name');
     const state = make('span', 'current');
     const inlineLight = tileMode && domain === 'light' && config.role !== 'status' && config.room_light_controls === true;
-    const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactCover: cover };
+    const compactHeater = titleInDialog && config.kind === 'heater' && !!config.timed && config.role !== 'status';
+    item.toggleAttribute('data-compact-heater', compactHeater);
+    const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactHeater, compactCover: cover };
     if (tileMode) {
       item.dataset.compact = 'tile';
       const tile = button('device-tile');
@@ -1604,10 +1606,13 @@ export class BayitDashboard extends HTMLElement {
       }
       const timerLayout = model.timer ? [model.timer.state, Number.isFinite(model.timer.usedSeconds), model.state === 'on'] : null;
       const coverClass = model.domain === 'cover' ? model.attributes.device_class : null;
-      const signature = JSON.stringify([actionsInOrder.map(id => model.actions[id] || null), timerLayout, model.levelAction, coverClass]);
+      const hideIdleHeaterOff = view.compactHeater && model.available &&
+        model.state === 'off' && model.timer?.state === 'idle';
+      const signature = JSON.stringify([actionsInOrder.map(id => model.actions[id] || null), timerLayout,
+        model.levelAction, coverClass, hideIdleHeaterOff]);
       if (signature !== view.signature) {
         view.signature = signature;
-        this.buildActions(view, model);
+        this.buildActions(view, model, hideIdleHeaterOff);
       }
       if (view.lightPower && view.compactLight) {
         const power = view.lightPower;
@@ -1797,7 +1802,7 @@ export class BayitDashboard extends HTMLElement {
 
   actionLabel(id) { return this.t(id === 'close' ? 'close_device' : id); }
 
-  buildActions(view, model) {
+  buildActions(view, model, hideIdleHeaterOff) {
     const active = this.shadowRoot.activeElement;
     const focused = active && view.group.contains(active) ? active.dataset : undefined;
     view.fields = [];
@@ -1820,7 +1825,7 @@ export class BayitDashboard extends HTMLElement {
     const timerPreferenceKey = timing && 'bayit-9.timer-duration.v1:' +
       (timing.simple_timer_entity ?? timing.timer_entity ?? view.config.entity);
     view.special = buildPanelControls(model, { make, button, icon, label, t: key => this.t(key),
-      compactTimer: view.inlineClimate || standaloneClimate, timerPreferenceKey,
+      compactTimer: view.inlineClimate || view.compactHeater || standaloneClimate, timerPreferenceKey,
       usageInfo: (entity, source) => { if (this.canShowTimerUsage(entity)) this.moreInfo({ entity }, source); },
       canShowUsage: entity => this.canShowTimerUsage(entity),
       canResetUsage: entity => this.canResetTimerUsage(entity),
@@ -1834,6 +1839,7 @@ export class BayitDashboard extends HTMLElement {
     for (const id of actionsInOrder) {
       const action = actions[id];
       if (!action || view.special.used.has(id) || (view.compactCover && id === 'set_position')) continue;
+      if (hideIdleHeaterOff && id === 'turn_off') continue;
       if (view.inlineLight && !inlineLightActions.has(id)) continue;
       if (view.compactLight && (inlineLightActions.has(id) || id === 'turn_on' || id === 'turn_off')) continue;
       if (action.color && this.panel?.type !== 'device') continue;

@@ -2873,7 +2873,18 @@ try {
       });
       await nextStep(5).waitFor();
       assert.equal(await nextStep(5).getAttribute('aria-pressed'), 'true');
-      for (const width of [320, 390, 280]) {
+      const heaterOff = nextPanel.locator('button[data-action="turn_off"]');
+      const timerRange = nextPanel.locator('.device-timer[data-compact] .timer-range');
+      assert.equal(await heaterOff.count(), 0);
+      assert.equal(await timerRange.evaluate(range => getComputedStyle(range).appearance), 'none');
+      assert.equal(await timerRange.evaluate(range => {
+        const properties = getComputedStyle(range);
+        return properties.getPropertyValue('--timer-thumb').trim() === properties.getPropertyValue('--warm').trim();
+      }), true);
+      await timerRange.press('ArrowLeft');
+      assert.equal(await timerRange.inputValue(), '45');
+      assert.equal(await nextPage.evaluate(() => window.bayitTest.calls.length), 0);
+      for (const width of [320, 391, 280]) {
         await nextPage.setViewportSize({ width, height: 812 });
         const layout = await nextPanel.locator('.heat-level-options').evaluate(row => {
           const buttons = [...row.querySelectorAll('.heat-level-choice')];
@@ -2893,13 +2904,17 @@ try {
         assert.equal(layout.active, '5');
         assert.notEqual(layout.selectedBackground, layout.idleBackground);
         assert.equal(layout.fits, true);
-        assert.ok(layout.targets.every(target => target.width >= 24.9 && target.height >= 43.9));
-        const rows = new Set(layout.targets.map(target => Math.round(target.y)));
-        if (width === 280) assert.ok(rows.size > 1, 'Smaller containers wrap without narrowing the targets');
-        else {
-          assert.equal(rows.size, 1, 'All levels fit on one row');
-          assert.ok(layout.targets.every((target, index) => index === 0 || target.x > layout.targets[index - 1].x));
+        assert.ok(layout.targets.every(target => target.width >= 43.9 && target.height >= 43.9));
+        const rows = new Map();
+        for (const target of layout.targets) {
+          const y = Math.round(target.y);
+          const row = rows.get(y) ?? [];
+          row.push(target);
+          rows.set(y, row);
         }
+        if (width === 391) assert.deepEqual([...rows.values()].map(row => row.length), [5, 4]);
+        assert.ok(rows.size > 1);
+        for (const row of rows.values()) assert.ok(row.every((target, index) => index === 0 || target.x > row[index - 1].x));
       }
       await nextPage.setViewportSize({ width: 320, height: 812 });
       await nextStep(7).tap();
@@ -2915,19 +2930,29 @@ try {
       }).waitFor();
       assert.equal(await nextStep(7).getAttribute('aria-pressed'), 'true');
       await nextPage.evaluate(() => window.bayitTest.setHeaterPower('on'));
+      await heaterOff.waitFor();
       const runningStep = nextPanel.getByRole('button', {
         name: (rightToLeft ? 'עוצמת חימום ' : 'Heating level ') + '3', exact: true,
       });
       await runningStep.waitFor();
       assert.equal(await runningStep.getAttribute('aria-pressed'), 'true');
       assert.equal(await nextStep(7).count(), 0);
+      await nextPage.evaluate(() => window.bayitTest.setHeaterPower('off'));
+      await heaterOff.waitFor({ state: 'detached' });
+      await nextPanel.locator('.timer-preset[data-action="start_timed"]').last().tap();
+      await nextPanel.locator('.timer-command[data-action="stop_timed"]').waitFor();
+      assert.deepEqual(await nextPage.evaluate(() => window.bayitTest.calls[1]), {
+        type: 'call_service', domain: 'simple_timer', service: 'start_timer',
+        service_data: { entity_id: 'sensor.demo_step_runtime', duration: 60, unit: 'min', reverse_mode: false },
+      });
+      assert.equal(await heaterOff.count(), 0);
       await nextPage.evaluate(() => {
-        window.bayitTest.setHeaterPower('off');
+        window.bayitTest.setFixtureAttributes('sensor.demo_step_runtime', { timer_state:'idle', device_active:false });
         window.bayitTest.repointTimer();
       });
       await nextStep(7).waitFor();
       assert.equal(await nextStep(7).isDisabled(), true);
-      assert.equal(await nextPage.evaluate(() => window.bayitTest.calls.length), 1);
+      assert.equal(await nextPage.evaluate(() => window.bayitTest.calls.length), 2);
       await nextPage.close();
       console.log(engine + ' 320: helper-only heater preselect, observed save and independent running controls');
 

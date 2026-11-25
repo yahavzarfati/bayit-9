@@ -332,6 +332,7 @@ export const panelControlStyles = `
   .device-timer[data-compact] {
     --timer-rail: color-mix(in srgb,var(--ink) 10%,transparent);
   }
+  .device[data-compact-heater] .device-timer { --timer-thumb: var(--warm); }
   .device-timer[data-compact] .timer-clock { line-height: 1.2; }
   .device-timer[data-compact] .timer-range {
     -webkit-appearance: none;
@@ -349,7 +350,7 @@ export const panelControlStyles = `
     width: 18px;
     height: 18px;
     margin-top: -5px;
-    background: var(--moving);
+    background: var(--timer-thumb,var(--moving));
     border: 1px solid var(--line);
     border-radius: 50%;
   }
@@ -362,7 +363,7 @@ export const panelControlStyles = `
   .device-timer[data-compact] .timer-range::-moz-range-thumb {
     width: 18px;
     height: 18px;
-    background: var(--moving);
+    background: var(--timer-thumb,var(--moving));
     border: 1px solid var(--line);
     border-radius: 50%;
   }
@@ -400,6 +401,16 @@ export const panelControlStyles = `
     column-gap: clamp(1px,calc((100% - 233px) / 8),4px);
   }
   .heat-level-options > .heat-level-choice { min-width: 25px; padding-inline: 1px; font-variant-numeric: tabular-nums; }
+  .device[data-compact-heater] .heat-level-options {
+    grid-template-columns: repeat(auto-fit,minmax(44px,1fr));
+    column-gap: 4px;
+  }
+  @media (max-width: 480px) {
+    .device[data-compact-heater] .heat-level-options {
+      /* Five columns use four 4px gaps. Narrower panels wrap before shrinking a target. */
+      grid-template-columns: repeat(auto-fit,minmax(max(44px,calc((100% - 16px) / 5)),1fr));
+    }
+  }
   .heat-level-choice[aria-pressed=true] { background: color-mix(in srgb,var(--warm) 16%,var(--control)); }
   .heat-level-choice[data-changing] { outline: 1px dashed currentColor; outline-offset: -4px; }
   .modal[data-kind=device] .device[data-treatment=climate] .device-name { display: none; }
