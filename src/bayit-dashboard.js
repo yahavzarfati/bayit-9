@@ -49,6 +49,30 @@ function forgetAppearanceReturn(view, entry = appearanceReturns.get(view)) {
   view.clearTimeout(entry.timer);
   appearanceReturns.delete(view);
 }
+
+function readStoredAppearance(view, { storageKey, fallbackStorageKeys }) {
+  for (const key of [storageKey, ...fallbackStorageKeys]) {
+    try {
+      const candidate = JSON.parse(view.localStorage.getItem(key));
+      if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) return candidate;
+    } catch { /* A corrupt older setting does not prevent recovery. */ }
+  }
+}
+
+function clearSavedAppearanceOverrides(view, config, preferences, entries) {
+  const latest = readStoredAppearance(view, config);
+  if (!latest) return;
+  const cleared = entries.filter(([key]) => Object.hasOwn(preferences, key) && latest[key] === preferences[key]);
+  if (!cleared.length) return;
+  for (const [key] of cleared) delete latest[key];
+  try {
+    const newValue = JSON.stringify(latest);
+    view.localStorage.setItem(config.storageKey, newValue);
+    // Native storage events reach other tabs. The replacement in this tab needs the same update.
+    view.dispatchEvent(new view.StorageEvent('storage', { key:config.storageKey, newValue, storageArea:view.localStorage }));
+  } catch { /* Storage may be unavailable in this browser. */ }
+}
+
 const iconPattern = /^mdi:[a-z0-9-]+$/;
 const entityPattern = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 const controlIcons = {
@@ -813,17 +837,7 @@ export class BayitDashboard extends HTMLElement {
   t(key) { return this.words?.[key] || key; }
 
   readPreferences() {
-    let saved;
-    const { storageKey, fallbackStorageKeys } = this.config;
-    for (const key of [storageKey, ...fallbackStorageKeys]) {
-      try {
-        const candidate = JSON.parse(localStorage.getItem(key));
-        if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
-          saved = candidate;
-          break;
-        }
-      } catch { /* A corrupt older setting does not prevent recovery. */ }
-    }
+    const saved = readStoredAppearance(this.ownerDocument.defaultView, this.config);
     this.preferences = {};
     for (const [key, choices] of Object.entries(options)) {
       const selected = saved?.[key];
@@ -1178,7 +1192,12 @@ export class BayitDashboard extends HTMLElement {
           } });
         if (!saved) return result(false);
       }
-      if (!this.isConnected || this.config?.storageKey !== config.storageKey || pathname !== location.pathname) return result(true);
+      if (!this.isConnected || this.config?.storageKey !== config.storageKey || pathname !== location.pathname) {
+        if (this._hass?.user?.id === userId) {
+          clearSavedAppearanceOverrides(this.ownerDocument.defaultView, config, previousPreferences, entries);
+        }
+        return result(true);
+      }
       if (this.config === config) Object.assign(config, changes);
       for (const [key, value] of entries) {
         if (this.preferences[key] === (direct ? previousPreferences[key] : value)) delete this.preferences[key];

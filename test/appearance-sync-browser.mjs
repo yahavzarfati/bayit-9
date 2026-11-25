@@ -172,6 +172,88 @@ const current = (page, key) => page.locator('.shell').getAttribute('data-' + key
 const after = (page, key, value) => page.locator('.shell[data-' + key + '="' + value + '"]').waitFor();
 const saves = page => page.evaluate(() => tracker.saves.length);
 
+async function assertRemountedAppearanceOverrides(browser, prefix) {
+  for (const [locale, words] of [
+    ['en', { appearance:'Appearance', setup:'Customize home', enable:'Save admin appearance choices for the household immediately',
+      save:'Save dashboard', saved:'Household appearance saved.', error:'Could not load or save dashboard settings.' }],
+    ['he', { appearance:'מראה', setup:'התאמת הבית', enable:'שמירה מיידית של בחירות מנהל הבית לכל הבית',
+      save:'שמירת הדשבורד', saved:'מראה הבית נשמר.', error:'לא ניתן לטעון או לשמור את הגדרות הדשבורד.' }],
+  ]) {
+    for (const newer of [false, true]) {
+      const id = prefix + '-remount-' + locale + (newer ? '-newer' : '-retained');
+      states.set(id, { strategy:{ ...defaults, appearance_sync:false, locale } });
+      const page = await browser.newPage({ viewport:{ width:locale === 'he' ? 391 : 320, height:844 },
+        hasTouch:true, reducedMotion:'reduce' });
+      page.setDefaultTimeout(8000);
+      const url = home + id;
+      const otherScope = 'bayit-9.preferences.v1:/other-household';
+      const localChoices = () => page.evaluate(() => {
+        const card = document.querySelector('bayit-dashboard');
+        return JSON.parse(localStorage.getItem(card.config.storageKey));
+      });
+      const settings = page.getByRole('dialog', { name:words.appearance, exact:true });
+      const open = async () => {
+        await page.getByRole('button', { name:words.appearance, exact:true }).press('Enter');
+        await settings.waitFor();
+        await openLayout(settings);
+      };
+      const feedback = text => settings.locator('.appearance-actions [role=status]').filter({ hasText:text });
+      try {
+        await page.goto(url);
+        await open();
+        await pressed(settings,'shape','square').press('Enter');
+        await pressed(settings,'layout','header').press('Enter');
+        await after(page,'shape','square');
+        assert.deepEqual(await localChoices(), { shape:'square', layout:'header' });
+        assert.equal(await saves(page), 0, 'Disabled household sync keeps appearance on this browser');
+
+        await settings.getByRole('button', { name:words.setup, exact:true }).press('Enter');
+        const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+        await setup.getByText(words.appearance, { exact:true }).press('Enter');
+        await setup.getByLabel(words.enable, { exact:true }).check();
+        await Promise.all([page.waitForEvent('load'), setup.getByRole('button', { name:words.save, exact:true }).press('Enter')]);
+        await open();
+        assert.equal(await current(page,'shape'), 'square');
+
+        await page.evaluate(() => { tracker.reject = true; });
+        await pressed(settings,'shape','circle').press('Enter');
+        await feedback(words.error).waitFor();
+        assert.deepEqual(await localChoices(), { shape:'square', layout:'header' });
+        assert.equal(states.get(id).strategy.shape, 'soft');
+
+        await page.evaluate(() => { tracker.hold = true; tracker.rebuildOnSave = 'replace'; });
+        await pressed(settings,'shape','circle').press('Enter');
+        await page.waitForFunction(() => Boolean(tracker.release));
+        await page.evaluate(({ newer, otherScope }) => {
+          if (newer) {
+            const { storageKey } = document.querySelector('bayit-dashboard').config;
+            const stored = JSON.parse(localStorage.getItem(storageKey));
+            localStorage.setItem(storageKey, JSON.stringify({ ...stored, shape:'soft' }));
+          }
+          localStorage.setItem(otherScope, JSON.stringify({ shape:'square', layout:'classic' }));
+          tracker.release();
+        }, { newer, otherScope });
+        await feedback(words.saved).waitFor();
+        const expectedShape = newer ? 'soft' : 'circle';
+        const expectedLocal = newer ? { shape:'soft', layout:'header' } : { layout:'header' };
+        await after(page,'shape',expectedShape);
+        assert.deepEqual(await localChoices(), expectedLocal);
+        assert.equal(await current(page,'layout'), 'header');
+        assert.equal(states.get(id).strategy.shape, 'circle');
+        assert.equal(states.get(id).strategy.layout, 'classic');
+        await page.reload();
+        await after(page,'shape',expectedShape);
+        assert.equal(await current(page,'layout'), 'header');
+        assert.deepEqual(await localChoices(), expectedLocal);
+        assert.equal(await page.evaluate(key => localStorage.getItem(key), otherScope),
+          JSON.stringify({ shape:'square', layout:'classic' }));
+      } finally {
+        await page.close();
+      }
+    }
+  }
+}
+
 async function assertLinkedAppearance(browser, prefix) {
   for (const locale of ['en','he']) {
     const fixtureId = prefix + '-linked-' + locale;
@@ -452,6 +534,8 @@ try {
       console.log(name + ': opt-in household appearance, selected-key writes, failures, draft guard and personal overrides');
       await assertLinkedAppearance(browser, fixtureId);
       console.log(name + ': linked member and admin appearance, localized controls, registry guard and local-only overrides');
+      await assertRemountedAppearanceOverrides(browser, fixtureId);
+      console.log(name + ': household appearance clears only superseded local overrides across a dashboard replacement');
     } finally {
       await browser.close();
     }
