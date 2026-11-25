@@ -40,6 +40,8 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     const moreInfo = [];
     const scheduleActions = params.has('schedule-actions') || guardedSchedule;
     const scheduleCalls = [];
+    let pauseScheduleRead = false;
+    let releaseScheduleRead;
     const card = document.createElement('bayit-dashboard');
     card.setConfig({ locale, page: params.has('routed'), rooms: [
       { id: 'kitchen', name: 'Kitchen', entities: [...sensors, boiler], shortcuts: [] },
@@ -58,7 +60,11 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
       user: { is_admin: true }, states, services,
       callWS(request) {
         requests.push(request.type);
-        if (params.has('stacked') && request.type === 'scheduler') return Promise.resolve(schedules);
+        if (params.has('stacked') && request.type === 'scheduler') {
+          if (!pauseScheduleRead) return Promise.resolve(schedules);
+          pauseScheduleRead = false;
+          return new Promise(resolve => { releaseScheduleRead = () => resolve(schedules); });
+        }
         if (scheduleActions && request.type === 'scheduler/item') {
           return Promise.resolve(schedules.find(schedule => schedule.schedule_id === request.schedule_id));
         }
@@ -108,6 +114,12 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     } else document.body.append(card);
     window.fixture = {
       requests, moreInfo, scheduleCalls,
+      pauseScheduleRead() { pauseScheduleRead = true; },
+      scheduleReadWaiting() { return Boolean(releaseScheduleRead); },
+      releaseScheduleRead() {
+        releaseScheduleRead();
+        releaseScheduleRead = undefined;
+      },
       setupState(deviceState, timerState) {
         states[boiler.entity] = { state: deviceState, attributes: {} };
         states['sensor.fixture_runtime'] = {
@@ -457,9 +469,10 @@ try {
       ]);
       assert.equal(await stackedRange.getAttribute('step'), '1');
 
-      await add.scrollIntoViewIfNeeded();
-      await dialogViewport.evaluate(node => { node.scrollTop += 32; });
-      const previousBoilerScroll = Math.round(await openScheduleForm(add));
+      const midListEdit = scheduleRows.getByRole('button', {
+        name: (english ? 'Edit' : 'עריכה') + ' · Fixture schedule 6', exact: true,
+      });
+      const previousBoilerScroll = Math.round(await openScheduleForm(midListEdit));
       assert.ok(previousBoilerScroll > 0);
       const closeBoiler = stackedDialog.getByRole('button', { name: words.close, exact: true });
       await closeBoiler.tap();
@@ -470,9 +483,26 @@ try {
         return Number(sessionStorage.getItem(key));
       });
       assert.equal(savedBoilerScroll, previousBoilerScroll, 'Dismissing a draft keeps the pre-editor scroll offset');
+      await stackedPage.evaluate(() => window.fixture.pauseScheduleRead());
       await stackedShortcut.tap();
+      await stackedPage.waitForFunction(() => window.fixture.scheduleReadWaiting());
+      const beforeRead = await dialogViewport.evaluate(node => node.scrollHeight - node.clientHeight);
+      assert.ok(beforeRead < previousBoilerScroll, 'The modal cannot reach the saved offset before schedule rows load');
+      await stackedPage.evaluate(() => window.fixture.releaseScheduleRead());
       await scheduleRows.getByText('New fixture', { exact: true }).waitFor();
-      assert.equal(Math.round(await dialogViewport.evaluate(node => node.scrollTop)), previousBoilerScroll);
+      try {
+        await stackedPage.waitForFunction(expected => {
+          const viewport = document.querySelector('bayit-dashboard').shadowRoot.querySelector('dialog[open] .modal-body');
+          return viewport && Math.abs(viewport.scrollTop - expected) < 1;
+        }, previousBoilerScroll, { timeout: 3000 });
+      } catch (error) {
+        const details = await stackedDialog.evaluate(dialog => {
+          const { scrollTop, scrollHeight, clientHeight } = dialog.querySelector('.modal-body');
+          return { route: location.hash, scrollTop, scrollHeight, clientHeight };
+        });
+        throw new Error('Expected reopened boiler offset ' + previousBoilerScroll + ' but observed ' +
+          JSON.stringify(details), { cause: error });
+      }
 
       const editorWords = locale === 'he' ? {
         profiles: 'שליטה בדוד ובתנורים', edit: 'עריכה', save: 'שמירת בקר',
