@@ -4,7 +4,7 @@ import { classicRoomTitle, DEVICE_ICONS, hasDynamicPresenceIcon, isAutomationScr
   isEnergyReadingCards, isWeatherReadingsList,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
   normalizeToolbarReadout, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
-  ROOM_PANEL_KINDS, roomShortcutDevices, roomTemperatureUnit, supportsRoomTemperatureSource, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
+  ROOM_PANEL_KINDS, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, supportsRoomTemperatureSource, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
   sensorComparisonOptions, sensorSeriesColor, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
@@ -70,6 +70,7 @@ const isTemperatureSensor = (domain, attributes) => domain === 'sensor' &&
 const movement = new Set(['open','close','set_position']);
 const scriptOperations = new Set(['start_script', 'stop_script']);
 const coverMovingStates = new Set(['opening', 'closing']);
+const roomVacuumCleaningActions = new Set(['vacuum_start', 'vacuum_pause', 'vacuum_stop', 'return_to_base']);
 const inlineLightActions = new Set(['set_brightness', 'set_color_temp_kelvin']);
 const rangeActions = new Set(['set_position', 'set_brightness', 'set_color_temp_kelvin', 'set_percentage', 'volume_set']);
 const stateKeys = {
@@ -257,7 +258,11 @@ function normalizeEntity(item) {
   const panelId = item[panelKind + '_panel_id'];
   if (panelKind && typeof panelId === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(panelId)) {
     entry[panelKind + '_panel_id'] = panelId;
-    if (domain === 'vacuum' && item.room_vacuum_panel_on_hold === true) entry.room_vacuum_panel_on_hold = true;
+    if (domain === 'vacuum') {
+      if (item.room_vacuum_panel_on_hold === true) entry.room_vacuum_panel_on_hold = true;
+      const display = roomVacuumPresentation(item.room_vacuum_presentation);
+      if (display) entry.room_vacuum_presentation = display;
+    }
   }
   if (entity.startsWith('light.') && entry.role !== 'status') {
     const groups = normalizeLightEffectGroups(item.effect_groups);
@@ -1439,11 +1444,14 @@ export class BayitDashboard extends HTMLElement {
   } = {}) {
     const item = make('section', 'device');
     const domain = domainFor(config);
-    const tileMode = toolbarLightTile || groupKey === 'room_lights' && ['light', 'switch'].includes(domain) && !config.kind;
     const panelKind = ROOM_PANEL_KINDS.get(domain);
     const panelId = config[panelKind + '_panel_id'];
     const panelTarget = room && panelId && this.config.toolbar?.find(
       entry => entry.kind === panelKind && entry.id === panelId);
+    const vacuumDisplay = panelTarget && panelKind === 'vacuum' ? config.room_vacuum_presentation : undefined;
+    const tileMode = vacuumDisplay === 'tile' || toolbarLightTile ||
+      groupKey === 'room_lights' && ['light', 'switch'].includes(domain) && !config.kind;
+    const panelOpensOnTap = panelKind === 'vacuum' && config.room_vacuum_panel_on_hold !== true;
     const cover = domain === 'cover' && (!!room || toolbarCoverRail);
     const coverPanel = cover && config.role !== 'status';
     const boilerPanel = !!room && config.kind === 'boiler' && config.role !== 'status';
@@ -1460,19 +1468,34 @@ export class BayitDashboard extends HTMLElement {
     item.toggleAttribute('data-compact-heater', compactHeater);
     const standaloneBoiler = titleInDialog && config.kind === 'boiler' && config.role !== 'status';
     const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactHeater,
-      standaloneBoiler, compactCover: cover };
+      standaloneBoiler, compactCover: cover, vacuumCleaningControls: vacuumDisplay === 'cleaning-controls' };
+    const bindPanelLaunch = source => {
+      const targetName = panelTarget.label || this.t(panelKind);
+      const hint = panelOpensOnTap ? this.t('vacuum_room_hold') : this.t('room_panel_hold').replace('{name}', targetName);
+      const open = () => this.openPanel(panelKind, source, undefined, undefined,
+        { ...panelTarget, name: targetName }, { room, entity: config.entity });
+      const showDetails = () => this.moreInfo(config, source);
+      source.onclick = panelOpensOnTap ? open : showDetails;
+      source.setAttribute('aria-description', hint);
+      bindDeviceDetails(source, panelOpensOnTap ? showDetails : open);
+      view.panelLaunch = { action: panelOpensOnTap ? this.t('vacuum_room_open').replace('{name}', targetName)
+        : this.t('more_info'), hint };
+    };
     if (tileMode) {
       item.dataset.compact = 'tile';
       const tile = button('device-tile');
       tile.append(glyph, name, state);
       tile.setAttribute('aria-haspopup', 'dialog');
-      tile.onclick = () => this.quickAction(config, tile, room);
-      const nativeRoomLightHold = room && !toolbarLightTile && config.room_light_native_hold === true;
-      bindDeviceDetails(tile, () => {
-        if (!nativeRoomLightHold) this.openDeviceDetails(config, tile, room);
-        else if (isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities,
-          this.config.hiddenEntities)) this.moreInfo(config, tile);
-      });
+      if (vacuumDisplay === 'tile') bindPanelLaunch(tile);
+      else {
+        tile.onclick = () => this.quickAction(config, tile, room);
+        const nativeRoomLightHold = room && !toolbarLightTile && config.room_light_native_hold === true;
+        bindDeviceDetails(tile, () => {
+          if (!nativeRoomLightHold) this.openDeviceDetails(config, tile, room);
+          else if (isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities,
+            this.config.hiddenEntities)) this.moreInfo(config, tile);
+        });
+      }
       view.tile = tile;
       item.append(tile);
       if (inlineLight) {
@@ -1502,17 +1525,8 @@ export class BayitDashboard extends HTMLElement {
         name.hidden = true;
       }
       if (panelTarget) {
-        const opensOnTap = panelKind === 'vacuum' && config.room_vacuum_panel_on_hold !== true;
-        const targetName = panelTarget.label || this.t(panelKind);
-        const hint = opensOnTap ? this.t('vacuum_room_hold') : this.t('room_panel_hold').replace('{name}', targetName);
-        const open = () => this.openPanel(panelKind, more, undefined, undefined,
-          { ...panelTarget, name: targetName }, { room, entity: config.entity });
-        if (opensOnTap) more.onclick = open;
-        more.setAttribute('aria-description', hint);
-        head.append(glyph, details, icon(opensOnTap ? 'mdi:arrow-top-right' : 'mdi:information-outline'));
-        bindDeviceDetails(more, opensOnTap ? () => this.moreInfo(config, more) : open);
-        view.panelLaunch = { action: opensOnTap ? this.t('vacuum_room_open').replace('{name}', targetName)
-          : this.t('more_info'), hint };
+        head.append(glyph, details, icon(panelOpensOnTap ? 'mdi:arrow-top-right' : 'mdi:information-outline'));
+        bindPanelLaunch(more);
       } else if (boilerPanel || coverPanel) {
         bindDeviceDetails(more, more.onclick);
         head.append(glyph, details);
@@ -1747,7 +1761,7 @@ export class BayitDashboard extends HTMLElement {
       }
       setText(view.state, (feedback?.requestLabel || this.stateLabel(model, view.inlineClimate ? 'inline-climate' : undefined)) + (media ? ' · ' + media : ''));
       view.state.dataset.tone = feedback ? 'moving' : this.tone(model);
-      if (view.tile) {
+      if (view.tile && !view.panelLaunch) {
         const actionId = model.state === 'off' ? 'turn_on' : 'turn_off';
         const toggles = !!model.actions[actionId];
         label(view.tile, labelName + ' · ' + this.t(toggles ? actionId : 'more_info'));
@@ -1758,9 +1772,11 @@ export class BayitDashboard extends HTMLElement {
         if (!view.inlineLight) continue;
       }
       if (view.panelLaunch) {
-        label(view.more, labelName + ' · ' + view.panelLaunch.action);
-        if (view.panelLaunch.native) view.more.disabled = !model.actions.more_info;
-        if (view.panelLaunch.hint && view.more.title !== view.panelLaunch.hint) view.more.title = view.panelLaunch.hint;
+        const launch = view.more ?? view.tile;
+        label(launch, labelName + ' · ' + view.panelLaunch.action);
+        if (view.panelLaunch.native) launch.disabled = !model.actions.more_info;
+        if (view.panelLaunch.hint && launch.title !== view.panelLaunch.hint) launch.title = view.panelLaunch.hint;
+        if (view.tile) continue;
       } else if (view.more) {
         view.more.hidden = !model.actions.more_info;
         if (view.inlineClimate) label(view.more, this.t('more_info') + ' · ' + labelName);
@@ -2063,6 +2079,7 @@ export class BayitDashboard extends HTMLElement {
       } : undefined,
       request: (id, value, control) => this.requestAction(view.config, id, value, control) });
     for (const id of actionsInOrder) {
+      if (view.vacuumCleaningControls && !roomVacuumCleaningActions.has(id)) continue;
       const action = actions[id];
       if (!action || view.special.used.has(id) || (view.compactCover && id === 'set_position')) continue;
       if (hideIdleTimedOff && id === 'turn_off') continue;

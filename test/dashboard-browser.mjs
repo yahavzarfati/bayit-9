@@ -633,7 +633,8 @@ if (query.has('toolbar-panels')) {
       media_position:12,media_duration:180,media_position_updated_at:new Date().toISOString(),
       entity_picture:'/api/media_player_proxy/media_player.demo_speaker?token=fixture'}},
     'media_player.demo_tv': {state:'on',attributes:{friendly_name:'Television',supported_features:1416,is_volume_muted:false}},
-    'vacuum.demo_robot': {state:'idle',attributes:{friendly_name:'Robot',supported_features:8244,fan_speed_list:['silent','normal']}},
+    'vacuum.demo_robot': {state:'idle',attributes:{friendly_name:'Robot',
+      supported_features:query.has('vacuum-room-display-test') ? 8244 | 8 | 512 : 8244,fan_speed_list:['silent','normal']}},
     'button.demo_filter': {state:'unknown',attributes:{friendly_name:'Reset filter'}},
     'calendar.demo_household': {state:'off',attributes:{friendly_name:'Household'}},
     'calendar.demo_birthdays': {state:'off',attributes:{friendly_name:'Birthdays'}},
@@ -826,6 +827,7 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     media_panel_links:{'media_player.demo_tv':'media-panel'},
     vacuum_panel_links:{'vacuum.demo_robot':'vacuum-panel'},
     ...(query.has('vacuum-panel-hold') && {vacuum_panel_hold_entities:['vacuum.demo_robot']}),
+    ...(query.has('vacuum-room-display') && {vacuum_panel_presentation:{'vacuum.demo_robot':query.get('vacuum-room-display')}}),
   } } }),
   toolbar:[
     ...(query.has('security-cover-rail') ? [
@@ -2455,6 +2457,73 @@ async function assertSelectedRoomTemperature(browser) {
   }
 }
 
+async function assertRoomVacuumPresentation(browser) {
+  for (const locale of ['en', 'he']) {
+    const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const url = base + '/fixture-home/home?toolbar-panels&room-link&vacuum-room-display-test&locale=' + locale;
+    const room = page.getByRole('dialog', {name:'Studio', exact:true});
+    const vacuum = page.getByRole('dialog', {name:he ? 'שואב' : 'Robot vacuum', exact:true});
+    const device = room.locator('[data-entity="vacuum.demo_robot"]');
+    const open = async flags => {
+      await page.goto(url + flags);
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+      await device.waitFor();
+    };
+    try {
+      await open('&vacuum-room-display=tile&native-more-info=modern');
+      const tile = device.locator('.device-tile');
+      assert.equal(await device.getByRole('button').count(), 1);
+      assert.equal(await device.locator('.action-list').count(), 0);
+      assert.equal(await tile.getAttribute('aria-description'), he ? 'לחיצה ארוכה פותחת מידע נוסף' : 'Press and hold for more info');
+      assert.ok((await tile.boundingBox()).height >= 44);
+      await tile.tap();
+      await vacuum.waitFor();
+      await vacuum.getByRole('button',{name:he ? 'חזרה לחדר' : 'Back to room',exact:true}).tap();
+      await room.waitFor();
+      assert.ok(await tile.evaluate(el => el.getRootNode().activeElement === el));
+      await tile.press('Shift+Enter');
+      const details = page.getByRole('dialog',{name:'Native entity details',exact:true});
+      await details.waitFor();
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), ['vacuum.demo_robot']);
+      await details.getByRole('button',{name:'Close native details',exact:true}).tap();
+      await details.waitFor({state:'hidden'});
+      assert.ok(await tile.evaluate(el => el.getRootNode().activeElement === el));
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls), []);
+
+      await open('&vacuum-room-display=cleaning-controls&vacuum-panel-hold');
+      const header = device.locator('.device-panel-launch');
+      await device.locator('[data-action=vacuum_start]').waitFor();
+      await page.evaluate(() => window.bayitTest.setRoomState('vacuum.demo_robot','cleaning'));
+      await device.locator('[data-action=vacuum_pause]').waitFor();
+      await device.locator('[data-action=vacuum_stop]').waitFor();
+      await device.locator('[data-action=return_to_base]').waitFor();
+      assert.equal(await device.locator('[data-action=locate]').count(), 0);
+      assert.equal(await device.getByLabel(he ? 'עוצמת שאיבה' : 'Suction',{exact:true}).count(), 0);
+      await header.press('Shift+Enter');
+      await vacuum.waitFor();
+      await vacuum.locator('[data-action=locate]').waitFor();
+
+      await open('');
+      await device.locator('[data-action=locate]').waitFor();
+
+      await page.goto(url + '&vacuum-room-display=tile&editor');
+      await page.getByText(he ? 'חדרים' : 'Rooms',{exact:true}).tap();
+      await page.getByLabel(he ? 'חדר להתאמה אישית' : 'Room to customize',{exact:true}).selectOption('studio');
+      const selector = page.getByLabel(he ? 'פקדי השואב בחדר · Robot' : 'Vacuum controls in the room · Robot',{exact:true});
+      const setting = () => page.evaluate(() => window.latest.room_overrides.studio.vacuum_panel_presentation);
+      assert.equal(await selector.inputValue(),'tile');
+      await selector.selectOption('cleaning-controls');
+      assert.deepEqual(await setting(),{'vacuum.demo_robot':'cleaning-controls'});
+      await page.getByLabel(he ? 'חלונית השואב · Robot' : 'Vacuum panel · Robot',{exact:true}).selectOption('');
+      assert.equal(await setting(),undefined);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
@@ -3018,6 +3087,7 @@ try {
       await mediaPage.close();
       console.log(engine + ': curated media and vacuum controls, Now Playing, and the original room shortcuts');
       await assertRoomVacuumGestures(browser);
+      await assertRoomVacuumPresentation(browser);
       console.log(engine + ': room-specific linked vacuum tap/hold, keyboard and native focus restoration');
 
       for (const locale of ['en','he']) {

@@ -4,7 +4,7 @@ import {
   isVisibleEntity, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
   normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeRoomIcon, normalizeShortcutDetailEntities, normalizeShortcutDetailRoutes,
   normalizeUnreportedSwingMode,
-  PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, roomShortcutDevices,
+  PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, roomShortcutDevices, roomVacuumPresentation,
   selectableRoomEntities, selectedRoomIds,
   shortcutPanelOptions, STRATEGY_NAME, supportsNativeShortcutDetails, supportsShortcutWithoutDetails,
   supportsRoomTemperatureSource, usesAutomaticRoomDevices,
@@ -65,6 +65,8 @@ const WORDS = {
     roomTemperatureFallback: 'Fallback room temperature', roomTemperatureNoFallback: 'None',
     roomVacuumLink: 'Vacuum panel', roomVacuumDefault: 'Robot vacuum',
     roomVacuumGesture: 'Open the vacuum panel with', roomVacuumTap: 'Tap', roomVacuumHold: 'Press and hold',
+    roomVacuumDisplay: 'Vacuum controls in the room', roomVacuumAll: 'All available controls',
+    roomVacuumCleaning: 'Cleaning controls', roomVacuumTile: 'Status tile',
     sections: 'Room sections', sectionMode: 'Section arrangement', automaticSections: 'Automatic grouping',
     manualSections: 'Arrange sections manually',
     editSection: 'Section to customize', addSection: 'Add section', removeSection: 'Delete section',
@@ -158,6 +160,8 @@ const WORDS = {
     roomTemperatureFallback: 'מקור גיבוי לטמפרטורת החדר', roomTemperatureNoFallback: 'ללא גיבוי',
     roomVacuumLink: 'חלונית השואב', roomVacuumDefault: 'שואב',
     roomVacuumGesture: 'פתיחת חלונית השואב באמצעות', roomVacuumTap: 'לחיצה', roomVacuumHold: 'לחיצה ארוכה',
+    roomVacuumDisplay: 'פקדי השואב בחדר', roomVacuumAll: 'כל הפקדים הזמינים',
+    roomVacuumCleaning: 'פקדי ניקוי', roomVacuumTile: 'אריח מצב',
     sections: 'קבוצות בחדר', sectionMode: 'סידור הקבוצות', automaticSections: 'קיבוץ אוטומטי',
     manualSections: 'סידור ידני של הקבוצות',
     editSection: 'קבוצה לעריכה', addSection: 'הוספת קבוצה', removeSection: 'מחיקת קבוצה',
@@ -995,6 +999,13 @@ export class Bayit9StrategyEditor extends HTMLElement {
         if (selected.size) next.vacuum_panel_hold_entities = [...selected];
         else delete next.vacuum_panel_hold_entities;
       };
+      const setDisplay = (next, display) => {
+        const displays = { ...override.vacuum_panel_presentation };
+        if (display) displays[id] = display;
+        else delete displays[id];
+        if (Object.keys(displays).length) next.vacuum_panel_presentation = displays;
+        else delete next.vacuum_panel_presentation;
+      };
       const input = select(panelOptions, targets.some(target => target.id === chosenPanel) ? chosenPanel : '');
       const focusKey = 'room-panel-' + id;
       input.dataset.roomFocus = focusKey;
@@ -1005,7 +1016,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
         else delete links[id];
         if (Object.keys(links).length) next[key] = links;
         else delete next[key];
-        if (vacuum && !input.value) setHold(next, false);
+        if (vacuum && !input.value) {
+          setHold(next, false);
+          setDisplay(next);
+        }
         this.#setRoomOverride(room.id, next, focusKey);
       });
       const name = this.#hass.states?.[id]?.attributes?.friendly_name ?? id;
@@ -1020,6 +1034,15 @@ export class Bayit9StrategyEditor extends HTMLElement {
           this.#setRoomOverride(room.id, next, gesture.dataset.roomFocus);
         });
         options.push(field(words.roomVacuumGesture + ' · ' + name, gesture));
+        const display = select([['', words.roomVacuumAll], ['cleaning-controls', words.roomVacuumCleaning], ['tile', words.roomVacuumTile]],
+          roomVacuumPresentation(override.vacuum_panel_presentation?.[id]) ?? '');
+        display.dataset.roomFocus = 'room-vacuum-display-' + id;
+        display.addEventListener('change', () => {
+          const next = { ...override };
+          setDisplay(next, display.value);
+          this.#setRoomOverride(room.id, next, display.dataset.roomFocus);
+        });
+        options.push(field(words.roomVacuumDisplay + ' · ' + name, display));
       }
     }
     if (!manual) return [...children, ...options];
@@ -1044,7 +1067,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         next[key] = next[key].filter(id => entities.includes(id));
         if (!next[key].length) delete next[key];
       }
-      for (const key of ['climate_preset_shortcuts', 'shortcut_detail_routes',
+      for (const key of ['climate_preset_shortcuts', 'shortcut_detail_routes', 'vacuum_panel_presentation',
         ...[...ROOM_PANEL_KINDS.values()].map(kind => kind + '_panel_links')]) {
         if (!next[key]) continue;
         next[key] = Object.fromEntries(Object.entries(next[key]).filter(([id]) => entities.includes(id)));

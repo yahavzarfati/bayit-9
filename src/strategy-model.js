@@ -38,6 +38,10 @@ export const TOOLBAR_ROLE_DOMAINS = new Map([
   ['lock', 'lock'], ['cover', 'cover'], ['forecast', 'weather'], ['sun', 'sun'], ['person', 'person'],
   ['now_playing', 'media_player'], ['light_tile', 'light'],
 ]);
+export function roomVacuumPresentation(value) {
+  return value === 'tile' || value === 'cleaning-controls' ? value : undefined;
+}
+
 export const ROOM_PANEL_KINDS = new Map([['media_player', 'media'], ['vacuum', 'vacuum']]);
 export const DEVICE_ICONS = {
   light:'mdi:lightbulb-outline', switch:'mdi:toggle-switch-outline', fan:'mdi:fan',
@@ -328,6 +332,7 @@ function dashboardAreas(config, hass) {
       shutdown: idList(override.turn_off_entities).filter(supportsRoomShutdown),
       activities: override.activities,
       vacuumPanelHolds: new Set(idList(override.vacuum_panel_hold_entities)),
+      vacuumPanelPresentations: override.vacuum_panel_presentation,
       panelLinks: Object.fromEntries([...ROOM_PANEL_KINDS.values()].flatMap(kind => {
         const links = override[kind + '_panel_links'];
         return links && typeof links === 'object' && !Array.isArray(links) ? [[kind, links]] : [];
@@ -602,7 +607,11 @@ export function discoverRooms(config, hass, locale) {
         const target = links[device.entity];
         if (panelKinds.get(target) === panelKind) {
           device[panelKind + '_panel_id'] = target;
-          if (panelKind === 'vacuum' && area.vacuumPanelHolds?.has(device.entity)) device.room_vacuum_panel_on_hold = true;
+          if (panelKind === 'vacuum') {
+            if (area.vacuumPanelHolds?.has(device.entity)) device.room_vacuum_panel_on_hold = true;
+            const display = roomVacuumPresentation(area.vacuumPanelPresentations?.[device.entity]);
+            if (display) device.room_vacuum_presentation = display;
+          }
         }
       }
       if (domainOf(device.entity) === 'cover' && area.nativeCoverHeaders?.has(device.entity) &&

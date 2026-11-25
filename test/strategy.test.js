@@ -227,9 +227,10 @@ test('a vacuum link opens on hold only for the selected vacuum and its valid roo
     area_ids: ['studio', 'lounge', 'porch'],
     toolbar: [{ id: 'robot', kind: 'vacuum', placement: 'linked' }, { id: 'media', kind: 'media' }],
     room_overrides: {
-      studio: { ...link, vacuum_panel_hold_entities: [vacuum] },
-      lounge: link,
-      porch: { ...link, vacuum_panel_links: { [vacuum]: 'media' }, vacuum_panel_hold_entities: [vacuum] },
+      studio: { ...link, vacuum_panel_hold_entities: [vacuum], vacuum_panel_presentation: { [vacuum]: 'cleaning-controls' } },
+      lounge: { ...link, vacuum_panel_presentation: { [vacuum]: 'tile' } },
+      porch: { ...link, vacuum_panel_links: { [vacuum]: 'media' }, vacuum_panel_hold_entities: [vacuum],
+        vacuum_panel_presentation: { [vacuum]: 'tile' } },
     },
   }, hass).views[0].cards[0];
   const get = id => rooms.find(room => room.id === id).entities.find(item => item.entity === vacuum);
@@ -239,6 +240,9 @@ test('a vacuum link opens on hold only for the selected vacuum and its valid roo
   assert.equal(get('lounge').room_vacuum_panel_on_hold, undefined);
   assert.equal(get('porch').vacuum_panel_id, undefined);
   assert.equal(get('porch').room_vacuum_panel_on_hold, undefined);
+  assert.equal(get('studio').room_vacuum_presentation, 'cleaning-controls');
+  assert.equal(get('lounge').room_vacuum_presentation, 'tile');
+  assert.equal(get('porch').room_vacuum_presentation, undefined);
 });
 
 test('room temperature choice and optional climate fallback require valid visible members', () => {
