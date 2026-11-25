@@ -1080,6 +1080,11 @@ export function usesRoomPopupPosition(entry) {
   return entry?.kind === 'devices' && entry.placement === 'settings' && entry.popup_position === 'room';
 }
 
+export function toolbarPopupPosition(entry) {
+  if (usesRoomPopupPosition(entry)) return 'room';
+  if (entry?.kind === 'energy' && entry.popup_position === 'center') return 'center';
+}
+
 export function toolbarPlacement(kind, value) {
   if (value === 'settings' && kind !== 'settings') return 'settings';
   if (value === 'linked' && (kind === 'media' || kind === 'vacuum')) return 'linked';
@@ -1117,6 +1122,7 @@ function dashboardToolbar(config, hass, roomIds) {
     const icon = typeof entry.icon === 'string' ? entry.icon.trim() : '';
     const panelIcon = entry.kind === 'energy' ? normalizeRoomIcon(entry.panel_icon) : undefined;
     const placement = toolbarPlacement(entry.kind, entry.placement);
+    const popupPosition = toolbarPopupPosition(entry);
     const entities = Array.isArray(entry.entities) ? idList(entry.entities).map(describe).filter(Boolean) : undefined;
     const sections = entry.kind !== 'link'
       ? toolbarSections(entry.sections, describe, entry.kind, { vacuumPanels, roomIds }) : undefined;
@@ -1136,7 +1142,7 @@ function dashboardToolbar(config, hass, roomIds) {
       ...(entry.kind === 'presence' && typeof entry.presence_dynamic_icon === 'boolean' &&
         { presence_dynamic_icon: entry.presence_dynamic_icon }),
       ...(path && { path }), ...(placement && { placement }),
-      ...(usesRoomPopupPosition(entry) && { popup_position: 'room' }),
+      ...(popupPosition && { popup_position: popupPosition }),
       ...(entities !== undefined && { entities }), ...(sections !== undefined && { sections }),
       ...(agenda && { calendar_agenda: agenda }), ...(mediaRemote && { media_remote: mediaRemote }),
       ...(mediaStage && { media_stage: mediaStage }),

@@ -151,6 +151,8 @@ On a **Devices** or **Overview** screen, choose **Show status items side by side
 
 For a **Devices** screen shown in Settings, enable **Use the room popup position** to align its top edge with room popups. In YAML, set `popup_position: room` on the toolbar entry with `kind: devices` and `placement: settings`.
 
+On an **Energy** screen, enable **Center the popup with reading cards** to center its electricity and water readings. In YAML, set `popup_position: center` on the toolbar entry with `kind: energy`.
+
 In an **Automations** actions section, set a script's **Script button behavior** to **Start or stop script** to make the button follow the run reported by Home Assistant. In YAML, give the script entry `role: action` and `command: toggle_script`. The button checks that the observed run is still current before sending a command. Stopping skips the remaining steps in that run. Existing `run_script` entries continue to start a script on each tap.
 
 In an **Overview** status section, choose **Discover active lights** to list currently on lights from across the dashboard's Home Assistant connection. Hidden and disabled entities stay excluded. Use **Exclude these lights** for exact entity IDs and **Exclude by text in entity ID** for literal ID fragments. An active status or covers section can also keep covers visible while they are closing.

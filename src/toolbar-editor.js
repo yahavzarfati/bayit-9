@@ -72,6 +72,7 @@ const WORDS = {
     hourlyForecast: 'Show the 24-hour forecast above the daily forecast',
     energyReadingCards: 'Show readings with large values',
     energyDashboardLink: 'Show the Home Assistant Energy dashboard link',
+    energyPopupPosition: 'Center the popup with reading cards',
     energyPanelIcon: 'Popup header icon',
     sensorComparison: 'Compare trends in a single chart', comparisonHours: 'Time range in hours',
     comparisonInterval: 'Average interval in minutes', seriesColor: 'Line color for this sensor',
@@ -147,6 +148,7 @@ const WORDS = {
     hourlyForecast: 'הצגת תחזית ל־24 שעות מעל התחזית היומית',
     energyReadingCards: 'הצגת ערכי המדידה בגדול',
     energyDashboardLink: 'הצגת קישור לדשבורד האנרגיה של Home Assistant',
+    energyPopupPosition: 'מרכוז החלונית כשמוצגים כרטיסי מדידה',
     energyPanelIcon: 'סמל בכותרת החלונית',
     sensorComparison: 'השוואת מגמות בגרף אחד', comparisonHours: 'טווח תצוגה בשעות',
     comparisonInterval: 'מרווח ממוצע בדקות', seriesColor: 'צבע הקו של החיישן',
@@ -966,9 +968,12 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     if (entry.kind === 'energy') {
       const shortcut = node('input', { type:'checkbox', checked:entry.energy_dashboard_link !== false });
       shortcut.addEventListener('change', () => changeEntry({ energy_dashboard_link: shortcut.checked ? undefined : false }));
+      const centered = node('input', { type:'checkbox', checked:entry.popup_position === 'center' });
+      centered.addEventListener('change', () => changeEntry({ popup_position: centered.checked ? 'center' : undefined }));
       fields.push(iconField(entry.panel_icon, value => changeEntry({ panel_icon: value || undefined }), {
         label: words.energyPanelIcon, placeholder: entry.icon || 'mdi:meter-electric-outline',
-      }), node('label', { className:'check' }, [shortcut, words.energyDashboardLink]));
+      }), node('label', { className:'check' }, [shortcut, words.energyDashboardLink]),
+      node('label', { className:'check' }, [centered, words.energyPopupPosition]));
     }
     if (entry.kind === 'security') fields.push(editOrefMap(entry));
     if (entry.kind === 'vacuum') fields.push(editVacuumMap(entry));

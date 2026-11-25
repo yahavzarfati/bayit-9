@@ -1828,16 +1828,21 @@ test('linked placement is restricted to Media and Vacuum while both remain room 
   ]);
 });
 
-test('room popup position applies only to opted-in Devices screens in Settings', () => {
+test('popup positions are scoped to Devices in Settings or an opted-in Energy screen', () => {
   const { toolbar } = generateDashboard({
     toolbar: [
       { kind: 'devices', placement: 'settings', popup_position: 'room' },
       { kind: 'devices', popup_position: 'room' },
       { kind: 'devices', placement: 'settings', popup_position: 'unknown' },
       { kind: 'weather', placement: 'settings', popup_position: 'room' },
+      { kind: 'energy', popup_position: 'center' },
+      { kind: 'energy', popup_position: 'room' },
+      { kind: 'devices', placement: 'settings', popup_position: 'center' },
+      { kind: 'weather', popup_position: 'center' },
     ],
   }, home()).views[0].cards[0];
-  assert.deepEqual(toolbar.map(entry => entry.popup_position), ['room', undefined, undefined, undefined]);
+  assert.deepEqual(toolbar.map(entry => entry.popup_position),
+    ['room', undefined, undefined, undefined, 'center', undefined, undefined, undefined]);
 });
 
 test('only Devices and Overview status sections retain the compact layout without changing entity roles', () => {

@@ -7,7 +7,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   supportsRoomSectionColumns,
   ROOM_PANEL_KINDS, normalizeShortcutPowerEntities, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomCompactDevice, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
   sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
-  toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
+  toolbarPlacement, toolbarPopupPosition, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { allowsCoverRailAction, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
   simpleTimerStatusEntity, simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
@@ -419,13 +419,14 @@ export function normalizeDashboardConfig(config = {}) {
     const mediaRemote = item.kind === 'media' ? normalizeMediaRemote(item.media_remote) : undefined;
     const agenda = item.kind === 'calendar' ? normalizeCalendarAgenda(item.calendar_agenda) : undefined;
     const placement = toolbarPlacement(item.kind, item.placement);
+    const popupPosition = toolbarPopupPosition(item);
     const panelIcon = item.kind === 'energy' ? normalizeRoomIcon(item.panel_icon) : undefined;
     return [{ kind: item.kind, id: text(item.id), label: text(item.label), path: item.path,
       ...(item.kind === 'presence' && { presence_dynamic_icon: hasDynamicPresenceIcon(item) }),
       ...(item.kind === 'energy' && item.energy_dashboard_link === false && { energy_dashboard_link: false }),
       ...(panelIcon && { panel_icon: panelIcon }),
       ...(placement && { placement }),
-      ...(usesRoomPopupPosition(item) && { popup_position: 'room' }),
+      ...(popupPosition && { popup_position: popupPosition }),
       ...(orefMap && { oref_map: orefMap }),
       ...(vacuumMap && { vacuum_map: vacuumMap }),
       ...(mediaStage && { media_stage: mediaStage }),
@@ -1648,8 +1649,9 @@ export class BayitDashboard extends HTMLElement {
     if (type === 'activity') this.paintActivity();
     const kind = type === 'room' || type === 'device' ? type : 'toolbar';
     const roomPosition = usesRoomPopupPosition(toolbar);
-    const energyReadings = type === 'energy' && toolbar?.sections?.some(section => isEnergyReadingCards(type, section));
-    const centeredToolbar = kind === 'toolbar' && !roomPosition && !energyReadings &&
+    const alignEnergyReadingsToToolbar = type === 'energy' && toolbar?.popup_position !== 'center' &&
+      toolbar?.sections?.some(section => isEnergyReadingCards(type, section));
+    const centeredToolbar = kind === 'toolbar' && !roomPosition && !alignEnergyReadingsToToolbar &&
       (type === 'settings' || type === 'energy' || !n.toolbarActions.contains(source ?? null));
     this.popupMotion.open(source, {
       kind,

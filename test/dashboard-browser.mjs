@@ -1088,6 +1088,7 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
         {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24},
       ]}] : [])]},
     {kind:'energy',...(query.has('hide-energy-dashboard-link') && {energy_dashboard_link:false}),
+      ...(query.has('center-energy-popup') && {popup_position:'center'}),
       ...(query.has('energy-panel-icon') && {icon:'mdi:meter-electric-outline',panel_icon:'mdi:lightning-bolt'}),
       sections:[{kind:'electricity',
       ...(query.has('energy-readings') && {title:'Electricity'}),
@@ -5419,10 +5420,12 @@ async function assertEnergyPopupPlacement(browser) {
     const title=he?'אנרגיה':'Energy';
     const url=base+'/fixture-home/home?toolbar-panels&energy-readings&with-energy-dashboard&locale='+locale;
     const compact='&energy-reading-cards';
+    const center='&center-energy-popup';
     const hidden='&hide-energy-dashboard-link';
     const dialog=page.getByRole('dialog',{name:title,exact:true});
     const link=dialog.getByRole('link',{name:he?'פתיחת דשבורד האנרגיה':'Open energy dashboard',exact:true});
     const geometry=()=>dialog.evaluate(el=>({centered:el.hasAttribute('data-centered-toolbar'),y:Math.round(el.getBoundingClientRect().top),width:Math.round(el.getBoundingClientRect().width)}));
+    const settleReadings=()=>dialog.locator('[data-native-type=sensor]').nth(3).waitFor();
     try {
       await page.goto(url);
       await page.getByRole('button',{name:title,exact:true}).tap();
@@ -5435,6 +5438,7 @@ async function assertEnergyPopupPlacement(browser) {
       assert.match(route,/^#panel\//);
       await page.goto(url+compact+hidden+'&energy-panel-icon'+route);
       await dialog.waitFor();
+      await settleReadings();
       const fitted=await geometry();
       assert.equal(fitted.centered,false, 'The reading cards align with the toolbar even from a direct URL');
       assert.equal(fitted.width,359);
@@ -5446,8 +5450,23 @@ async function assertEnergyPopupPlacement(browser) {
       await page.goto(url+compact);
       await page.getByRole('button',{name:title,exact:true}).tap();
       await dialog.waitFor();
+      await settleReadings();
       assert.deepEqual(await geometry(),fitted);
       assert.equal(await link.getAttribute('href'),'/energy');
+
+      await page.goto(url+compact+center+hidden+route);
+      await dialog.waitFor();
+      await settleReadings();
+      const centered=await geometry();
+      assert.equal(centered.centered,true);
+      assert.equal(centered.width,fitted.width);
+      assert.ok(centered.y > fitted.y + 32, 'Centering moves the same Energy reading cards away from the toolbar');
+      await page.goto(url+compact+center+hidden);
+      await page.getByRole('button',{name:title,exact:true}).tap();
+      await dialog.waitFor();
+      await settleReadings();
+      assert.deepEqual(await geometry(),centered);
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.calls),[]);
 
       await page.goto(url+compact+hidden+'&energy-panel-icon&editor');
       await page.getByText(he?'סרגל ומסכים נוספים':'Toolbar and extra screens',{exact:true}).tap();
@@ -5462,6 +5481,14 @@ async function assertEnergyPopupPlacement(browser) {
       const headerIcon = page.getByLabel(he ? 'סמל בכותרת החלונית' : 'Popup header icon', { exact:true });
       assert.equal(await headerIcon.inputValue(),'mdi:lightning-bolt');
       const editedEntry = () => page.evaluate(() => window.latest.toolbar.find(item => item.kind === 'energy'));
+      const centerPicker = page.getByRole('checkbox',{
+        name:he?'מרכוז החלונית כשמוצגים כרטיסי מדידה':'Center the popup with reading cards',exact:true,
+      });
+      assert.equal(await centerPicker.isChecked(),false);
+      await centerPicker.check();
+      assert.equal((await editedEntry()).popup_position,'center');
+      await centerPicker.uncheck();
+      assert.equal((await editedEntry()).popup_position,undefined);
       await headerIcon.fill('mdi:flash-outline');
       await headerIcon.blur();
       assert.equal((await editedEntry()).panel_icon,'mdi:flash-outline');
@@ -5469,6 +5496,10 @@ async function assertEnergyPopupPlacement(browser) {
       await headerIcon.fill('');
       await headerIcon.blur();
       assert.equal((await editedEntry()).panel_icon,undefined);
+      await page.goto(url+compact+center+'&editor');
+      await page.getByText(he?'סרגל ומסכים נוספים':'Toolbar and extra screens',{exact:true}).tap();
+      await page.getByRole('button',{name:title,exact:true}).tap();
+      assert.equal(await centerPicker.isChecked(),true);
     } finally { await page.close(); }
   }
 }
