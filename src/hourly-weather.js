@@ -10,7 +10,7 @@ const icons = {
 const hourMs = 3600000;
 const count = 24;
 const dateTime = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/.test(value)
-  ? Date.parse(value) : NaN;
+  ? Date.parse(value.replace(/(\.\d{3})\d+(?=Z|[+-])/, '$1')) : NaN;
 const rainfall = value => Number.isFinite(value) && value >= 0 && value <= 100
   ? Math.round(value / 10) * 10 || undefined : undefined;
 export const weatherIconName = condition => 'mdi:' + (typeof condition === 'string' && Object.hasOwn(icons, condition)
@@ -20,11 +20,26 @@ export const weatherCondition = condition => typeof condition === 'string' && Ob
 
 export function hourlyWeatherItems(forecast, now, sun, currentTemperature) {
   if (!Array.isArray(forecast)) return [];
+  const nightNow = sun?.state === 'below_horizon';
+  const dayNow = sun?.state === 'above_horizon';
+  const solarTimes = nightNow || dayNow ? sun.attributes : undefined;
+  const sunrise = dateTime(solarTimes?.next_rising);
+  const sunset = dateTime(solarTimes?.next_setting);
+  const nextChange = nightNow ? sunrise : sunset;
+  const followingChange = nightNow ? sunset : sunrise;
+  const reliableWindow = (nightNow || dayNow) && nextChange > now && followingChange > nextChange;
+  const afterDark = at => {
+    if (at <= now) return nightNow;
+    if (!reliableWindow || at > now + count * hourMs) return false;
+    return at < nextChange || at >= followingChange ? nightNow : dayNow;
+  };
   const byTime = new Map();
   for (const entry of forecast) {
     const at = dateTime(entry?.datetime);
     if (!Number.isFinite(at) || byTime.has(at)) continue;
-    const condition = entry.is_daytime === false && entry.condition === 'sunny' ? 'clear-night' : entry.condition;
+    const clearNight = entry.condition === 'sunny' &&
+      (entry.is_daytime === false || (entry.is_daytime !== true && afterDark(at)));
+    const condition = clearNight ? 'clear-night' : entry.condition;
     byTime.set(at, {
       at,
       temperature: Number.isFinite(entry.temperature) ? entry.temperature : undefined,
@@ -43,8 +58,7 @@ export function hourlyWeatherItems(forecast, now, sun, currentTemperature) {
     selected[0] = { ...item, now: true, temperature: Number.isFinite(currentTemperature) ? currentTemperature : item.temperature };
   }
   const last = selected.at(-1).at;
-  for (const [event, attribute] of [['sunrise', 'next_rising'], ['sunset', 'next_setting']]) {
-    const time = dateTime(sun?.[attribute]);
+  for (const [event, time] of [['sunrise', sunrise], ['sunset', sunset]]) {
     if (time >= Math.floor(now / 60000) * 60000 && time <= last) selected.push({ at: time, event });
   }
   return selected.sort((left, right) => left.at - right.at).slice(0, count);
@@ -80,8 +94,7 @@ export function createHourlyWeather({ entity, sunEntity, make, icon, t, locale, 
     const now = Date.now();
     const weather = hass.states[entity].attributes;
     const sun = sunEntity && visible(hass, sunEntity) && hass.states[sunEntity];
-    const sunlight = sun && ['above_horizon', 'below_horizon'].includes(sun.state) ? sun.attributes : null;
-    const items = hourlyWeatherItems(feed.forecast, now, sunlight, weather.temperature);
+    const items = hourlyWeatherItems(feed.forecast, now, sun, weather.temperature);
     let clock;
     const clockOptions = { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
     try { clock = new Intl.DateTimeFormat(locale, { ...clockOptions, timeZone: hass.config?.time_zone }); }

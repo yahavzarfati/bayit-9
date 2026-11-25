@@ -9,6 +9,7 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
   '<script type="module">import "/dashboard.js";(' + function () {
     const options = new URL(location.href).searchParams;
     const locale = options.get('locale') || 'en';
+    const solar = options.get('solar');
     const entity = 'weather.fixture';
     const connected = new Set();
     const forecastCalls = [];
@@ -23,7 +24,10 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
     const start = Math.floor(Date.now() / hour) * hour;
     const iso = epoch => new Date(epoch).toISOString();
     const forecast = Array.from({ length:27 }, (_, index) => ({
-      datetime:iso(start + hour * index), temperature:15.5, condition:index === 1 ? 'rainy' : 'cloudy',
+      datetime:iso(start + hour * index), temperature:15.5,
+      condition: solar ? index === 3 ? 'cloudy' : 'sunny' : index === 1 ? 'rainy' : 'cloudy',
+      ...(solar && index === 2 && { is_daytime: true }),
+      ...(solar && index === 4 && { is_daytime: false }),
       precipitation_probability:[0,14,37,4,undefined,120,'39',-5][index],
     }));
     const today = Date.UTC(2026, 10, 25);
@@ -46,8 +50,10 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
       states: {
         [entity]: { state:'cloudy', attributes:{ friendly_name:'Fixture Outlook', supported_features:3,
           temperature:18.6, temperature_unit:'°C' } },
-        'sun.sun': { state:'above_horizon', attributes:{ azimuth:140, elevation:35,
-          next_rising:iso(start + 6.5 * hour), next_setting:iso(start + 2.5 * hour) } },
+        'sun.sun': { state:solar === 'evening' ? 'below_horizon' : 'above_horizon', attributes:{ azimuth:140, elevation:35,
+          next_rising:solar ? '2026-11-26T06:18:58.538099+02:00' : iso(start + 6.5 * hour),
+          next_setting:solar ? '2026-11-' + (solar === 'evening' ? '26' : '25') + 'T16:33:28.401451+02:00'
+            : iso(start + 2.5 * hour) } },
       },
       connection: { subscribeMessage(callback, message) {
         const mode = message.forecast_type;
@@ -136,6 +142,40 @@ const server = createServer((request, response) => {
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 const base = 'http://127.0.0.1:' + server.address().port + '/fixture/home';
+
+async function assertSolarForecast(browser) {
+  for (const locale of ['en', 'he']) {
+    const page = await browser.newPage({ viewport: { width:391, height:844 }, hasTouch:true, isMobile:true });
+    try {
+      await page.clock.install({ time: new Date('2026-11-25T19:43:00+02:00') });
+      const load = phase => page.goto(base + '?locale=' + locale + '&solar=' + phase + '#panel/weather-fixture');
+      const hourly = page.locator('.hourly-weather-list');
+      const symbols = hourly.locator('li ha-icon');
+      const row = time => hourly.locator('li').filter({
+        has: page.locator('time').getByText(time, { exact:true }),
+      });
+      const glyph = time => row(time).locator('ha-icon').getAttribute('icon');
+      await load('evening');
+      await hourly.waitFor();
+      assert.deepEqual(await symbols.evaluateAll(nodes => nodes.slice(0,5).map(node => node.getAttribute('icon'))),
+        ['mdi:weather-night','mdi:weather-night','mdi:weather-sunny','mdi:weather-cloudy','mdi:weather-night']);
+      assert.equal(await row('20:00').locator('.hourly-weather-temperature').textContent(), '16°');
+      assert.equal(await glyph('06:00'), 'mdi:weather-night');
+      assert.equal(await glyph('07:00'), 'mdi:weather-sunny');
+
+      await page.clock.setSystemTime(new Date('2026-11-25T14:43:00+02:00'));
+      await load('day');
+      await hourly.waitFor();
+      assert.equal(await glyph('15:00'), 'mdi:weather-sunny');
+      assert.equal(await glyph('16:00'), 'mdi:weather-sunny');
+      assert.equal(await glyph('18:00'), 'mdi:weather-night');
+      assert.equal(await glyph('19:00'), 'mdi:weather-night');
+      assert.ok(await hourly.evaluate(el => el.scrollWidth > el.clientWidth));
+    } finally {
+      await page.close();
+    }
+  }
+}
 
 try {
   for (const [engine, locale] of [[chromium, 'en'], [webkit, 'he']]) {
@@ -378,6 +418,8 @@ try {
       }
       assert.deepEqual(errors, []);
       console.log(engine.name() + ' at 320 px (' + locale + '): forecast/Sun swipe, hourly scrolling, daily ranges, subscriptions, and editor');
+      await assertSolarForecast(browser);
+      console.log(engine.name() + ' at 391 px (EN/HE): sunny icons follow the reported sun window');
     } finally {
       await browser.close();
     }
