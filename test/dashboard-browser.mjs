@@ -5364,6 +5364,60 @@ async function assertCoverPopupVisibility(browser) {
   }
 }
 
+async function assertMountedDeviceVisibility(browser) {
+  const devices = [
+    { entity:'light.demo_lamp', state:'on', service:'turn_off', selector:'.compact-light-power',
+      flags:'configuration&inline-room-lights&compact-light-reading', route:'#device/studio/light.demo_lamp' },
+    { entity:'media_player.demo_tv', state:'playing', service:'turn_off', selector:'button[data-action=turn_off]',
+      flags:'toolbar-panels&room-link&room-media-test&room-media-compact', route:'#room-studio' },
+    { entity:'vacuum.demo_robot', state:'cleaning', service:'return_to_base', selector:'button[data-action=return_to_base]',
+      flags:'toolbar-panels&room-link&vacuum-room-display-test&vacuum-room-display=controls', route:'#room-studio' },
+  ];
+  for (const { entity, state, service, selector, flags, route } of devices) {
+    const page = await browser.newPage({viewport:{width:391,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    try {
+      await page.goto(base + '/fixture-home/home?' + flags + '&locale=en' + route);
+      await page.evaluate(([id, value]) => window.bayitTest.setRoomState(id, value), [entity, state]);
+      const device = page.locator('.modal[open] .device[data-entity="' + entity + '"]');
+      const command = device.locator(selector + ':visible:enabled');
+      const commands = () => page.evaluate(id => window.bayitTest.calls.filter(call =>
+        call.target?.entity_id === id).map(call => call.service), entity);
+      const restore = async () => {
+        await page.evaluate(id => window.bayitTest.setFixtureRegistry(id, {}), entity);
+        await command.waitFor();
+      };
+      await command.waitFor();
+      await command.evaluate((control, id) => {
+        window.bayitTest.setFixtureRegistry(id, { hidden_by:'user' });
+        control.click();
+      }, entity);
+      await command.waitFor({state:'hidden'});
+      assert.deepEqual(await commands(), []);
+
+      await restore();
+      await command.evaluate((control, id) => {
+        const dashboard = document.querySelector('bayit-dashboard');
+        const update = dashboard.update;
+        dashboard.update = function (...args) {
+          this.update = update;
+          window.bayitTest.setFixtureRegistry(id, { disabled_by:'user' });
+          return update.apply(this, args);
+        };
+        control.click();
+      }, entity);
+      await command.waitFor({state:'hidden'});
+      assert.deepEqual(await commands(), []);
+
+      await restore();
+      await command.tap();
+      await page.waitForFunction(([id, expected]) => window.bayitTest.calls.some(call =>
+        call.target?.entity_id === id && call.service === expected), [entity, service]);
+      assert.deepEqual(await commands(), [service]);
+    } finally { await page.close(); }
+  }
+}
+
 async function assertAdditionalAutomaticRoomDevices(browser) {
   for (const [locale, words] of [
     ['en', { appearance:'Appearance', setup:'Customize home', rooms:'Rooms', room:'Room to customize',
@@ -9667,6 +9721,8 @@ try {
     });
 
     await run('Stale climate registry controls', () => assertClimatePopupVisibility(browser));
+
+    await run('Device controls after registry updates', () => assertMountedDeviceVisibility(browser));
 
     await run('Overview climate discovery', async () => {
       await assertOverviewClimateDiscovery(browser);

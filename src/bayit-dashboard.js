@@ -1179,11 +1179,11 @@ export class BayitDashboard extends HTMLElement {
 
   model(config, options) {
     try {
-      const hiddenClimate = domainFor(config) === 'climate' && !this.shortcutEntityVisible(config.entity);
-      // A registry update can arrive while a climate popup is still mounted.
-      const model = getDeviceModel(hiddenClimate ? { ...config, role:'status' } : config,
+      // Cover rails retain their controls in a disabled state when a registry update hides them.
+      const hidden = domainFor(config) !== 'cover' && !this.entityVisible(config.entity);
+      const model = getDeviceModel(hidden ? { ...config, role:'status' } : config,
         this._hass?.states ?? {}, Date.now(), options);
-      return { ...model, available: model.available && !hiddenClimate,
+      return { ...model, available: model.available && !hidden,
         icon: validIcon(model.icon, DEVICE_ICONS[model.kind || model.domain]) };
     }
     catch {
@@ -1235,15 +1235,12 @@ export class BayitDashboard extends HTMLElement {
     });
   }
 
-  shortcutEntityVisible(entity) {
+  entityVisible(entity) {
     return isVisibleEntity(entity, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities);
   }
 
   deviceActionVisible(config, id) {
-    const domain = domainFor(config);
-    const requiresVisible = (domain === 'climate' && id !== 'more_info') ||
-      (domain === 'cover' && (movement.has(id) || id === 'stop'));
-    return !requiresVisible || this.shortcutEntityVisible(config.entity);
+    return id === 'more_info' || this.entityVisible(config.entity);
   }
 
   quickAction(config, source, room, { details = true, shortcutCurrent } = {}) {
@@ -1372,7 +1369,7 @@ export class BayitDashboard extends HTMLElement {
           powerConfig = { ...config, [flag]: true };
         }
         const shortcutCurrent = () => this.isConnected && el.isConnected && !this.nodes.modal.open &&
-          this.roomViews.get(room.id)?.shortcut.get(config.entity)?.el === el && this.shortcutEntityVisible(config.entity);
+          this.roomViews.get(room.id)?.shortcut.get(config.entity)?.el === el && this.entityVisible(config.entity);
         const showDetails = () => {
           if (shortcutCurrent()) this.openShortcutDetails(config, el, room);
         };
@@ -1565,7 +1562,7 @@ export class BayitDashboard extends HTMLElement {
     n.emptySetup.hidden = !this.config.setupRoomsOnEmpty || this.roomViews.size > 0 || !this._hass?.user?.is_admin;
     const active = new Map();
     const haveStates = !!this._hass?.states;
-    const visible = entity => this.shortcutEntityVisible(entity);
+    const visible = entity => this.entityVisible(entity);
     const now = Date.now();
     let applianceNext = Infinity;
     let countdown = false;
@@ -1632,7 +1629,7 @@ export class BayitDashboard extends HTMLElement {
         const quickControl = view.shortcut.get(config.entity);
         if (!quickControl) continue;
         const { el: shortcut, powerConfig } = quickControl;
-        const stale = haveStates && !this.shortcutEntityVisible(config.entity);
+        const stale = haveStates && !this.entityVisible(config.entity);
         if (stale) shortcut.setAttribute('aria-disabled', 'true');
         else shortcut.removeAttribute('aria-disabled');
         const pending = this.pending.get(config.entity);
@@ -2174,7 +2171,7 @@ export class BayitDashboard extends HTMLElement {
     const config = { ...view.config, home_heater_shortcut: true };
     const { modal, modalHeading } = this.nodes;
     const current = () => this.isConnected && this.deviceViews.has(view) && this.panel?.type === 'device' &&
-      modal.open && !modal.hasAttribute('data-closing') && modalHeading.contains(control) && this.shortcutEntityVisible(config.entity);
+      modal.open && !modal.hasAttribute('data-closing') && modalHeading.contains(control) && this.entityVisible(config.entity);
     const showDetails = () => { if (current()) this.moreInfo(view.config, control); };
     let armedAction;
     bindDeviceDetails(control, () => {
@@ -2510,7 +2507,7 @@ export class BayitDashboard extends HTMLElement {
         typeof model.attributes.media_title === 'string'
         ? model.attributes.media_title.trim().slice(0, 160) : '';
       const pending = this.pending.get(view.config.entity);
-      const coverVisible = model.domain !== 'cover' || this.shortcutEntityVisible(view.config.entity);
+      const coverVisible = model.domain !== 'cover' || this.entityVisible(view.config.entity);
       const feedback = coverVisible && this.coverFeedback(model, pending);
       if (view.compactCover) {
         view.item.toggleAttribute('data-cover-motion', coverVisible && model.available && coverMovingStates.has(model.state));
