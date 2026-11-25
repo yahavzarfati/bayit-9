@@ -1640,7 +1640,7 @@ var uo=`
     padding: 8px 6px; border: 1px solid var(--soft-line); border-radius: 12px; background: var(--control); text-align: center; }
   .toolbar-section[data-layout=compact-actions] :is(.toolbar-section-items,.script-toggle) > .tile-row {
     grid-template-columns: 22px minmax(0,1fr); grid-template-areas: "icon label" "icon state";
-    justify-items: start; align-items: center; gap: 2px 7px; min-height: 56px; padding: 6px 8px;
+    justify-items: start; align-items: center; gap: 1px 7px; min-height: 56px; padding: 5px 8px;
     text-align: start;
   }
   .toolbar-section[data-layout=compact-actions] .tile-row:has(.tile-state[hidden]) { grid-template-areas: "icon label"; }
