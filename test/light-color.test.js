@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { lightColorFromHueSaturation, lightColorHex, lightHueSaturation, lightWhiteRailColor } from '../src/light-color.mjs';
+import { lightColorFromHueSaturation, lightColorHex, lightHueSaturation, lightWhiteHueSaturation, lightWhiteRailColor } from '../src/light-color.mjs';
 
 test('hue and saturation describe a color independently of its brightness', () => {
   assert.deepEqual(lightHueSaturation('#804020'), { hue: 20, saturation: 75 });
@@ -25,4 +25,15 @@ test('white slider tint uses only validated RGB reported in temperature mode', (
   assert.equal(lightWhiteRailColor(red), null);
   assert.equal(lightColorHex(red), '#ff0000');
   assert.equal(lightColorHex({ ...red, color_mode: 'color_temp' }), null);
+});
+
+test('white-mode hue and saturation use valid reported HS before RGB without providing confirmed color', () => {
+  const white = { color_mode:'color_temp', hs_color:[45.2, 2.4], rgb_color:[255, 254, 249] };
+  assert.deepEqual(lightWhiteHueSaturation(white), { hue:45, saturation:2 });
+  assert.equal(lightColorHex(white), null);
+  for (const invalid of [undefined, [-1, 7], [20, 170], [20, Infinity], ['45', 2.4], [20, 10, 2]]) {
+    assert.deepEqual(lightWhiteHueSaturation({ ...white, hs_color:invalid }), lightHueSaturation('#fffef9'));
+  }
+  assert.equal(lightWhiteHueSaturation({ ...white, color_mode:'rgb' }), null);
+  assert.equal(lightWhiteHueSaturation({ ...white, hs_color:undefined, rgb_color:[0, 0, 0] }), null);
 });

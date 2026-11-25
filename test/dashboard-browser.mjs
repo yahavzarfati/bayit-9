@@ -8611,6 +8611,28 @@ async function assertCompactColorPalette(browser) {
       await page.evaluate(id=>window.bayitTest.setRoomState(id,'unavailable'),entity);
       await palette.waitFor({state:'detached'});
       assert.equal((await commands()).length,7);
+
+      await page.evaluate(id => {
+        window.bayitTest.setFixtureAttributes(id, { color_mode:'color_temp', hs_color:[45.2,2.4], rgb_color:[255,254,249] });
+        window.bayitTest.setRoomState(id, 'on');
+      }, entity);
+      await color.tap();
+      await preview.waitFor();
+      for (const width of [320,391]) {
+        await page.setViewportSize({width,height:844});
+        assert.equal(await hue.getAttribute('aria-valuetext'),'45\u00b0');
+        assert.equal(await saturation.getAttribute('aria-valuetext'),'2%');
+        assert.equal(await swatches.locator('[aria-pressed=true]').count(),0);
+      }
+      assert.equal((await commands()).length,7, 'Viewing a white light as a starting point sends nothing');
+      await stage(hue,120);
+      assert.equal((await commands()).length,7);
+      await hue.dispatchEvent('pointercancel');
+      assert.equal(await hue.inputValue(),'45');
+      assert.equal(await saturation.inputValue(),'2');
+      await stage(hue,120);
+      await hue.dispatchEvent('change');
+      await committed(8,[250,255,250]);
     } finally {
       await page.close();
     }

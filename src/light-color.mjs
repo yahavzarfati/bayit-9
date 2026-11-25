@@ -32,6 +32,19 @@ export function lightWhiteRailColor(attributes) {
   return attributes?.color_mode === "color_temp" ? rgbToHex(validatedRGB(attributes.rgb_color)) : null;
 }
 
+export function lightWhiteHueSaturation(attributes) {
+  if (attributes?.color_mode !== "color_temp") return null;
+  const hs = attributes.hs_color;
+  if (Array.isArray(hs) && hs.length === 2) {
+    const [hue, saturation] = hs;
+    if (Number.isFinite(hue) && hue >= 0 && hue <= 360 &&
+        Number.isFinite(saturation) && saturation >= 0 && saturation <= 100) {
+      return { hue:Math.round(hue), saturation:Math.round(saturation) };
+    }
+  }
+  return lightHueSaturation(lightWhiteRailColor(attributes));
+}
+
 export function lightHueSaturation(hex) {
   const rgb = parseLightColor(hex);
   if (!rgb) return null;

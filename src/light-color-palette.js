@@ -1,4 +1,4 @@
-import { lightColorFromHueSaturation, lightColorHex, lightHueSaturation } from './light-color.mjs';
+import { lightColorFromHueSaturation, lightColorHex, lightHueSaturation, lightWhiteHueSaturation } from './light-color.mjs';
 
 const action = 'set_light_color';
 const colors = [
@@ -48,6 +48,7 @@ export function createLightColorPalette({ make, button, label, t, request }) {
   element.append(swatches);
 
   let report;
+  let whiteReference;
   let pendingColor;
   let displayed;
   let draft;
@@ -76,9 +77,9 @@ export function createLightColorPalette({ make, button, label, t, request }) {
   }
 
   function restore() {
-    const observed = lightHueSaturation(report);
-    const selection = lightHueSaturation(pendingColor) || observed;
-    if (observed?.saturation) hueForWhite = observed.hue;
+    const reference = lightHueSaturation(report) ?? whiteReference;
+    const selection = lightHueSaturation(pendingColor) ?? reference;
+    if (reference?.saturation) hueForWhite = reference.hue;
     hue.input.value = String(selection?.saturation ? selection.hue : hueForWhite);
     saturation.input.value = String(selection?.saturation ?? 100);
     paint(Boolean(selection), pendingColor || report);
@@ -115,10 +116,13 @@ export function createLightColorPalette({ make, button, label, t, request }) {
     cancel,
     update(model, pending) {
       const nextReport = model.state === 'on' ? lightColorHex(model.attributes) : null;
+      const nextWhite = model.state === 'on' ? lightWhiteHueSaturation(model.attributes) : null;
       const nextPending = pending?.id === action ? pending.value : null;
       const cancelled = !!pending && !!draft;
-      if (!cancelled && report === nextReport && pendingColor === nextPending) return;
+      const sameWhite = whiteReference?.hue === nextWhite?.hue && whiteReference?.saturation === nextWhite?.saturation;
+      if (!cancelled && report === nextReport && sameWhite && pendingColor === nextPending) return;
       report = nextReport;
+      whiteReference = nextWhite;
       pendingColor = nextPending;
       if (cancelled) draft = undefined;
       if (!draft) restore();
