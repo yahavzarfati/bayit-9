@@ -5,7 +5,8 @@ import {
   securityReadoutLabelStates, selectableRoomEntities, sensorComparisonMaxHours, sensorComparisonOptions,
   SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
   supportsCompactAutomationActions, supportsCompactToolbarStatus, supportsHorizonCard, supportsHourlyWeatherForecast, supportsReadingCards,
-  supportsOverviewLightsOff, supportsOverviewStackedLocks, supportsSecurityDangerAction, supportsToolbarReadouts, supportsToolbarVacuumSummary,
+  supportsOverviewCompactHistory, supportsOverviewLightsOff, supportsOverviewStackedLocks, supportsSecurityDangerAction,
+  supportsToolbarReadouts, supportsToolbarVacuumSummary,
   supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
@@ -44,6 +45,7 @@ const WORDS = {
     ask: 'Ask before running', skip: 'Run immediately', askCustom: 'Custom confirmation',
     confirmation: 'Confirmation', confirmationText: 'Confirmation message', dangerAction: 'Highlight this action in red',
     graphHours: 'History hours',
+    compactHistory: 'Compact history chart',
     graphDestination: 'Open on graph tap', graphDetails: 'Sensor details', graphLinkUnavailable: 'Destination unavailable', graphRoom: 'Room',
     runScript: 'Run script from this button',
     scriptButton: 'Script button behavior', scriptStartOnly: 'Start script only', scriptToggle: 'Start or stop script',
@@ -126,6 +128,7 @@ const WORDS = {
     ask: 'בקשת אישור לפני ההפעלה', skip: 'הפעלה מיידית', askCustom: 'הודעת אישור מותאמת',
     confirmation: 'אישור פעולה', confirmationText: 'הודעת אישור', dangerAction: 'הדגשת הפעולה באדום',
     graphHours: 'שעות היסטוריה',
+    compactHistory: 'גרף היסטוריה קומפקטי',
     graphDestination: 'פתיחה בלחיצה על הגרף', graphDetails: 'פרטי החיישן', graphLinkUnavailable: 'היעד אינו זמין', graphRoom: 'חדר',
     runScript: 'הפעלת התסריט מהכפתור',
     scriptButton: 'פעולת כפתור התרחיש', scriptStartOnly: 'הפעלת תרחיש בלבד', scriptToggle: 'הפעלה או עצירה של תרחיש',
@@ -435,7 +438,8 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       ...(role.value && role.value !== 'forecast' && { hourly_forecast: undefined, clock_weather_card: undefined }),
       ...(role.value && role.value !== 'sun' && { horizon_card: undefined }),
       ...(role.value !== 'device' && { vacuum_summary: undefined }),
-      ...(role.value !== 'graph' && { graph_hours: undefined, graph_room_id: undefined, vacuum_panel_id: undefined, series_color: undefined }),
+      ...(role.value !== 'graph' && { graph_hours: undefined, compact_history_graph: undefined, graph_room_id: undefined,
+        vacuum_panel_id: undefined, series_color: undefined }),
       ...(role.value !== 'action' && { command: undefined, action_appearance: undefined,
         ...(toolbar[entryIndex].sections[sectionIndex].entities[index]?.confirmation === false && { confirmation: undefined }) }),
     }, true));
@@ -550,6 +554,11 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         if (hours.validity.valid) save({ graph_hours: hours.value === '' ? undefined : hours.valueAsNumber });
       });
       fields.push(field(words.graphHours, hours));
+      if (supportsOverviewCompactHistory(toolbar[entryIndex].kind, section, record)) {
+        const compactHistory = node('input', { type:'checkbox', checked:record.compact_history_graph === true });
+        compactHistory.addEventListener('change', () => save({ compact_history_graph: compactHistory.checked || undefined }));
+        fields.push(node('label', { className:'check' }, [compactHistory, words.compactHistory]));
+      }
       if (domain === 'sensor' && toolbar[entryIndex].kind === 'sensors' && section.kind !== 'series') {
         const vacuumPanels = roomPanelOptions({ ...config, toolbar }, hass).filter(panel => panel.kind === 'vacuum');
         const rooms = discoverRooms(config, hass, locale);

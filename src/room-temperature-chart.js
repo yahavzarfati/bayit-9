@@ -1,7 +1,6 @@
 import { buildComparisonSeries, parseTemperatureValue } from './temperature-comparison.js';
-import { createNativeCards, sensorGraphConfig } from './toolbar-panels.js';
 
-const day = 24 * 60 * 60 * 1000;
+const hour = 60 * 60 * 1000;
 const recorderRefreshDelay = 1500;
 const recorderTimeout = 10000;
 const chartWidth = 320;
@@ -39,15 +38,16 @@ function chartPaths(points, start, end) {
   });
 }
 
-function buildCompactGraph(config, hass, { host, make, icon, moreInfo, locale, t }) {
+export function createCompactHistoryChart({ entity, name, glyph, color, hours = 24 }, hass, {
+  host, make, icon, moreInfo, locale, t, canView = () => true,
+}) {
   const document = host.ownerDocument;
   const view = document.defaultView;
   const root = make('button', 'room-temperature-chart');
   root.type = 'button';
   root.dir = 'ltr';
-  root.style.setProperty('--room-chart-color', config.room_temperature_graph_color);
-  root.append(icon(config.room_icon || 'mdi:thermometer'));
-  root.addEventListener('click', () => moreInfo(config, root));
+  root.style.setProperty('--room-chart-color', color);
+  root.append(icon(glyph || 'mdi:thermometer'));
 
   const reading = make('span', 'room-temperature-reading');
   const value = make('span', 'room-temperature-value');
@@ -75,7 +75,7 @@ function buildCompactGraph(config, hass, { host, make, icon, moreInfo, locale, t
   root.append(svg);
 
   const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 });
-  const heading = config.room_name || t('room_temperature_chart');
+  const heading = name || t('room_temperature_chart');
   let disposed = false;
   let latest;
   let currentHass = hass;
@@ -86,11 +86,11 @@ function buildCompactGraph(config, hass, { host, make, icon, moreInfo, locale, t
   let timer;
   let pendingRequest;
 
-  const canRead = () => typeof currentHass?.callWS === 'function' &&
+  const canRead = () => !root.hidden && canView(currentHass) && typeof currentHass?.callWS === 'function' &&
     currentHass.connected !== false && transport?.connected !== false;
   const active = () => {
     const dialog = root.closest('dialog');
-    return !disposed && root.isConnected && document.visibilityState !== 'hidden' &&
+    return !disposed && !root.hidden && root.isConnected && document.visibilityState !== 'hidden' &&
       (!dialog || (dialog.open && !dialog.hasAttribute('data-closing')));
   };
 
@@ -109,13 +109,18 @@ function buildCompactGraph(config, hass, { host, make, icon, moreInfo, locale, t
   function update(next) {
     const couldRead = canRead();
     currentHass = next;
+    const hidden = !canView(next);
+    if (root.hidden !== hidden) {
+      root.hidden = hidden;
+      if (hidden) plot.replaceChildren();
+    }
     const replacedTransport = transport !== next?.connection;
     if (replacedTransport) {
       transport?.removeEventListener?.('ready', refreshOnReturn);
       transport = next?.connection;
       transport?.addEventListener?.('ready', refreshOnReturn);
     }
-    const sensor = next?.states?.[config.entity];
+    const sensor = root.hidden ? undefined : next?.states?.[entity];
     const sampleChanged = latest?.state !== sensor?.state ||
       latest?.attributes?.unit_of_measurement !== sensor?.attributes?.unit_of_measurement;
     if (sensor !== latest) {
@@ -140,7 +145,7 @@ function buildCompactGraph(config, hass, { host, make, icon, moreInfo, locale, t
     requested = true;
     queued = false;
     const end = Date.now();
-    const start = end - day;
+    const start = end - hours * hour;
     const unit = latest?.attributes?.unit_of_measurement;
     const request = view.setTimeout(() => {
       pendingRequest = undefined;
@@ -149,12 +154,12 @@ function buildCompactGraph(config, hass, { host, make, icon, moreInfo, locale, t
     pendingRequest = request;
     try {
       const result = await currentHass.callWS({
-        type: 'history/history_during_period', entity_ids: [config.entity],
-        start_time: new Date(start - 30 * 60000).toISOString(), end_time: new Date(end).toISOString(),
+        type: 'history/history_during_period', entity_ids: [entity],
+        start_time: new Date(start - hour / 2).toISOString(), end_time: new Date(end).toISOString(),
         minimal_response: true, significant_changes_only: false,
       });
       if (pendingRequest !== request || !active() || latest?.attributes?.unit_of_measurement !== unit) return;
-      const [series] = buildComparisonSeries(result, [{ entity: config.entity, unit }], { startMs: start, endMs: end });
+      const [series] = buildComparisonSeries(result, [{ entity, unit }], { startMs: start, endMs: end });
       const paths = chartPaths(series?.points ?? [], start, end);
       plot.replaceChildren(...paths.flatMap(({ line, fill }) => [
         shape('path', { class: 'room-temperature-fill', d: fill, fill: 'url(#' + id + ')' }),
@@ -170,6 +175,7 @@ function buildCompactGraph(config, hass, { host, make, icon, moreInfo, locale, t
     }
   }
 
+  root.addEventListener('click', () => { if (active() && canView(currentHass)) moreInfo(root); });
   document.addEventListener('visibilitychange', refreshOnReturn);
   update(hass);
   return {
@@ -182,29 +188,6 @@ function buildCompactGraph(config, hass, { host, make, icon, moreInfo, locale, t
       view.cancelAnimationFrame(frame);
       view.clearTimeout(timer);
       view.clearTimeout(pendingRequest);
-    },
-  };
-}
-
-export function createRoomGraphs(host, hass, context) {
-  const native = createNativeCards(host, hass, context.make);
-  const compact = [];
-  return {
-    mount(config, fallback) {
-      if (!config.room_temperature_graph_color) return native.mount(sensorGraphConfig(config, { moreInfo: true }), fallback);
-      const chart = buildCompactGraph(config, hass, { ...context, host });
-      compact.push(chart);
-      return chart.root;
-    },
-    update(next) {
-      hass = next;
-      native.update(next);
-      for (const chart of compact) chart.update(next);
-    },
-    dispose() {
-      native.dispose();
-      for (const chart of compact) chart.dispose();
-      compact.length = 0;
     },
   };
 }
@@ -223,6 +206,13 @@ export const roomTemperatureChartStyles = `
   .room-temperature-value { font-size:22px; line-height:1.2; font-weight:300; }
   .room-temperature-unit { color:var(--secondary); font-size:12px; }
   .room-temperature-chart svg { display:block; width:100%; height:44px; overflow:hidden; }
+  .toolbar-section .room-temperature-chart.overview-history-chart {
+    grid-template-rows:26px 54px 44px; padding-inline:0;
+    border:1px solid var(--soft-line); border-radius:12px; background:var(--control);
+  }
+  .shell[dir=rtl] .toolbar-section[data-layout=compact] > .toolbar-section-items > .overview-history-chart {
+    direction:ltr;
+  }
   .room-temperature-chart stop { stop-color:var(--room-chart-color); }
   .room-temperature-line {
     fill:none; stroke:var(--room-chart-color); stroke-width:1.4; stroke-linecap:round;

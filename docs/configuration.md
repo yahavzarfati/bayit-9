@@ -184,6 +184,8 @@ Toolbar sections accept ordered entities and can render action tiles, locks, cov
 
 On a **Devices** or **Overview** screen, choose **Show status items side by side** for a compact status section. In YAML, use `layout: compact` on that section. Tap a graph in this layout to open the sensor's Home Assistant details. To add a separate lock command, set the lock's display role to `lock`. Unlocking asks for confirmation, and locks that require a PIN use Home Assistant's native details dialog. In a compact **Overview** status section with a lock, **Place lock buttons below their status** gives each command the full card width. In YAML, set `stacked_lock_actions: true` on that status section.
 
+Choose **Compact history chart** on a sensor graph in that **Overview** section to show its current value, unit, and a small history line. The card opens Home Assistant sensor details and uses the same **History hours** setting. In YAML, set `compact_history_graph: true` on the graph entity.
+
 For a **Devices** screen shown in Settings, enable **Use the room popup position** to align its top edge with room popups. In YAML, set `popup_position: room` on the toolbar entry with `kind: devices` and `placement: settings`.
 
 On an **Energy** screen, enable **Center the popup with reading cards** to center its electricity and water readings. In YAML, set `popup_position: center` on the toolbar entry with `kind: energy`.

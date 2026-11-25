@@ -12,6 +12,7 @@ import { comparisonSources, createTemperatureComparison, temperatureComparisonSt
 import { createHourlyWeather, hourlyWeatherStyles } from './hourly-weather.js';
 import { createDailyWeather, createWeatherSummary, weatherSummaryStyles } from './weather-summary.js';
 import { createClockWeatherProjection } from './clock-weather-card.js';
+import { createCompactHistoryChart } from './room-temperature-chart.js';
 
 const sectionKeys = {
   actions: 'automations', locks: 'toolbar_locks', covers: 'room_covers', status: 'toolbar_status',
@@ -138,6 +139,31 @@ export function sensorGraphConfig(item, { moreInfo = false } = {}) {
     hours_to_show:item.graph_hours || 24, tap_action:{action:moreInfo ? 'more-info' : 'none'} };
 }
 
+export function createRoomGraphs(host, hass, context) {
+  const native = createNativeCards(host, hass, context.make);
+  const compact = [];
+  return {
+    mount(config, fallback) {
+      if (!config.room_temperature_graph_color) return native.mount(sensorGraphConfig(config, { moreInfo: true }), fallback);
+      const chart = createCompactHistoryChart({
+        entity: config.entity, name: config.room_name, glyph: config.room_icon, color: config.room_temperature_graph_color,
+      }, hass, { ...context, host, moreInfo: source => context.moreInfo(config, source) });
+      compact.push(chart);
+      return chart.root;
+    },
+    update(next) {
+      hass = next;
+      native.update(next);
+      for (const chart of compact) chart.update(next);
+    },
+    dispose() {
+      native.dispose();
+      for (const chart of compact) chart.dispose();
+      compact.length = 0;
+    },
+  };
+}
+
 const lockPaletteStates = new Set(['locked', 'unlocked', 'locking', 'unlocking']);
 
 function paintLockStatus(node, model) {
@@ -151,6 +177,7 @@ export function createToolbarPanel(kind, configuration, context) {
   const handlers = [];
   const mediaViews = [];
   const comparisons = [];
+  const compactHistory = [];
   const weatherForecasts = [];
   const useLockPalette = ['overview', 'devices', 'security'].includes(kind);
   let live = true;
@@ -814,6 +841,20 @@ export function createToolbarPanel(kind, configuration, context) {
     if (kind === 'calendar' && domain(item) === 'calendar') {
       return nativeCard({ type: 'calendar', entities: [item.entity], initial_view: 'listWeek' }, renderTile(item, 'status'));
     }
+    if (itemKind === 'graph' && item.compact_history_graph === true) {
+      const model = modelFor(item);
+      const chart = createCompactHistoryChart({
+        entity:item.entity, name:model.name, glyph:item.icon || model.icon,
+        hours:item.graph_hours, color:'#F4C95D',
+      }, currentHass, {
+        ...context,
+        canView: hass => isVisibleEntity(item.entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities),
+        moreInfo: source => { if (modelFor(item).actions.more_info) moreInfo(item, source); },
+      });
+      compactHistory.push(chart);
+      chart.root.classList.add('overview-history-chart');
+      return chart.root;
+    }
     if (domain(item) === 'sensor' && (item.graph_hours || itemKind === 'graph')) {
       const nativeMoreInfo = compactStatus || kind === 'weather' && section === 'readings' ||
         kind === 'energy' && (section === 'electricity' || section === 'water');
@@ -1086,6 +1127,7 @@ export function createToolbarPanel(kind, configuration, context) {
       vacuumMap?.update(hass);
       calendarAgenda?.update(hass);
       for (const comparison of comparisons) comparison.update(hass);
+      for (const chart of compactHistory) chart.update(hass);
       for (const update of handlers) update();
       if (quiet) quiet.hidden = !!host.querySelector('.toolbar-section:not([hidden])');
     },
@@ -1096,6 +1138,7 @@ export function createToolbarPanel(kind, configuration, context) {
       calendarAgenda?.dispose();
       for (const player of mediaViews) player.dispose();
       for (const comparison of comparisons) comparison.dispose();
+      for (const chart of compactHistory) chart.dispose();
       for (const forecast of weatherForecasts) forecast.dispose();
       if (clockTimer) view.clearInterval(clockTimer);
       native.dispose();

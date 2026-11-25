@@ -317,10 +317,12 @@ const hass = {
   devices: {},
   callWS(request) {
     calls.push(request);
-    if (request.type === 'history/history_during_period' && query.has('room-temperature-chart')) {
+    if (request.type === 'history/history_during_period' &&
+        (query.has('room-temperature-chart') || query.has('overview-compact-chart'))) {
       const end = Date.parse(request.end_time) / 1000;
-      const current = states['sensor.demo_temperature'].state;
-      return Promise.resolve({ 'sensor.demo_temperature': [
+      const entity = query.has('overview-compact-chart') ? 'sensor.demo_studio_temperature' : 'sensor.demo_temperature';
+      const current = states[entity].state;
+      return Promise.resolve({ [entity]: [
         { s:'21', lu:end - 85000 }, { s:'22', lu:end - 78000 }, { s:'unknown', lu:end - 72000 },
         { s:'22.5', lu:end - 71000 }, { s:'23.5', lu:end - 20800 },
         ...(['26', '27'].includes(current) ? [{ s:current, lu:end - 15 }] : []),
@@ -1234,7 +1236,8 @@ const selected = query.has('configuration') ? rendererStrategy(stored().strategy
         {kind:'status',title:compactOverview ? 'Home status' : 'Entry status',layout:'compact',
           ...(compactOverview && query.has('overview-authored-layout') && {stacked_lock_actions:true}),entities:[
         {entity:'lock.demo_compact_entry',role:'lock'},
-        {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24},
+        {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:query.has('overview-compact-chart') ? 36 : 24,
+          ...(query.has('overview-compact-chart') && {compact_history_graph:true})},
       ]},{kind:'status',title:'Read-only status',layout:'compact',entities:[
         {entity:'lock.demo_compact_readonly',role:'status'},
       ]}]}] : []),
@@ -6901,6 +6904,67 @@ async function assertCompactAutomationActions(browser) {
     assert.equal(await page.evaluate(() => window.bayitTest.calls.length), 0);
   } finally {
     await page.close();
+  }
+}
+
+async function assertOverviewCompactHistoryChart(browser) {
+  const entity = 'sensor.demo_studio_temperature';
+  for (const locale of ['en', 'he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({ viewport:{ width:391, height:845 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const url = base + '/fixture-home/home?toolbar-panels&compact-entrance-status&compact-overview-status' +
+      '&overview-compact-chart&locale=' + locale;
+    const popup = page.getByRole('dialog', { name:'Fixture Overview', exact:true });
+    const chart = popup.locator('.overview-history-chart');
+    try {
+      await page.goto(url + '#panel/compact-overview');
+      await chart.locator('path.room-temperature-line').first().waitFor();
+      const calls = () => page.evaluate(() => window.bayitTest.calls);
+      const history = (await calls()).find(call => call.type === 'history/history_during_period');
+      assert.deepEqual(history.entity_ids,[entity]);
+      assert.equal(Date.parse(history.end_time)-Date.parse(history.start_time),36.5*3600000);
+      assert.equal(await chart.locator('.room-temperature-value').textContent(),'22.5');
+      assert.equal(await chart.locator('.room-temperature-unit').textContent(),'°C');
+      assert.match(await chart.getAttribute('aria-label'),/Studio temperature/);
+      assert.equal(await chart.getByText('Studio temperature',{exact:true}).count(),0);
+      for (const width of [320,391]) {
+        await page.setViewportSize({width,height:845});
+        const geometry = await chart.evaluate(element => ({
+          height:Math.round(element.getBoundingClientRect().height),
+          fits:element.scrollWidth<=element.clientWidth+1,
+          direction:getComputedStyle(element).direction,
+        }));
+        assert.deepEqual(geometry,{height:136,fits:true,direction:'ltr'});
+      }
+      await chart.press('Enter');
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls),[entity]);
+      await page.evaluate(id => {
+        window.bayitTest.setRoomState(id,'26');
+        window.bayitTest.setFixtureRegistry(id,{hidden_by:'user'});
+      },entity);
+      await chart.waitFor({state:'hidden'});
+      await page.waitForTimeout(1600);
+      assert.equal((await calls()).filter(call => call.type === 'history/history_during_period').length,1);
+      assert.equal((await calls()).filter(call => call.type === 'call_service').length,0);
+
+      await page.goto(url + '&editor');
+      await page.getByText(he ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens',{exact:true}).tap();
+      await page.getByRole('button',{name:'Fixture Overview',exact:true}).tap();
+      await page.getByRole('button',{name:'Home status',exact:true}).tap();
+      await page.getByRole('button',{name:'Studio temperature',exact:true}).tap();
+      const option = page.getByRole('checkbox',{name:he ? 'גרף היסטוריה קומפקטי' : 'Compact history chart',exact:true});
+      assert.equal(await option.isChecked(),true);
+      const stored = () => page.evaluate(() => window.latest.toolbar.find(item => item.id === 'compact-overview')
+        .sections[0].entities.find(item => item.entity === 'sensor.demo_studio_temperature'));
+      await option.uncheck();
+      assert.equal((await stored()).compact_history_graph,undefined);
+      await option.check();
+      assert.equal((await stored()).compact_history_graph,true);
+      assert.equal((await stored()).graph_hours,36);
+    } finally {
+      await page.close();
+    }
   }
 }
 
@@ -13199,6 +13263,7 @@ try {
       await assertSelectedRoomTemperature(browser);
       await assertRoomActivityBadgeScope(browser);
       await assertRoomTemperatureCharts(browser);
+      await assertOverviewCompactHistoryChart(browser);
       console.log(engine + ': room temperature source, fallback, units and editor');
       await assertEnergyReadingCards(browser);
       await assertUtilityAndSensorGrid(browser);
