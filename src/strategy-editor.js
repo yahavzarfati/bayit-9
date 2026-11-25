@@ -606,11 +606,21 @@ export class Bayit9StrategyEditor extends HTMLElement {
     return Object.hasOwn(list, room) && list[room] && typeof list[room] === 'object' ? list[room] : {};
   }
 
-  #setRoomOverride(room, override, focusKey) {
+  #commitRoomOverride(room, override) {
     const next = { ...this.#config.room_overrides };
     if (Object.keys(override).length) next[room] = override;
     else delete next[room];
-    this.#commitRooms({ room_overrides: next }, focusKey);
+    this.#commit({ room_overrides: next });
+  }
+
+  #setRoomOverride(room, override, focusKey) {
+    // A room-name change keeps the form mounted. Its sibling controls may still hold the prior name.
+    const name = this.#roomOverride(room).name;
+    const next = { ...override };
+    if (name === undefined) delete next.name;
+    else next.name = name;
+    this.#commitRoomOverride(room, next);
+    this.#renderRoomChange(focusKey);
   }
 
   #roomIconPicker(room, override, words, language) {
@@ -1650,17 +1660,19 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const children = [field(words.roomSelection, mode), this.#customRoomForm(rooms, selection, words)];
     const roomManagement = [];
 
+    const ordered = selected.map(id => ({
+      id, name: byId.get(id)?.name ?? id,
+      secondary: byId.get(id)?.custom ? words.customRoom : byId.has(id) ? '' : words.missing,
+    }));
+    let roomOrder;
     if (customSelection) {
-      const ordered = selected.map(id => ({
-        id, name: byId.get(id)?.name ?? id,
-        secondary: byId.get(id)?.custom ? words.customRoom : byId.has(id) ? '' : words.missing,
-      }));
       if (ordered.length) roomManagement.push(disclosure(words.shownRoomOrder + ' · ' + ordered.length,
-        this.#open.roomOrder, open => { this.#open.roomOrder = open; }, () => [
-          orderedList(ordered, (items, focusKey) => this.#commitRooms({
+        this.#open.roomOrder, open => { this.#open.roomOrder = open; }, () => {
+          roomOrder = orderedList(ordered, (items, focusKey) => this.#commitRooms({
             room_selection: 'manual', area_ids: items.map(item => item.id),
-          }, focusKey ?? 'room-mode'), words, words.hideRoom, false, 'rooms'),
-        ]));
+          }, focusKey ?? 'room-mode'), words, words.hideRoom, false, 'rooms');
+          return [roomOrder];
+        }));
       const shown = new Set(selected);
       const available = rooms.filter(room => !shown.has(room.id));
       if (available.length) {
@@ -1687,49 +1699,83 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const override = this.#roomOverride(active.id);
       const input = node('input', { value: override.name ?? '', maxLength: 80, placeholder: active.name, required: Boolean(active.custom) });
       input.dataset.roomFocus = 'room-name';
+      const registryArea = Object.entries(this.#hass.areas ?? {}).find(([id, area]) => (area.area_id ?? id) === active.id)?.[1];
+      const defaultName = registryArea?.name ?? (active.custom ? active.name : active.id);
+      const activeOption = picker.selectedOptions[0];
+      const orderEntry = ordered.find(room => room.id === active.id);
+      const titleBreak = select([], '');
+      titleBreak.dataset.roomFocus = 'room-title-break';
+      const titleBreakField = field(words.roomTitleBreak, titleBreak);
+      let previewName;
+      const refreshName = name => {
+        if (name === previewName) return;
+        previewName = name;
+        active.name = name;
+        input.placeholder = name;
+        if (activeOption.textContent !== name) {
+          activeOption.textContent = name;
+          if (!customSelection) {
+            const later = [...picker.options].find(item => item !== activeOption && name.localeCompare(item.textContent, language) < 0);
+            picker.insertBefore(activeOption, later ?? null);
+            picker.value = active.id;
+          }
+        }
+        if (orderEntry && orderEntry.name !== name) {
+          orderEntry.name = name;
+          const row = roomOrder?.children[ordered.indexOf(orderEntry)];
+          if (row) {
+            row.querySelector('.room-entry-name').firstChild.textContent = name;
+            for (const action of row.querySelectorAll('button')) action.setAttribute('aria-label', action.title + ' · ' + name);
+          }
+        }
+        const breaks = name.trim().split(/\s+/u).slice(1).map((_, index) =>
+          option(String(index + 1), classicRoomTitle(name, index + 1).replace('\n', ' ↵ ')));
+        titleBreak.replaceChildren(option('', words.roomTitleAuto), ...breaks);
+        const savedBreak = this.#roomOverride(active.id).classic_title_break;
+        titleBreak.value = classicRoomTitle(name, savedBreak) ? String(savedBreak) : '';
+        titleBreakField.hidden = !breaks.length;
+      };
+      // Update the rename-dependent controls while typing, before a blur-triggering tap can target them.
+      input.addEventListener('input', () => {
+        const fallback = active.custom ? this.#roomOverride(active.id).name.trim() : defaultName;
+        refreshName(input.value.trim() || fallback);
+      });
+      refreshName(active.name);
       const saveName = () => {
         const name = input.value.trim();
+        const next = { ...this.#roomOverride(active.id) };
         if (!name && active.custom) {
-          input.value = override.name ?? active.name;
-          return;
+          input.value = next.name ?? active.name;
+          return false;
         }
-        if (name === (override.name ?? '')) return;
-        const next = { ...override };
+        if (input.value !== name) input.value = name;
+        if (name === (next.name ?? '')) return false;
         if (name) next.name = name;
         else delete next.name;
-        this.#setRoomOverride(active.id, next, 'room-name');
+        this.#commitRoomOverride(active.id, next);
+        return true;
       };
       input.addEventListener('change', saveName);
       input.addEventListener('keydown', event => {
         if (event.key === 'Enter' && !event.isComposing) {
           event.preventDefault();
-          saveName();
+          if (saveName() || this.#registryRefreshPending) this.#renderRoomChange('room-name');
         }
       });
-      const titleBreaks = active.name.trim().split(/\s+/u).slice(1).map((_, index) => {
-        const at = index + 1;
-        return [String(at), classicRoomTitle(active.name, at).replace('\n', ' ↵ ')];
+      titleBreak.addEventListener('change', () => {
+        const updated = { ...this.#roomOverride(active.id) };
+        if (titleBreak.value) updated.classic_title_break = Number(titleBreak.value);
+        else delete updated.classic_title_break;
+        this.#setRoomOverride(active.id, updated, 'room-title-break');
       });
       children.push(field(words.roomToEdit, picker), field(words.roomName, input), ...roomManagement);
-      const fields = [];
-      if (titleBreaks.length) {
-        const currentBreak = classicRoomTitle(active.name, override.classic_title_break) ? String(override.classic_title_break) : '';
-        const titleBreak = select([['', words.roomTitleAuto], ...titleBreaks], currentBreak);
-        titleBreak.dataset.roomFocus = 'room-title-break';
-        titleBreak.addEventListener('change', () => {
-          const updated = { ...override };
-          if (titleBreak.value) updated.classic_title_break = Number(titleBreak.value);
-          else delete updated.classic_title_break;
-          this.#setRoomOverride(active.id, updated, 'room-title-break');
-        });
-        fields.push(field(words.roomTitleBreak, titleBreak));
-      }
-      fields.push(
+      const fields = [
+        titleBreakField,
         this.#roomIconPicker(active, override, words, language),
         ...this.#roomDevicePanel(active, words, language, rooms),
         this.#roomSectionsPanel(active, override, words, language),
         this.#roomAppliancePanel(active, override, words, language),
-      );
+      ];
       if (active.custom) {
         const remove = button(words.deleteRoom, () => {
           const after = { ...this.#config.room_overrides };

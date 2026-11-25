@@ -2275,6 +2275,72 @@ async function assertSetupRegistryRefreshKeepsField(browser) {
 }
 
 
+async function assertRoomRenameKeepsNextGesture(browser) {
+  const labels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', chooser:'Room to customize',
+      create:'New dashboard-only room', newName:'New room name', name:'Room display name', titleBreak:'Room name line break in classic layout',
+      order:'Displayed rooms and order', moveUp:'Move up', devices:'Devices in this room', save:'Save dashboard',
+      draft:'Garden studio', final:'Music studio', title:'Music\nstudio' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים', chooser:'חדר להתאמה אישית',
+      create:'חדר חדש לדשבורד', newName:'שם החדר החדש', name:'שם החדר לתצוגה', titleBreak:'חלוקת שם החדר לשורות בפריסה הקלאסית',
+      order:'חדרים מוצגים וסדר', moveUp:'העברה למעלה', devices:'מכשירים בחדר', save:'שמירת הדשבורד',
+      draft:'סטודיו גן', final:'חדר מוזיקה', title:'חדר\nמוזיקה' },
+  ];
+  for (const words of labels) {
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      const url = base + '/fixture-home/home?configuration&room-selection&legacy-room-order&locale=' + words.locale;
+      await page.goto(url);
+      await page.getByRole('button', { name:words.appearance, exact:true }).tap();
+      await page.getByRole('button', { name:words.setup, exact:true }).tap();
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      await setup.getByText(words.rooms, { exact:true }).tap();
+      const chooser = setup.getByLabel(words.chooser, { exact:true });
+      const name = setup.getByLabel(words.name, { exact:true });
+      const create = setup.getByText(words.create, { exact:true });
+      const nameForNewRoom = setup.getByLabel(words.newName, { exact:true });
+      const roomOrder = setup.getByText(words.order + ' · 2', { exact:true });
+      const save = setup.getByRole('button', { name:words.save, exact:true });
+      await chooser.selectOption('studio');
+      await name.fill(' ' + words.draft + ' ');
+      assert.equal(await save.isEnabled(), false);
+      const target = await create.boundingBox();
+      await page.touchscreen.tap(target.x + target.width / 2, target.y + target.height / 2);
+      assert.equal(await nameForNewRoom.isVisible(), true);
+      assert.equal(await name.inputValue(), words.draft);
+      assert.equal(await chooser.locator('option[value=studio]').textContent(), words.draft);
+      assert.equal(await save.isEnabled(), true);
+      await create.tap();
+      await roomOrder.tap();
+      assert.equal(await setup.getByRole('button', { name:words.moveUp + ' · ' + words.draft, exact:true }).count(), 1);
+
+      await name.fill(words.final);
+      await name.press('Tab');
+      assert.equal(await roomOrder.evaluate(summary => summary.getRootNode().activeElement === summary), true);
+      assert.equal(await setup.getByRole('button', { name:words.moveUp + ' · ' + words.final, exact:true }).count(), 1);
+      assert.deepEqual(await chooser.locator('option').evaluateAll(options => options.map(option => option.value)), ['lounge', 'studio']);
+      await setup.getByLabel(words.devices, { exact:true }).selectOption('manual');
+      assert.equal(await name.inputValue(), words.final);
+      await setup.getByLabel(words.titleBreak, { exact:true }).selectOption('1');
+      assert.equal(await page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'lovelace/config/save').length), 0);
+
+      await save.tap();
+      await setup.waitFor({ state:'hidden' });
+      const persisted = await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      assert.deepEqual(persisted.area_ids, ['lounge', 'studio']);
+      assert.equal(persisted.room_overrides.studio.name, words.final);
+      assert.equal(persisted.room_overrides.studio.classic_title_break, 1);
+      assert.ok(persisted.room_overrides.studio.entities.includes('light.demo_lamp'));
+      await page.goto(url);
+      await page.getByRole('button', { name:words.final, exact:true }).waitFor();
+      assert.equal(await page.locator('.room[data-room=studio] .room-name').textContent(), words.title);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertManualRoomOrderRestored(browser) {
   const labels = [
     { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', mode:'Rooms on the dashboard',
@@ -6767,6 +6833,7 @@ try {
       console.log(engine + ': setup footer stays clear of the scrollable editor');
       await assertSetupDrafts(browser);
       await assertSetupRegistryRefreshKeepsField(browser);
+      await assertRoomRenameKeepsNextGesture(browser);
       await assertManualRoomOrderRestored(browser);
       await assertRoomEditorQuickPaths(browser);
       console.log(engine + ': setup drafts survive closing, preserve conflicts, and retry safely');
