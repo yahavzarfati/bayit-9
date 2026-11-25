@@ -9,7 +9,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, supportsHorizonCard, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
   supportsToolbarVacuumSummary, toolbarPlacement, toolbarPopupPosition, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
-import { allowsCoverRailAction, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, isReadOnlyRole, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
+import { allowsCoverRailAction, canSendDeviceCommands, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, isReadOnlyRole, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
   simpleTimerStatusEntity, simpleTimerUsageResetAvailable, supportsHomeHeaterPower, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupScrollMemory } from './popup-scroll.js';
@@ -1248,7 +1248,7 @@ export class BayitDashboard extends HTMLElement {
   }
 
   deviceActionVisible(config, id) {
-    return id === 'more_info' || this.entityVisible(config.entity);
+    return id === 'more_info' || (canSendDeviceCommands(this._hass) && this.entityVisible(config.entity));
   }
 
   quickAction(config, source, room, { details = true, shortcutCurrent } = {}) {
@@ -1259,13 +1259,13 @@ export class BayitDashboard extends HTMLElement {
       ? 'stop' : state === 'open' ? 'close' : state === 'closed' ? 'open' : undefined;
     else if (domain === 'lock') action = state === 'locked' ? 'unlock' : state === 'unlocked' ? 'lock' : undefined;
     else if (powerDomains.has(domain) && !config.kind) action = state === 'off' ? 'turn_on' : 'turn_off';
-    if (action && model.actions[action]) {
+    if (action && model.actions[action] && canSendDeviceCommands(this._hass)) {
       this.requestAction(config, action, undefined, source, { confirmShortcut: domain === 'lock', shortcutCurrent });
     } else if (details) this.openDeviceDetails(config, source, room);
   }
 
   homeShortcutPowerAction(config) {
-    if (!isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities)) return;
+    if (!canSendDeviceCommands(this._hass) || !isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities)) return;
     if (config.room_boiler_quick_power) return this.roomPowerTileAction(config);
     if (config.home_heater_shortcut) return homeHeaterPowerAction(this._hass, config);
     const action = roomClimatePowerAction(this.model(config));
@@ -1437,7 +1437,7 @@ export class BayitDashboard extends HTMLElement {
   }
 
   async turnOffEntities(entities, name) {
-    if (!entities.length || entities.some(entity => this.pending.has(entity))) return;
+    if (!canSendDeviceCommands(this._hass) || !entities.length || entities.some(entity => this.pending.has(entity))) return;
     const token = { id: 'turn_off' };
     for (const entity of entities) this.pending.set(entity, token);
     this.announce(this.t('sending').replace('{name}', name));
@@ -1684,7 +1684,7 @@ export class BayitDashboard extends HTMLElement {
         const targets = this.roomOffTargets(view.room);
         const busy = view.room.turnOff.some(device => this.pending.has(device.entity));
         view.turnOff.setAttribute('aria-busy', String(busy));
-        view.turnOff.setAttribute('aria-disabled', String(busy || !targets.length));
+        view.turnOff.setAttribute('aria-disabled', String(busy || !targets.length || !canSendDeviceCommands(this._hass)));
       }
       setText(view.count, lightingStatus);
       const lightingDescription = this.t('room_lights') + ' · ' + (lightingStatus === '—' ? this.t('unavailable') : lightingStatus);
@@ -2453,7 +2453,7 @@ export class BayitDashboard extends HTMLElement {
   lightStatusRefreshTarget(config) {
     const entity = config.light_status_refresh_button;
     const { states = {}, entities, services } = this._hass ?? {};
-    if (!isPairedLightStatusRefresh(config.entity, entity, entities) ||
+    if (!canSendDeviceCommands(this._hass) || !isPairedLightStatusRefresh(config.entity, entity, entities) ||
         !Object.hasOwn(services?.button ?? {}, 'press') || this.pending.has(config.entity) ||
         !this.canRequest(entity, 'press_button') ||
         ![config.entity, entity].every(id => isVisibleEntity(id, states, entities, this.config.hiddenEntities))) return;
@@ -2527,6 +2527,7 @@ export class BayitDashboard extends HTMLElement {
   }
 
   updateDevices() {
+    const commandsReady = canSendDeviceCommands(this._hass);
     let countdown = false;
     for (const view of this.deviceViews.values()) {
       const model = this.model(view.config);
@@ -2549,7 +2550,7 @@ export class BayitDashboard extends HTMLElement {
         const power = view.climatePower;
         const action = roomClimatePowerAction(model);
         power.dataset.action = action ?? '';
-        power.disabled = !!pending || !climatePowerServiceRegistered(this._hass, action) ||
+        power.disabled = !commandsReady || !!pending || !climatePowerServiceRegistered(this._hass, action) ||
           !isVisibleEntity(model.entity, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities);
         const powered = roomClimatePowerState(model);
         label(power, this.t('climate_power') + ' · ' + labelName);
@@ -2691,7 +2692,7 @@ export class BayitDashboard extends HTMLElement {
         const actionId = model.state === 'on' ? 'turn_off' : 'turn_on';
         power.dataset.action = actionId;
         power.toggleAttribute('data-powered', model.state === 'on');
-        power.disabled = !this.canRequest(view.config.entity, actionId);
+        power.disabled = !commandsReady || !this.canRequest(view.config.entity, actionId);
         label(power, this.t(actionId));
       }
       if (view.lightStatusRefresh) {
@@ -2703,11 +2704,13 @@ export class BayitDashboard extends HTMLElement {
         if (control.dataset.lightMode || control.hasAttribute('data-room-mute-placeholder') ||
             control.classList.contains('target-reading')) continue;
         const id = control.dataset.action;
-        control.disabled = !coverVisible || !this.canRequest(view.config.entity, id) || (id === 'locate' && !model.actions.locate) ||
+        const requiresConnection = id && id !== 'more_info';
+        control.disabled = (requiresConnection && !commandsReady) || !coverVisible || !this.canRequest(view.config.entity, id) ||
+          (id === 'locate' && !model.actions.locate) ||
           (view.compactCover && !allowsCoverRailAction(model, id));
       }
       view.special.update(model, pending);
-      view.effectGallery?.update(model, this.canRequest(view.config.entity, 'set_effect'));
+      view.effectGallery?.update(model, commandsReady && this.canRequest(view.config.entity, 'set_effect'));
       view.colorPalette?.update(model, pending);
       for (const field of view.fields) {
         this.syncField(field, model);

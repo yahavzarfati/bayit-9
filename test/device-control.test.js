@@ -745,6 +745,36 @@ test("off-only heater preselection writes only its dedicated helper and keeps th
     target: { entity_id: c.level_preselect_entity }, service_data: { value: 8 } }]);
 });
 
+test('disconnected device commands never enter the reconnect queue', async () => {
+  const light = config('light.fixture');
+  const queued = [];
+  const delivered = [];
+  const hass = {
+    connected: true,
+    connection: { connected: false },
+    states: { [light.entity]: entity('on') },
+    callWS(request) {
+      (this.connection.connected ? delivered : queued).push(request);
+    },
+  };
+  const controller = createDeviceController({ getHass: () => hass, confirmationTimeoutMs: 0 });
+  for (const [frontend, transport] of [[true, false], [false, true], [false, false]]) {
+    hass.connected = frontend;
+    hass.connection.connected = transport;
+    await assert.rejects(controller.execute(light, 'turn_off'), code('service_unavailable'));
+    await assert.rejects(controller.turnOffRoom([light.entity]), code('service_unavailable'));
+    assert.deepEqual(await controller.execute(light, 'more_info'), { status:'more_info', entity:light.entity });
+  }
+  assert.deepEqual(queued, []);
+  assert.deepEqual(delivered, []);
+
+  hass.connected = hass.connection.connected = true;
+  assert.equal((await controller.execute(light, 'turn_off')).status, 'sent');
+  assert.deepEqual(delivered, [{
+    type:'call_service', domain:'light', service:'turn_off', service_data:{}, target:{entity_id:light.entity},
+  }]);
+});
+
 test("combined heater controls wait for the shared level selector to be idle", async () => {
   const c = { ...levelSelector, level_preselect_entity: levelSelector.level_read_entity };
   const script = c.level_select_script;

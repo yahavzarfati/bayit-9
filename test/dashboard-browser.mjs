@@ -1327,6 +1327,11 @@ window.bayitTest = {
     hass.entities = { ...hass.entities, [entity]: metadata };
     card.hass = { ...hass, entities: hass.entities };
   },
+  setFixtureConnection(connected, transportConnected) {
+    hass.connected = connected;
+    hass.connection = { ...hass.connection, connected:transportConnected };
+    card.hass = { ...hass };
+  },
   rejectNextSetupSave() { rejectSetupSave = true; },
   rejectNextBoilerAction() { rejectQuickBoiler = true; },
   finishApplianceCommand() { finishApplianceCommand({}); },
@@ -5899,6 +5904,73 @@ async function assertMountedDeviceVisibility(browser) {
   }
 }
 
+async function assertDisconnectedDeviceCommands(browser) {
+  const devices = [
+    { entity:'cover.demo_shade', flags:'configuration&cover-grid&cover-feedback',
+      action:'open', restoredAction:'close', initial:'closed', reported:'open', service:'close_cover' },
+    { entity:'light.demo_lamp', flags:'configuration&inline-room-lights&compact-light-reading',
+      action:'turn_off', restoredAction:'turn_on', initial:'on', reported:'off', service:'turn_on' },
+  ];
+  for (const locale of ['en', 'he']) {
+    for (const { entity, flags, action, restoredAction, initial, reported, service } of devices) {
+      const page = await browser.newPage({viewport:{width:391,height:844},hasTouch:true,reducedMotion:'reduce'});
+      page.setDefaultTimeout(8000);
+      const dialog = page.locator('.modal[open]');
+      const buttonFor = id => dialog.locator('[data-entity="' + entity + '"] button[data-action="' + id + '"]');
+      const actions = () => page.evaluate(() => window.bayitTest.calls.filter(request => request.type === 'call_service'));
+      try {
+        await page.goto(base + '/fixture-home/home?' + flags + '&locale=' + locale + '#device/studio/' + entity);
+        await page.evaluate(([id, state]) => {
+          const fixture = window.bayitTest;
+          fixture.setRoomState(id, state);
+          if (id.startsWith('cover.')) fixture.setFixtureAttributes(id, {current_position:0});
+        }, [entity, initial]);
+        const visibleCommand = buttonFor(action).and(page.locator(':visible:enabled'));
+        await visibleCommand.evaluate(button => {
+          window.bayitTest.setFixtureConnection(true, false);
+          button.click();
+        });
+        await buttonFor(action).and(page.locator(':visible:disabled')).waitFor();
+        assert.deepEqual(await actions(), []);
+
+        const more = dialog.getByRole('button', {name:locale === 'he' ? 'מידע נוסף' : 'More info', exact:true});
+        await more.tap();
+        assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), [entity]);
+        assert.deepEqual(await actions(), []);
+
+        await page.evaluate(() => window.bayitTest.setFixtureConnection(true, true));
+        await visibleCommand.evaluate(button => {
+          const dashboard = document.querySelector('bayit-dashboard');
+          const update = dashboard.update;
+          dashboard.update = function (...args) {
+            this.update = update;
+            window.bayitTest.setFixtureConnection(false, true);
+            return update.apply(this, args);
+          };
+          button.click();
+        });
+        await buttonFor(action).and(page.locator(':visible:disabled')).waitFor();
+        assert.deepEqual(await actions(), []);
+
+        // A fresh reported state changes which command is valid after reconnecting.
+        await page.evaluate(([id, state]) => {
+          const fixture = window.bayitTest;
+          fixture.setRoomState(id, state);
+          if (id.startsWith('cover.')) fixture.setFixtureAttributes(id, {current_position:100});
+          fixture.setFixtureConnection(true, true);
+        }, [entity, reported]);
+        await buttonFor(restoredAction).and(page.locator(':visible:enabled')).tap();
+        await page.waitForFunction(() => window.bayitTest.calls.some(request => request.type === 'call_service'));
+        assert.deepEqual(await actions(), [{
+          type:'call_service',domain:entity.split('.')[0],service,service_data:{},target:{entity_id:entity},
+        }]);
+      } finally {
+        await page.close();
+      }
+    }
+  }
+}
+
 async function assertAdditionalAutomaticRoomDevices(browser) {
   for (const [locale, words] of [
     ['en', { appearance:'Appearance', setup:'Customize home', rooms:'Rooms', room:'Room to customize',
@@ -10376,6 +10448,7 @@ try {
     await run('Stale climate registry controls', () => assertClimatePopupVisibility(browser));
 
     await run('Device controls after registry updates', () => assertMountedDeviceVisibility(browser));
+    await run('Cover and light devices while reconnecting', () => assertDisconnectedDeviceCommands(browser));
 
     await run('Overview climate discovery', async () => {
       await assertOverviewClimateDiscovery(browser);

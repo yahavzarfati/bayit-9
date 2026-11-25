@@ -853,6 +853,11 @@ function boundRequest(request, timeout) {
   return Promise.race([request, deadline]).finally(() => clearTimeout(timer));
 }
 
+export function canSendDeviceCommands(hass) {
+  // The WebSocket client may queue requests during the first reconnect after a suspension.
+  return hass?.connected !== false && hass?.connection?.connected !== false && typeof hass?.callWS === "function";
+}
+
 export function createDeviceController({
   getHass,
   confirmationTimeoutMs,
@@ -875,7 +880,7 @@ export function createDeviceController({
       if (!entities.length || entities.some(entity => !supportsRoomShutdown(entity))) {
         throw new DeviceControlError("invalid_target", "Choose the room devices to turn off.");
       }
-      if (typeof hass?.callWS !== "function") {
+      if (!canSendDeviceCommands(hass)) {
         throw new DeviceControlError("service_unavailable", "The Home Assistant connection is unavailable.");
       }
       const request = { type: "call_service", domain: "homeassistant", service: "turn_off", service_data: {},
@@ -916,7 +921,7 @@ export function createDeviceController({
       if (plan.requiresMediaService && !mediaServiceRegistered(hass, plan.service)) {
         throw new DeviceControlError("service_unavailable", "Home Assistant does not publish that media service.");
       }
-      if (typeof hass?.callWS !== "function") {
+      if (!canSendDeviceCommands(hass)) {
         throw new DeviceControlError("service_unavailable", "The Home Assistant connection is unavailable.");
       }
 
