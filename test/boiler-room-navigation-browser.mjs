@@ -10,8 +10,10 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
   '<script type="module">import "/dashboard.js";(' + function () {
     const params = new URL(location.href).searchParams;
     const locale = params.get('locale');
+    const timing = params.has('compact') ? { min_minutes: 1, max_minutes: 300, step_minutes: 1, presets: [] }
+      : { min_minutes: 15, max_minutes: 60, step_minutes: 15 };
     const boiler = { entity: 'switch.fixture_boiler', name: 'Fixture boiler', kind: 'boiler',
-      timed: { simple_timer_entity: 'sensor.fixture_runtime', min_minutes: 15, max_minutes: 60, step_minutes: 15 } };
+      ...(!params.has('untimed') && { timed: { simple_timer_entity: 'sensor.fixture_runtime', ...timing } }) };
     const sensors = Array.from({ length: 12 }, (_, index) => ({
       entity: 'sensor.fixture_' + index, name: 'Fixture reading ' + index,
     }));
@@ -30,13 +32,28 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
       { id: 'bath', name: 'Bath', entities: [boiler], shortcuts: [boiler.entity] },
       { id: 'monitor', name: 'Monitor', entities: [{ ...boiler, role: 'status' }], shortcuts: [boiler.entity] },
     ] });
-    card.hass = {
+    const hass = {
       user: { is_admin: true }, states, services: { scheduler: { add: {} }, simple_timer: { start_timer: {} } },
       callWS(request) { requests.push(request.type); return Promise.resolve(request.type === 'history/history_during_period' ? {} : []); },
     };
+    card.hass = hass;
     card.addEventListener('hass-more-info', event => moreInfo.push(event.detail.entityId));
     document.body.append(card);
-    window.fixture = { requests, moreInfo };
+    window.fixture = {
+      requests, moreInfo,
+      setupState(deviceState, timerState) {
+        states[boiler.entity] = { state: deviceState, attributes: {} };
+        states['sensor.fixture_runtime'] = {
+          state: timerState === 'unavailable' ? 'unavailable' : '0',
+          attributes: {
+            entry_id: 'fixture-runtime', switch_entity_id: boiler.entity, timer_state: timerState,
+            timer_finishes_at: new Date(Date.now() + 120000).toISOString(),
+            device_active: deviceState === 'on',
+          },
+        };
+        card.hass = { ...hass, states: { ...states } };
+      },
+    };
   }.toString() + ')();</script>';
 
 const server = createServer((request, response) => {
@@ -158,11 +175,65 @@ try {
       await page.keyboard.press('Escape');
       await dialog.waitFor({ state: 'hidden' });
 
+      const compact = await browser.newPage({ viewport: { width: 320, height: 680 }, hasTouch: true });
+      const compactDialog = compact.getByRole('dialog', { name: 'Fixture boiler', exact: true });
+      const shortcut = compact.locator('[data-room="bath"] .quick-button[data-entity="switch.fixture_boiler"]');
+      await compact.goto('http://127.0.0.1:' + server.address().port + '?compact&locale=' + locale);
+      await shortcut.tap();
+      const start = compactDialog.locator('[data-action="start_timed"]');
+      const stop = compactDialog.locator('[data-action="stop_timed"]');
+      const off = compactDialog.locator('[data-action="turn_off"]');
+      const schedule = compactDialog.getByRole('button', { name: words.schedule, exact: true });
+      const history = compactDialog.getByRole('button', { name: words.history, exact: true });
+      const timer = compactDialog.getByRole('button', { name: locale === 'he' ? 'טיימר' : 'Timer', exact: true });
+      const timerArea = compactDialog.locator('.device-timer');
+      await start.waitFor();
+      await timer.waitFor({ state: 'hidden' });
+      assert.equal(await off.count(), 0);
+      assert.equal(await timerArea.getAttribute('data-compact'), '');
+      assert.equal(await timerArea.locator('.timer-range').getAttribute('aria-valuetext'), locale === 'he' ? '300 דקות' : '300 Minutes');
+      await compactDialog.evaluate(node => Promise.allSettled(node.getAnimations().map(animation => animation.finished)));
+      const [scheduleBox, historyBox, timerBox, startBox] = await Promise.all(
+        [schedule, history, timerArea, start].map(item => item.boundingBox()));
+      assert.ok(scheduleBox.height >= 44 && historyBox.height >= 44 && startBox.height >= 44);
+      assert.ok(Math.abs(scheduleBox.y - historyBox.y) < 1 && scheduleBox.y >= timerBox.y + timerBox.height);
+
+      await schedule.tap();
+      await timer.waitFor();
+      await start.waitFor({ state: 'hidden' });
+      await history.tap();
+      await compact.waitForFunction(() => window.fixture.requests.includes('history/history_during_period'));
+      await timer.tap();
+      await start.waitFor();
+      assert.equal(await schedule.evaluate(button => button.getRootNode().activeElement === button), true);
+
+      await compact.evaluate(() => window.fixture.setupState('on', 'active'));
+      await stop.waitFor();
+      assert.equal(await timerArea.getAttribute('data-compact'), null);
+      await compact.evaluate(() => window.fixture.setupState('off', 'unavailable'));
+      await off.waitFor();
+      assert.equal(await start.count(), 0);
+      await compact.evaluate(() => window.fixture.setupState('off', 'idle'));
+      await start.waitFor();
+      assert.equal(await off.count(), 0);
+      await compact.evaluate(() => window.fixture.setupState('unknown', 'idle'));
+      await start.waitFor({ state: 'detached' });
+      assert.equal(await off.count(), 0);
+      assert.equal(await compact.evaluate(() => window.fixture.requests.includes('call_service')), false);
+
+      await compact.goto('http://127.0.0.1:' + server.address().port + '?untimed&locale=' + locale);
+      await shortcut.tap();
+      await timer.waitFor();
+      await off.waitFor();
+      assert.equal(await timerArea.count(), 0);
+      assert.equal(await compact.evaluate(() => window.fixture.requests.includes('call_service')), false);
+      await compact.close();
+
       const { requests, moreInfo } = await page.evaluate(() => window.fixture);
       assert.equal(requests.includes('call_service'), false);
       assert.deepEqual(moreInfo, []);
       assert.deepEqual(errors, []);
-      console.log(launcher.name() + ' at 375 px: boiler row tap, hold and keyboard, Back, schedule and history, status-only and zero power calls');
+      console.log(launcher.name() + ' at 320–375 px: compact idle boiler, guarded state transitions, schedule/history return, native shortcuts and zero power calls');
     } finally { await browser.close(); }
   }
 } finally { server.close(); }

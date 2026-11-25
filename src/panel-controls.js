@@ -344,7 +344,8 @@ export const panelControlStyles = `
   .device-timer[data-compact] {
     --timer-rail: color-mix(in srgb,var(--ink) 10%,transparent);
   }
-  .device[data-compact-heater] .device-timer { --timer-thumb: var(--warm); }
+  .device[data-compact-heater] .device-timer,
+  .device[data-treatment=boiler] .device-timer[data-compact] { --timer-thumb: var(--warm); }
   .device-timer[data-compact] .timer-clock { line-height: 1.2; }
   .device-timer[data-compact] .timer-range {
     -webkit-appearance: none;
