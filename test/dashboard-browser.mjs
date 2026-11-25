@@ -555,6 +555,7 @@ const roomStatusSelected = {
     bayit_room_status: {
       name: query.has('classic-quiet') ? (hass.locale.language === 'he' ? 'חדר\\nהפנאי' : 'Family\\nroom')
         : hass.locale.language === 'he' ? 'חדר הפנאי' : 'Family room',
+      ...(query.has('classic-quiet') && { turn_off_entities:['light.demo_side1'] }),
       entities: ['climate.demo_room', 'cover.demo_window', 'sensor.demo_temperature', 'light.demo_unavailable',
         'light.demo_side1', 'light.demo_side2', 'light.demo_side3',
         ...(query.has('temperature-source') ? ['sensor.demo_preferred_temperature'] : [])],
@@ -2847,7 +2848,17 @@ async function assertHomeMaterial(browser) {
       const badge = [room.querySelector('[data-badge=temperature]'), room.querySelector('.room-count')];
       const [toolbarStyle, chromeStyle, roomStyle] = [root.querySelector('.toolbar'), chrome, room]
         .map(node => getComputedStyle(node));
+      const ink = element => pixel(getComputedStyle(element).color);
       return {
+        glass: CSS.supports('backdrop-filter: blur(1px)') || CSS.supports('-webkit-backdrop-filter: blur(1px)'),
+        labelInk: ink(room.querySelector('.room-name')),
+        statusInk: ink(room.querySelector('.room-count')),
+        expectedStatusInk: pixel(roomStyle.getPropertyValue('--secondary')),
+        chromeInk: ink(chrome.querySelector('ha-icon')),
+        roomInk: ink(room.querySelector('.room-title > ha-icon')),
+        shutdownInk: ink(room.querySelector('.room-turn-off > ha-icon')),
+        shortcutInk: ink(control.querySelector('ha-icon')),
+        coverGlyphInk: ink(room.querySelector('[data-entity="cover.demo_window"] ha-icon')),
         reduced: matchMedia('(prefers-reduced-transparency: reduce)').matches,
         stronger: matchMedia('(prefers-contrast: more)').matches,
         background: pixel(style.backgroundColor),
@@ -2876,6 +2887,17 @@ async function assertHomeMaterial(browser) {
       const current = await appearance(ink);
       const fallback = current.reduced || current.stronger;
       const dark = ink === 'dark';
+      const white = [255, 255, 255, 255];
+      const labelInk = dark ? [16, 18, 23, 255] : white;
+      const transparentGlass = current.glass && !fallback;
+      assert.deepEqual(current.labelInk, labelInk);
+      assert.deepEqual(current.statusInk, current.expectedStatusInk);
+      for (const neutral of [current.chromeInk, current.roomInk, current.shutdownInk]) {
+        assert.deepEqual(neutral, transparentGlass ? white : labelInk);
+      }
+      assert.deepEqual(current.shortcutInk, transparentGlass ? white
+        : dark ? [32, 36, 43, 255] : [255, 255, 255, 222]);
+      assert.deepEqual(current.coverGlyphInk, current.coverInk);
       assert.equal(current.toolbarAlpha, 0);
       assert.equal(current.chromeAlpha, fallback ? 255 : 0);
       assert.equal(current.roomAlpha, fallback ? 255 : 0);

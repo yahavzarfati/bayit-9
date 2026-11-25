@@ -172,6 +172,14 @@ try {
 
       const family = await browser.newPage({ viewport:{ width:390, height:844 }, hasTouch:true, reducedMotion:'reduce' });
       family.setDefaultTimeout(10000);
+      await family.emulateMedia({ contrast:'no-preference' });
+      if (engine === 'Chromium') {
+        const cdp = await family.context().newCDPSession(family);
+        await cdp.send('Emulation.setEmulatedMedia', { features:[
+          { name:'prefers-reduced-transparency', value:'no-preference' },
+          { name:'prefers-contrast', value:'no-preference' },
+        ] });
+      }
       const appearance = family.getByRole('dialog',{ name:'Appearance', exact:true });
       const openSettings = async () => {
         if (!await appearance.isVisible()) await family.getByRole('button',{ name:'Appearance', exact:true }).tap();
@@ -183,6 +191,20 @@ try {
       });
       await family.goto(origin + '/fixture-shared/' + fixtureName);
       await family.locator('.shell[data-background=aurora]').waitFor();
+      const splitPhoto = await family.evaluate(() => {
+        const image = document.createElement('canvas');
+        image.width = 390;
+        image.height = 844;
+        const context = image.getContext('2d');
+        context.fillStyle = '#dbe4ee';
+        context.fillRect(0, 0, 195, 844);
+        context.fillStyle = '#19252f';
+        context.fillRect(195, 0, 195, 844);
+        return image.toDataURL('image/png').split(',')[1];
+      });
+      await family.route('**/local/fixture/garden.webp', route => route.fulfill({
+        contentType: 'image/png', body: Buffer.from(splitPhoto, 'base64'),
+      }));
       await family.getByRole('button',{ name:'Appearance', exact:true }).tap();
       const familyGallery = family.locator('.wallpaper-gallery');
       await familyGallery.locator('summary').tap();
@@ -195,7 +217,24 @@ try {
       await garden.tap();
       await family.locator('.shell[data-background=shared-garden]').waitFor();
       assert.match(await shellBackground(family), /blob:/);
-      await family.locator('.room[data-wallpaper-ink]').waitFor();
+      const room = family.locator('.room[data-wallpaper-ink=dark]');
+      await room.waitFor();
+      await family.locator('.toolbar .chrome-button[data-wallpaper-ink=dark]').first().waitFor();
+      await family.locator('.toolbar .chrome-button[data-wallpaper-ink=light]').first().waitFor();
+      const colors = await room.evaluate(room => {
+        const root = room.getRootNode();
+        const color = element => getComputedStyle(element).color;
+        const toolbar = mode => root.querySelector('.toolbar .chrome-button[data-wallpaper-ink=' + mode + '] > ha-icon');
+        return {
+          reduced: matchMedia('(prefers-reduced-transparency: reduce)').matches,
+          values: [color(room.querySelector('.room-name')), color(room.querySelector('.quick-button > ha-icon')),
+            color(toolbar('dark')), color(toolbar('light'))],
+        };
+      });
+      const white = 'rgb(255, 255, 255)';
+      const dark = 'rgb(16, 18, 23)';
+      if (engine === 'Chromium') assert.equal(colors.reduced, false);
+      assert.deepEqual(colors.values, colors.reduced ? [dark, 'rgb(32, 36, 43)', dark, white] : [dark, white, white, white]);
       for (const name of ['Missing photo','Redirected photo']) {
         await familyGallery.getByRole('button',{name,exact:true}).tap();
         await familyGallery.getByText('Could not load this wallpaper.',{exact:true}).waitFor();

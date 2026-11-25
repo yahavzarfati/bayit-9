@@ -354,6 +354,11 @@ export const styles = `
     width: var(--mdc-icon-size);
     height: var(--mdc-icon-size);
   }
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .shell[data-page=true] :is(.toolbar .chrome-button,.room-title,.room-turn-off,.quick-button[data-tone=quiet]) > ha-icon:first-child {
+      color: var(--home-neutral-glyph, #fff);
+    }
+  }
   .shell[data-page=true] .quick-button[data-tone=quiet]:not(:disabled) {
     border-color: color-mix(in srgb,var(--ink) 16%,transparent);
   }
@@ -861,6 +866,7 @@ export const styles = `
     }
   }
   @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    .shell[data-page=true] { --home-neutral-glyph: currentColor; }
     .modal, .notice { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--surface); }
     .modal {
       --room-tile-fill: rgba(255,255,255,.08);
