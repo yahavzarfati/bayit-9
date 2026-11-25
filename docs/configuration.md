@@ -23,6 +23,7 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 | `light_effect_category_sources` | Optional per-light `input_select` for a category shared across the home. |
 | `background` | A built-in wallpaper ID such as `aurora` or the ID of a shared photo listed in the same dashboard. |
 | `shared_wallpapers` | Ordered shared photos with an `id`, `name`, local image `path` and optional local `preview` path. |
+| `appearance_helpers` | Optional Home Assistant input select helpers for the shared wallpaper, button shape, and room-title placement. |
 | `fullscreen` | Set to `true` to hide the Home Assistant header and sidebar on this standalone dashboard. Use **Home Assistant menu** in Bayit 9 Settings, or add `?disable_km=1` to the dashboard address, to restore them. |
 | `shape` | `soft`, `circle` or `square`. |
 | `layout` | `classic` or `header`. |
@@ -33,6 +34,29 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 The Settings appearance controls preview changes in the current browser. On a storage dashboard, an administrator can save a built-in or shared wallpaper, button shape, and room layout as household defaults. Select **Use household defaults** on a device to reset its local override. Photos added through **My photo** stay in the browser that uploaded them.
 
 On a storage dashboard, enable **Save admin appearance choices for the household immediately** in **Customize home → Appearance** to save an administrator's wallpaper, button shape and room-title choices when selected. Home Assistant updates open dashboards for devices using household defaults. Personal photo uploads and other users' local choices keep their existing behavior. In YAML set `appearance_sync: true` on the strategy.
+
+To let members with access to a Home Assistant helper share appearance choices, open **Customize home → Appearance → Household appearance helpers**. Pick **Wallpaper**, **Button shape**, or **Room titles**, choose its input select helper, and match its reported options to dashboard choices. Use a separate helper for each setting and assign each choice once. The helper supplies the shared value for the mapped choices. Choices left on **Use locally** stay in the current browser. Shared photos can be mapped like built-in wallpapers.
+
+Each mapping is optional. In YAML, use the exact Home Assistant option text as the value:
+
+```yaml
+appearance_helpers:
+  background:
+    entity: input_select.household_wallpaper
+    options:
+      jade: Evening forest
+      design_default: Original wallpaper
+  shape:
+    entity: input_select.household_buttons
+    options:
+      circle: Round buttons
+      square: Square buttons
+  layout:
+    entity: input_select.household_room_titles
+    options:
+      classic: Classic placement
+      header: Above the controls
+```
 
 In **Customize home → Appearance → Shared photos**, add named pictures already served by Home Assistant under `/local/`. Supported formats are JPG, PNG, WebP and AVIF, up to 20 MB per image. An optional smaller preview loads in the gallery before the full-size image. Save the dashboard to make these choices available to its users. In YAML, the same entry can use `{ id: patio_photo, name: Patio, path: /local/wallpapers/patio.webp, preview: /local/wallpapers/patio-small.webp }` under `shared_wallpapers`.
 

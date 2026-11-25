@@ -1,4 +1,5 @@
 import { normalizeSharedWallpaperPath, normalizeSharedWallpapers } from './shared-wallpapers.js';
+import { appearanceHelperChoices, normalizeAppearanceHelpers } from './appearance-helpers.js';
 import {
   BACKGROUNDS, classicRoomTitle, CUSTOM_ROOM_PREFIX, dashboardRoomMemberships, dashboardRoomOptions, DEFAULT_ROOM_TEMPERATURE_GRAPH_COLOR, DEVICE_ICONS, discoverRooms,
   isVisibleEntity, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
@@ -109,6 +110,10 @@ const WORDS = {
     appearance: 'Appearance', background: 'Wallpaper', layout: 'Room titles', shape: 'Button shape',
     wideAlignment: 'Align dashboard to the left on wide screens',
     appearanceSync: 'Save admin appearance choices for the household immediately',
+    appearanceHelpers: 'Household appearance helpers', appearanceSetting: 'Setting to share',
+    appearanceHelper: 'Input select helper', appearanceNotShared: 'Use locally',
+    appearanceHelperHint: 'Match the helper’s choices to dashboard settings. Members with access to the helper can share those choices.',
+    appearanceHelperEmpty: 'This helper has no reported choices.',
     sharedWallpaper: 'Shared photos', sharedWallpaperItem: 'Shared wallpaper', newWallpaper: 'New photo',
     wallpaperName: 'Photo name', wallpaperPath: 'Local image path', wallpaperPreview: 'Local thumbnail path (optional)',
     wallpaperHint: 'Use a photo served by this Home Assistant under /local/.',
@@ -252,6 +257,10 @@ const WORDS = {
     appearance: 'מראה', background: 'רקע', layout: 'שמות חדרים', shape: 'צורת כפתורים',
     wideAlignment: 'הצמדת הדשבורד לשמאל במסכים רחבים',
     appearanceSync: 'שמירה מיידית של בחירות מנהל הבית לכל הבית',
+    appearanceHelpers: 'עזרים למראה משותף', appearanceSetting: 'הגדרה לשיתוף',
+    appearanceHelper: 'עזר לבחירת אפשרות', appearanceNotShared: 'שימוש מקומי',
+    appearanceHelperHint: 'התאימו את אפשרויות העזר להגדרות הדשבורד. משתמשים עם גישה לעזר יוכלו לשתף את הבחירות האלה.',
+    appearanceHelperEmpty: 'העזר הזה אינו מדווח על אפשרויות.',
     sharedWallpaper: 'תמונות משותפות', sharedWallpaperItem: 'רקע משותף', newWallpaper: 'תמונה חדשה',
     wallpaperName: 'שם התמונה', wallpaperPath: 'נתיב התמונה המקומית', wallpaperPreview: 'נתיב תמונה ממוזערת (לא חובה)',
     wallpaperHint: 'בחרו תמונה ש־Home Assistant מגיש בנתיב שמתחיל ב־‎/local/‎.',
@@ -337,6 +346,7 @@ label.check { min-block-size: 42px; display: flex; align-items: center; }\
 details,fieldset { border: 1px solid var(--divider-color,#999); border-radius: 10px; padding: 8px 12px 12px; min-inline-size: 0; }\
 summary { padding-block: 8px; min-block-size: 24px; font-weight: 650; cursor: pointer; }\
 .stack { display: grid; gap: 12px; margin-block-start: 8px; }\
+.appearance-helper-options > .field > span { white-space: pre-wrap; overflow-wrap: anywhere; }\
 .grid { display: grid; gap: 10px; grid-template-columns: repeat(2,minmax(0,1fr)); }\
 .actions,.record { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }\
 .record { padding-block: 5px; border-block-end: 1px solid var(--divider-color,#999); }\
@@ -566,6 +576,9 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #lightEffectEntity = '';
   #lightEffectGroup = 0;
   #refreshLightEffects;
+  #refreshAppearanceHelpers;
+  #appearanceHelperSetting = 'background';
+  #appearanceHelperDrafts = new Map();
   #profileEditing;
   #profileDraftBody;
   #shortcutRoom;
@@ -599,13 +612,17 @@ export class Bayit9StrategyEditor extends HTMLElement {
       // Let the field finish editing before replacing the form.
       if (this.shadowRoot.activeElement) this.#registryRefreshPending = true;
       else this.render();
-    } else this.#refreshLightEffects?.();
+    } else {
+      this.#refreshLightEffects?.();
+      this.#refreshAppearanceHelpers?.();
+    }
   }
 
   setConfig(config) {
     this.#config = { type: 'custom:' + STRATEGY_NAME, ...config };
     const serialized = JSON.stringify(this.#config);
     if (serialized !== this.#lastConfig) {
+      this.#appearanceHelperDrafts.clear();
       this.#lastConfig = serialized;
       this.render();
     }
@@ -627,6 +644,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       detail: { config: this.#config }, bubbles: true, composed: true,
     }));
     if (Object.hasOwn(change, 'hidden_entities')) this.#refreshLightEffects?.(true);
+    if (Object.hasOwn(change, 'hidden_entities') || Object.hasOwn(change, 'shared_wallpapers')) this.#refreshAppearanceHelpers?.();
     if (Object.hasOwn(change, 'toolbar')) this.#refreshShortcutRoutes?.();
   }
 
@@ -2724,8 +2742,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
         const actions = node('div', { className:'actions' }, [save]);
         if (record) actions.append(button(words.removeWallpaper, () => {
           selected = '';
+          const remaining = photos.filter(photo => photo.id !== record.id);
+          const helpers = normalizeAppearanceHelpers(this.#config.appearance_helpers, remaining);
           this.#commit({
-            shared_wallpapers:photos.filter(photo => photo.id !== record.id),
+            shared_wallpapers:remaining,
+            ...(this.#config.appearance_helpers && { appearance_helpers:Object.keys(helpers).length ? helpers : undefined }),
             ...(this.#config.background === record.id && { background:'aurora' }),
           });
           updateBackground();
@@ -2741,6 +2762,87 @@ export class Bayit9StrategyEditor extends HTMLElement {
 
     return [field(words.background, background),
       disclosure(words.sharedWallpaper, this.#open.sharedWallpapers, open => { this.#open.sharedWallpapers = open; }, editList)];
+  }
+
+  #appearanceHelpersPanel(words, language) {
+    const panel = node('div', { className:'stack' });
+    const fields = [['background', words.background], ['shape', words.shape], ['layout', words.layout]];
+    const local = words.appearanceNotShared;
+    const photos = () => normalizeSharedWallpapers(this.#config.shared_wallpapers);
+    const bindings = () => normalizeAppearanceHelpers(this.#config.appearance_helpers, photos());
+    const store = (key, entity, options) => {
+      const current = bindings();
+      const next = normalizeAppearanceHelpers({ ...current, [key]:{ entity, options } }, photos());
+      if (JSON.stringify(current) !== JSON.stringify(next)) {
+        this.#commit({ appearance_helpers:Object.keys(next).length ? next : undefined });
+      }
+    };
+
+    let painted;
+    const draw = () => {
+      const key = this.#appearanceHelperSetting;
+      const current = bindings();
+      const selected = field => this.#appearanceHelperDrafts.get(field) ?? current[field]?.entity ?? '';
+      const entity = selected(key);
+      const occupied = new Set(fields.filter(([field]) => field !== key).map(([field]) => selected(field)));
+      const hidden = new Set(configuredIds(this.#config.hidden_entities));
+      const choices = entityOptions(this.#hass, new Set(['input_select'])).filter(([id]) => !occupied.has(id) &&
+        isVisibleEntity(id, this.#hass.states, this.#hass.entities, hidden));
+      const visible = choices.some(([id]) => id === entity);
+      const reported = visible ? this.#hass.states[entity]?.attributes?.options : undefined;
+      const helperChoices = new Set(Array.isArray(reported) ? reported.filter(value => typeof value === 'string' && value.trim()) : []);
+      const mapped = new Map(Object.entries(current[key]?.entity === entity ? current[key].options : {})
+        .map(([value, native]) => [native, value]));
+      const shared = photos();
+      const names = key === 'background' ? Object.fromEntries([
+        ...Object.entries(BACKGROUNDS).map(([id, labels]) => [id, labels[language]]),
+        ...shared.map(({ id, name }) => [id, name]),
+      ]) : key === 'shape' ? { soft:words.soft, circle:words.circle, square:words.square }
+        : { classic:words.classic, header:words.header };
+      const values = appearanceHelperChoices(key, shared).map(id => [id, names[id] ?? id]);
+      const signature = JSON.stringify([key, entity, choices, [...helperChoices], [...mapped], values]);
+      if (signature === painted) return;
+      painted = signature;
+      const focus = this.shadowRoot.activeElement?.dataset.appearanceHelperFocus;
+
+      const setting = select(fields, key);
+      setting.dataset.appearanceHelperFocus = 'setting';
+      setting.addEventListener('change', () => {
+        this.#appearanceHelperSetting = setting.value;
+        draw();
+      });
+      const helper = select([['', local], ...choices, ...(entity && !visible ? [[entity, entity + ' · ' + words.missing]] : [])], entity);
+      helper.dataset.appearanceHelperFocus = 'helper';
+      helper.addEventListener('change', () => {
+        this.#appearanceHelperDrafts.set(key, helper.value);
+        store(key, helper.value, {});
+        draw();
+      });
+      const assigned = new Set(mapped.values());
+      const rows = [...new Set([...helperChoices, ...mapped.keys()])].map(choice => {
+        const value = mapped.get(choice) ?? '';
+        const reportedChoice = helperChoices.has(choice);
+        const options = values.filter(([id]) => id === value || (reportedChoice && !assigned.has(id)));
+        const input = select([['', local], ...options], value);
+        input.dataset.appearanceHelperFocus = 'option:' + choice;
+        input.addEventListener('change', () => {
+          const next = new Map(mapped);
+          if (input.value) next.set(choice, input.value);
+          else next.delete(choice);
+          store(key, entity, Object.fromEntries([...next].map(([native, id]) => [id, native])));
+          draw();
+        });
+        return field(reportedChoice ? choice : choice + ' · ' + words.missing, input);
+      });
+      panel.replaceChildren(field(words.appearanceSetting, setting), field(words.appearanceHelper, helper),
+        node('div', { className:'stack appearance-helper-options' }, rows),
+        ...(entity && !rows.length ? [node('p', { textContent:words.appearanceHelperEmpty })] : []));
+      if (focus) [...panel.querySelectorAll('select')].find(input =>
+        input.dataset.appearanceHelperFocus === focus)?.focus({ preventScroll:true });
+    };
+    this.#refreshAppearanceHelpers = draw;
+    draw();
+    return [node('p', { textContent:words.appearanceHelperHint }), panel];
   }
 
   #popupLinksPanel(words, language) {
@@ -2847,6 +2949,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const pane = (text, key, build) => disclosure(text, this.#open[key], open => { this.#open[key] = open; }, build);
     const lightEffects = node('div');
     this.#refreshLightEffects = undefined;
+    this.#refreshAppearanceHelpers = undefined;
     const showLightEffects = () => {
       if (!lightEffects.childElementCount) {
         lightEffects.append(this.#lightEffectPanel(discoverRooms(this.#config, this.#hass, language), words));
@@ -2865,6 +2968,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
             enabled => this.#commit({wide_alignment:enabled ? 'left' : undefined})),
           checkbox(words.appearanceSync, this.#config.appearance_sync === true,
             value => this.#commit({appearance_sync:value})),
+          pane(words.appearanceHelpers, 'appearanceHelpers', () => this.#appearanceHelpersPanel(words, language)),
           checkbox(words.fullscreen, this.#config.fullscreen === true, value => this.#commit({fullscreen:value})),
         ])]),
       pane(words.toolbar, 'toolbar', () => [node('div', { className:'stack' }, [

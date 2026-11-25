@@ -1654,6 +1654,95 @@ async function assertPopupScrollMemory(browser) {
   }
 }
 
+async function assertAppearanceHelperEditor(browser) {
+  const labels = {
+    en:{ appearance:'Appearance', section:'Household appearance helpers', setting:'Setting to share',
+      helper:'Input select helper', photos:'Shared photos', photo:'Shared wallpaper', remove:'Remove photo' },
+    he:{ appearance:'מראה', section:'עזרים למראה משותף', setting:'הגדרה לשיתוף',
+      helper:'עזר לבחירת אפשרות', photos:'תמונות משותפות', photo:'רקע משותף', remove:'הסרת תמונה' },
+  };
+  const wallpaper = 'input_select.fixture_wallpaper';
+  const shape = 'input_select.fixture_shape';
+  const layout = 'input_select.fixture_layout';
+  const forest = ' Evening forest ';
+  const shared = 'shared-patio';
+  const helperState = (name, ...options) => ({state:options[0],attributes:{friendly_name:name,options}});
+  for (const [locale, words] of Object.entries(labels)) {
+    const page = await browser.newPage({viewport:{width:391,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    try {
+      await page.goto(base + '?editor&locale=' + locale);
+      const editor = page.locator('bayit-9-strategy-editor');
+      await editor.evaluate((element, { locale, wallpaper, shape, layout, shared, states }) => {
+        element.hass = { locale:{language:locale}, states, entities:{'input_select.hidden_registry':{hidden_by:'user'}} };
+        element.setConfig({ type:'custom:bayit-9', locale, hidden_entities:['input_select.hidden_dashboard'],
+          shared_wallpapers:[{id:shared,name:'Patio',path:'/local/patio.webp'}] });
+      },{locale,wallpaper,shape,layout,shared,states:{
+        [wallpaper]:helperState('Wallpaper',forest,'Shared patio','Original'),
+        [shape]:helperState('Buttons','Round buttons','Square buttons'),
+        [layout]:helperState('Rooms','Titles above','Classic titles'),
+        'input_select.hidden_registry':helperState('Hidden in HA','Hidden'),
+        'input_select.hidden_dashboard':helperState('Hidden on the dashboard','Hidden'),
+        'select.wrong_domain':helperState('Wrong domain','Invalid'),
+      }});
+      await editor.getByText(words.appearance,{exact:true}).tap();
+      assert.equal(await editor.getByRole('combobox',{name:words.setting,exact:true}).count(),0);
+      await editor.getByText(words.section,{exact:true}).tap();
+      const setting = editor.getByLabel(words.setting,{exact:true});
+      const helper = editor.getByLabel(words.helper,{exact:true});
+      const choice = value => editor.locator('select[data-appearance-helper-focus="option:' + value + '"]');
+      const mapping = () => page.evaluate(()=>window.latest?.appearance_helpers);
+      assert.deepEqual((await helper.locator('option').evaluateAll(options=>options.map(item=>item.value))).sort(),
+        ['',layout,shape,wallpaper].sort());
+      await helper.selectOption(wallpaper);
+      assert.equal(await mapping(),undefined);
+      assert.equal(await choice(forest).locator('option[value="personal"]').count(),0);
+      await choice(forest).selectOption('jade');
+      assert.deepEqual(await mapping(),{background:{entity:wallpaper,options:{jade:forest}}});
+      assert.equal(await choice('Original').locator('option[value="jade"]').count(),0);
+      await choice('Shared patio').selectOption(shared);
+      await choice('Original').selectOption('design_default');
+
+      await setting.selectOption('shape');
+      assert.equal(await helper.locator('option[value="' + wallpaper + '"]').count(),0);
+      await helper.selectOption(shape);
+      await choice('Round buttons').selectOption('circle');
+      await setting.selectOption('layout');
+      await helper.selectOption(layout);
+      await choice('Titles above').selectOption('header');
+      const expected = {
+        background:{entity:wallpaper,options:{jade:forest,[shared]:'Shared patio',design_default:'Original'}},
+        shape:{entity:shape,options:{circle:'Round buttons'}},
+        layout:{entity:layout,options:{header:'Titles above'}},
+      };
+      assert.deepEqual(await mapping(),expected);
+
+      const draft = await page.evaluate(()=>window.latest);
+      await editor.evaluate((element, config) => {
+        element.setConfig({type:'custom:bayit-9'});
+        element.setConfig(config);
+      },draft);
+      await setting.selectOption('background');
+      assert.equal(await helper.inputValue(),wallpaper);
+      assert.equal(await choice(forest).inputValue(),'jade');
+      assert.equal(await choice('Shared patio').inputValue(),shared);
+      await editor.getByText(words.photos,{exact:true}).tap();
+      await editor.getByLabel(words.photo,{exact:true}).selectOption(shared);
+      await editor.getByRole('button',{name:words.remove,exact:true}).tap();
+      const next = { ...expected, background:{entity:wallpaper,options:{jade:forest,design_default:'Original'}} };
+      assert.deepEqual(await mapping(),next);
+      await setting.selectOption('layout');
+      await helper.selectOption('');
+      delete next.layout;
+      assert.deepEqual(await mapping(),next);
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.calls.filter(call=>
+        ['call_service','lovelace/config/save'].includes(call.type))),[]);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertSharedAppearance(browser) {
   const url = base + '/fixture-home/home?configuration&shared-appearance=' + browser.browserType().name();
   const device = { viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: 'reduce' };
@@ -8653,6 +8742,7 @@ try {
 
       await assertHomePreferenceAliases(browser);
       await assertSharedAppearance(browser);
+      await assertAppearanceHelperEditor(browser);
       await assertPopupPageLifecycle(browser);
       console.log(engine + ': room popup motion pauses safely when leaving the phone app');
       await assertClippedRoomOrigin(browser);
