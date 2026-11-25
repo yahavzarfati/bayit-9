@@ -64,7 +64,7 @@ const WORDS = {
     calendarMonth: 'Show month in the date column', calendarEventDetails: 'Open event details when tapped',
     calendarWeather: 'Daily forecast beside dates', calendarNoWeather: 'No forecast',
     calendarAccent: 'Calendar accent', calendarInvalidAccent: 'Enter a six-digit color such as #80BFFF.',
-    compactStatus: 'Show status items side by side',
+    compactStatus: 'Show status items side by side', compactSecurityLocks: 'Show compact lock controls',
     compactAutomationActions: 'Show compact action buttons',
     weatherReadingsList: 'Show readings as a compact read-only list',
     hourlyForecast: 'Show the 24-hour forecast above the daily forecast',
@@ -136,7 +136,7 @@ const WORDS = {
     calendarMonth: 'הצגת החודש בטור התאריך', calendarEventDetails: 'פתיחת פרטי אירוע בלחיצה',
     calendarWeather: 'תחזית יומית ליד התאריך', calendarNoWeather: 'ללא תחזית',
     calendarAccent: 'צבע היומן', calendarInvalidAccent: 'הזינו צבע בן שש ספרות, למשל ‎#80BFFF‎.',
-    compactStatus: 'הצגת פריטי הסטטוס זה לצד זה',
+    compactStatus: 'הצגת פריטי הסטטוס זה לצד זה', compactSecurityLocks: 'הצגת פקדי נעילה קומפקטיים',
     compactAutomationActions: 'הצגת כפתורי פעולה קומפקטיים',
     weatherReadingsList: 'הצגת המדדים ברשימה קומפקטית לקריאה בלבד',
     hourlyForecast: 'הצגת תחזית ל־24 שעות מעל התחזית היומית',
@@ -682,7 +682,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     if (supportsCompactToolbarStatus(kind, active)) {
       const compact = node('input', { type: 'checkbox', checked: isCompactToolbarStatus(kind, active) });
       compact.addEventListener('change', () => changeSection({ layout: compact.checked ? 'compact' : undefined }));
-      fields.push(node('label', { className: 'check' }, [compact, words.compactStatus]));
+      fields.push(node('label', { className:'check' }, [compact, kind === 'security' ? words.compactSecurityLocks : words.compactStatus]));
     }
     if (supportsToolbarReadouts(kind, active)) {
       const readouts = node('input', { type: 'checkbox', checked: isToolbarReadouts(kind, active) });

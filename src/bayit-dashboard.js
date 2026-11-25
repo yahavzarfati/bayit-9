@@ -1881,7 +1881,7 @@ export class BayitDashboard extends HTMLElement {
       make, button, icon, label, t: key => this.t(key),
       modelFor: item => this.model(item), stateLabel: model => this.stateLabel(model, type === 'overview' ? 'overview' : undefined),
       moreInfo: (item, source) => this.moreInfo(item, source), pending: entity => this.pending.has(entity),
-      request: (item, action, value, source) => this.requestAction(item, action, value, source),
+      request: (item, action, value, source, options) => this.requestAction(item, action, value, source, options),
       turnOffEntities: (entities, name) => this.turnOffEntities(entities, name),
       buildDevice: (item, slot, presentation) => this.buildDevice(item, slot, undefined, undefined, presentation),
       graphDestination: item => {

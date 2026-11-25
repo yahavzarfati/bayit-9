@@ -4,7 +4,7 @@ import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
 import { discoverOverviewEntities, isActiveOverviewEntity, isCompactAutomationActions, isCompactToolbarStatus, isEnergyReadingCards,
   isToolbarLightTile, isToolbarReadoutEntity, isToolbarReadouts, isVisibleEntity, isWeatherReadingsList } from './strategy-model.js';
 import { mediaServiceRegistered } from './media-device-support.mjs';
-import { roomShutdownTargets } from './device-control.mjs';
+import { compactRoomLockCommand, roomShutdownTargets } from './device-control.mjs';
 import { calendarAgendaStyles, createCalendarAgenda } from './calendar-agenda.js';
 import { bindDeviceDetails } from './popup-motion.js';
 import { comparisonSources, createTemperatureComparison, temperatureComparisonStyles } from './temperature-comparison-view.js';
@@ -513,26 +513,36 @@ export function createToolbarPanel(kind, configuration, context) {
 
   function renderCompactLock(item) {
     const row = make('div', 'compact-status-lock');
+    const securityLock = kind === 'security';
     const details = renderTile(item, 'status');
     bindDeviceDetails(details, () => moreInfo(item, details));
     const change = button('control-button compact-lock-action', t('lock'), 'mdi:lock-outline', true);
     const changeIcon = change.querySelector('ha-icon');
     const availableAction = model => {
+      if (securityLock) {
+        const hass = context.getHass();
+        return isVisibleEntity(item.entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities)
+          ? compactRoomLockCommand(model) : undefined;
+      }
       const action = model.state === 'locked' ? 'unlock' : model.state === 'unlocked' ? 'lock' : undefined;
       return action && model.actions[action] ? action : undefined;
     };
     change.onclick = () => {
       const action = availableAction(modelFor(item));
-      if (action) request(item, action, undefined, change);
+      if (action) request(item, action, undefined, change, securityLock ? { compactDevice:true } : undefined);
     };
     handlers.push(() => {
       const model = modelFor(item);
       const action = availableAction(model);
-      const busy = pending(item.entity);
+      const transitioning = securityLock && model.available && (model.state === 'locking' || model.state === 'unlocking');
+      const busy = pending(item.entity) || transitioning;
       change.disabled = !action || busy;
       change.setAttribute('aria-busy', String(busy));
-      label(change, t(action || 'lock') + ' · ' + model.name);
-      changeIcon.setAttribute('icon', action === 'unlock' ? 'mdi:lock-open-variant-outline' : 'mdi:lock-outline');
+      const caption = action ? t(action) : securityLock ? stateLabel(model) : t('lock');
+      label(change, caption + ' · ' + model.name);
+      change.toggleAttribute('data-lock-transition', transitioning);
+      changeIcon.setAttribute('icon', transitioning ? 'mdi:lock-clock'
+        : action === 'unlock' ? 'mdi:lock-open-variant-outline' : 'mdi:lock-outline');
     });
     row.append(details, change);
     return row;
@@ -970,6 +980,8 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .compact-status-lock > .tile-row { min-width: 0; padding-inline: 2px; border: 0; background: transparent; }
   .compact-status-lock .tile-mark { width: 28px; height: 28px; }
   .compact-lock-action { padding: 4px; }
+  .toolbar-section[data-section=locks][data-layout=compact] .compact-status-lock { grid-column: 1 / -1; }
+  .compact-lock-action[data-lock-transition]:disabled { color: var(--lock-pending-ink,#fbbf24); opacity: 1; }
   .tile-row { display: grid; justify-items: center; align-content: center; gap: 5px; min-height: 80px; width: 100%;
     padding: 8px 6px; border: 1px solid var(--soft-line); border-radius: 12px; background: var(--control); text-align: center; }
   .toolbar-section[data-layout=compact-actions] :is(.toolbar-section-items,.script-toggle) > .tile-row {

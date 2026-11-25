@@ -369,7 +369,7 @@ const hass = {
         card.hass = { ...hass, states: { ...states } };
       }
     }
-    if (request.domain === 'lock' && query.has('compact-entrance-status')) {
+    if (request.domain === 'lock' && (query.has('compact-entrance-status') || query.has('security-compact-locks'))) {
       const id = request.target.entity_id;
       states[id] = { ...states[id], state: request.service === 'lock' ? 'locked' : 'unlocked' };
       card.hass = { ...hass, states: { ...states } };
@@ -645,6 +645,10 @@ if (query.has('heater-level')) {
   });
   hass.entities[heaterFan] = { area_id: 'studio' };
 }
+if (query.has('security-compact-locks')) Object.assign(states, {
+  'lock.fixture_security': { state:'locked', attributes:{ friendly_name:'Fixture lock' } },
+  'sensor.fixture_lock_battery': { state:'89', attributes:{ friendly_name:'Fixture battery', unit_of_measurement:'%' } },
+});
 if (query.has('toolbar-panels')) {
   if (query.has('security-cover-rail')) Object.assign(states, {
     'cover.demo_security_first': { state: 'closed', attributes: { friendly_name: 'West shade', supported_features: 15, current_position: 0 } },
@@ -3113,6 +3117,107 @@ async function assertToolbarPressAcrossReplacement(browser) {
     }
   } finally {
     await page.close();
+  }
+}
+
+async function assertCompactSecurityLocks(browser) {
+  const languages = {
+    en:{ appearance:'Appearance', setup:'Customize home', toolbar:'Toolbar and extra screens', security:'Security',
+      section:'Entry locks', setting:'Show compact lock controls', save:'Save dashboard', close:'Close',
+      lock:'Lock', unlock:'Unlock', locking:'Locking', unlocking:'Unlocking', confirm:'Confirm' },
+    he:{ appearance:'מראה', setup:'התאמת הבית', toolbar:'סרגל ומסכים נוספים', security:'אבטחה',
+      section:'מנעולי הבית', setting:'הצגת פקדי נעילה קומפקטיים', save:'שמירת הדשבורד', close:'סגירה',
+      lock:'נעילה', unlock:'פתיחת מנעול', locking:'ננעל', unlocking:'משתחרר', confirm:'אישור' },
+  };
+  for (const [locale, words] of Object.entries(languages)) {
+    const page = await browser.newPage({ viewport:{width:320,height:756}, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      const url = base + '/fixture-home/home?configuration&security-compact-locks&native-more-info=modern&locale=' + locale;
+      await page.addInitScript(toolbar => {
+        const key = 'bayit9-browser-fixture';
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key,
+          JSON.stringify({strategy:{type:'custom:bayit-9',toolbar}}));
+      }, [{ id:'security', kind:'security', label:words.security,
+        sections:[{id:'entry-lock',kind:'locks',title:words.section,entities:[
+          {entity:'lock.fixture_security',role:'lock',confirmation:true},
+          {entity:'sensor.fixture_lock_battery',role:'status'},
+        ]}] }, { id:'settings',kind:'settings' }]);
+
+      const button = (surface, name) => surface.getByRole('button', {name, exact:true});
+      const panel = page.getByRole('dialog',{name:words.security,exact:true});
+      const open = async () => {
+        await button(page, words.security).tap();
+        await panel.waitFor();
+      };
+      const confirm = page.locator('dialog.confirm');
+      const command = panel.locator('.compact-lock-action');
+      const patchState = state => page.evaluate(state => window.bayitTest.setRoomState('lock.fixture_security',state), state);
+      const calls = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service'));
+      await page.goto(url);
+      await open();
+      assert.equal(await command.count(),0);
+      assert.equal(await panel.locator('.device[data-entity="lock.fixture_security"] [data-action]').count(),2);
+      await button(panel, words.close).tap();
+      await panel.waitFor({state:'hidden'});
+
+      await button(page, words.appearance).tap();
+      await button(page, words.setup).tap();
+      const setup = page.getByRole('dialog',{name:words.setup,exact:true});
+      await setup.getByText(words.toolbar,{exact:true}).tap();
+      await button(setup, words.security).tap();
+      await button(setup, words.section).tap();
+      const option = setup.getByRole('checkbox',{name:words.setting,exact:true});
+      assert.equal(await option.isChecked(),false);
+      await option.check();
+      await button(setup, words.save).tap();
+      await setup.waitFor({state:'hidden'});
+      await page.reload();
+      const persisted = await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.toolbar[0].sections[0]);
+      assert.equal(persisted.layout,'compact');
+      assert.equal(persisted.entities.length,2);
+      await open();
+      assert.ok(await panel.getByRole('button',{name:/Fixture battery.*89/}).isVisible());
+      assert.equal(await command.count(),1);
+      assert.equal(await command.getAttribute('aria-label'), words.unlock + ' · Fixture lock');
+      assert.ok(await command.evaluate(command=>command.offsetWidth >= 44 && command.offsetHeight >= 44));
+      assert.deepEqual(await calls(),[]);
+
+      for (const state of ['locking','unlocking']) {
+        await patchState(state);
+        await button(panel, words[state] + ' · Fixture lock').and(command.locator(':scope:disabled')).waitFor();
+        assert.equal(await command.getAttribute('data-lock-transition'), '');
+        assert.equal(await command.getAttribute('aria-busy'),'true');
+        assert.equal(await command.locator('ha-icon').getAttribute('icon'),'mdi:lock-clock');
+        await command.evaluate(element => element.click());
+        assert.deepEqual(await calls(),[]);
+      }
+
+      await patchState('locked');
+      await button(panel, words.unlock + ' · Fixture lock').tap();
+      await confirm.waitFor();
+      await patchState('unlocking');
+      await panel.locator('.compact-lock-action[data-lock-transition]:disabled').waitFor();
+      await button(confirm,words.confirm).tap();
+      await confirm.waitFor({state:'hidden'});
+      assert.deepEqual(await calls(),[]);
+
+      await patchState('locked');
+      await button(panel, words.unlock + ' · Fixture lock').tap();
+      await button(confirm, words.confirm).tap();
+      await button(panel, words.lock + ' · Fixture lock').waitFor();
+      assert.deepEqual(await calls(),[{ type:'call_service',domain:'lock',service:'unlock',service_data:{},
+        target:{entity_id:'lock.fixture_security'} }]);
+
+      await page.evaluate(() => window.bayitTest.setFixtureAttributes('lock.fixture_security',{code_format:'^[0-9]+$'}));
+      await patchState('locked');
+      await button(panel, words.unlock + ' · Fixture lock').tap();
+      await button(confirm, words.confirm).tap();
+      await page.waitForFunction(() => window.bayitTest.moreInfoCalls.includes('lock.fixture_security'));
+      assert.equal((await calls()).length,1,'PIN details use the native dialog without another service call');
+    } finally {
+      await page.close();
+    }
   }
 }
 
@@ -7737,6 +7842,7 @@ try {
       await guardedRail.close();
       console.log(engine + ': Security cover rails at 320–390 px, exact native details, endpoint and latest confirmation');
       await assertReportedCoverMotion(browser);
+      await assertCompactSecurityLocks(browser);
 
       const groupOffPage = await browser.newPage({ viewport:{width:320,height:845}, hasTouch:true, reducedMotion:'reduce' });
       groupOffPage.setDefaultTimeout(8000);

@@ -1732,6 +1732,21 @@ test('an optional Sensors comparison retains only valid graph colors and bounded
   }
 });
 
+test('compact lock controls are opt-in for Security lock sections and retain battery items', () => {
+  const hass = home();
+  hass.states['lock.test_entry'] = { state:'locked', attributes:{} };
+  hass.states['sensor.test_battery'] = { state:'89', attributes:{ unit_of_measurement:'%' } };
+  const entities = [{ entity:'lock.test_entry', role:'lock' }, { entity:'sensor.test_battery', role:'status' }];
+  const config = { toolbar:[{ kind:'security', sections:[
+    { kind:'locks', layout:'compact', entities },
+    { kind:'locks', entities },
+    { kind:'status', layout:'compact', entities },
+  ] }] };
+  const [{ sections }] = generateDashboard(config, hass).views[0].cards[0].toolbar;
+  assert.deepEqual(sections.map(section => section.layout), ['compact', undefined, undefined]);
+  assert.deepEqual(sections[0].entities.map(({entity,role}) => ({entity,role})), entities);
+});
+
 test('Security readouts require the explicit status layout and supported source entity and state types', () => {
   const hass = home();
   const binary = 'binary_sensor.fixture_signal';

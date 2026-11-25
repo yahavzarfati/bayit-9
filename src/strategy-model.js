@@ -818,7 +818,8 @@ export function isCompactAutomationActions(kind, section) {
 }
 
 export function supportsCompactToolbarStatus(kind, section) {
-  return (kind === 'devices' || kind === 'overview') && section?.kind === 'status';
+  return ((kind === 'devices' || kind === 'overview') && section?.kind === 'status') ||
+    (kind === 'security' && section?.kind === 'locks');
 }
 
 export function isCompactToolbarStatus(kind, section) {
