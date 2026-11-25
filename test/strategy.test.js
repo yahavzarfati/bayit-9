@@ -86,6 +86,28 @@ test('Overview discovers active covers as status rows, honoring exclusions, visi
   assert.deepEqual(visible(true), ['added_later','closing','open','opening','stopped'].map(name => ['cover.' + name, 'status']));
 });
 
+test('Overview group off is opt-in for active light discovery or selected light actions only', () => {
+  const hass = home();
+  const setting = { turn_off_active_lights: true };
+  const status = { ...setting, kind:'status', filter:'active' };
+  const light = { entity:'light.demo_lamp', role:'action' };
+  const { toolbar } = generateDashboard({ toolbar: [
+    {kind:'overview', sections: [
+      {...status, discover:{domain:'light'}},
+      {...status, entities:[light]},
+      {...status, discover:{domain:'cover'}, entities:[light]},
+      {...status, filter:undefined, entities:[light]},
+      {...status, entities:[{...light,role:'status'}]},
+      {...status, kind:'covers', entities:[light]},
+      {...status, discover:{domain:'light'}, turn_off_active_lights:undefined},
+    ]},
+    {kind:'security', sections:[{...status,entities:[light]}]},
+  ] }, hass).views[0].cards[0];
+  assert.deepEqual(toolbar[0].sections.map(section => section.turn_off_active_lights),
+    [true,true,undefined,undefined,undefined,undefined,undefined]);
+  assert.equal(toolbar[1].sections[0].turn_off_active_lights, undefined);
+});
+
 test('normalizes only visible media remote targets on Media destinations', () => {
   const hass = home();
   Object.assign(hass.states, {

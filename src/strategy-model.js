@@ -306,15 +306,25 @@ export function normalizeOverviewDiscovery(value) {
   return { domain, exclude_entities: [...new Set(exclude_entities)], exclude_id_contains: [...new Set(exclude_id_contains)] };
 }
 
+export function supportsOverviewLightsOff(kind, section) {
+  if (kind !== 'overview' || section.kind !== 'status') return false;
+  const source = normalizeOverviewDiscovery(section.discover);
+  if (source) return source.domain === 'light';
+  return section.filter === 'active' && Array.isArray(section.entities) &&
+    section.entities.some(item => item?.role === 'action' && idForDomain(item.entity, 'light'));
+}
+
 export function overviewSectionOptions(kind, section) {
   if (kind !== 'overview') return {};
   const discover = normalizeOverviewDiscovery(section.discover);
+  const lightsOff = section.turn_off_active_lights === true && supportsOverviewLightsOff(kind, section)
+    ? { turn_off_active_lights: true } : {};
   if (discover && (section.kind === 'status' || section.kind === 'covers' && discover.domain === 'cover')) {
-    return { discover, filter: 'active', ...(discover.domain === 'cover' && section.include_closing === true &&
+    return { ...lightsOff, discover, filter: 'active', ...(discover.domain === 'cover' && section.include_closing === true &&
       { include_closing: true }) };
   }
   return section.filter === 'active' && ['status', 'covers'].includes(section.kind) && section.include_closing === true
-    ? { include_closing: true } : {};
+    ? { ...lightsOff, include_closing: true } : lightsOff;
 }
 
 export function isActiveOverviewEntity(entity, source, hass, hidden, includeClosing = false) {

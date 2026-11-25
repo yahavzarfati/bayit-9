@@ -1,7 +1,7 @@
 import {
   discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactToolbarStatus, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
   normalizeOverviewDiscovery, overviewSectionOptions, roomPanelOptions, selectableRoomEntities,
-  supportsCompactToolbarStatus, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
+  supportsCompactToolbarStatus, supportsOverviewLightsOff, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
 } from './strategy-model.js';
 import { normalizeOrefMap, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
@@ -27,6 +27,7 @@ const WORDS = {
     showHeading: 'Show section title', addSection: 'Add section', editSection: 'Edit section', sectionDisplay: 'Section display',
     overviewSource: 'Device source', overviewDiscover: 'Discover active lights', overviewExcluded: 'Exclude these lights',
     overviewDiscoverCovers: 'Discover active covers', overviewExcludedCovers: 'Exclude these covers',
+    overviewLightsOff: 'Show a button to turn off these lights',
     overviewExcludedIds: 'Exclude by text in entity ID', overviewInvalidIds: 'Enter up to 16 comma-separated ID fragments.',
     overviewActiveOnly: 'Show active devices only', overviewClosing: 'Include closing covers',
     deviceLabel: 'Device label', deviceRole: 'Display as', editDevice: 'Edit device display',
@@ -80,6 +81,7 @@ const WORDS = {
     showHeading: 'הצגת כותרת הקבוצה', addSection: 'הוספת קבוצה', editSection: 'עריכת קבוצה', sectionDisplay: 'תצוגת הקבוצה',
     overviewSource: 'מקור המכשירים', overviewDiscover: 'גילוי אורות דולקים', overviewExcluded: 'אורות להחרגה',
     overviewDiscoverCovers: 'גילוי תריסים ווילונות פעילים', overviewExcludedCovers: 'תריסים ווילונות להחרגה',
+    overviewLightsOff: 'הצגת כפתור לכיבוי המנורות בקבוצה',
     overviewExcludedIds: 'החרגה לפי חלק ממזהה הישות', overviewInvalidIds: 'הזינו עד 16 קטעי מזהה מופרדים בפסיקים.',
     overviewActiveOnly: 'הצגת מכשירים פעילים בלבד', overviewClosing: 'הצגת תריסים בזמן סגירה',
     deviceLabel: 'תווית המכשיר', deviceRole: 'אופן התצוגה', editDevice: 'עריכת תצוגת המכשיר',
@@ -499,6 +501,11 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       const closing = node('input', { type: 'checkbox', checked: active.include_closing === true });
       closing.addEventListener('change', () => changeSection({ include_closing: closing.checked ? true : undefined }));
       fields.push(node('label', { className: 'check' }, [closing, words.overviewClosing]));
+    }
+    if (supportsOverviewLightsOff('overview', active)) {
+      const turnOff = node('input', { type: 'checkbox', checked: active.turn_off_active_lights === true });
+      turnOff.addEventListener('change', () => changeSection({ turn_off_active_lights: turnOff.checked ? true : undefined }));
+      fields.push(node('label', { className: 'check' }, [turnOff, words.overviewLightsOff]));
     }
     return fields;
   }

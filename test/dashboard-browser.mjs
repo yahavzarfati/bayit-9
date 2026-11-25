@@ -166,7 +166,8 @@ const hass = {
       sessionStorage.setItem(storedKey + '-hash-at-save', location.hash);
       return Promise.resolve();
     }
-    if (request.domain === 'homeassistant' && request.service === 'turn_off' && query.has('room-shutdown')) {
+    if (request.domain === 'homeassistant' && request.service === 'turn_off' &&
+        (query.has('room-shutdown') || query.has('overview-lights-off') || query.has('overview-lights-off-selected'))) {
       return new Promise((resolve, reject) => {
         finishRoomOff = failed => {
           if (failed) return reject(new Error('Fixture rejected room shutdown'));
@@ -309,6 +310,13 @@ if (query.has('overview-opt-in')) {
   }
   states['cover.demo_overview_window'] = { state: 'closing', attributes: { friendly_name: 'Overview cover', supported_features: 15 } };
   hass.entities['cover.demo_overview_window'] = {};
+  if (query.has('overview-lights-off-selected')) {
+    for (const id of ['selected','read_only','protected','unrelated']) {
+      states['light.demo_' + id] = { state:'on', attributes:{ friendly_name:id, supported_color_modes:['onoff'] } };
+      hass.entities['light.demo_' + id] = {};
+    }
+    states['switch.demo_heater'].state = 'on';
+  }
   if (query.has('overview-readings')) {
     Object.assign(states['light.demo_dining'].attributes, { supported_color_modes: ['brightness'], brightness: 128 });
     states['climate.demo_overview_air'] = { state: 'cool', attributes: {
@@ -617,8 +625,14 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
 } : query.has('overview-opt-in') ? {
   hidden_entities: ['light.demo_dashboard_hidden'],
   toolbar: [{kind:'overview',sections:[
-    {kind:'status',title:'Discovered lighting',discover:{domain:'light',
+    {kind:'status',title:'Discovered lighting',turn_off_active_lights:query.has('overview-lights-off'),discover:{domain:'light',
       exclude_entities:['light.demo_excluded'],exclude_id_contains:['helper']},entities:['light.demo_lamp']},
+    ...(query.has('overview-lights-off-selected') ? [{kind:'status',title:'Selected lighting',filter:'active',
+      turn_off_active_lights:true,entities:[
+        {entity:'light.demo_dining',role:'action'}, {entity:'light.demo_selected',role:'action'},
+        {entity:'light.demo_read_only',role:'status'}, {entity:'light.demo_protected',role:'action',confirmation:true},
+        {entity:'switch.demo_heater',role:'action'},
+      ]}] : []),
     {kind:'covers',title:'Closing status',filter:'active',include_closing:true,entities:[
       {entity:'cover.demo_overview_window',role:'status'}]},
     {kind:'covers',title:'Default covers',filter:'active',entities:[
@@ -3524,6 +3538,57 @@ try {
       }
       console.log(engine + ': Security cover rails at 320–390 px, exact native details and independent controls');
 
+      const groupOffPage = await browser.newPage({ viewport:{width:320,height:845}, hasTouch:true, reducedMotion:'reduce' });
+      groupOffPage.setDefaultTimeout(8000);
+      const offOverviewName = rightToLeft ? 'מבט על הבית' : 'Home overview';
+      const offLabel = rightToLeft ? 'כיבוי המנורות' : 'Turn off lights';
+      const offOverview = groupOffPage.getByRole('dialog',{name:offOverviewName,exact:true});
+      const offUrl = base + '/fixture-home/home?overview-opt-in&locale=' + (rightToLeft ? 'he' : 'en');
+      const callsForGroup = () => groupOffPage.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service'));
+      for (const selected of [false,true]) {
+        await groupOffPage.goto(offUrl + (selected ? '&overview-lights-off-selected' : '&overview-lights-off'));
+        await groupOffPage.getByRole('button',{name:offOverviewName,exact:true}).tap();
+        const caption = selected ? 'Selected lighting' : 'Discovered lighting';
+        const section = offOverview.locator('.toolbar-section').filter({
+          has: groupOffPage.getByRole('heading',{name:caption,exact:true}),
+        });
+        const groupOff = section.getByRole('button',{name:offLabel + ' · ' + caption,exact:true});
+        await section.waitFor();
+        if (!selected) {
+          assert.equal(await groupOff.count(),0);
+          await groupOffPage.evaluate(() =>
+            window.bayitTest.setDiscoveredLight('light.demo_second','Second active light',{}));
+          await groupOff.waitFor();
+          await groupOff.evaluate(button => {
+            button.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true}));
+            window.bayitTest.setDiscoveredLight('light.demo_new','New active light',{});
+            window.bayitTest.setRoomState('light.demo_second','off');
+          });
+          await section.getByText('New active light',{exact:true}).waitFor();
+          await groupOff.evaluate(button => button.click());
+        }
+        await groupOff.waitFor();
+        assert.equal(await offOverview.locator('.overview-lights-off:visible').count(),1);
+        const bounds = await groupOff.boundingBox();
+        assert.ok(bounds.width >= 44 && bounds.height >= 44);
+        assert.deepEqual(await callsForGroup(),[]);
+        await groupOff.tap();
+        assert.equal(await groupOff.getAttribute('aria-busy'),'true');
+        await groupOff.evaluate(button => button.click());
+        assert.deepEqual(await callsForGroup(),[{
+          type:'call_service',domain:'homeassistant',service:'turn_off',service_data:{},
+          target:{entity_id:['light.demo_dining',selected ? 'light.demo_selected' : 'light.demo_new']},
+        }]);
+        await groupOffPage.evaluate(() => window.bayitTest.finishRoomOff(false));
+        await groupOff.waitFor({state:'hidden'});
+        if (selected) {
+          await section.getByText('read_only',{exact:true}).waitFor();
+          await section.getByText('protected',{exact:true}).waitFor();
+        }
+      }
+      await groupOffPage.close();
+      console.log(engine + ': active-light group Off targets the exact visible eligible set and rejects a changed gesture');
+
       const coverDiscovery = await browser.newPage({ viewport: { width: 391, height: 845 }, hasTouch: true, reducedMotion: 'reduce' });
       coverDiscovery.setDefaultTimeout(8000);
       const coverDiscoveryUrl = base + '?overview-opt-in&overview-cover-discovery';
@@ -3687,6 +3752,10 @@ try {
       await overviewEditor.getByRole('button', { name: 'Discovered lighting', exact: true }).tap();
       const lightSource = overviewEditor.getByLabel('Device source', { exact: true });
       assert.equal(await lightSource.inputValue(), 'light');
+      const groupOffOption = overviewEditor.getByLabel('Show a button to turn off these lights',{exact:true});
+      assert.equal(await groupOffOption.isChecked(),false);
+      await groupOffOption.check();
+      assert.equal(await overviewEditor.evaluate(() => window.latest.toolbar[0].sections[0].turn_off_active_lights),true);
       await overviewEditor.getByLabel('Exclude these lights', { exact: true }).selectOption(['light.demo_excluded', 'light.demo_dining']);
       const fragments = overviewEditor.getByLabel('Exclude by text in entity ID', { exact: true });
       await fragments.fill('unsafe.*');
@@ -3703,6 +3772,7 @@ try {
       assert.equal(await overviewEditor.evaluate(() => window.latest.toolbar[0].sections[0].discover), undefined);
       await lightSource.selectOption('light');
       await overviewEditor.getByRole('button', { name: 'Default covers', exact: true }).tap();
+      assert.equal(await groupOffOption.count(),0);
       const closingOption = overviewEditor.getByLabel('Include closing covers', { exact: true });
       assert.equal(await closingOption.isChecked(), false);
       await closingOption.check();

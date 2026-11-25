@@ -3,6 +3,7 @@ import { createVacuumMap } from './vacuum-map.js';
 import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
 import { discoverOverviewEntities, isActiveOverviewEntity, isCompactToolbarStatus, isToolbarLightTile, isVisibleEntity } from './strategy-model.js';
 import { mediaServiceRegistered } from './media-device-support.mjs';
+import { roomShutdownTargets } from './device-control.mjs';
 import { calendarAgendaStyles, createCalendarAgenda } from './calendar-agenda.js';
 import { bindDeviceDetails } from './popup-motion.js';
 
@@ -278,7 +279,51 @@ export function createToolbarPanel(kind, configuration, context) {
     return host;
   }
 
-  function discoveredOverviewSection(panel, items, { discover: source, include_closing: includeClosing }) {
+  function overviewLightsOff(section, caption) {
+    const name = caption || t('room_lights');
+    const control = button('control-button overview-lights-off', t('overview_lights_off'), 'mdi:lightbulb-off-outline');
+    label(control, t('overview_lights_off') + ' · ' + name);
+    let shown = [];
+    let captured;
+    const targetsFor = (devices, hass) => {
+      const states = hass?.states ?? {};
+      const lights = devices.filter(item => item.role === 'action' && domain(item) === 'light' &&
+        states[item.entity]?.state === 'on' && isVisibleEntity(item.entity, states, hass?.entities, context.hiddenEntities));
+      return [...new Set(roomShutdownTargets(lights, states))].sort();
+    };
+    const capture = () => { captured = shown; };
+    const clear = () => { captured = undefined; };
+    control.addEventListener('pointerdown', capture);
+    control.addEventListener('pointercancel', clear);
+    control.addEventListener('blur', clear);
+    control.addEventListener('keydown', event => {
+      if (!event.repeat && ['Enter', ' '].includes(event.key)) capture();
+    });
+    control.onclick = () => {
+      const observed = captured ?? shown;
+      clear();
+      if (!live || !dialog?.open || dialog.hasAttribute('data-closing') || !control.isConnected || observed.length < 2) return;
+      const hass = context.getHass();
+      const devices = section.discover
+        ? discoverOverviewEntities(section.discover, hass, context.hiddenEntities, context.locale)
+        : section.entities;
+      const latest = targetsFor(devices, hass);
+      if (latest.length !== observed.length || latest.some((id, index) => id !== observed[index] || pending(id))) return;
+      return context.turnOffEntities(latest, name);
+    };
+    return {
+      control,
+      update(devices) {
+        shown = targetsFor(devices, currentHass);
+        const busy = shown.some(pending);
+        control.hidden = shown.length < 2;
+        control.disabled = control.hidden || busy;
+        control.setAttribute('aria-busy', String(busy));
+      },
+    };
+  }
+
+  function discoveredOverviewSection(panel, items, { discover: source, include_closing: includeClosing }, lightsOff) {
     const tiles = new Map();
     const allowed = entity => isActiveOverviewEntity(entity, source, context.getHass(), context.hiddenEntities, includeClosing);
     handlers.push(() => {
@@ -305,6 +350,7 @@ export function createToolbarPanel(kind, configuration, context) {
         else items.insertBefore(view.tile, cursor);
       }
       panel.hidden = devices.length === 0;
+      lightsOff?.update(devices);
     });
   }
 
@@ -476,9 +522,15 @@ export function createToolbarPanel(kind, configuration, context) {
     if (kind === 'overview' && !compactStatus && section.filter === 'active' &&
         ['status', 'covers'].includes(section.kind)) panel.dataset.overviewActiveRows = '';
     const caption = section.title ?? t(sectionKeys[section.kind] ?? 'room_devices');
-    if (caption) panel.append(make('h3', 'toolbar-section-title', caption));
+    const lightsOff = section.turn_off_active_lights ? overviewLightsOff(section, caption) : undefined;
+    const heading = lightsOff ? make('div', 'overview-active-heading') : panel;
+    if (caption) heading.append(make('h3', 'toolbar-section-title', caption));
+    if (lightsOff) {
+      heading.append(lightsOff.control);
+      panel.append(heading);
+    }
     const items = make('div', 'toolbar-section-items');
-    if (section.discover) discoveredOverviewSection(panel, items, section);
+    if (section.discover) discoveredOverviewSection(panel, items, section, lightsOff);
     else if (section.kind === 'series') {
       const fallback = make('div','toolbar-section-items');
       for (const item of section.entities) fallback.append(renderTile(item, 'status'));
@@ -489,16 +541,17 @@ export function createToolbarPanel(kind, configuration, context) {
         .map(item => ({item, node:render(item, section.kind, compactStatus)}));
       items.append(...pairs.map(pair=>pair.node));
       if (section.filter === 'active') handlers.push(() => {
-        let visible = false;
+        const visible = [];
         for (const {node, item} of pairs) {
           const model = modelFor(item);
           const active = model.available && (model.domain === 'climate' ? model.state !== 'off'
             : model.domain === 'cover' ? model.state !== 'closed' && (section.include_closing || model.state !== 'closing')
               : model.state === 'on');
           node.hidden = !active;
-          visible ||= active;
+          if (active) visible.push(item);
         }
-        panel.hidden = !visible;
+        panel.hidden = visible.length === 0;
+        lightsOff?.update(visible);
       });
     }
     panel.append(items);
@@ -612,6 +665,13 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
   .toolbar-panes, .toolbar-section-items { display: grid; gap: 8px; min-width: 0; }
   .toolbar-section { min-width: 0; border: 1px solid var(--soft-line); border-radius: 13px; padding: 8px; }
   .toolbar-section-title { margin: 0 0 8px; text-align: center; font-size: 14px; }
+  .overview-active-heading:has(.overview-lights-off:not([hidden])) {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-block-end: 4px;
+  }
+  .overview-active-heading:has(.overview-lights-off:not([hidden])) > .toolbar-section-title {
+    flex: 1; min-width: 0; margin: 0; text-align: start; overflow-wrap: anywhere;
+  }
+  .overview-lights-off { min-height: 44px; min-width: 44px; flex: none; }
   .media-remote-group { display: grid; grid-template-columns: repeat(auto-fit,minmax(44px,1fr)); gap: 8px; direction: ltr; }
   .media-remote-group:not([hidden]) + .media-remote-group { margin-block-start: 8px; }
   .media-remote-group[hidden], .media-remote-key[hidden] { display: none; }

@@ -905,15 +905,19 @@ export class BayitDashboard extends HTMLElement {
   }
 
   async turnOffRoom(room) {
-    const entities = this.roomOffTargets(room);
-    if (!entities.length || room.turnOff.some(device => this.pending.has(device.entity))) return;
+    if (room.turnOff.some(device => this.pending.has(device.entity))) return;
+    return this.turnOffEntities(this.roomOffTargets(room), room.name);
+  }
+
+  async turnOffEntities(entities, name) {
+    if (!entities.length || entities.some(entity => this.pending.has(entity))) return;
     const token = { id: 'turn_off' };
     for (const entity of entities) this.pending.set(entity, token);
-    this.announce(this.t('sending').replace('{name}', room.name));
+    this.announce(this.t('sending').replace('{name}', name));
     this.update();
     try {
       const status = await this.controller.turnOffRoom(entities);
-      this.announce(this.t(status).replace('{name}', room.name));
+      this.announce(this.t(status).replace('{name}', name));
     } catch {
       this.announce(this.t('send_error'));
     } finally {
@@ -1441,6 +1445,7 @@ export class BayitDashboard extends HTMLElement {
       modelFor: item => this.model(item), stateLabel: model => this.stateLabel(model, type === 'overview' ? 'overview' : undefined),
       moreInfo: (item, source) => this.moreInfo(item, source), pending: entity => this.pending.has(entity),
       request: (item, action, value, source) => this.requestAction(item, action, value, source),
+      turnOffEntities: (entities, name) => this.turnOffEntities(entities, name),
       buildDevice: (item, slot, presentation) => this.buildDevice(item, slot, undefined, undefined, presentation),
       graphDestination: item => {
         if (type !== 'sensors') return;
