@@ -335,20 +335,20 @@ export const panelControlStyles = `
     grid-template-columns: repeat(2,minmax(0,1fr));
     --climate-first-column: minmax(58px,1fr);
   }
-  .compact-climate-rail .climate-controls:has(> .temperature-stepper) { --climate-first-column: minmax(98px,1.18fr); }
+  .compact-climate-rail .climate-controls:has(> .temperature-stepper) { --climate-first-column: minmax(min-content,1.18fr); }
   .compact-climate-rail .climate-controls[data-control-count="1"] { grid-template-columns: minmax(0,1fr); }
   .compact-climate-rail .temperature-stepper { gap: 0; }
   .compact-climate-rail .step-control { min-width: 27px; }
-  .compact-climate-rail .target-reading { min-width: 0; }
+  .compact-climate-rail .target-reading { flex: 0 0 auto; }
   .compact-climate-rail .target-value { font-size: 15px; white-space: nowrap; }
   @container bayit-climate-rail (min-width: 224px) {
     .compact-climate-rail .climate-controls[data-control-count="3"] {
-      grid-template-columns: var(--climate-first-column) repeat(2,minmax(58px,1fr));
+      grid-template-columns: var(--climate-first-column) repeat(2,minmax(52px,1fr));
     }
   }
   @container bayit-climate-rail (min-width: 287px) {
     .compact-climate-rail .climate-controls[data-control-count="4"] {
-      grid-template-columns: var(--climate-first-column) repeat(3,minmax(58px,1fr));
+      grid-template-columns: var(--climate-first-column) repeat(3,minmax(52px,1fr));
     }
   }
   @container bayit-climate-rail (min-width: 224px) and (max-width: 270px) {

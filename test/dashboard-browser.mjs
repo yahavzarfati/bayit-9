@@ -4109,7 +4109,8 @@ async function assertCompactClimateRail(browser) {
         allInside &&= rect.left >= bounds.left - .5 && rect.right <= bounds.right + .5 && rect.height >= 44;
       }
       return {rows:[...result.values()],allInside,timerAfter:timer.top >= bounds.bottom,
-        targetFits:accurateTarget.scrollWidth <= accurateTarget.clientWidth + 1};
+        targetFits:accurateTarget.scrollWidth <= accurateTarget.clientWidth + 1,
+        targetWidths:[accurateTarget.scrollWidth,accurateTarget.clientWidth]};
     });
     try {
       for (const width of [320,375,391]) {
@@ -4119,7 +4120,7 @@ async function assertCompactClimateRail(browser) {
           await rail.waitFor();
           const four = await geometry();
           assert.deepEqual(four.rows,width === 320 ? [2,2] : [4]);
-          assert.ok(four.allInside && four.timerAfter && four.targetFits,JSON.stringify(four));
+          assert.ok(four.allInside && four.timerAfter && four.targetFits, JSON.stringify({locale,width,surface,...four}));
           assert.equal(await rail.locator('select[data-action=set_swing_mode]').count(),1);
           assert.equal(await page.locator('dialog[open] .room-climate-power:enabled').count(),1);
           await rail.locator('select[data-action=set_fan_mode]').focus();
@@ -4129,7 +4130,7 @@ async function assertCompactClimateRail(browser) {
           await rail.waitFor();
           const three = await geometry();
           assert.deepEqual(three.rows,[3]);
-          assert.ok(three.allInside && three.timerAfter && three.targetFits,JSON.stringify(three));
+          assert.ok(three.allInside && three.timerAfter && three.targetFits, JSON.stringify({locale,width,surface,...three}));
           assert.equal(await rail.locator('select[data-action=set_swing_mode]').count(),0);
           assert.equal(await page.locator('dialog[open] .timer-preset').count(),4);
           assert.deepEqual(await calls(),[]);
