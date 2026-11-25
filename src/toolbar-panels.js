@@ -254,13 +254,24 @@ export function createToolbarPanel(kind, configuration, context) {
 
   function renderSun(item) {
     const card = make('div', 'sun-panel');
-    const arc = make('div', 'sun-arc');
+    const chart = make('div', 'sun-chart');
+    const plot = make('div', 'sun-plot');
+    const horizon = make('div', 'sun-horizon');
+    const track = make('div', 'sun-marker-track');
     const marker = icon('mdi:white-balance-sunny');
+    const scale = make('div', 'sun-scale');
+    const legend = make('div', 'sun-legend', t('sun_horizon'));
     const readings = make('dl', 'sun-times');
-    arc.setAttribute('aria-hidden', 'true');
-    arc.append(marker);
+    chart.setAttribute('aria-hidden', 'true');
+    plot.dir = scale.dir = 'ltr';
+    marker.hidden = true;
+    track.append(marker);
+    plot.append(horizon, track);
+    for (const degrees of [0, 90, 180, 270, 360]) scale.append(make('span', '', degrees + '°'));
+    chart.append(plot, scale, legend);
     const rows = [['sun_rise', 'next_rising'], ['sun_set', 'next_setting'], ['sun_dawn', 'next_dawn'],
-      ['sun_dusk', 'next_dusk'], ['sun_azimuth', 'azimuth'], ['sun_elevation', 'elevation']].map(([labelKey, field]) => {
+      ['sun_dusk', 'next_dusk'], ['sun_next_noon', 'next_noon'],
+      ['sun_azimuth', 'azimuth'], ['sun_elevation', 'elevation']].map(([labelKey, field]) => {
       const value = make('dd', '', '—');
       readings.append(make('dt', '', t(labelKey)), value);
       return { field, value };
@@ -268,17 +279,30 @@ export function createToolbarPanel(kind, configuration, context) {
     handlers.push(() => {
       const { attributes, available } = modelFor(item);
       const formatter = format({ hour: '2-digit', minute: '2-digit', hourCycle:'h23' });
-      const elevation = available && typeof attributes.elevation === 'number' ? attributes.elevation : null;
-      marker.hidden = elevation === null;
-      if (elevation !== null) marker.style.setProperty('--sun-x', Math.max(7, Math.min(93, (attributes.azimuth ?? 180) / 360 * 100)) + '%');
+      const coordinate = (field, min, max) => {
+        const value = attributes[field];
+        return available && Number.isFinite(value) && value >= min && value <= max ? value : null;
+      };
+      const azimuth = coordinate('azimuth', 0, 360);
+      const elevation = coordinate('elevation', -90, 90);
+      marker.hidden = azimuth === null || elevation === null;
+      if (!marker.hidden) {
+        marker.style.setProperty('--sun-x', azimuth / 360 * 100 + '%');
+        marker.style.setProperty('--sun-y', (90 - elevation) / 180 * 100 + '%');
+        marker.toggleAttribute('data-below-horizon', elevation < 0);
+      }
       for (const { field, value } of rows) {
+        if (field === 'azimuth' || field === 'elevation') {
+          const degrees = field === 'azimuth' ? azimuth : elevation;
+          value.textContent = degrees === null ? '—' : Math.round(degrees) + '°';
+          continue;
+        }
         const raw = available ? attributes[field] : undefined;
-        const date = typeof raw === 'string' ? new Date(raw) : null;
-        value.textContent = date && Number.isFinite(date.getTime()) ? formatter.format(date)
-          : typeof raw === 'number' ? Math.round(raw) + '°' : '—';
+        const date = typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(raw) ? new Date(raw) : null;
+        value.textContent = date && Number.isFinite(date.getTime()) ? formatter.format(date) : '—';
       }
     });
-    card.append(arc, readings);
+    card.append(chart, readings);
     return card;
   }
 
@@ -484,9 +508,16 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
   .forecast-clock strong { font-variant-numeric: tabular-nums; font-size: 19px; }
   .forecast-clock span { font-size: 13px; color: var(--secondary); }
   .sun-panel { color: var(--ink); padding: 8px; }
-  .sun-arc { position: relative; margin: 0 auto 7px; height: 52px; width: min(85%,250px);
-    border: 1px solid var(--soft-line); border-radius: 100% 100% 0 0; border-bottom-color: var(--warm); }
-  .sun-arc ha-icon { color: var(--warm); position: absolute; left: var(--sun-x,50%); top: 12px; transform: translateX(-50%); }
+  .sun-chart { margin: 0 0 12px; color: var(--secondary); font-size: 11px; }
+  .sun-plot { position: relative; height: 104px; border: 1px solid var(--soft-line); border-radius: 12px; }
+  .sun-horizon { position: absolute; inset-inline: 0; top: 50%; border-block-start: 1px dashed var(--secondary); }
+  .sun-marker-track { position: absolute; inset: 12px; }
+  .sun-marker-track ha-icon { position: absolute; left: var(--sun-x); top: var(--sun-y); color: var(--warm);
+    transform: translate(-50%, -50%); --mdc-icon-size: 20px; }
+  .sun-marker-track ha-icon[data-below-horizon] { color: var(--secondary); }
+  .sun-scale { display: flex; justify-content: space-between; padding: 3px 4px 0; font-variant-numeric: tabular-nums; }
+  .sun-legend { display: flex; align-items: center; gap: 5px; margin-top: 4px; }
+  .sun-legend::before { content: ''; width: 14px; border-block-start: 1px dashed currentColor; }
   .sun-times { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin: 0; font-size: 13px; }
   .sun-times dd { margin: 0; text-align: end; font-weight: 740; }
 `;

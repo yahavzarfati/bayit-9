@@ -73,6 +73,7 @@ const stored = () => sharedConfig ?? JSON.parse(sessionStorage.getItem(storedKey
 const hass = {
   user: { is_admin: query.has('configuration') && !query.has('member') },
   locale: { language: new URL(location.href).searchParams.get('locale') || 'en' },
+  ...(query.has('sun-horizon') && { config: { time_zone:'Asia/Tokyo' } }),
   states,
   entities: { 'light.demo_lamp': { area_id: 'studio' }, 'switch.demo_heater': { area_id: 'studio' } },
   areas: { studio: { area_id: 'studio', name: 'Studio', icon: 'mdi:desk' } },
@@ -287,7 +288,8 @@ if (query.has('toolbar-panels')) {
       attributes:{friendly_name:'Arrival scene',last_triggered:null}},
     'lock.demo_entry': {state:'locked', attributes:{friendly_name:'Front door',code_format:'^[0-9]+$'}},
     'weather.demo_home': {state:'sunny', attributes:{friendly_name:'Home forecast',supported_features:1,temperature:23}},
-    'sun.sun': {state:'above_horizon', attributes:{friendly_name:'Sun', next_rising:'2026-11-25T04:00:00Z',elevation:15,azimuth:270}},
+    'sun.sun': {state:'above_horizon', attributes:{friendly_name:'Sun', next_rising:'2026-11-25T04:00:00Z',
+      next_noon:'2026-11-25T04:25:00Z',elevation:15,azimuth:270}},
     'person.demo_friend': {state:'home',attributes:{friendly_name:'Simona'}},
     'sensor.demo_meter': {state:'51',attributes:{friendly_name:'Energy meter',unit_of_measurement:'kWh'}},
     'sensor.demo_studio_temperature': {state:'22.5',attributes:{friendly_name:'Studio temperature',unit_of_measurement:'°C'}},
@@ -462,6 +464,10 @@ window.bayitTest = {
   finishCover: (index, failed = false) => coverRequests[index](failed),
   setRoomState(entity, state) {
     states[entity] = { ...states[entity], state };
+    card.hass = { ...hass, states: { ...states } };
+  },
+  setSunState(state, attributes) {
+    states['sun.sun'] = { state, attributes };
     card.hass = { ...hass, states: { ...states } };
   },
   setDiscoveredLight(entity, name, metadata) {
@@ -1866,6 +1872,66 @@ try {
       await panelsPage.getByRole('dialog').getByRole('button',{name:'Calendar',exact:true}).click();
       await panelsPage.getByRole('dialog',{name:'Calendar',exact:true}).getByText('2 calendars',{exact:true}).waitFor();
       await panelsPage.close();
+
+      const sunPage = await browser.newPage({ viewport: { width: 320, height:844 }, hasTouch:true });
+      sunPage.setDefaultTimeout(8000);
+      const rtlSun = engine === 'WebKit';
+      await sunPage.goto(base + '?toolbar-panels&sun-horizon&locale=' + (rtlSun ? 'he' : 'en'));
+      const weatherName = rtlSun ? 'מזג אוויר' : 'Weather';
+      await sunPage.getByRole('button', { name: weatherName, exact: true }).tap();
+      const sunDialog = sunPage.getByRole('dialog', { name: weatherName, exact: true });
+      await sunDialog.getByRole('button', { name: rtlSun ? 'שמש' : 'Sun', exact: true }).tap();
+      const sunPanel = sunDialog.locator('.sun-panel');
+      const sunPlot = sunPanel.locator('.sun-plot');
+      const sunMarker = sunPlot.locator('ha-icon');
+      const sunValue = label => sunPanel.getByText(label, { exact: true }).locator('xpath=following-sibling::dd[1]');
+      const noon = sunValue(rtlSun ? 'חצות השמש הקרוב' : 'Next solar noon');
+      const altitude = sunValue(rtlSun ? 'גובה השמש' : 'Elevation');
+      const azimuth = sunValue(rtlSun ? 'אזימוט' : 'Azimuth');
+      await sunMarker.waitFor();
+      assert.equal(await noon.innerText(), '13:25');
+      assert.equal(await sunPlot.getAttribute('dir'), 'ltr');
+      assert.equal(await sunPanel.locator('.sun-legend').innerText(), rtlSun ? 'אופק' : 'Horizon');
+      const position = () => sunPlot.evaluate(plot => {
+        const marker = plot.querySelector('ha-icon').getBoundingClientRect();
+        const horizon = plot.querySelector('.sun-horizon').getBoundingClientRect();
+        return { x:marker.left + marker.width / 2, y:marker.top + marker.height / 2, baseline:horizon.top };
+      });
+      const above = await position();
+      assert.ok(above.y < above.baseline);
+      const observeSun = (state, attributes) => sunPage.evaluate(([value, next]) => window.bayitTest.setSunState(value, next),
+        [state, attributes]);
+      await observeSun('below_horizon', { azimuth:270, elevation:-15, next_noon:'2026-11-25T04:25:00Z' });
+      await sunPlot.locator('ha-icon[data-below-horizon]').waitFor();
+      const below = await position();
+      assert.ok(below.y > below.baseline);
+      assert.ok(Math.abs(above.x - below.x) < 0.5);
+      assert.equal(await altitude.innerText(), '-15°');
+      await observeSun('above_horizon', { azimuth:270, elevation:0, next_noon:'2026-11-25T04:25:00Z' });
+      await altitude.filter({ hasText:/^0°$/ }).waitFor();
+      const horizonPosition = await position();
+      assert.ok(Math.abs(horizonPosition.y - horizonPosition.baseline) < 0.5);
+
+      await observeSun('above_horizon', { elevation:15, next_noon:'not-a-timestamp' });
+      await sunMarker.waitFor({ state:'hidden' });
+      assert.equal(await azimuth.innerText(), '—');
+      assert.equal(await noon.innerText(), '—');
+      assert.equal(await altitude.innerText(), '15°');
+      await observeSun('above_horizon', { azimuth:0, elevation:90, next_noon:'2026-11-25T04:25:00Z' });
+      await sunMarker.waitFor();
+      const contained = await sunPlot.evaluate(plot => {
+        const bounds = plot.getBoundingClientRect();
+        const marker = plot.querySelector('ha-icon').getBoundingClientRect();
+        return marker.left >= bounds.left && marker.top >= bounds.top && marker.right <= bounds.right;
+      });
+      assert.equal(contained, true);
+      await observeSun('unavailable', { azimuth:270, elevation:15, next_noon:'2026-11-25T04:25:00Z' });
+      await sunMarker.waitFor({ state:'hidden' });
+      assert.equal(await noon.innerText(), '—');
+      assert.equal(await altitude.innerText(), '—');
+      assert.equal(await sunPage.evaluate(() => window.bayitTest.calls.length), 0);
+      await sunPage.close();
+      console.log(engine + ' 320: measured Sun positions, 24-hour time zone and unavailable readings');
 
       const chartFallback = await browser.newPage({ viewport: { width:320, height:844 }, hasTouch:true });
       chartFallback.setDefaultTimeout(8000);
