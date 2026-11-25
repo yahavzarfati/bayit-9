@@ -383,8 +383,14 @@ export const panelControlStyles = `
   @container bayit-climate-rail (min-width: 224px) and (max-width: 270px) {
     .compact-climate-rail .climate-controls[data-control-count="3"] .climate-selector > ha-icon:not(.climate-selector-chevron) { display: none; }
   }
-  @container bayit-climate-rail (min-width: 287px) and (max-width: 336px) {
+  @container bayit-climate-rail (min-width: 287px) and (width < 304px) {
     .compact-climate-rail .climate-controls[data-control-count="4"] .climate-selector > ha-icon:not(.climate-selector-chevron) { display: none; }
+  }
+  @container bayit-climate-rail (min-width: 304px) and (max-width: 336px) {
+    .compact-climate-rail .climate-controls[data-control-count="4"] .climate-selector { gap: 1px; padding-inline: 3px; }
+    .compact-climate-rail .climate-controls[data-control-count="4"] .climate-selector > ha-icon:not(.climate-selector-chevron) {
+      width: 14px; height: 14px; --mdc-icon-size: 11px; color: var(--secondary);
+    }
   }
   .climate-extra-controls { min-width: 0; border-top: 1px solid var(--soft-line); }
   .climate-extra-controls > summary { min-height: 44px; padding: 11px 4px; cursor: pointer; }
