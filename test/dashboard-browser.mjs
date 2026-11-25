@@ -1187,21 +1187,45 @@ async function assertPopupScrollMemory(browser) {
         return element.scrollTop;
       }, top);
       const position = () => body.evaluate(element => element.scrollTop);
-      const waitForPosition = top => target.waitForFunction(value => {
-        const body = document.querySelector('bayit-dashboard').shadowRoot.querySelector('dialog[open] .modal-body');
-        return body?.scrollTop === value;
-      }, top);
+      const waitForPosition = async top => {
+        try {
+          await target.waitForFunction(value => {
+            const body = document.querySelector('bayit-dashboard').shadowRoot.querySelector('dialog[open] .modal-body');
+            return body?.scrollTop === value;
+          }, top);
+        } catch (error) {
+          const bounds = await body.evaluate(element => ({ top: element.scrollTop,
+            max: element.scrollHeight - element.clientHeight }));
+          throw new Error(`Could not restore popup scroll ${top}; observed ${JSON.stringify(bounds)}`, { cause:error });
+        }
+      };
       return { dialog, body, size, scroll, position, waitForPosition };
     }
 
+    const storage = () => page.evaluate(prefix =>
+      Object.fromEntries(Object.keys(sessionStorage).filter(key => key.startsWith(prefix))
+        .map(key => [key, sessionStorage.getItem(key)])), marker);
+    const roomKey = marker + JSON.stringify(['/fixture-home/home', studioHash]);
     const room = popup(page);
     await page.goto(url + studioHash);
     await room.dialog.waitFor();
     await room.size(1000);
     assert.equal(await room.scroll(460), 460);
+    assert.equal((await storage())[roomKey], '460');
     await page.reload();
     await room.dialog.waitFor();
     assert.ok(await room.position() < 460);
+    // Reproduce layout/focus moving the body before the saved position fits.
+    const partial = await room.body.evaluate(element => {
+      const content = element.querySelector('[data-role=content]');
+      content.style.minBlockSize = '500px';
+      element.scrollTop = 1;
+      element.dispatchEvent(new Event('scroll'));
+      return { top: element.scrollTop, max: element.scrollHeight - element.clientHeight };
+    });
+    assert.equal(partial.top, 1);
+    assert.ok(partial.max > 2 && partial.max < 460);
+    assert.equal((await storage())[roomKey], '460');
     await room.size(1000);
     await room.waitForPosition(460);
 
@@ -1228,9 +1252,6 @@ async function assertPopupScrollMemory(browser) {
     await room.size(1000);
     await room.waitForPosition(140);
 
-    const storage = () => page.evaluate(prefix =>
-      Object.fromEntries(Object.keys(sessionStorage).filter(key => key.startsWith(prefix))
-        .map(key => [key, sessionStorage.getItem(key)])), marker);
     await page.goto(url + boilerHash);
     await room.dialog.waitFor();
     await room.size(1000);

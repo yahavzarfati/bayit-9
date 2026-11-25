@@ -16,7 +16,7 @@ export function createPopupScrollMemory(body, content) {
 
   function remember() {
     const entry = current;
-    if (!entry?.active() || (entry.waiting && Math.abs(body.scrollTop - clamp(entry.top)) <= 1)) return;
+    if (!entry?.active() || entry.waiting) return;
     const top = Math.max(0, Math.round(body.scrollTop));
     if (memory.get(entry.key) === top) return;
     memory.set(entry.key, top);
@@ -71,10 +71,13 @@ export function createPopupScrollMemory(body, content) {
     cancelRetry(current);
   }
 
-  body.addEventListener('scroll', () => {
-    if (!current?.active() || (current.waiting && Math.abs(body.scrollTop - clamp(current.top)) <= 1)) return;
-    if (current.waiting) interrupt();
-    remember();
+  // Layout changes and native focus can scroll before a saved offset fits.
+  // Cancel a pending restore only when the input indicates scroll intent.
+  body.addEventListener('scroll', remember, { passive: true });
+  body.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || event.target !== body || !current?.waiting) return;
+    const x = event.clientX - body.getBoundingClientRect().left - body.clientLeft;
+    if (x < 0 || x >= body.clientWidth) interrupt();
   }, { passive: true });
   body.addEventListener('wheel', event => { if (event.deltaY && !event.defaultPrevented) interrupt(); }, { passive: true });
   body.addEventListener('touchmove', interrupt, { passive: true });
