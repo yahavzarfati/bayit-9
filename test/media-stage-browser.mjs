@@ -19,8 +19,9 @@ const attributes = { friendly_name:'Fixture player', media_title:'Track title', 
 const hass = {
   locale: { language: options.get('locale') || 'en' }, themes: {}, areas:{}, devices:{}, entities:{},
   states: { [source]:{ state:'paused', attributes },
-    [other]:{ state:'idle', attributes:{ friendly_name:'Alternative player' } } },
-  services: { media_player:{ media_play_pause:{}, media_previous_track:{}, media_next_track:{} } },
+    [other]:{ state:'idle', attributes:{ friendly_name:'Alternative player', supported_features: 1416, is_volume_muted: false } } },
+  services: { media_player:{ media_play_pause:{}, media_previous_track:{}, media_next_track:{},
+    turn_on:{}, turn_off:{}, volume_down:{}, volume_up:{}, volume_mute:{} } },
   callWS(message) { tracker.calls.push(message); return Promise.resolve({}); },
 };
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
@@ -28,7 +29,7 @@ const legacy = options.has('legacy');
 const config = { type:'custom:bayit-9', locale:hass.locale.language, toolbar:[
   { id:'sample-media', kind:'media', label:'Fixture Media', placement:'linked',
     ...(!legacy && { media_stage:{ source_entity:source, ...(options.has('default-icon') ? {} : { fallback_icon:'mdi:radio' }) } }),
-    media_remote:{ transport_entity:source }, sections:legacy
+    media_remote:{ transport_entity:source, ...(options.has('full-remote') && { volume_entity:other, power_entity:other }) }, sections:legacy
       ? [{id:'small',kind:'media',entities:[{entity:source,role:'now_playing'}]}] : [] },
 ] };
 const dashboard = document.createElement('bayit-dashboard');
@@ -107,7 +108,7 @@ try {
 
       for (const [width, locale] of [[320, 'he'], [391, 'en'], [900, 'en']]) {
         await page.setViewportSize({ width, height:844 });
-        await page.goto(home + '?locale=' + locale + hash);
+        await page.goto(home + '?full-remote&locale=' + locale + hash);
         await image.waitFor();
         const geometry = await stage.evaluate(node => {
           const art = node.querySelector('.now-playing-art');
@@ -135,6 +136,13 @@ try {
         assert.equal(await image.getAttribute('referrerpolicy'), 'no-referrer');
         assert.equal(await fallback.isVisible(), false);
         assert.equal(await stage.evaluate(node => node.nextElementSibling.classList.contains('media-remote')), true);
+        const volume = dialog.getByRole('group', { name: 'Alternative player' });
+        assert.deepEqual(await volume.getByRole('button').evaluateAll(buttons =>
+          buttons.map(button => button.querySelector('ha-icon')?.getAttribute('icon'))),
+        ['mdi:power', 'mdi:volume-minus', 'mdi:volume-plus', 'mdi:volume-mute']);
+        const sizes = await volume.getByRole('button').evaluateAll(buttons =>
+          buttons.map(button => [button.offsetWidth, button.offsetHeight]));
+        assert.ok(sizes.every(([width, height]) => width >= 44 && height >= 44));
         assert.equal(await dialog.locator('.toolbar-device').count(), 0);
         assert.deepEqual(await page.evaluate(() => tracker.calls), []);
       }
@@ -185,6 +193,16 @@ try {
       await dialog.waitFor({ state:'hidden' });
       await page.waitForFunction(() => !tracker.previousImage.hasAttribute('src'));
       assert.deepEqual(await page.evaluate(() => tracker.calls), []);
+
+      await page.goto(home + '?full-remote' + hash);
+      const power = dialog.getByRole('button', { name: 'Power · Alternative player', exact: true });
+      await power.click();
+      await page.waitForFunction(() => tracker.calls.length === 1);
+      assert.deepEqual(await page.evaluate(() => tracker.calls), [
+        { type: 'call_service', domain: 'media_player', service: 'turn_off', service_data: {},
+          target: { entity_id: 'media_player.fixture_other' } },
+      ]);
+      await stage.getByText('Track title', { exact: true }).waitFor();
 
       await page.goto(home + '?legacy' + hash);
       const compact = dialog.locator('.now-playing');

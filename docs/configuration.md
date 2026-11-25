@@ -116,9 +116,9 @@ To open a Media panel from a room, first configure a Media panel in the toolbar 
 
 For a Media or Vacuum panel, set **Show in** to **Linked only** to use it from room links and direct popup URLs. In YAML, set `placement: linked` on the Media or Vacuum toolbar entry.
 
-A Media screen can also include a remote. In the toolbar editor select a playback device and a volume device under **Media remote**. They may refer to the same Home Assistant player. To keep supported playback and volume commands available while a configured player reports standby or off, turn on **Show remote controls in standby**. Home Assistant can accept the command while the equipment is asleep. The mute button needs a known mute state.
+A Media screen can also include a remote. In the toolbar editor choose a playback, volume or power device under **Media remote**. Each role can use a different Home Assistant player. The power button uses the selected device’s reported state and appears when that device supports the corresponding on or off command. To keep supported playback and volume commands available while a configured player reports standby or off, turn on **Show remote controls in standby**. The mute button needs a known mute state.
 
-In YAML add `media_remote: { transport_entity: media_player.streamer, volume_entity: media_player.television, allow_standby: true }` to a Media toolbar entry. Either device can be omitted. Existing Media device controls and power buttons operate separately.
+In YAML add `media_remote: { transport_entity: media_player.streamer, volume_entity: media_player.television, power_entity: media_player.television, allow_standby: true }` to a Media toolbar entry. Each device assignment is optional.
 
 Use **Device display → Preset shortcut** on a climate device to add a one-tap native preset in its room and its dedicated details. The preset and highlight can be different. The highlight reflects the preset reported by Home Assistant. You can also set a short label and an MDI icon. Only presets currently advertised by the device can be sent.
 
