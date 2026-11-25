@@ -13972,7 +13972,17 @@ try {
       await setup.getByRole('button', { name: 'Add device', exact: true }).click();
       await setup.getByLabel('Show status only for selected room devices', { exact: true }).selectOption(['light.demo_lamp']);
       assert.equal(await profileName.inputValue(), 'Uncommitted heater name');
-      await setup.getByRole('button', { name: 'Save dashboard', exact: true }).click();
+      const saveDashboard = setup.getByRole('button', { name: 'Save dashboard', exact: true });
+      await saveDashboard.click();
+      const pendingProfile = setupEditor.locator('details[data-profile-editor]');
+      await pendingProfile.getByRole('status').filter({
+        hasText: 'Save this profile or cancel its changes before saving the dashboard.',
+      }).waitFor();
+      assert.equal(await profileName.inputValue(), 'Uncommitted heater name');
+      assert.equal(await setupPage.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'lovelace/config/save').length), 0);
+      await pendingProfile.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await profileName.waitFor({ state: 'detached' });
+      await saveDashboard.click();
       await setupPage.getByRole('button', { name: 'Reading nook', exact: true }).waitFor();
       const persisted = await setupPage.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')));
       assert.equal(await setupPage.evaluate(() => sessionStorage.getItem('bayit9-browser-fixture-hash-at-save')), '#panel/settings');
