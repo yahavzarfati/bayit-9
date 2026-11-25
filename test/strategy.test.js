@@ -925,6 +925,18 @@ test('light toggle tiles are explicit and scoped to visible lights in Devices se
   assert.deepEqual(toolbar[1].sections[0].entities, []);
 });
 
+test('room popup position applies only to opted-in Devices screens in Settings', () => {
+  const { toolbar } = generateDashboard({
+    toolbar: [
+      { kind: 'devices', placement: 'settings', popup_position: 'room' },
+      { kind: 'devices', popup_position: 'room' },
+      { kind: 'devices', placement: 'settings', popup_position: 'unknown' },
+      { kind: 'weather', placement: 'settings', popup_position: 'room' },
+    ],
+  }, home()).views[0].cards[0];
+  assert.deepEqual(toolbar.map(entry => entry.popup_position), ['room', undefined, undefined, undefined]);
+});
+
 test('only Devices status sections retain the compact layout without changing entity roles', () => {
   const hass = home();
   hass.states['lock.fixture'] = { state: 'locked', attributes: {} };

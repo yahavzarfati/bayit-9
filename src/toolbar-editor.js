@@ -1,7 +1,7 @@
 import {
   discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactToolbarStatus, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
   normalizeOverviewDiscovery, overviewSectionOptions, roomPanelOptions, selectableRoomEntities,
-  TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
+  TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS, usesRoomPopupPosition,
 } from './strategy-model.js';
 import { normalizeOrefMap, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
 import { sameVacuumDevice } from './vacuum-map.js';
@@ -18,6 +18,7 @@ const WORDS = {
     invalidIcon: 'Use an icon name such as mdi:home.',
     up: 'Move up', down: 'Move down', remove: 'Remove', choose: 'Choose…',
     placement: 'Show in', toolbarPlace: 'Toolbar', settingsPlace: 'Settings',
+    roomPopupPosition: 'Use the room popup position',
     panelContents: 'Panel contents', deviceList: 'Selected devices', grouped: 'Sections',
     scope: 'Devices', addEntity: 'Add device', entity: 'Device', noDevices: 'No devices selected.',
     unavailable: 'Unavailable', noChoices: 'No more devices available',
@@ -68,6 +69,7 @@ const WORDS = {
     invalidIcon: 'הזינו שם סמל, למשל ‎mdi:home‎.',
     up: 'הזזה למעלה', down: 'הזזה למטה', remove: 'הסרה', choose: 'בחירה…',
     placement: 'מקום הצגה', toolbarPlace: 'סרגל', settingsPlace: 'הגדרות',
+    roomPopupPosition: 'פתיחה במיקום של חלונית חדר',
     panelContents: 'תוכן החלונית', deviceList: 'מכשירים נבחרים', grouped: 'קבוצות',
     scope: 'מכשירים', addEntity: 'הוספת מכשיר', entity: 'מכשיר', noDevices: 'אין מכשירים שנבחרו.',
     unavailable: 'לא זמין', noChoices: 'אין עוד מכשירים זמינים',
@@ -726,8 +728,13 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         entry.placement === 'settings' ? 'settings' : 'toolbar');
       placement.dataset.toolbarFocus = 'placement';
       placement.addEventListener('change', () => changeEntry({ placement: placement.value === 'settings' ? 'settings' : undefined },
-        entry.kind === 'presence', 'placement'));
+        entry.kind === 'presence' || entry.kind === 'devices', 'placement'));
       fields.push(field(words.placement, placement));
+    }
+    if (entry.kind === 'devices' && entry.placement === 'settings') {
+      const roomPosition = node('input', { type: 'checkbox', checked: usesRoomPopupPosition(entry) });
+      roomPosition.addEventListener('change', () => changeEntry({ popup_position: roomPosition.checked ? 'room' : undefined }));
+      fields.push(node('label', { className: 'check' }, [roomPosition, words.roomPopupPosition]));
     }
     if (entry.kind === 'security') fields.push(editOrefMap(entry));
     if (entry.kind === 'vacuum') fields.push(editVacuumMap(entry));

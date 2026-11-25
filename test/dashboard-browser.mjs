@@ -41,6 +41,10 @@ function observeScript(state) {
   card.hass = { ...hass, states: { ...states } };
 }
 const query = new URL(location.href).searchParams;
+if (query.has('entrance-popup-position')) {
+  states['sensor.demo_entry_temperature'] = { state: '24', attributes: { friendly_name: 'טמפרטורה', unit_of_measurement: '°C' } };
+  states['lock.demo_entry_position'] = { state: 'locked', attributes: { friendly_name: 'מנעול' } };
+}
 const storedKey = 'bayit9-browser-fixture';
 const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection') && { show_unassigned: false }),
   ...(query.has('legacy-room-order') && { area_ids: ['lounge', 'studio'] }),
@@ -483,6 +487,19 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
 } : query.has('popup-geometry') ? {
   room_overrides: { studio: { entities: ['switch.demo_heater'] } },
   room_shortcuts: { studio: ['switch.demo_heater'] },
+} : query.has('entrance-popup-position') ? {
+  room_overrides: { studio: { entities: ['switch.demo_heater'] } },
+  toolbar: [
+    { id:'appearance', kind:'settings' },
+    { id:'entry', kind:'devices', label:'כניסה', placement:'settings', popup_position:'room', sections:[
+      { kind:'devices', title:'תאורה', entities:[{ entity:'light.demo_lamp', role:'light_tile' }] },
+      { kind:'status', title:'אבטחה', layout:'compact', entities:[
+        { entity:'lock.demo_entry_position', role:'lock' },
+        { entity:'sensor.demo_entry_temperature', role:'graph', graph_hours:24 },
+      ] },
+    ] },
+    { id:'regular-device', kind:'devices', label:'חלונית רגילה', placement:'settings', entities:['switch.demo_heater'] },
+  ],
 } : query.has('room-grid') ? {
   room_overrides: { studio: { entities: ['light.demo_lamp', 'light.demo_wall', 'light.demo_pendant', 'light.demo_monitor'],
     read_only_entities: ['light.demo_monitor'],
@@ -616,7 +633,8 @@ if (query.has('editor')) {
   document.querySelector('#surface').hidden = true;
   const editor = Strategy.getConfigElement();
   editor.setConfig({ type: 'custom:bayit-9',
-    ...((query.has('toolbar-panels') || query.has('overview-opt-in') || query.has('lighting-count') || query.has('preset-shortcut')) && selected) });
+    ...((query.has('toolbar-panels') || query.has('overview-opt-in') || query.has('lighting-count') ||
+      query.has('preset-shortcut') || query.has('entrance-popup-position')) && selected) });
   editor.hass = hass;
   editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
   document.querySelector('#editor').append(editor);
@@ -1671,6 +1689,74 @@ try {
       assert.equal(await motionSource.evaluate(source => source.getRootNode().activeElement === source), true);
       await motionResizePage.close();
       console.log(engine + ': room popup easing survives duplicate resize, true geometry changes and close restoration');
+
+      const entryPositionPage = await browser.newPage({
+        viewport: { width:391, height:845 }, isMobile:true, hasTouch:true, reducedMotion:'reduce',
+      });
+      entryPositionPage.setDefaultTimeout(8000);
+      const entryPositionUrl = base + '/fixture-home/home?entrance-popup-position';
+      await entryPositionPage.goto(entryPositionUrl + '&locale=he');
+      const positionedPopup = entryPositionPage.locator('dialog.modal:not(.confirm)');
+      const popupFrame = () => positionedPopup.evaluate(popup => {
+        const rectangle = node => {
+          const { x, y, width, height } = node.getBoundingClientRect();
+          return { x, y, width, height };
+        };
+        const root = popup.getRootNode();
+        const { x, y, width } = rectangle(popup);
+        const header = rectangle(popup.querySelector('.modal-header'));
+        const close = rectangle(popup.querySelector('[data-role=close]'));
+        const title = rectangle(popup.querySelector('.modal-header h2'));
+        return { frame:{ x, y, width, header, close, title }, kind:popup.dataset.kind,
+          roomPosition:popup.hasAttribute('data-room-position'), source:root.querySelector('[data-popup-origin]')?.dataset.role };
+      });
+      await entryPositionPage.getByRole('button', { name:'Studio', exact:true }).tap();
+      const realRoomFrame = await popupFrame();
+      assert.equal(realRoomFrame.kind, 'room');
+      assert.ok(realRoomFrame.frame.close.width >= 44);
+      await positionedPopup.locator('[data-role=close]').tap();
+      await positionedPopup.waitFor({ state:'hidden' });
+      assert.equal(await positionedPopup.getAttribute('data-room-position'), null);
+      const launchSettings = entryPositionPage.locator('.chrome-button[data-role=settings]');
+      await launchSettings.tap();
+      const settingsFrame = await popupFrame();
+      const entranceLink = entryPositionPage.getByRole('button', { name:'כניסה', exact:true });
+      await entranceLink.tap();
+      const entranceFrame = await popupFrame();
+      assert.equal(entranceFrame.kind, 'toolbar');
+      assert.equal(entranceFrame.roomPosition, true);
+      assert.equal(entranceFrame.source, 'settings');
+      assert.deepEqual(entranceFrame.frame, realRoomFrame.frame);
+      assert.equal(new URL(entryPositionPage.url()).hash, '#panel/entry');
+      await positionedPopup.locator('[data-light-tile] .device-tile').waitFor();
+      await positionedPopup.locator('[data-layout=compact] .compact-status-lock').waitFor();
+      await entryPositionPage.evaluate(() => history.back());
+      await entranceLink.waitFor();
+      assert.equal((await popupFrame()).roomPosition, false);
+      assert.equal((await popupFrame()).frame.y, settingsFrame.frame.y);
+      await entryPositionPage.getByRole('button', { name:'חלונית רגילה', exact:true }).tap();
+      assert.equal((await popupFrame()).frame.y, settingsFrame.frame.y);
+      assert.equal(new URL(entryPositionPage.url()).hash, '#panel/regular-device');
+      await entryPositionPage.goto(entryPositionUrl + '&locale=he#panel/entry');
+      await entryPositionPage.getByRole('dialog', { name:'כניסה', exact:true }).waitFor();
+      assert.deepEqual((await popupFrame()).frame, entranceFrame.frame);
+      assert.equal((await popupFrame()).source, undefined);
+      assert.deepEqual(await entryPositionPage.evaluate(() => window.bayitTest.calls), []);
+      await entryPositionPage.goto(entryPositionUrl + '&editor');
+      await entryPositionPage.getByText('Toolbar and extra screens', { exact:true }).tap();
+      await entryPositionPage.locator('#editor').getByRole('button', { name:'כניסה', exact:true }).tap();
+      const roomPositionSetting = entryPositionPage.getByRole('checkbox', { name:'Use the room popup position', exact:true });
+      assert.equal(await roomPositionSetting.isChecked(), true);
+      await roomPositionSetting.uncheck();
+      assert.equal(await entryPositionPage.evaluate(() => window.latest.toolbar.find(entry => entry.id === 'entry').popup_position), undefined);
+      await roomPositionSetting.check();
+      assert.equal(await entryPositionPage.evaluate(() => window.latest.toolbar.find(entry => entry.id === 'entry').popup_position), 'room');
+      await entryPositionPage.getByLabel('Show in', { exact:true }).selectOption({ label:'Toolbar' });
+      assert.equal(await roomPositionSetting.count(), 0);
+      await entryPositionPage.getByLabel('Show in', { exact:true }).selectOption({ label:'Settings' });
+      assert.equal(await roomPositionSetting.isChecked(), true);
+      await entryPositionPage.close();
+      console.log(engine + ': Entrance aligns with room geometry through Settings and direct routes');
 
       for (const [locale, width] of [['he', 320], ['en', 375], ['he', 390]]) {
         const coverGridPage = await browser.newPage({ viewport: { width, height: 800 }, hasTouch: true, reducedMotion: 'reduce' });

@@ -2,7 +2,7 @@ import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isVacuumProgramAction,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName,
-  overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
+  overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { createDeviceController, getDeviceModel, roomShutdownTargets, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
@@ -321,6 +321,7 @@ export function normalizeDashboardConfig(config = {}) {
     return [{ kind: item.kind, id: text(item.id), label: text(item.label), path: item.path,
       ...(item.kind === 'presence' && { presence_dynamic_icon: hasDynamicPresenceIcon(item) }),
       ...(item.placement === 'settings' && item.kind !== 'settings' && {placement:'settings'}),
+      ...(usesRoomPopupPosition(item) && { popup_position: 'room' }),
       ...(orefMap && { oref_map: orefMap }),
       ...(vacuumMap && { vacuum_map: vacuumMap }),
       ...(mediaRemote && { media_remote: mediaRemote }),
@@ -1183,7 +1184,11 @@ export class BayitDashboard extends HTMLElement {
     if (type === 'setup') void this.paintSetup();
     if (type === 'activity') this.paintActivity();
     const kind = type === 'room' || type === 'device' ? type : 'toolbar';
-    this.popupMotion.open(source, { kind, highlighted: type === 'room' ? this.roomViews.get(room.id)?.article : source });
+    this.popupMotion.open(source, {
+      kind,
+      roomPosition: usesRoomPopupPosition(toolbar),
+      highlighted: type === 'room' ? this.roomViews.get(room.id)?.article : source,
+    });
     n.modalBody.scrollTop = type === 'room' ? this.roomScroll.get(room.id) || 0 : 0;
     this.update();
     if (!navigation.hash && this.popupHistory) {

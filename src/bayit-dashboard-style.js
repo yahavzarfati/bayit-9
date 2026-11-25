@@ -422,7 +422,7 @@ export const styles = `
     overscroll-behavior: contain;
     transform-origin: var(--motion-x,50%) var(--motion-y,34%);
   }
-  .modal:is([data-kind=room],[data-kind=device]) {
+  .modal:is([data-kind=room],[data-kind=device],[data-room-position]) {
     --panel-top: clamp(14px,var(--bayit-popup-area-top,142px),max(14px,calc(var(--panel-bottom) - 180px)));
   }
   .modal:is([data-kind=room],[data-kind=toolbar]) { width: min(860px,calc(100% - 2 * var(--edge))); }
@@ -433,7 +433,7 @@ export const styles = `
     max-height: calc(var(--panel-bottom) - var(--panel-top) - var(--device-bottom-gap));
     margin-block: auto;
   }
-  .modal[data-kind=toolbar] {
+  .modal[data-kind=toolbar]:not([data-room-position]) {
     --panel-top: clamp(14px,calc(var(--bayit-popup-area-top,142px) - 78px),max(14px,calc(var(--panel-bottom) - 180px)));
   }
   .modal[open] { display: flex; flex-direction: column; }
@@ -469,10 +469,10 @@ export const styles = `
   .shell[dir=rtl] .modal-header h2 { direction: rtl; flex-direction: row-reverse; text-align: left; }
   .modal-header > .round-action { flex: 0 0 44px; border-radius: 999px; }
   @media (max-width: 420px) {
-    .shell[data-page=true] .modal[data-kind=room] { width: calc(100% - 32px); }
-    .shell[data-page=true] .modal[data-kind=room] .modal-header { padding: 17px 17px 11px; }
-    .shell[data-page=true] .modal[data-kind=room] .modal-header h2 { min-height: 50px; }
-    .shell[data-page=true] .modal[data-kind=room] .modal-header > [data-role=close] {
+    .shell[data-page=true] .modal:is([data-kind=room],[data-kind=device],[data-room-position]) { width: calc(100% - 32px); }
+    .shell[data-page=true] .modal:is([data-kind=room],[data-kind=device],[data-room-position]) .modal-header { padding: 17px 17px 11px; }
+    .shell[data-page=true] .modal:is([data-kind=room],[data-kind=device],[data-room-position]) .modal-header h2 { min-height: 50px; }
+    .shell[data-page=true] .modal:is([data-kind=room],[data-kind=device],[data-room-position]) .modal-header > [data-role=close] {
       flex-basis: 50px;
       min-block-size: 50px;
     }

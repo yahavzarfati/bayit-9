@@ -565,6 +565,10 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
   });
 }
 
+export function usesRoomPopupPosition(entry) {
+  return entry?.kind === 'devices' && entry.placement === 'settings' && entry.popup_position === 'room';
+}
+
 function dashboardToolbar(config, hass, roomIds) {
   if (!Array.isArray(config.toolbar)) return undefined;
   const states = hass.states ?? {};
@@ -600,6 +604,7 @@ function dashboardToolbar(config, hass, roomIds) {
       ...(entry.kind === 'presence' && typeof entry.presence_dynamic_icon === 'boolean' &&
         { presence_dynamic_icon: entry.presence_dynamic_icon }),
       ...(path && { path }), ...(entry.placement === 'settings' && entry.kind !== 'settings' && { placement:'settings' }),
+      ...(usesRoomPopupPosition(entry) && { popup_position: 'room' }),
       ...(entities !== undefined && { entities }), ...(sections !== undefined && { sections }),
       ...(agenda && { calendar_agenda: agenda }), ...(mediaRemote && { media_remote: mediaRemote }),
       ...(orefMap && { oref_map: orefMap }), ...(vacuumMap && { vacuum_map: vacuumMap }) };

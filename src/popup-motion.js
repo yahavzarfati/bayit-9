@@ -229,6 +229,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     }
     for (const property of ['--motion-x', '--motion-y', '--bayit-popup-area-top']) dialog.style.removeProperty(property);
     delete dialog.dataset.kind;
+    dialog.removeAttribute('data-room-position');
     delete dialog.dataset.closing;
     current = undefined;
     if (restoreFocus) focusWithoutScroll(context.source);
@@ -250,13 +251,18 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     liftSource(context, sourceRect, panelRect, 0);
   }
 
-  function open(source, { kind = 'toolbar', highlighted = source } = {}) {
+  function setDialogPosition(kind, roomPosition) {
+    dialog.dataset.kind = kind;
+    dialog.toggleAttribute('data-room-position', roomPosition);
+  }
+
+  function open(source, { kind = 'toolbar', roomPosition = false, highlighted = source } = {}) {
     if (!isConnected(dialog)) return;
     const focusTarget = dialog.querySelector('[autofocus]');
     if (!source) {
       resetContext(current, false);
       current = { kind };
-      dialog.dataset.kind = kind;
+      setDialogPosition(kind, roomPosition);
       updateArea(current);
       if (!dialog.open) dialog.showModal();
       watchResize();
@@ -270,7 +276,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
       context.closing = false;
       context.restoreFocus = true;
       delete dialog.dataset.closing;
-      dialog.dataset.kind = kind;
+      setDialogPosition(kind, roomPosition);
       updateArea(context);
       focusWithoutScroll(focusTarget);
       return;
@@ -281,7 +287,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     const sourceRect = source.getBoundingClientRect();
     const context = { source, highlighted: highlighted || source, kind, originalScroll, expectedScroll: originalScroll };
     current = context;
-    dialog.dataset.kind = kind;
+    setDialogPosition(kind, roomPosition);
     updateArea(context);
     if (!dialog.open) dialog.showModal();
     const panelRect = dialog.getBoundingClientRect();
