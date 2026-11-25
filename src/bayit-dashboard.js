@@ -1477,24 +1477,26 @@ export class BayitDashboard extends HTMLElement {
     return String((record && this._hass?.formatEntityState?.(record)) || state || this.t('unknown'));
   }
 
-  temperatureBadge(value, unit, highValue) {
+  temperatureBadge(value, unit, highValue, { keepReportedTenth = false } = {}) {
     const temperature = number(value);
     const high = number(highValue);
     if (temperature === null || (highValue !== undefined && (high === null || high < temperature))) return undefined;
     const suffix = unit || this._hass?.config?.unit_system?.temperature || '°';
     const fullUnit = typeof suffix === 'string' && suffix.trim().length <= 3 ? suffix.trim() : '°';
     const compactUnit = fullUnit === '°C' ? '°' : fullUnit;
-    const rounded = Number(temperature.toFixed(1));
+    const tenth = temperature.toFixed(1);
+    const rounded = Number(tenth);
     const upper = high === null ? rounded : Number(high.toFixed(1));
-    const reading = upper === rounded ? String(rounded) : rounded + '–' + upper;
+    const singleReading = keepReportedTenth && /^[+-]?\d+\.0$/.test(text(value)) ? tenth : String(rounded);
+    const reading = upper === rounded ? singleReading : rounded + '–' + upper;
     return { text: ltr(reading + compactUnit), fullText: ltr(reading + fullUnit) };
   }
 
-  selectedTemperatureBadge(value, unit) {
+  selectedTemperatureBadge(value, unit, formatting) {
     if (typeof value !== 'number' &&
         !(typeof value === 'string' && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim()))) return;
     const sourceUnit = roomTemperatureUnit(unit ?? this._hass?.config?.unit_system?.temperature);
-    return this.temperatureBadge(value, sourceUnit ?? '°');
+    return this.temperatureBadge(value, sourceUnit ?? '°', undefined, formatting);
   }
 
   roomClimateBadge(model, tone) {
@@ -1582,7 +1584,8 @@ export class BayitDashboard extends HTMLElement {
               isVisibleEntity(model.entity, this._hass.states, this._hass.entities, this.config.hiddenEntities)) {
             if (model.entity === source && supportsRoomTemperatureSource(source, model.attributes)) {
               temperature = model.domain === 'climate' ? this.selectedTemperatureBadge(model.attributes.current_temperature)
-                : this.selectedTemperatureBadge(model.state, model.attributes.unit_of_measurement || undefined);
+                : this.selectedTemperatureBadge(model.state, model.attributes.unit_of_measurement || undefined,
+                  { keepReportedTenth: true });
             }
             if (model.entity === temperatureFallback) {
               ambient = this.selectedTemperatureBadge(model.attributes.current_temperature);

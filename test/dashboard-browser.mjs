@@ -6274,8 +6274,20 @@ async function assertSelectedRoomTemperature(browser) {
     await page.goto(url);
     await badge.getByText(/69[.]7°F/).waitFor();
     assert.match(await badge.getAttribute('aria-label'), /69[.]7°F/);
-    await set(selected,'0');
-    await badge.getByText(/0°F/).waitFor();
+    for (const [reported, rendered] of [
+      ['70.0', '70.0°F'], ['-4.0', '-4.0°F'], ['0.0', '0.0°F'], ['0', '0°F'],
+      ['70.00', '70°F'], ['69.76', '69.8°F'],
+    ]) {
+      await set(selected, reported);
+      await badge.getByText(new RegExp('^\u2066?' + rendered.replace('.', '[.]') + '\u2069?$')).waitFor();
+      assert.ok((await badge.getAttribute('aria-label')).includes(rendered));
+    }
+    await page.evaluate(id => window.bayitTest.setFixtureAttributes(id, { unit_of_measurement: '°C' }), selected);
+    await set(selected, '23.0');
+    await badge.getByText(/23[.]0°/).waitFor();
+    assert.ok((await badge.getAttribute('aria-label')).includes('23.0°C'));
+    await page.evaluate(id => window.bayitTest.setFixtureAttributes(id, { unit_of_measurement: '°F' }), selected);
+    await page.evaluate(() => window.bayitTest.setFixtureAttributes('climate.demo_room', { current_temperature: '19.0' }));
     for (const absent of [' ', 'unknown', 'unavailable', '0x12']) {
       await set(selected,absent);
       await badge.getByText(/19°/).waitFor();
@@ -6295,12 +6307,15 @@ async function assertSelectedRoomTemperature(browser) {
     await badge.waitFor({state:'hidden'});
 
     await page.goto(url + '&temperature-from-climate');
-    await badge.getByText(/19°/).waitFor();
+    await page.evaluate(() => window.bayitTest.setFixtureAttributes('climate.demo_room', { current_temperature: '18.0' }));
+    await badge.getByText(/18°/).waitFor();
     await set('climate.demo_room','unavailable');
     await badge.waitFor({state:'hidden'});
 
     await page.goto(base + '?room-status');
     await badge.getByText(/23[.]5°/).waitFor();
+    await set('sensor.demo_temperature','23.0');
+    await badge.getByText(/23°/).waitFor();
     await set('sensor.demo_temperature','unavailable');
     await badge.getByText(/19°/).waitFor();
 
