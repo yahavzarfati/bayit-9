@@ -1107,20 +1107,17 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   }
   .native-panel-card { min-width: 0; --ha-card-background: transparent; --ha-card-box-shadow: none;
     --ha-card-border-color: var(--soft-line); --primary-text-color: var(--ink); --secondary-text-color: var(--secondary); }
-  .energy-reading, .reading-native-card { display: grid; min-width: 0; }
+  .energy-reading, .reading-native-card { display: grid; min-width: 0; grid-template-columns: minmax(0,1fr); }
   .reading-native-card {
     --ha-card-border-width: 1px; --ha-card-border-radius: 8px;
     --state-icon-color: var(--secondary); --accent-color: var(--secondary);
     font-weight: var(--ha-font-weight-normal,400);
   }
-  .toolbar-section[data-section=readings][data-layout=reading-cards] .reading-native-card {
-    grid-template-columns: minmax(0,1fr);
-  }
-  .toolbar-section[data-section=readings][data-layout=reading-cards] .reading-native-card > hui-sensor-card {
+  .toolbar-section[data-layout=reading-cards] .reading-native-card > hui-sensor-card {
     min-inline-size: 0; max-inline-size: 100%;
   }
   @container (max-width: 420px) {
-    .toolbar-section[data-section=readings][data-layout=reading-cards] .reading-native-card > hui-sensor-card {
+    .toolbar-section[data-layout=reading-cards] .reading-native-card > hui-sensor-card {
       --ha-font-size-l: var(--ha-font-size-m,14px);
     }
   }

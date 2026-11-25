@@ -823,24 +823,25 @@ if (query.has('toolbar-panels')) {
   if (!query.has('no-native-charts')) window.loadCardHelpers = async () => ({createCardElement(configuration) {
     const graphAction = configuration.tap_action?.action === 'fire-dom-event' && configuration.tap_action;
     const graphMoreInfo = configuration.tap_action?.action === 'more-info' && configuration.entity;
-    const weatherSensor = query.has('weather-native-width') && configuration.type === 'sensor' &&
-      configuration.entity?.startsWith('sensor.demo_weather_history_');
-    const card = document.createElement(weatherSensor ? 'hui-sensor-card' : graphAction || graphMoreInfo ? 'button' : 'div');
+    const weatherSensor = query.has('weather-native-width') && configuration.entity?.startsWith('sensor.demo_weather_history_');
+    const energySensor = query.has('energy-native-width') && configuration.entity === 'sensor.demo_last_water';
+    const intrinsicSensor = configuration.type === 'sensor' && (weatherSensor || energySensor);
+    const card = document.createElement(intrinsicSensor ? 'hui-sensor-card' : graphAction || graphMoreInfo ? 'button' : 'div');
     const dialog = document.querySelector('bayit-dashboard')?.shadowRoot.querySelector('.modal[open]');
     card.dataset.duringOpening = String(!!dialog?.getAnimations().some(animation =>
       animation.playState === 'running' || animation.pending));
     card.dataset.nativeType = configuration.type;
     card.dataset.tapAction = configuration.tap_action?.action;
     if (configuration.graph) card.dataset.graphHours = configuration.hours_to_show;
-    if (weatherSensor) {
+    if (intrinsicSensor) {
       const shadow = card.attachShadow({mode:'open'});
       shadow.innerHTML = '<style>:host{display:block}.frame{overflow:hidden}.header{display:flex;justify-content:space-between;padding:8px 16px 0;}' +
         '.name{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font:500 var(--ha-font-size-l,16px)/40px Arial}' +
         '.icon{flex:0 0 24px;}.plot{height:16px;max-inline-size:100%;}</style>' +
         '<div class="frame"><div class="header"><span class="name"></span><span class="icon"></span></div><div class="plot"></div></div>';
       const name = shadow.querySelector('.name');
-      name.textContent = name.title = configuration.name;
-      shadow.querySelector('.plot').style.inlineSize = configuration.entity.endsWith('_temp') ? '164px' : '72px';
+      name.textContent = name.title = configuration.name ?? states[configuration.entity].attributes.friendly_name;
+      shadow.querySelector('.plot').style.inlineSize = energySensor || configuration.entity.endsWith('_temp') ? '164px' : '72px';
     }
     if (query.has('energy-borderless-theme') && configuration.type === 'sensor') {
       card.style.border = 'var(--ha-card-border-width, 1px) solid var(--ha-card-border-color)';
@@ -1101,7 +1102,9 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
         ...(query.has('energy-reading-cards') && {layout:'reading-cards'}),
         entities:[{entity:'sensor.demo_water_meter',role:'graph',graph_hours:168},
           ...(query.has('energy-readings') ? [
-            {entity:'sensor.demo_last_water',role:'status'},
+            {entity:'sensor.demo_last_water',role:'status',...(query.has('energy-native-width') && {
+              name:hass.locale.language === 'he' ? 'תחזית חודשית' : 'Monthly water forecast',
+            })},
             {entity:'binary_sensor.demo_water_alarm',role:'status'},
           ] : []),
         ],
@@ -1129,10 +1132,16 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
       }]}] : []),
       {kind:'actions',entities:[{entity:'button.demo_filter',role:'action',confirmation:'Reset the filter?'}]}]},
     ...(!query.has('linked-only-fallback') ? [
-      {id:'sensors-panel',kind:'sensors',placement:'settings',sections:[{kind:'readings',entities:[
-        {entity:'sensor.demo_progress',role:'graph',graph_hours:168,vacuum_panel_id:'vacuum-panel'},
-        {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24,graph_room_id:'studio'},
-        {entity:'sensor.demo_meter',role:'graph',graph_hours:24,graph_room_id:'removed-room'}]}]},
+      {id:'sensors-panel',kind:'sensors',placement:'settings',sections:[{kind:'readings',
+        ...(query.has('sensors-layout-proof') && {title:'Fixture readings'}),
+        ...(query.has('sensors-reading-cards') && {layout:'reading-cards'}),
+        entities:[
+          {entity:'sensor.demo_progress',role:'graph',graph_hours:168,vacuum_panel_id:'vacuum-panel'},
+          {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24,graph_room_id:'studio'},
+          {entity:'sensor.demo_meter',role:'graph',graph_hours:24,graph_room_id:'removed-room'},
+          ...(query.has('sensors-layout-proof') ? [{entity:'sensor.demo_water_meter',role:'graph',graph_hours:48}] : []),
+        ],
+      }] },
       {kind:'calendar',placement:'settings',entities:['calendar.demo_household','calendar.demo_birthdays']},
       ...(linkedPanels ? [{id:'overview',kind:'overview',placement:'settings'}, {id:'entrance',kind:'devices',placement:'settings'}] : []),
     ] : []),
@@ -5357,6 +5366,88 @@ async function assertEnergyPopupPlacement(browser) {
       await headerIcon.blur();
       assert.equal((await editedEntry()).panel_icon,undefined);
     } finally { await page.close(); }
+  }
+}
+
+async function assertUtilityAndSensorGrid(browser) {
+  for (const locale of ['en','he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({viewport:{width:391,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const url = base + '/fixture-home/home?toolbar-panels&energy-readings&sensors-layout-proof&locale=' + locale;
+    const energy = he ? 'אנרגיה' : 'Energy';
+    const sensors = he ? 'חיישנים' : 'Sensors';
+    try {
+      await page.goto(url + '&energy-reading-cards&energy-native-width&native-more-info=modern');
+      await page.getByRole('button', { name:energy, exact:true }).tap();
+      const water = page.getByRole('dialog',{name:energy,exact:true}).locator('[data-section=water]');
+      const forecast = water.locator('hui-sensor-card');
+      await forecast.waitFor();
+      for (const width of [320,391]) {
+        await page.setViewportSize({width,height:844});
+        const fit = await forecast.evaluate(card => {
+          const native = card.getBoundingClientRect();
+          const wrapper = card.closest('.energy-reading').getBoundingClientRect();
+          const prior = card.closest('.energy-reading').previousElementSibling.getBoundingClientRect();
+          const label = card.shadowRoot.querySelector('.name');
+          return { sameCell: Math.abs(native.left-wrapper.left) < 1 && Math.abs(native.right-wrapper.right) < 1,
+            inGutter: native.left < prior.right, name:label.textContent, fullName:label.title,
+            reading:card.dataset.readingState, direction:getComputedStyle(card).direction };
+        });
+        assert.ok(fit.sameCell && !fit.inGutter, JSON.stringify({locale,width,fit}));
+        assert.equal(fit.name, he ? 'תחזית חודשית' : 'Monthly water forecast');
+        assert.equal(fit.fullName, fit.name);
+        assert.equal(fit.reading, '48');
+        assert.equal(fit.direction, locale === 'he' ? 'rtl' : 'ltr');
+      }
+      await forecast.tap();
+      const native = page.getByRole('dialog',{name:'Native entity details',exact:true});
+      await native.waitFor();
+      assert.equal(new URL(page.url()).searchParams.get('more-info-entity-id'), 'sensor.demo_last_water');
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.calls),[]);
+
+      const dialog = page.getByRole('dialog',{name:sensors,exact:true});
+      const items = dialog.locator('[data-section=readings] > .toolbar-section-items');
+      const nativeCards = items.locator('[data-native-type=sensor]');
+      const grid = () => items.evaluate(node => [...node.children].map(card => {
+        const { x, y, width } = card.getBoundingClientRect();
+        return { x, y, width, direction:getComputedStyle(card).direction };
+      }));
+      await page.goto(url + '#panel/sensors-panel');
+      await nativeCards.nth(3).waitFor();
+      const [first, second] = await grid();
+      assert.ok(he ? first.x > second.x : first.x < second.x);
+      assert.equal(await dialog.locator('[data-layout=reading-cards]').count(), 0);
+
+      await page.goto(url + '&sensors-reading-cards#panel/sensors-panel');
+      await nativeCards.nth(3).waitFor();
+      assert.equal(await dialog.locator('[data-layout=reading-cards]').count(), 1);
+      assert.deepEqual(await nativeCards.evaluateAll(nodes=>nodes.map(card=>card.dataset.graphHours)),['168','24','24','48']);
+      for (const width of [320,391]) {
+        await page.setViewportSize({width,height:844});
+        const cards = await grid();
+        const [a,b,c,d] = cards;
+        assert.ok(a.x < b.x && c.x < d.x && a.y === b.y && c.y === d.y && c.y > a.y, JSON.stringify({locale,width,cards}));
+        assert.ok(cards.every(card => card.width >= 44 && card.direction === (he ? 'rtl' : 'ltr')));
+      }
+      await nativeCards.nth(1).tap();
+      await page.getByRole('dialog',{name:'Studio',exact:true}).waitFor();
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.calls),[]);
+
+      await page.goto(url + '&sensors-reading-cards&editor');
+      await page.getByText(he ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens',{exact:true}).tap();
+      await page.getByRole('button',{name:sensors,exact:true}).tap();
+      await page.getByRole('button',{name:'Fixture readings',exact:true}).tap();
+      const setting = page.getByRole('checkbox',{name:he ? 'הצגת המדדים ככרטיסי גרף' : 'Show readings as chart cards',exact:true});
+      const stored = () => page.evaluate(()=>window.latest.toolbar.find(item=>item.kind==='sensors').sections[0].layout);
+      assert.ok(await setting.isChecked());
+      await setting.uncheck();
+      assert.equal(await stored(),undefined);
+      await setting.check();
+      assert.equal(await stored(),'reading-cards');
+    } finally {
+      await page.close();
+    }
   }
 }
 
@@ -10417,6 +10508,7 @@ try {
       await assertRoomTemperatureCharts(browser);
       console.log(engine + ': room temperature source, fallback, units and editor');
       await assertEnergyReadingCards(browser);
+      await assertUtilityAndSensorGrid(browser);
       await assertEnergyPopupPlacement(browser);
       console.log(engine + ': optional Energy headline readings, native details, fallback and editor');
       await assertWeatherNativeCardWidth(browser);

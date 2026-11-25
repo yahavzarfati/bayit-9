@@ -930,9 +930,13 @@ export function isWeatherReadingsList(kind, section) {
   return supportsWeatherReadingsList(kind, section) && section.layout === 'readings-list';
 }
 
+export function supportsReadingCards(kind, section) {
+  return supportsEnergyReadingCards(kind, section) ||
+    (['weather','sensors'].includes(kind) && section?.kind === 'readings');
+}
+
 export function isReadingCards(kind, section) {
-  return isEnergyReadingCards(kind, section) ||
-    (supportsWeatherReadingsList(kind, section) && section.layout === 'reading-cards');
+  return supportsReadingCards(kind, section) && section.layout === 'reading-cards';
 }
 
 export function supportsHourlyWeatherForecast(kind, section, item) {

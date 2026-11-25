@@ -1888,9 +1888,11 @@ test('native reading cards are opt-in for Energy electricity and water and Weath
   const { toolbar } = generateDashboard({ toolbar: [
     { kind: 'energy', sections: [electricity, water, { ...electricity, kind: 'status' }, { ...water, layout: undefined }] },
     { kind: 'weather', sections: [electricity, { ...water, kind: 'readings' }] },
+    { kind: 'sensors', sections: [{ ...water, kind: 'readings' }, { ...water, kind: 'series' }] },
   ] }, hass).views[0].cards[0];
   const sections = toolbar.flatMap(entry => entry.sections);
-  assert.deepEqual(sections.map(section => section.layout), ['reading-cards', 'reading-cards', undefined, undefined, undefined, 'reading-cards']);
+  assert.deepEqual(sections.map(section => section.layout),
+    ['reading-cards', 'reading-cards', undefined, undefined, undefined, 'reading-cards', 'reading-cards', undefined]);
   assert.deepEqual(sections[0].entities.map(({ entity, icon, role, graph_hours }) => [entity, icon, role, graph_hours]),
     [[shown, 'mdi:cash', 'status', undefined], [graph.entity, undefined, 'graph', 168]]);
   assert.equal(sections[0].entities[0].name, 'Cost');
