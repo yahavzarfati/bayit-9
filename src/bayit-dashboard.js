@@ -14,7 +14,7 @@ import { allowsCoverRailAction, canSendDeviceCommands, climatePowerServiceRegist
   simpleTimerStatusEntity, simpleTimerUsageResetAvailable, supportsHomeHeaterPower, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupScrollMemory } from './popup-scroll.js';
-import { createPopupHistory, normalizePopupAliases, popupRouteFragment, resolvePopupRoute } from './popup-routes.js';
+import { createPopupHistory, normalizePopupAliasCloseRoutes, normalizePopupAliases, popupRouteFragment, resolvePopupRoute } from './popup-routes.js';
 import { preserveToolbarPopupPress } from './popup-toolbar-press.js';
 import { preserveMoreInfoReturn } from './native-more-info.js';
 import { buildPanelControls, climateOptionLabel, panelControlStyles } from './panel-controls.js';
@@ -444,6 +444,7 @@ export function normalizeDashboardConfig(config = {}) {
     return parsed;
   });
   const entities = new Map(rooms.flatMap(room => room.entities.map(device => [device.entity, device])));
+  const popupAliases = normalizePopupAliases(config.popup_aliases);
   const overview = Array.isArray(config.overview)
     ? [...new Set(config.overview)].filter(id => entities.has(id)).map(id => entities.get(id)) : [];
   const context = Object.fromEntries(contextKeys.map(key => {
@@ -529,7 +530,8 @@ export function normalizeDashboardConfig(config = {}) {
     setupRoomsOnEmpty: config.page === true && config.setup_rooms_on_empty === true,
     hiddenEntities: new Set(Array.isArray(config.hidden_entities)
       ? config.hidden_entities.filter(id => typeof id === 'string' && entityPattern.test(id)) : []),
-    popupAliases: new Map(Object.entries(normalizePopupAliases(config.popup_aliases))),
+    popupAliases: new Map(Object.entries(popupAliases)),
+    popupAliasCloseRoutes: new Map(Object.entries(normalizePopupAliasCloseRoutes(config.popup_alias_close_routes, popupAliases))),
     title: text(config.title) || languages[locale].home,
     background, sharedWallpapers, appearanceSync: config.appearance_sync === true,
     appearanceHelpers: normalizeAppearanceHelpers(config.appearance_helpers, sharedWallpapers),
@@ -1909,7 +1911,12 @@ export class BayitDashboard extends HTMLElement {
     this.setup?.editor.shadowRoot.activeElement?.blur();
     this.popupScroll.stop();
     const routeHash = this.panel?.routeHash;
-    if (routeHash) this.popupHistory?.close(routeHash);
+    if (routeHash) {
+      const destination = this.config.popupAliasCloseRoutes.get(routeHash);
+      if (destination && this.config.popupAliases.get(routeHash) === popupRouteFragment(this.resolvePopup(routeHash)) &&
+          this.popupHistory?.close(routeHash, destination)) return;
+      this.popupHistory?.close(routeHash);
+    }
     this.popupMotion.dismiss(options);
   }
 

@@ -8,7 +8,7 @@ import { wallpaperChoices } from './wallpapers.js';
 import { normalizeSharedWallpapers } from './shared-wallpapers.js';
 import { normalizeAppearanceHelpers } from './appearance-helpers.js';
 import { normalizeLightEffectCategorySource, normalizeLightEffectFavoriteLights, normalizeLightEffectGroups, normalizeLightModeSource } from './light-effects.js';
-import { normalizePopupAliases, popupRouteFragment } from './popup-routes.js';
+import { normalizePopupAliasCloseRoutes, normalizePopupAliases, popupRouteFragment } from './popup-routes.js';
 import { canOpenBoilerSchedule, isBoilerScheduleProfile } from './boiler-schedule.js';
 import { calendarAccent, normalizeCalendarAgenda, supportsDailyForecast } from './calendar-agenda.js';
 
@@ -1300,6 +1300,8 @@ export function generateDashboard(config = {}, hass = {}) {
   if (!card.rooms.length) card.setup_rooms_on_empty = true;
   const popupAliases = normalizePopupAliases(config.popup_aliases);
   if (Object.keys(popupAliases).length) card.popup_aliases = popupAliases;
+  const popupCloseRoutes = normalizePopupAliasCloseRoutes(config.popup_alias_close_routes, popupAliases);
+  if (Object.keys(popupCloseRoutes).length) card.popup_alias_close_routes = popupCloseRoutes;
   const visible = new Set(card.rooms.flatMap(room => room.entities.map(device => device.entity)));
   const overview = idList(config.overview_entities).filter(id => visible.has(id));
   if (overview.length) card.overview = overview;

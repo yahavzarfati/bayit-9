@@ -17,7 +17,8 @@ import { activityKinds, activitySources, normalizeRoomActivities } from './room-
 import { getDeviceModel, isPairedLightCompanion, isPairedLightStatusRefresh, supportsRoomShutdown } from './device-control.mjs';
 import { lightEffectCategoryOptions, lightEffectCategoryTitles, normalizeLightEffectCategorySource,
   normalizeLightEffectFavoriteLights, normalizeLightEffectGroups, normalizeLightModeSource } from './light-effects.js';
-import { createPopupRouteId, isPopupFragment, normalizePopupAliases, parsePopupRoute } from './popup-routes.js';
+import { createPopupRouteId, isPopupAliasCloseRoute, isPopupFragment, normalizePopupAliasCloseRoutes, normalizePopupAliases,
+  parsePopupRoute } from './popup-routes.js';
 
 const WORDS = {
   en: {
@@ -127,6 +128,7 @@ const WORDS = {
     toolbar: 'Toolbar and extra screens', fullscreen: 'Hide Home Assistant chrome on this dashboard',
     popupLinks: 'Popup links', popupLinkEntry: 'Link to edit', popupLinkNew: 'New popup link',
     popupLinkFragment: 'Old link fragment', popupLinkDestination: 'Popup destination', popupLinkChoose: 'Choose a destination',
+    popupLinkClose: 'On close', popupLinkHome: 'Dashboard home',
     popupLinkRooms: 'Rooms', popupLinkDevices: 'Room devices', popupLinkScreens: 'Screens', popupLinkUnavailable: 'Destination unavailable',
     popupLinkAdd: 'Add link', popupLinkUpdate: 'Update link', popupLinkRemove: 'Remove link',
     popupLinkInvalid: 'Enter only the fragment from the old URL, such as #old-room.',
@@ -282,6 +284,7 @@ const WORDS = {
     toolbar: 'סרגל ומסכים נוספים', fullscreen: 'הסתרת סרגל Home Assistant בדשבורד הזה',
     popupLinks: 'קישורים לחלוניות', popupLinkEntry: 'קישור לעריכה', popupLinkNew: 'קישור חדש לחלונית',
     popupLinkFragment: 'מקטע הקישור הישן', popupLinkDestination: 'יעד הקישור', popupLinkChoose: 'בחירת יעד',
+    popupLinkClose: 'יעד בסגירה', popupLinkHome: 'מסך הבית של הדשבורד',
     popupLinkRooms: 'חדרים', popupLinkDevices: 'מכשירים בחדרים', popupLinkScreens: 'מסכים', popupLinkUnavailable: 'היעד אינו זמין',
     popupLinkAdd: 'הוספת קישור', popupLinkUpdate: 'עדכון הקישור', popupLinkRemove: 'הסרת הקישור',
     popupLinkInvalid: 'יש להזין רק את המקטע מהכתובת הישנה, למשל #old-room.',
@@ -2109,7 +2112,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
               manual_area_ids: this.#config.manual_area_ids.filter(id => id !== active.id),
             }),
             room_shortcuts: shortcuts,
-            ...(aliasesChanged && { popup_aliases: aliases }),
+            ...(aliasesChanged && { popup_aliases: aliases,
+              popup_alias_close_routes: this.#popupCloseRoutes(this.#config.popup_alias_close_routes, aliases) }),
           }, 'room-mode');
         });
         remove.className = 'room-danger';
@@ -3092,6 +3096,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
     return [node('p', { textContent:words.appearanceHelperHint }), panel];
   }
 
+  #popupCloseRoutes(value, aliases) {
+    const routes = normalizePopupAliasCloseRoutes(value, normalizePopupAliases(aliases));
+    return Object.keys(routes).length ? routes : undefined;
+  }
+
   #popupLinksPanel(words, language) {
     const savedLinks = () => {
       const value = this.#config.popup_aliases;
@@ -3100,8 +3109,16 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const entry = node('select', { dir:'ltr' });
     const fragment = node('input', { dir:'ltr', maxLength:512, autocapitalize:'none', spellcheck:false, placeholder:'#old-room' });
     const target = node('select');
+    const closeTarget = node('select');
+    const closeField = field(words.popupLinkClose, closeTarget);
     const error = node('p', { className:'room-add-hint' });
     error.setAttribute('role', 'status');
+    const savedCloses = () => this.#popupCloseRoutes(this.#config.popup_alias_close_routes, savedLinks()) ?? {};
+    const targetLabel = item => {
+      const name = item.kind === 'panel' ? item.name || languages[language][item.panelKind] : item.name;
+      const caption = item.roomName ? name + ' · ' + item.roomName : name;
+      return item.detail === 'schedule' ? languages[language].boiler_schedule + ' · ' + caption : caption;
+    };
     let renderedTargets;
     const updateTargets = value => {
       const destinations = popupAliasDestinations(this.#config, this.#hass);
@@ -3112,10 +3129,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         const groups = [['room', words.popupLinkRooms], ['device', words.popupLinkDevices], ['panel', words.popupLinkScreens]];
         const choices = groups.flatMap(([kind, label]) => {
           const entries = destinations.filter(item => item.kind === kind).map(item => {
-            const name = item.kind === 'panel' ? item.name || languages[language][item.panelKind] : item.name;
-            const caption = item.roomName ? name + ' · ' + item.roomName : name;
-            return { id: item.fragment, identifier: item.entity ?? item.room ?? item.panel,
-              name: item.detail === 'schedule' ? languages[language].boiler_schedule + ' · ' + caption : caption };
+            return { id: item.fragment, identifier: item.entity ?? item.room ?? item.panel, name:targetLabel(item) };
           });
           if (!entries.length) return [];
           const names = distinctEditorLabels(entries, new Map(entries.map(item => [item.id, item.identifier])));
@@ -3126,10 +3140,31 @@ export class Bayit9StrategyEditor extends HTMLElement {
         renderedTargets = signature;
       }
       target.value = value;
-      return allowed;
+      return { allowed, destinations };
     };
-    const remember = (links, selected) => {
-      this.#commit({ popup_aliases:Object.keys(links).length ? links : undefined });
+    const updateCloseTargets = (selected, destinations) => {
+      const from = parsePopupRoute(target.value);
+      const available = new Map(destinations.filter(item => isPopupAliasCloseRoute(from, parsePopupRoute(item.fragment)))
+        .map(item => [item.fragment, targetLabel(item)]));
+      const links = savedLinks();
+      const canonicalDestinations = new Set(destinations.map(item => item.fragment));
+      const options = new Map(available);
+      for (const [alias, canonical] of Object.entries(links)) {
+        if (available.has(canonical) && !canonicalDestinations.has(alias)) {
+          options.set(alias, available.get(canonical) + ' · ' + alias);
+        }
+      }
+      const canonical = Object.hasOwn(links, selected) ? links[selected] : selected;
+      if (selected && !options.has(selected) && isPopupAliasCloseRoute(from, parsePopupRoute(canonical))) {
+        options.set(selected, words.popupLinkUnavailable + ' · ' + selected);
+      }
+      closeField.hidden = options.size === 0;
+      closeTarget.replaceChildren(option('', words.popupLinkHome), ...[...options].map(([hash, name]) => option(hash, name)));
+      closeTarget.value = options.has(selected) ? selected : '';
+    };
+    const remember = (links, closes, selected) => {
+      this.#commit({ popup_aliases:Object.keys(links).length ? links : undefined,
+        popup_alias_close_routes:this.#popupCloseRoutes(closes, links) });
       draw(selected);
     };
     const apply = button(words.popupLinkAdd, () => {
@@ -3137,7 +3172,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const destination = target.value;
       const existing = entry.value;
       const links = savedLinks();
-      const allowed = updateTargets(destination);
+      const { allowed } = updateTargets(destination);
       if (!isPopupFragment(source)) error.textContent = words.popupLinkInvalid;
       else if (allowed.has(source) || source !== existing && Object.hasOwn(links, source)) error.textContent = words.popupLinkConflict;
       else if (!allowed.has(destination)) error.textContent = words.popupLinkSelect;
@@ -3145,15 +3180,27 @@ export class Bayit9StrategyEditor extends HTMLElement {
         const pairs = Object.entries(links);
         const next = Object.fromEntries(existing ? pairs.map(([key, value]) => key === existing ? [source, destination] : [key, value])
           : [...pairs, [source, destination]]);
-        if (normalizePopupAliases(next)[source] !== destination) error.textContent = words.popupLinkLimit;
-        else if (source !== existing || links[source] !== destination) remember(next, source);
-        else error.textContent = '';
+        if (normalizePopupAliases(next)[source] !== destination) {
+          error.textContent = words.popupLinkLimit;
+          return;
+        }
+        const saved = savedCloses();
+        const closes = Object.fromEntries(Object.entries(saved).filter(([alias]) => alias !== existing)
+          .map(([alias, close]) => [alias, existing && close === existing ? source : close]));
+        if (closeTarget.value) closes[source] = closeTarget.value;
+        if (source !== existing || links[source] !== destination || saved[source] !== closes[source]) {
+          remember(next, closes, source);
+        } else error.textContent = '';
       }
     });
     const remove = button(words.popupLinkRemove, () => {
+      const selected = entry.value;
       const links = { ...savedLinks() };
-      delete links[entry.value];
-      remember(links, '');
+      const canonical = links[selected];
+      const closes = Object.fromEntries(Object.entries(savedCloses()).filter(([alias]) => alias !== selected)
+        .map(([alias, close]) => [alias, close === selected ? canonical : close]));
+      delete links[selected];
+      remember(links, closes, '');
       entry.focus({ preventScroll:true });
     });
     const draw = selected => {
@@ -3163,13 +3210,18 @@ export class Bayit9StrategyEditor extends HTMLElement {
       entry.value = entries.includes(selected) ? selected : '';
       fragment.value = entry.value;
       const destination = links[entry.value];
-      updateTargets(typeof destination === 'string' ? destination : '');
+      const { destinations } = updateTargets(typeof destination === 'string' ? destination : '');
+      updateCloseTargets(savedCloses()[entry.value], destinations);
       apply.textContent = entry.value ? words.popupLinkUpdate : words.popupLinkAdd;
       remove.hidden = !entry.value;
       error.textContent = '';
     };
     entry.addEventListener('change', () => draw(entry.value));
-    target.addEventListener('focus', () => updateTargets(target.value));
+    target.addEventListener('focus', () => {
+      const { destinations } = updateTargets(target.value);
+      updateCloseTargets(closeTarget.value, destinations);
+    });
+    target.addEventListener('change', () => updateCloseTargets(closeTarget.value, popupAliasDestinations(this.#config, this.#hass)));
     fragment.addEventListener('keydown', event => {
       if (event.key !== 'Enter' || event.isComposing) return;
       event.preventDefault();
@@ -3177,7 +3229,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     });
     draw('');
     return [node('div', { className:'stack' }, [field(words.popupLinkEntry, entry), field(words.popupLinkFragment, fragment),
-      field(words.popupLinkDestination, target), node('div', { className:'actions' }, [apply, remove]), error])];
+      field(words.popupLinkDestination, target), closeField, node('div', { className:'actions' }, [apply, remove]), error])];
   }
 
   render() {

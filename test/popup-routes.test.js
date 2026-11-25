@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createPopupHistory, normalizePopupAliases, parsePopupRoute, popupRouteFragment, resolvePopupRoute } from '../src/popup-routes.js';
+import { createPopupHistory, normalizePopupAliasCloseRoutes, normalizePopupAliases, parsePopupRoute, popupRouteFragment, resolvePopupRoute } from '../src/popup-routes.js';
 
 const room = { kind: 'room', room: 'Studio_1' };
 const device = { kind: 'device', room: 'Studio_1', entity: 'light.desk' };
@@ -160,6 +160,51 @@ test('keeps a linked Bayit parent across native More Info history and removes it
     assert.equal(navigation.backToRoom(room.room, { source: {}, fallback: () => assert.fail() }), mode !== 'unrelated');
     if (mode !== 'unrelated') assert.equal(observations.at(-1).reason, 'room-return');
   }
+});
+
+test('explicit alias Close permits only the same room or the same device from Schedule', () => {
+  const scheduleHash = '#device/Studio_1/switch.boiler/schedule';
+  const boilerHash = '#device/Studio_1/switch.boiler';
+  const input = {
+    '#old-form': scheduleHash, '#old-timer': boilerHash, '#old-room': roomHash,
+    '#bad-form': scheduleHash, '#foreign-target': '#room-outside',
+  };
+  assert.deepEqual(normalizePopupAliasCloseRoutes({
+    '#old-form': '#old-timer',
+    '#old-timer': '#old-room',
+    '#old-room': roomHash,
+    '#bad-form': '#foreign-target',
+    '#foreign-target': 'https://example.invalid',
+    [deviceHash]: roomHash,
+  }, input), { '#old-form':'#old-timer', '#old-timer':'#old-room' });
+  assert.deepEqual(normalizePopupAliasCloseRoutes({ '#old-form':deviceHash }, input), {});
+
+  const view = new Browser('/dashboard/home?kiosk=1');
+  const admitted = new Set([scheduleHash, boilerHash, roomHash, '#room-outside']);
+  const links = new Map(Object.entries(input));
+  const changes = [];
+  const navigation = createPopupHistory({ view, resolve: hash =>
+    resolvePopupRoute(hash, route => admitted.has(popupRouteFragment(route)), links), onChange: change => changes.push(change) });
+  navigation.start();
+  view.history.pushState({ native:true }, '', '/dashboard/home?kiosk=1#old-form');
+  view.dispatchEvent(new Event('location-changed'));
+  assert.equal(navigation.close('#old-form', '#foreign-target'), false);
+  admitted.delete(boilerHash);
+  assert.equal(navigation.close('#old-form', '#old-timer'), false);
+  admitted.add(boilerHash);
+  assert.equal(navigation.close('#old-form', '#old-timer'), true);
+  assert.equal(view.location.hash, '#old-timer');
+  assert.equal(changes.at(-1).reason, 'alias-close');
+  assert.deepEqual(view.history.state, { native:true });
+  assert.equal(view.entries.length, 2);
+  view.move(-1);
+  assert.equal(view.location.hash, '');
+  view.move(1);
+  assert.equal(view.location.hash, '#old-timer');
+  assert.equal(navigation.close('#old-timer', '#old-room'), true);
+  assert.equal(view.location.hash, '#old-room');
+  assert.equal(navigation.close('#old-room'), true);
+  assert.equal(view.location.href, 'http://fixture.invalid/dashboard/home?kiosk=1');
 });
 
 test('takes late configuration into account and stops listening on teardown', () => {

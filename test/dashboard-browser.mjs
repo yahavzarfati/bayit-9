@@ -5336,11 +5336,11 @@ async function assertPopupAliasEditing(browser) {
     en:{ appearance:'Appearance', setup:'Customize home', toolbar:'Toolbar and extra screens', links:'Popup links',
       entry:'Link to edit', fragment:'Old link fragment', target:'Popup destination', add:'Add link', update:'Update link',
       remove:'Remove link', save:'Save dashboard', invalid:'Enter only the fragment', conflict:'This fragment already opens',
-      unavailable:'Destination unavailable' },
+      unavailable:'Destination unavailable', close:'On close', dismiss:'Close' },
     he:{ appearance:'מראה', setup:'התאמת הבית', toolbar:'סרגל ומסכים נוספים', links:'קישורים לחלוניות',
       entry:'קישור לעריכה', fragment:'מקטע הקישור הישן', target:'יעד הקישור', add:'הוספת קישור', update:'עדכון הקישור',
       remove:'הסרת הקישור', save:'שמירת הדשבורד', invalid:'יש להזין רק את המקטע', conflict:'המקטע הזה כבר פותח',
-      unavailable:'היעד אינו זמין' },
+      unavailable:'היעד אינו זמין', close:'יעד בסגירה', dismiss:'סגירה' },
   };
   for (const [locale, words] of Object.entries(wordsByLocale)) {
     const page = await browser.newPage({ viewport:{ width:320, height:660 }, hasTouch:true, reducedMotion:'reduce' });
@@ -5367,6 +5367,7 @@ async function assertPopupAliasEditing(browser) {
         return setup;
       };
       const stored = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.popup_aliases);
+      const storedCloses = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.popup_alias_close_routes);
       await page.goto(url);
       const setup = await openLinks();
       const entry = setup.getByLabel(words.entry, { exact:true });
@@ -5374,6 +5375,7 @@ async function assertPopupAliasEditing(browser) {
       const target = setup.getByLabel(words.target, { exact:true });
       const add = setup.getByRole('button', { name:words.add, exact:true });
       const edit = setup.getByRole('button', { name:words.update, exact:true });
+      const close = setup.getByLabel(words.close, { exact:true });
       const destinations = () => target.locator('option').evaluateAll(nodes => nodes.map(node => node.value));
       const allowed = await destinations();
       for (const value of ['#room-studio', '#device/studio/light.demo_lamp', '#panel/fixture-media']) assert.ok(allowed.includes(value));
@@ -5399,23 +5401,46 @@ async function assertPopupAliasEditing(browser) {
         assert.equal(await entry.inputValue(), alias);
       };
       await addAlias('#fixture-room', '#room-studio');
+      await close.waitFor({state:'hidden'});
+      await addAlias('#fixture-light', '#device/studio/light.demo_lamp');
+      assert.deepEqual(await close.locator('option').evaluateAll(nodes => nodes.map(node => node.value).filter(value =>
+        value === '#room-studio' || value === '#fixture-room')), ['#room-studio','#fixture-room']);
+      await close.selectOption('#fixture-room');
+      await edit.tap();
+      await entry.selectOption('#fixture-room');
       await fragment.fill('#fixture-room-renamed');
       await edit.tap();
-      await addAlias('#fixture-light', '#device/studio/light.demo_lamp');
+      await entry.selectOption('#fixture-light');
+      assert.equal(await close.inputValue(), '#fixture-room-renamed');
+
       await addAlias('#fixture-screen', '#panel/fixture-media');
+      await close.waitFor({state:'hidden'});
       await addAlias('#fixture-remove', '#room-studio');
+      await entry.selectOption('#fixture-light');
+      await close.selectOption('#fixture-remove');
+      await edit.tap();
+      await entry.selectOption('#fixture-remove');
       await setup.getByRole('button', { name:words.remove, exact:true }).tap();
+      await entry.selectOption('#fixture-light');
+      assert.equal(await close.inputValue(), '#room-studio');
       assert.deepEqual(await stored(), initialAliases);
       await setup.getByRole('button', { name:words.save, exact:true }).tap();
       await setup.waitFor({ state:'hidden' });
       assert.deepEqual(await stored(), { ...initialAliases, '#fixture-room-renamed':'#room-studio',
         '#fixture-light':'#device/studio/light.demo_lamp', '#fixture-screen':'#panel/fixture-media' });
+      assert.deepEqual(await storedCloses(), { '#fixture-light':'#room-studio' });
       await page.reload();
       const savedSetup = await openLinks();
       assert.ok(await savedSetup.getByLabel(words.entry, { exact:true }).locator('option[value="#fixture-light"]').count());
       for (const [hash, title] of [['#fixture-room-renamed','Studio'], ['#fixture-light','Desk lamp'], ['#fixture-screen','Fixture media']]) {
         await page.goto(url + hash);
-        await page.getByRole('dialog', { name:title, exact:true }).waitFor();
+        const panel = page.getByRole('dialog', { name:title, exact:true });
+        await panel.waitFor();
+        if (hash === '#fixture-light') {
+          await panel.getByRole('button', { name:words.dismiss, exact:true }).tap();
+          await page.waitForURL(value => value.hash === '#room-studio');
+          await page.getByRole('dialog', {name:'Studio',exact:true}).waitFor();
+        }
         assert.equal(await page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service').length), 0);
       }
     } finally {

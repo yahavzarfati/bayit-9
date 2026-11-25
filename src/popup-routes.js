@@ -69,6 +69,22 @@ export function normalizePopupAliases(config) {
     isPopupFragment(alias) && parsePopupRoute(target) && alias !== target).slice(0, 128));
 }
 
+export function isPopupAliasCloseRoute(source, target) {
+  return source?.kind === 'device' && source.room === target?.room &&
+    (target.kind === 'room' || (source.detail === 'schedule' && target.kind === 'device' &&
+      !target.detail && source.entity === target.entity));
+}
+
+export function normalizePopupAliasCloseRoutes(config, aliases) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return {};
+  return Object.fromEntries(Object.entries(config).filter(([alias, target]) => {
+    if (!Object.hasOwn(aliases, alias) || !isPopupFragment(target)) return false;
+    const source = parsePopupRoute(aliases[alias]);
+    const destination = parsePopupRoute(Object.hasOwn(aliases, target) ? aliases[target] : target);
+    return isPopupAliasCloseRoute(source, destination);
+  }));
+}
+
 export function createPopupHistory({ view, resolve, onChange, pathname = view.location.pathname, scope }) {
   const roomEntries = new Map();
   let listening = false;
@@ -206,12 +222,15 @@ export function createPopupHistory({ view, resolve, onChange, pathname = view.lo
       }
       return true;
     },
-    close(expectedHash = view.location.hash) {
-      if (!listening || !withinView() || expectedHash !== view.location.hash || !resolve(expectedHash)) return false;
+    close(expectedHash = view.location.hash, targetHash) {
+      if (!listening || !withinView() || expectedHash !== view.location.hash) return false;
+      const source = resolve(expectedHash);
+      if (!source || (targetHash !== undefined &&
+          (!isPopupFragment(targetHash) || !isPopupAliasCloseRoute(source, resolve(targetHash))))) return false;
       if (linkedEntry) roomEntries.delete(linkedEntry.id);
       linkedEntry = undefined;
       cancelReturn();
-      write('', true, 'close');
+      write(targetHash ?? '', true, targetHash ? 'alias-close' : 'close');
       return true;
     },
   };

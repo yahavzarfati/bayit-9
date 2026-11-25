@@ -16,6 +16,7 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 | `overview_entities` | Optional visible entities to include in the toolbar's home overview. |
 | `room_shortcuts` | Optional per-room lists of up to six visible entity IDs, in display order. A room without a list uses automatic shortcuts. An empty manual list hides that room's shortcuts. The room override `shortcut_selection: auto` enables automatic shortcuts while keeping the manual list. |
 | `popup_aliases` | Optional mapping of old URL fragments to visible popup routes on this dashboard. |
+| `popup_alias_close_routes` | Optional mapping from a device or Schedule alias to the popup opened on Close. |
 | `light_effect_groups` | Optional categories for a light's advertised effects. Open the light's details, choose an effect and press **Apply**. |
 | `light_effect_favorites` | Lights with configured effect categories that allow personal favorites. |
 | `light_status_refresh_buttons` | Optional mapping from a light to a status request button registered to the same Home Assistant device. |
@@ -121,6 +122,8 @@ Use **Open Home Assistant details with a long press on this light** in **Room de
 Use **Devices turned off by the room icon** to give the icon a quick room shutdown action. Pick the exact room members to turn off. The room name still opens the room. The YAML field `turn_off_entities` accepts room lights, switches, fans, climate devices, water heaters, and media players. A device receives the action while it is available and offers a standard direct turn-off command. The selection is independent from the room's lighting count.
 
 On a standalone Bayit 9 dashboard, opening a room, device or screen updates the URL. Use the browser's Back and Forward buttons to return to those views. To keep an old bookmark, open **Customize home → Toolbar and extra screens → Popup links** and choose its new destination. Enter the fragment of the old URL, starting with `#`, then save the dashboard. In YAML, add the fragment under `popup_aliases`, such as `"#old-lamp": "#device/studio/light.desk"`. Room links use `#room-<room-id>` and screen links use `#panel/<toolbar-id>`. Links open the viewer with the dashboard's usual device permissions. A bound boiler's Schedule destination opens the current list at `#device/<room-id>/<boiler-entity>/schedule`. Use the list to open a fresh form.
+
+For an old device link, choose **On close** in **Popup links** if Close should open its room. A Schedule link can also close to the regular controls for the same device. In YAML, set `popup_alias_close_routes: { "#old-lamp": "#room-studio" }` alongside the corresponding `popup_aliases` entry. You can select an existing popup link when it opens one of those destinations. Close replaces the current entry and the browser's Back and Forward buttons keep their usual navigation.
 
 A dashboard-only room keeps its links when renamed or reordered. Deleting the room removes aliases that point to it or to one of its devices. Newly created rooms receive their own IDs.
 

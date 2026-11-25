@@ -63,7 +63,18 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     const card = document.createElement('bayit-dashboard');
     card.setConfig({ locale, page: params.has('routed'),
       ...(params.has('hide-runtime') && {hidden_entities:['sensor.fixture_runtime']}),
-      popup_aliases:{ '#former-boiler-form':'#device/bath/switch.fixture_boiler/schedule' }, rooms: [
+      popup_aliases:{
+        '#former-boiler-form':'#device/bath/switch.fixture_boiler/schedule',
+        '#former-boiler':'#device/bath/switch.fixture_boiler',
+        '#former-room-boiler':'#device/bath/switch.fixture_boiler',
+        '#former-room-form':'#device/bath/switch.fixture_boiler/schedule',
+      },
+      ...(params.has('close-links') && { popup_alias_close_routes:{
+        '#former-boiler-form':'#former-boiler',
+        '#former-room-boiler':'#room-bath',
+        '#former-room-form':'#room-bath',
+      } }),
+      rooms: [
       { id: 'kitchen', name: 'Kitchen', entities: [...sensors,
         { ...boiler, ...(params.has('room-schedule-entry') && { room_boiler_schedule_entry: true }) }],
         shortcuts: [] },
@@ -726,6 +737,44 @@ async function assertStopDuringTimerReadback(browser, locale) {
   }
 }
 
+async function assertContextualBoilerClose(browser, locale) {
+  const page = await browser.newPage({viewport:{width:391,height:844},hasTouch:true,reducedMotion:'reduce'});
+  page.setDefaultTimeout(8000);
+  const url = 'http://127.0.0.1:' + server.address().port + '?compact&routed&stacked&close-links&schedule-link&locale=' + locale;
+  const boiler = page.getByRole('dialog', {name:'Fixture boiler',exact:true});
+  const schedule = boiler.locator('.schedule-list').getByText('Morning',{exact:true});
+  const close = boiler.locator('[data-role=close]');
+  const room = page.getByRole('dialog',{name:'Bath',exact:true});
+  const hash = value => page.waitForURL(url => url.hash === value);
+  try {
+    await page.goto(url);
+    await page.evaluate(() => { location.hash = '#former-boiler-form'; });
+    await schedule.waitFor();
+    assert.equal(await boiler.locator('.schedule-form:visible').count(), 0);
+    await close.tap();
+    await hash('#former-boiler');
+    await boiler.waitFor();
+    await page.evaluate(() => history.back());
+    await hash('');
+    await boiler.waitFor({state:'hidden'});
+    await page.evaluate(() => history.forward());
+    await hash('#former-boiler');
+    await close.tap();
+    await hash('');
+    await boiler.waitFor({state:'hidden'});
+
+    for (const alias of ['#former-room-boiler', '#former-room-form']) {
+      await page.goto(url + alias);
+      await close.tap();
+      await hash('#room-bath');
+      await room.waitFor();
+      assert.equal(await page.evaluate(() => window.fixture.requests.includes('call_service')), false);
+    }
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertRoomBoilerScheduleEntry(browser, locale) {
   const he = locale === 'he';
   const page = await browser.newPage({ viewport:{width:320,height:680}, hasTouch:true, reducedMotion:'reduce' });
@@ -855,6 +904,7 @@ try {
         await assertSharedBoilerView(browser, language);
         await assertIdleZeroBoilerDuration(browser, language);
         await assertStopDuringTimerReadback(browser, language);
+        await assertContextualBoilerClose(browser, language);
       }
       const routed = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true });
       await routed.goto('http://127.0.0.1:' + server.address().port + '?routed&locale=' + locale);
