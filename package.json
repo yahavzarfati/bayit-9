@@ -1,6 +1,6 @@
 {
   "name": "bayit-9",
-  "version": "0.34.0",
+  "version": "0.35.0",
   "private": true,
   "type": "module",
   "description": "A room-based Liquid Glass dashboard for Home Assistant",
