@@ -100,6 +100,14 @@ const hass = {
       states['climate.demo_air'] = { ...states['climate.demo_air'], state: 'cool' };
       card.hass = { ...hass, states: { ...states } };
     }
+    if (request.domain === 'climate' && query.has('climate-labels')) {
+      const attribute = { set_swing_mode: 'swing_mode', set_fan_mode: 'fan_mode' }[request.service];
+      const id = request.target.entity_id;
+      if (attribute) {
+        states[id].attributes = { ...states[id].attributes, [attribute]: request.service_data[attribute] };
+        card.hass = { ...hass, states: { ...states } };
+      }
+    }
     if (request.domain === 'media_player' && request.service === 'media_pause') {
       const id = request.target.entity_id;
       states[id] = { ...states[id], state: 'paused' };
@@ -167,6 +175,20 @@ if (query.has('device-panel')) {
     switch_entity_id: 'input_boolean.demo_air_timer', timer_state: 'idle', device_active: false,
   } };
   hass.entities['climate.demo_air'] = { area_id: 'studio' };
+  const attributes = states['climate.demo_air'].attributes;
+  if (query.get('climate-labels') === 'positioned') Object.assign(attributes, {
+    fan_modes: ['auto', 'low', 'medium low', 'medium', 'medium high', 'high'], fan_mode: 'medium low',
+    swing_modes: ['default', 'full_swing', 'fixed_upper', 'fixed_upper_middle', 'fixed_middle', 'fixed_lower_middle',
+      'fixed_lower', 'swing_upper', 'swing_upper_middle', 'swing_middle', 'swing_lower_middle', 'swing_lower'],
+    swing_mode: 'default',
+  });
+  if (query.get('climate-labels') === 'lounge') Object.assign(attributes, {
+    supported_features: attributes.supported_features & ~32,
+    fan_modes: ['auto', 'sleep', 'quiet', 'low', 'health', 'medium', 'natural', 'strong', 'high'], fan_mode: 'quiet',
+  });
+  if (query.get('climate-labels') === 'generic') Object.assign(attributes, {
+    swing_modes: ['default', 'vertical', 'custom_span'], swing_mode: 'default',
+  });
 }
 const roomStatusSelected = {
   area_ids: ['bayit_room_status', ...Array.from({ length: 9 }, (_, index) => 'bayit_room_fixture_' + index)],
@@ -1134,6 +1156,61 @@ try {
       await air.waitFor({ state: 'hidden' });
       assert.equal(await quickAir.evaluate(control => control.getRootNode().activeElement === control), true);
       await detailPage.close();
+
+      const labelPage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+      labelPage.setDefaultTimeout(8000);
+      const labelLang = rightToLeft ? 'he' : 'en';
+      const labelURL = base + '?device-panel&locale=' + labelLang + '&climate-labels=';
+      const openClimateLabels = async variant => {
+        await labelPage.goto(labelURL + variant);
+        await labelPage.locator('.quick-button[data-entity="climate.demo_air"]').press('Shift+Enter');
+        const modal = labelPage.getByRole('dialog', { name: 'Studio air conditioner', exact: true });
+        await modal.waitFor();
+        return modal;
+      };
+      const optionValues = select => select.locator('option:not([disabled])').evaluateAll(options =>
+        options.map(option => [option.value, option.textContent]));
+      const positioned = await openClimateLabels('positioned');
+      const swingName = rightToLeft ? 'נדנוד' : 'Swing';
+      const fanName = rightToLeft ? 'מהירות מאוורר' : 'Fan speed';
+      const swing = positioned.getByRole('combobox', { name: swingName, exact: true });
+      const fan = positioned.getByRole('combobox', { name: fanName, exact: true });
+      const expectedOptions = rows => rows.map(([value, en, he]) => [value, rightToLeft ? he : en]);
+      assert.deepEqual(await optionValues(swing), expectedOptions([
+        ['default', 'No swing', 'ללא נדנוד'], ['full_swing', 'Full swing', 'נדנוד מלא'],
+        ['fixed_upper', 'Fixed – Upper', 'קבוע – עליון'], ['fixed_upper_middle', 'Fixed – Upper middle', 'קבוע – עליון־אמצעי'],
+        ['fixed_middle', 'Fixed – Middle', 'קבוע – אמצעי'], ['fixed_lower_middle', 'Fixed – Lower middle', 'קבוע – תחתון־אמצעי'],
+        ['fixed_lower', 'Fixed – Lower', 'קבוע – תחתון'], ['swing_upper', 'Swing – Upper', 'נדנוד – עליון'],
+        ['swing_upper_middle', 'Swing – Upper middle', 'נדנוד – עליון־אמצעי'], ['swing_middle', 'Swing – Middle', 'נדנוד – אמצעי'],
+        ['swing_lower_middle', 'Swing – Lower middle', 'נדנוד – תחתון־אמצעי'], ['swing_lower', 'Swing – Lower', 'נדנוד – תחתון'],
+      ]));
+      assert.equal(await swing.inputValue(), 'default');
+      assert.deepEqual(await optionValues(fan), expectedOptions([
+        ['auto', 'Auto', 'אוטומטי'], ['low', 'Low', 'נמוך'], ['medium low', 'Medium low', 'בינוני נמוך'],
+        ['medium', 'Medium', 'בינוני'], ['medium high', 'Medium high', 'בינוני גבוה'], ['high', 'High', 'גבוה'],
+      ]));
+      assert.equal(await fan.inputValue(), 'medium low');
+      await swing.selectOption({ label: rightToLeft ? 'קבוע – עליון־אמצעי' : 'Fixed – Upper middle' });
+      await fan.selectOption({ label: rightToLeft ? 'בינוני גבוה' : 'Medium high' });
+      assert.deepEqual(await labelPage.evaluate(() => window.bayitTest.calls), [
+        { type: 'call_service', domain: 'climate', service: 'set_swing_mode',
+          target: { entity_id: 'climate.demo_air' }, service_data: { swing_mode: 'fixed_upper_middle' } },
+        { type: 'call_service', domain: 'climate', service: 'set_fan_mode',
+          target: { entity_id: 'climate.demo_air' }, service_data: { fan_mode: 'medium high' } },
+      ]);
+      const lounge = await openClimateLabels('lounge');
+      assert.equal(await lounge.getByRole('combobox', { name: swingName, exact: true }).count(), 0);
+      assert.deepEqual(await optionValues(lounge.getByRole('combobox', { name: fanName, exact: true })), expectedOptions([
+        ['auto', 'Auto', 'אוטומטי'], ['sleep', 'Sleep', 'שינה'], ['quiet', 'Quiet', 'שקט'], ['low', 'Low', 'נמוך'],
+        ['health', 'Health', 'בריאות'], ['medium', 'Medium', 'בינוני'], ['natural', 'Natural', 'טבעי'],
+        ['strong', 'Strong', 'חזק'], ['high', 'High', 'גבוה'],
+      ]));
+      const generic = await openClimateLabels('generic');
+      assert.deepEqual(await optionValues(generic.getByRole('combobox', { name: swingName, exact: true })), expectedOptions([
+        ['default', 'default', 'default'], ['vertical', 'Vertical', 'אנכי'], ['custom_span', 'custom_span', 'custom_span'],
+      ]));
+      await labelPage.close();
+      console.log(engine + ' 320: localized climate positions and fan modes keep native action values');
 
       const heaterPage = await browser.newPage({ viewport: { width: 375, height: 812 } });
       await heaterPage.goto(base + '?heater-level&locale=' + (rightToLeft ? 'he' : 'en'));

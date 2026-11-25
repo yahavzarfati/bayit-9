@@ -23,6 +23,25 @@ const selectors = {
   set_swing_mode: ['mdi:swap-vertical', model => model.attributes.swing_mode],
 };
 
+const namedFanModes = new Set(['sleep', 'quiet', 'health', 'natural', 'strong', 'medium low', 'medium high']);
+const swingPosition = /^(fixed|swing)_(upper(?:_middle)?|middle|lower(?:_middle)?)$/;
+
+function climateOptionLabel(action, value, options, t) {
+  if (action === 'set_fan_mode' && namedFanModes.has(value)) return t('climate_fan_' + value.replace(' ', '_'));
+  if (action === 'set_swing_mode') {
+    if (value === 'full_swing') return t('climate_swing_full');
+    if (value === 'default' && options.includes('full_swing') && options.includes('fixed_upper_middle')) {
+      return t('climate_swing_disabled');
+    }
+    const position = swingPosition.exec(value);
+    if (position) {
+      const movement = t(position[1] === 'fixed' ? 'climate_swing_fixed' : 'set_swing_mode');
+      return movement + ' – ' + t('climate_position_' + position[2]);
+    }
+  }
+  return t(value);
+}
+
 export function buildPanelControls(model, { make, button, icon, label, t, request }) {
   const used = new Set();
   const updates = [];
@@ -78,15 +97,16 @@ export function buildPanelControls(model, { make, button, icon, label, t, reques
       unavailable.value = '';
       unavailable.disabled = true;
       input.append(unavailable);
-      for (const option of actions[id].options) {
-        const item = make('option', '', t(option));
+      const options = actions[id].options;
+      for (const option of options) {
+        const item = make('option', '', climateOptionLabel(id, option, options, t));
         item.value = option;
         input.append(item);
       }
       input.onchange = () => request(id, input.value, input);
       updates.push((current, pending) => {
         const value = pending?.id === id ? pending.value : active(current);
-        input.value = actions[id].options.includes(value) ? value : '';
+        input.value = options.includes(value) ? value : '';
         input.disabled = !!pending;
       });
       field.append(icon(glyph), input);
