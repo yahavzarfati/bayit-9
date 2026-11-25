@@ -1,13 +1,13 @@
 import { normalizeSharedWallpaperPath, normalizeSharedWallpapers } from './shared-wallpapers.js';
 import {
   BACKGROUNDS, classicRoomTitle, CUSTOM_ROOM_PREFIX, dashboardRoomMemberships, dashboardRoomOptions, DEVICE_ICONS, discoverRooms,
-  languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
+  isVisibleEntity, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
   normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeRoomIcon, normalizeShortcutDetailEntities, normalizeShortcutDetailRoutes,
   normalizeUnreportedSwingMode,
   PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, roomShortcutDevices,
   selectableRoomEntities, selectedRoomIds,
   shortcutPanelOptions, STRATEGY_NAME, supportsNativeShortcutDetails, supportsShortcutWithoutDetails,
-  usesAutomaticRoomDevices,
+  supportsRoomTemperatureSource, usesAutomaticRoomDevices,
 } from './strategy-model.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { climateOptionLabel } from './panel-controls.js';
@@ -61,6 +61,8 @@ const WORDS = {
       power_entity: 'Power state', done_entity: 'Completion sensor', progress_entity: 'Progress (%)',
       boiler_entity: 'Boiler in this room', started_at_entity: 'Boiler start date and time helper' },
     roomMediaLink: 'Open on media press and hold', roomMediaNone: 'No panel', roomMediaDefault: 'Media',
+    roomTemperatureSource: 'Temperature on home card', roomTemperatureAuto: 'Automatic',
+    roomTemperatureFallback: 'Fallback room temperature', roomTemperatureNoFallback: 'None',
     roomVacuumLink: 'Vacuum panel', roomVacuumDefault: 'Robot vacuum',
     roomVacuumGesture: 'Open the vacuum panel with', roomVacuumTap: 'Tap', roomVacuumHold: 'Press and hold',
     sections: 'Room sections', sectionMode: 'Section arrangement', automaticSections: 'Automatic grouping',
@@ -152,6 +154,8 @@ const WORDS = {
       power_entity: 'מצב הפעלה', done_entity: 'חיישן סיום', progress_entity: 'התקדמות (%)',
       boiler_entity: 'דוד בחדר הזה', started_at_entity: 'עזר תאריך ושעת הפעלת הדוד' },
     roomMediaLink: 'פתיחה בלחיצה ארוכה על מכשיר מדיה', roomMediaNone: 'ללא חלונית', roomMediaDefault: 'מדיה',
+    roomTemperatureSource: 'טמפרטורה בכרטיס הבית', roomTemperatureAuto: 'אוטומטי',
+    roomTemperatureFallback: 'מקור גיבוי לטמפרטורת החדר', roomTemperatureNoFallback: 'ללא גיבוי',
     roomVacuumLink: 'חלונית השואב', roomVacuumDefault: 'שואב',
     roomVacuumGesture: 'פתיחת חלונית השואב באמצעות', roomVacuumTap: 'לחיצה', roomVacuumHold: 'לחיצה ארוכה',
     sections: 'קבוצות בחדר', sectionMode: 'סידור הקבוצות', automaticSections: 'קיבוץ אוטומטי',
@@ -897,6 +901,39 @@ export class Bayit9StrategyEditor extends HTMLElement {
       : [field(words.roomDevices, choice)];
     const options = [];
     const chosen = this.#roomMembership(room, override, sections, language);
+    const states = this.#hass.states ?? {};
+    const hidden = new Set(configuredIds(this.#config.hidden_entities));
+    const temperatureSource = override.room_temperature_entity;
+    const temperatures = chosen.filter(id => isVisibleEntity(id, states, this.#hass.entities, hidden) &&
+      (supportsRoomTemperatureSource(id, states[id]?.attributes) ||
+        id === temperatureSource && id.startsWith('sensor.') && ['unknown', 'unavailable'].includes(states[id]?.state)));
+    if (temperatures.length || temperatureSource) {
+      const input = select([['', words.roomTemperatureAuto], ...temperatures.map(id =>
+        [id, states[id]?.attributes?.friendly_name ?? id])], temperatures.includes(temperatureSource) ? temperatureSource : '');
+      input.dataset.roomFocus = 'room-temperature-source';
+      input.addEventListener('change', () => {
+        const next = { ...override };
+        if (input.value) next.room_temperature_entity = input.value;
+        else delete next.room_temperature_entity;
+        if (!input.value.startsWith('sensor.')) delete next.room_temperature_fallback_entity;
+        this.#setRoomOverride(room.id, next, input.dataset.roomFocus);
+      });
+      options.push(field(words.roomTemperatureSource, input));
+      const climates = temperatures.filter(id => id.startsWith('climate.'));
+      if (input.value.startsWith('sensor.') && climates.length) {
+        const current = override.room_temperature_fallback_entity;
+        const fallback = select([['', words.roomTemperatureNoFallback], ...climates.map(id =>
+          [id, states[id]?.attributes?.friendly_name ?? id])], climates.includes(current) ? current : '');
+        fallback.dataset.roomFocus = 'room-temperature-fallback';
+        fallback.addEventListener('change', () => {
+          const next = { ...override };
+          if (fallback.value) next.room_temperature_fallback_entity = fallback.value;
+          else delete next.room_temperature_fallback_entity;
+          this.#setRoomOverride(room.id, next, fallback.dataset.roomFocus);
+        });
+        options.push(field(words.roomTemperatureFallback, fallback));
+      }
+    }
     const lights = chosen.filter(id => id.startsWith('light.'));
     const selectedCount = configuredIds(override.lighting_count_entities);
     const editCount = lights.length > 1 || selectedCount.length > 0;
@@ -996,6 +1033,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const change = (items, focusKey) => {
       const entities = items.map(item => item.id);
       const next = { ...override, entities };
+      if (!entities.includes(next.room_temperature_entity)) delete next.room_temperature_entity;
+      if (!next.room_temperature_entity || !entities.includes(next.room_temperature_fallback_entity)) {
+        delete next.room_temperature_fallback_entity;
+      }
       for (const key of ['read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
         'inline_light_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details',
         'vacuum_panel_hold_entities']) {

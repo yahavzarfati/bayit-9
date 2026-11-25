@@ -75,6 +75,19 @@ function idList(value) {
   return Array.isArray(value) ? [...new Set(value.filter(id => typeof id === 'string' && id.trim()))] : [];
 }
 
+export function roomTemperatureUnit(value) {
+  const unit = typeof value === 'string' ? value.trim().toUpperCase() : '';
+  return ['°C', '°F', 'K'].includes(unit) ? unit : undefined;
+}
+
+export function supportsRoomTemperatureSource(entity, attributes) {
+  const domain = domainOf(entity);
+  if (domain === 'climate') return true;
+  const unit = attributes?.unit_of_measurement;
+  return domain === 'sensor' && (Boolean(roomTemperatureUnit(unit)) ||
+    (!unit && attributes?.device_class === 'temperature'));
+}
+
 function domainOf(entity) {
   return entity.split('.')[0];
 }
@@ -310,6 +323,8 @@ function dashboardAreas(config, hass) {
       nativeCoverHeaders: new Set(idList(override.native_cover_header_entities)),
       nativeLightHolds: new Set(idList(override.native_light_hold_entities)),
       lightingCount: idList(override.lighting_count_entities),
+      temperatureEntity: typeof override.room_temperature_entity === 'string' ? override.room_temperature_entity : undefined,
+      temperatureFallback: typeof override.room_temperature_fallback_entity === 'string' ? override.room_temperature_fallback_entity : undefined,
       shutdown: idList(override.turn_off_entities).filter(supportsRoomShutdown),
       activities: override.activities,
       vacuumPanelHolds: new Set(idList(override.vacuum_panel_hold_entities)),
@@ -546,6 +561,16 @@ export function discoverRooms(config, hass, locale) {
       const members = new Set(entities.map(device => device.entity));
       const hidden = area.panelHidden.filter(entity => members.has(entity));
       if (hidden.length) room.panel_hidden_entities = hidden;
+    }
+    const temperatureEntity = area.temperatureEntity;
+    const temperatureRecord = hass.states?.[temperatureEntity];
+    if (temperatureEntity && entities.some(item => item.entity === temperatureEntity) &&
+        (supportsRoomTemperatureSource(temperatureEntity, temperatureRecord?.attributes) ||
+          domainOf(temperatureEntity) === 'sensor' && ['unknown', 'unavailable'].includes(temperatureRecord?.state))) {
+      room.room_temperature_entity = temperatureEntity;
+      const fallback = area.temperatureFallback;
+      if (temperatureEntity.startsWith('sensor.') && fallback?.startsWith('climate.') &&
+          entities.some(item => item.entity === fallback)) room.room_temperature_fallback_entity = fallback;
     }
     if (area.lightingCount?.length) {
       const lights = new Set(entities.filter(item => domainOf(item.entity) === 'light').map(item => item.entity));

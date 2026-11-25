@@ -517,7 +517,12 @@ const roomStatusSelected = {
       name: query.has('classic-quiet') ? (hass.locale.language === 'he' ? 'חדר\\nהפנאי' : 'Family\\nroom')
         : hass.locale.language === 'he' ? 'חדר הפנאי' : 'Family room',
       entities: ['climate.demo_room', 'cover.demo_window', 'sensor.demo_temperature', 'light.demo_unavailable',
-        'light.demo_side1', 'light.demo_side2', 'light.demo_side3'],
+        'light.demo_side1', 'light.demo_side2', 'light.demo_side3',
+        ...(query.has('temperature-source') ? ['sensor.demo_preferred_temperature'] : [])],
+      ...(query.has('temperature-source') && {
+        room_temperature_entity: query.has('temperature-from-climate') ? 'climate.demo_room' : 'sensor.demo_preferred_temperature',
+        ...(!query.has('temperature-no-fallback') && {room_temperature_fallback_entity: 'climate.demo_room'}),
+      }),
     },
     ...Object.fromEntries(Array.from({ length: 9 }, (_, index) =>
       ['bayit_room_fixture_' + index, { name: 'Room ' + index, entities: [] }])),
@@ -534,6 +539,9 @@ if (query.has('room-status')) {
     },
     'sensor.demo_temperature': { state: '23.5', attributes: { device_class: 'temperature', unit_of_measurement: '°C' } },
     'sensor.demo_unmapped': { state: '99', attributes: { device_class: 'temperature', unit_of_measurement: '°C' } },
+    ...(query.has('temperature-source') && {
+      'sensor.demo_preferred_temperature': {state:'69.7',attributes:{friendly_name:'Wall thermometer',unit_of_measurement:'°F'}},
+    }),
     'light.demo_unavailable': { state: 'unavailable', attributes: { friendly_name: 'Desk light' } },
     'timer.demo_room': { state: 'active', attributes: { finishes_at: new Date(Date.now() + 3660000).toISOString() } },
   });
@@ -913,7 +921,7 @@ if (query.has('editor')) {
   editor.setConfig({ type: 'custom:bayit-9',
     ...((query.has('toolbar-panels') || query.has('overview-opt-in') || query.has('lighting-count') ||
       query.has('preset-shortcut') || query.has('entrance-popup-position') || query.has('timer-usage') ||
-      query.has('swing-unreported')) && selected) });
+      query.has('swing-unreported') || query.has('temperature-source')) && selected) });
   editor.hass = hass;
   editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
   document.querySelector('#editor').append(editor);
@@ -2299,6 +2307,71 @@ async function assertRoomVacuumGestures(browser) {
     await target.selectOption('');
     assert.equal(await holdEntities(), undefined);
     assert.equal(await gesture.count(), 0);
+  } finally {
+    await page.close();
+  }
+}
+
+async function assertSelectedRoomTemperature(browser) {
+  const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+  page.setDefaultTimeout(8000);
+  const url = base + '?room-status&temperature-source';
+  const room = page.locator('article[data-room="bayit_room_status"]');
+  const badge = room.locator('[data-badge=temperature]');
+  const set = (entity, state) => page.evaluate(([id, value]) => window.bayitTest.setRoomState(id,value), [entity,state]);
+  const selected = 'sensor.demo_preferred_temperature';
+  try {
+    await page.goto(url);
+    await badge.getByText(/69[.]7°F/).waitFor();
+    assert.match(await badge.getAttribute('aria-label'), /69[.]7°F/);
+    await set(selected,'0');
+    await badge.getByText(/0°F/).waitFor();
+    for (const absent of [' ', 'unknown', 'unavailable', '0x12']) {
+      await set(selected,absent);
+      await badge.getByText(/19°/).waitFor();
+    }
+    await set('climate.demo_room','unavailable');
+    await badge.waitFor({state:'hidden'});
+    await set(selected,'70');
+    await badge.getByText(/70°F/).waitFor();
+    await page.evaluate(id => window.bayitTest.setFixtureRegistry(id,{hidden:true}), selected);
+    await badge.waitFor({state:'hidden'});
+    await page.evaluate(id => window.bayitTest.setFixtureRegistry(id,{}), selected);
+    await badge.getByText(/70°F/).waitFor();
+
+    await page.goto(url + '&temperature-no-fallback');
+    await badge.getByText(/69[.]7°F/).waitFor();
+    await set(selected,'unavailable');
+    await badge.waitFor({state:'hidden'});
+
+    await page.goto(url + '&temperature-from-climate');
+    await badge.getByText(/19°/).waitFor();
+    await set('climate.demo_room','unavailable');
+    await badge.waitFor({state:'hidden'});
+
+    await page.goto(base + '?room-status');
+    await badge.getByText(/23[.]5°/).waitFor();
+    await set('sensor.demo_temperature','unavailable');
+    await badge.getByText(/19°/).waitFor();
+
+    await page.goto(url + '&editor');
+    await page.getByText('Rooms',{exact:true}).tap();
+    await page.getByLabel('Room to customize',{exact:true}).selectOption('bayit_room_status');
+    const source = page.getByLabel('Temperature on home card',{exact:true});
+    const fallback = page.getByLabel('Fallback room temperature',{exact:true});
+    const saved = () => page.evaluate(() => window.latest.room_overrides.bayit_room_status);
+    assert.equal(await source.inputValue(), selected);
+    assert.equal(await source.locator('option[value="sensor.demo_unmapped"]').count(), 0);
+    assert.equal(await fallback.inputValue(), 'climate.demo_room');
+    await source.selectOption('climate.demo_room');
+    assert.equal((await saved()).room_temperature_entity, 'climate.demo_room');
+    assert.equal((await saved()).room_temperature_fallback_entity, undefined);
+    await source.selectOption(selected);
+    await fallback.selectOption('climate.demo_room');
+    assert.equal((await saved()).room_temperature_fallback_entity, 'climate.demo_room');
+    await source.selectOption('');
+    assert.equal((await saved()).room_temperature_entity, undefined);
+    assert.equal((await saved()).room_temperature_fallback_entity, undefined);
   } finally {
     await page.close();
   }
@@ -4576,6 +4649,8 @@ try {
       assert.deepEqual(await utilityPage.evaluate(() => window.bayitTest.calls),[]);
       await utilityPage.close();
       console.log(engine + ': Energy, Weather and room graph details leave the Bayit popup open underneath');
+      await assertSelectedRoomTemperature(browser);
+      console.log(engine + ': room temperature source, fallback, units and editor');
       await assertEnergyReadingCards(browser);
       console.log(engine + ': optional Energy headline readings, native details, fallback and editor');
       await assertCompactWeatherReadings(browser);

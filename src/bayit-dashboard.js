@@ -4,7 +4,7 @@ import { classicRoomTitle, DEVICE_ICONS, hasDynamicPresenceIcon, isAutomationScr
   isEnergyReadingCards, isWeatherReadingsList,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
   normalizeToolbarReadout, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
-  ROOM_PANEL_KINDS, roomShortcutDevices, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
+  ROOM_PANEL_KINDS, roomShortcutDevices, roomTemperatureUnit, supportsRoomTemperatureSource, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
   sensorComparisonOptions, sensorSeriesColor, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
@@ -296,6 +296,13 @@ export function normalizeDashboardConfig(config = {}) {
     if (Array.isArray(room.panel_hidden_entities)) {
       const panelHidden = new Set(room.panel_hidden_entities.filter(entity => unique.has(entity)));
       if (panelHidden.size) parsed.panelHidden = panelHidden;
+    }
+    if (typeof room.room_temperature_entity === 'string' &&
+        /^(sensor|climate)\./.test(room.room_temperature_entity) && unique.has(room.room_temperature_entity)) {
+      parsed.temperatureEntity = room.room_temperature_entity;
+      const fallback = room.room_temperature_fallback_entity;
+      if (parsed.temperatureEntity.startsWith('sensor.') && typeof fallback === 'string' &&
+          fallback.startsWith('climate.') && unique.has(fallback)) parsed.temperatureFallback = fallback;
     }
     if (Array.isArray(room.lighting_count_entities)) {
       const lightingCount = new Set(room.lighting_count_entities.filter(entity =>
@@ -1061,6 +1068,13 @@ export class BayitDashboard extends HTMLElement {
     return { text: ltr(rounded + compactUnit), fullText: ltr(rounded + fullUnit) };
   }
 
+  selectedTemperatureBadge(value, unit) {
+    if (typeof value !== 'number' &&
+        !(typeof value === 'string' && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim()))) return;
+    const sourceUnit = roomTemperatureUnit(unit ?? this._hass?.config?.unit_system?.temperature);
+    return this.temperatureBadge(value, sourceUnit ?? '°');
+  }
+
   roomClimateBadge(model, tone) {
     const heating = ['heater', 'boiler'].includes(model.kind) || model.domain === 'water_heater';
     if (heating && tone === 'warm') return {
@@ -1112,6 +1126,8 @@ export class BayitDashboard extends HTMLElement {
       let lightUnavailable = false;
       let temperature;
       let ambient;
+      const source = view.room.temperatureEntity;
+      const temperatureFallback = view.room.temperatureFallback;
       const activities = [];
       const countMinutes = !this.applianceObserver || this.applianceRoomsInView.has(view.article);
       for (const config of view.room.entities) {
@@ -1126,10 +1142,21 @@ export class BayitDashboard extends HTMLElement {
         if (countedLight && model.domain === 'light' && model.state === 'on') lit++;
         if (tone !== 'quiet' && !active.has(config.entity)) active.set(config.entity, { config, model, room: view.room });
         if (model.available) {
-          if (isTemperatureSensor(model.domain, model.attributes)) {
-            temperature ||= this.temperatureBadge(model.state, model.attributes.unit_of_measurement);
+          if (!source) {
+            if (isTemperatureSensor(model.domain, model.attributes)) {
+              temperature ||= this.temperatureBadge(model.state, model.attributes.unit_of_measurement);
+            }
+            if (model.domain === 'climate') ambient ||= this.temperatureBadge(model.attributes?.current_temperature);
+          } else if ((model.entity === source || model.entity === temperatureFallback) &&
+              isVisibleEntity(model.entity, this._hass.states, this._hass.entities, this.config.hiddenEntities)) {
+            if (model.entity === source && supportsRoomTemperatureSource(source, model.attributes)) {
+              temperature = model.domain === 'climate' ? this.selectedTemperatureBadge(model.attributes.current_temperature)
+                : this.selectedTemperatureBadge(model.state, model.attributes.unit_of_measurement || undefined);
+            }
+            if (model.entity === temperatureFallback) {
+              ambient = this.selectedTemperatureBadge(model.attributes.current_temperature);
+            }
           }
-          if (model.domain === 'climate') ambient ||= this.temperatureBadge(model.attributes?.current_temperature);
         }
         const trackBoiler = view.boilerActivity?.boiler_entity === model.entity;
         const elapsed = trackBoiler && applianceActivity(view.boilerActivity, this._hass?.states, now);

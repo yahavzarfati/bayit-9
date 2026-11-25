@@ -241,6 +241,40 @@ test('a vacuum link opens on hold only for the selected vacuum and its valid roo
   assert.equal(get('porch').room_vacuum_panel_on_hold, undefined);
 });
 
+test('room temperature choice and optional climate fallback require valid visible members', () => {
+  const hass = home();
+  const sensor = 'sensor.fixture_temperature';
+  const climate = 'climate.fixture_conditioner';
+  const humidity = 'sensor.fixture_humidity';
+  const hidden = 'sensor.fixture_hidden_temperature';
+  for (const [id, state, attributes] of [
+    [sensor, '67.5', { unit_of_measurement: '°F' }],
+    [climate, 'off', { temperature: 22, current_temperature: 18 }],
+    [humidity, '55', { unit_of_measurement: '%' }],
+    [hidden, '18', { device_class: 'temperature' }],
+  ]) {
+    hass.states[id] = { state, attributes };
+    hass.entities[id] = {};
+  }
+  hass.entities[hidden].hidden_by = 'user';
+  const project = (source, fallback, entities = [sensor, climate, humidity, hidden]) =>
+    generateDashboard({ area_ids: ['studio'], room_overrides: { studio: {
+      entities, room_temperature_entity: source, room_temperature_fallback_entity: fallback,
+    } } }, hass).views[0].cards[0].rooms[0];
+  for (const [source, fallback, expectedSource, expectedFallback] of [
+    [sensor, climate, sensor, climate], [sensor, undefined, sensor, undefined],
+    [climate, sensor, climate, undefined], [humidity, climate, undefined, undefined],
+    [sensor, humidity, sensor, undefined], [hidden, climate, undefined, undefined],
+  ]) {
+    const room = project(source, fallback);
+    assert.equal(room.room_temperature_entity, expectedSource);
+    assert.equal(room.room_temperature_fallback_entity, expectedFallback);
+  }
+  assert.equal(project(sensor, climate, [humidity, climate]).room_temperature_entity, undefined);
+  hass.states[sensor] = { state: 'unavailable', attributes: {} };
+  assert.equal(project(sensor, climate).room_temperature_fallback_entity, climate);
+});
+
 test('keeps explicit vacuum floor bindings and excludes card config and geometry', () => {
   const states = Object.fromEntries(['vacuum.robot', 'select.map', 'select.other', 'image.first', 'image.second']
     .map(entity => [entity, { state: 'on', attributes: {} }]));
