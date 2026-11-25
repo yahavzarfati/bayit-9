@@ -167,6 +167,7 @@ const WORDS = {
     start: 'Scheduled start script', stop: 'Stop script', timer: 'Timer', none: 'None',
     level: 'Heating level entity', durationField: 'Duration field', min: 'Shortest run in minutes', max: 'Longest run in minutes',
     step: 'Step in minutes', add: 'Add profile', save: 'Save profile', edit: 'Edit',
+    finishProfile: 'Save this profile or cancel its changes before saving the dashboard.',
     remove: 'Remove', clear: 'Cancel', choose: 'Select a device',
     invalid: 'Select a heating device to save the profile.',
     profileInUse: 'Profile already exists',
@@ -321,6 +322,7 @@ const WORDS = {
     start: 'סקריפט הפעלה עם זמן', stop: 'סקריפט כיבוי', timer: 'טיימר', none: 'ללא',
     level: 'ישות עוצמת חימום', durationField: 'שדה משך', min: 'זמן מינימלי בדקות', max: 'זמן מקסימלי בדקות',
     step: 'מרווח בחירה בדקות', add: 'הוספת בקר', save: 'שמירת בקר', edit: 'עריכה',
+    finishProfile: 'שמרו את הבקר או בטלו את השינויים בו לפני שמירת הדשבורד.',
     remove: 'הסרה', clear: 'ביטול', choose: 'בחירת מכשיר',
     invalid: 'בחרו מכשיר חימום לפני השמירה.',
     profileInUse: 'כבר מוגדר בקר',
@@ -663,6 +665,18 @@ export class Bayit9StrategyEditor extends HTMLElement {
   openRooms() {
     this.#open.rooms = true;
     this.render();
+  }
+
+  focusPendingProfile() {
+    const draft = this.#profileDraftBody;
+    if (!draft || draft.editing !== this.#profileEditing || !draft.hasChanges()) return false;
+    const pane = this.shadowRoot.querySelector('details[data-profile-editor]');
+    const focus = () => this.#profileDraftBody?.focusDraft();
+    if (pane && !pane.open) {
+      pane.addEventListener('toggle', focus, { once:true });
+      pane.open = true;
+    } else focus();
+    return true;
   }
 
   connectedCallback() {
@@ -2298,7 +2312,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       children.push(node('div', { className: 'actions' }, [
         button(words.add, () => { this.#profileEditing = {}; this.render(); }),
       ]));
-      return children;
+      return { children };
     }
 
     const current = this.#profileEditing;
@@ -2596,19 +2610,42 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const save = button(words.save, saveProfile);
     sync();
 
-    children.push(
+    const notice = node('p', { hidden:true, textContent:words.finishProfile,
+      id:'bayit9-profile-draft-' + ++nextLabel });
+    notice.setAttribute('role', 'status');
+    const form = node('div', { className:'stack' }, [
       field(words.entity, entity), field(words.kind, kind), field(words.displayName, title), swingField,
       field(words.level, level), fanLevels,
       field(words.timerSource, timerSource), serverFields, simpleFields, boilerDetails, viewHelperField, schedule,
       field(words.dailyUsage, usage), field(words.presets, presets),
       node('div', { className: 'grid' }, [field(words.min, min), field(words.max, max), field(words.step, step)]),
-      idleZero, error,
+      idleZero, error, notice,
       node('div', { className: 'actions' }, [
         save,
         button(words.clear, () => { this.#profileEditing = undefined; this.render(); }),
       ]),
-    );
-    return children;
+    ]);
+    const controls = [...form.querySelectorAll('input,select')];
+    const snapshot = () => JSON.stringify(controls.map(control => control.type === 'checkbox'
+      ? control.checked : [control.value, Boolean(control.validity.badInput)]));
+    const initial = snapshot();
+    const hasChanges = () => snapshot() !== initial;
+    const updateNotice = () => {
+      notice.hidden = !hasChanges();
+      for (const control of [save, entity]) {
+        if (notice.hidden) control.removeAttribute('aria-describedby');
+        else control.setAttribute('aria-describedby', notice.id);
+      }
+    };
+    form.addEventListener('input', updateNotice);
+    form.addEventListener('change', updateNotice);
+    const focusDraft = () => {
+      updateNotice();
+      const action = save.disabled ? entity : save;
+      action.focus();
+      action.scrollIntoView({ block:'nearest', inline:'nearest' });
+    };
+    return { children:[...children, form], hasChanges, focusDraft };
   }
 
   #profilePane(words) {
@@ -2618,8 +2655,9 @@ export class Bayit9StrategyEditor extends HTMLElement {
     if (editing && previous?.editing === editing && previous.words === words && previous.profiles === profiles) {
       return [previous.body];
     }
-    const body = node('div', { className: 'stack' }, this.#profilePanel(words));
-    this.#profileDraftBody = editing ? { editing, profiles, words, body } : undefined;
+    const { children, hasChanges, focusDraft } = this.#profilePanel(words);
+    const body = node('div', { className: 'stack' }, children);
+    this.#profileDraftBody = editing ? { editing, profiles, words, body, hasChanges, focusDraft } : undefined;
     return [body];
   }
 
@@ -3169,6 +3207,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
       }
     };
     if (this.#open.lightEffects) showLightEffects();
+    const profilePane = pane(words.profiles, 'profiles', () => this.#profilePane(words));
+    profilePane.dataset.profileEditor = '';
     const form = node('form', { dir: language === 'he' ? 'rtl' : 'ltr' }, [
       field(words.title, title), field(words.language, locale),
       pane(words.areas, 'rooms', () => this.#roomsPanel(words, language)),
@@ -3211,7 +3251,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
           this.#refreshLightEffects = undefined;
         }
       }, [lightEffects]),
-      pane(words.profiles, 'profiles', () => this.#profilePane(words)),
+      profilePane,
     ]);
     form.addEventListener('submit', event => event.preventDefault());
     this.shadowRoot.replaceChildren(node('style', { textContent: CSS + ROOM_CSS + GLASS_EDITOR_CSS }), form);

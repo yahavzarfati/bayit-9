@@ -4303,6 +4303,114 @@ async function assertHeaterHomeFeedback(browser) {
   }
 }
 
+async function assertDashboardSaveKeepsPendingProfile(browser) {
+  const labels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', title:'Dashboard title', profiles:'Boiler and heater controls',
+      add:'Add profile', edit:'Edit', cancel:'Cancel', device:'Heating device', name:'Display name',
+      timer:'Timer', start:'Scheduled start script', presets:'Preset minutes', save:'Save dashboard', profileSave:'Save profile',
+      hint:'Save this profile or cancel its changes before saving the dashboard.', invalid:'Use preset minutes within' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', title:'שם הדשבורד', profiles:'שליטה בדוד ובתנורים',
+      add:'הוספת בקר', edit:'עריכה', cancel:'ביטול', device:'מכשיר חימום', name:'שם לתצוגה',
+      timer:'טיימר', start:'סקריפט הפעלה עם זמן', presets:'הגדרות דקות מהירות', save:'שמירת הדשבורד', profileSave:'שמירת בקר',
+      hint:'שמרו את הבקר או בטלו את השינויים בו לפני שמירת הדשבורד.', invalid:'בחרו דקות בטווח' },
+  ];
+  const initial = { type:'custom:bayit-9', profiles:[{
+    entity:'climate.demo_air', kind:'climate', name:'Imported climate', timed:{
+      simple_timer_entity:'sensor.demo_air_usage', simple_timer_target:'input_boolean.demo_air_timer', presets:[30,60],
+    },
+  }] };
+  for (const [index, words] of labels.entries()) {
+    const page = await browser.newPage({ viewport:{ width:index ? 391 : 320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      await page.addInitScript(strategy => {
+        const key = 'bayit9-browser-fixture';
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy }));
+      }, initial);
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      const button = (name, root=setup) => root.getByRole('button', { name, exact:true });
+      const field = name => setup.getByLabel(name, { exact:true });
+      const pane = setup.getByText(words.profiles, { exact:true });
+      const hint = setup.getByRole('status').filter({ hasText:words.hint });
+      const save = button(words.save);
+      const saveProfile = button(words.profileSave);
+      const focused = control => control.evaluate(item => item.getRootNode().activeElement === item);
+      const requests = () => page.evaluate(() => window.bayitTest.calls.filter(call =>
+        call.domain || call.type === 'lovelace/config' || call.type === 'lovelace/config/save'));
+      const open = async () => {
+        await button(words.appearance, page).press('Enter');
+        await button(words.setup, page).press('Enter');
+        await field(words.title).waitFor();
+      };
+      const persist = async () => {
+        await Promise.all([page.waitForEvent('load'), save.press('Enter')]);
+        return page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      };
+      const guard = async () => {
+        const initialRequests = await requests();
+        await save.press('Enter');
+        await hint.waitFor();
+        assert.deepEqual(await requests(), initialRequests, 'A pending profile must not send a dashboard save');
+      };
+
+      await page.goto(base + '/fixture-home/home?configuration&room-selection&device-panel&locale=' + words.locale);
+      await open();
+      await field(words.title).fill('Portable home');
+      await pane.press('Enter');
+      await button(words.add).press('Enter');
+      await field(words.device).selectOption('switch.demo_heater');
+      await field(words.name).fill('New server profile');
+      await field(words.start).selectOption('script.demo_start');
+      await field(words.timer).selectOption('timer.demo_heater');
+      await pane.press('Enter');
+      await hint.waitFor({ state:'hidden' });
+      await guard();
+      assert.equal(await focused(saveProfile), true);
+      assert.equal(await field(words.name).inputValue(), 'New server profile');
+      await saveProfile.press('Enter');
+      await hint.waitFor({ state:'hidden' });
+      const added = await persist();
+      assert.equal(added.title, 'Portable home');
+      assert.deepEqual(added.profiles[0], initial.profiles[0]);
+      assert.equal(added.profiles[1].name, 'New server profile');
+      assert.equal(added.profiles[1].timed.timer_entity, 'timer.demo_heater');
+
+      await open();
+      await field(words.title).fill('Retained title');
+      await pane.press('Enter');
+      await button(words.edit, setup.locator('.record').filter({ hasText:'Imported climate' })).press('Enter');
+      await field(words.presets).fill('14');
+      await guard();
+      assert.equal(await field(words.presets).inputValue(), '14');
+      await saveProfile.press('Enter');
+      await setup.getByRole('alert').filter({ hasText:words.invalid }).waitFor();
+      await button(words.cancel).press('Enter');
+      assert.deepEqual(await persist(), { ...added, title:'Retained title' });
+
+      await open();
+      await field(words.title).fill('Blank profile does not block');
+      await pane.press('Enter');
+      await button(words.add).press('Enter');
+      await field(words.name).fill('Temporary draft');
+      await guard();
+      assert.equal(await focused(field(words.device)), true);
+      await field(words.name).fill('');
+      await hint.waitFor({ state:'hidden' });
+      assert.deepEqual(await persist(), { ...added, title:'Blank profile does not block' });
+
+      await page.goto(base + '/fixture-home/home?editor&device-panel&locale=' + words.locale);
+      const nativeEditor = page.locator('bayit-9-strategy-editor');
+      await nativeEditor.getByText(words.profiles, { exact:true }).press('Enter');
+      await button(words.add, nativeEditor).press('Enter');
+      await nativeEditor.getByLabel(words.name, { exact:true }).fill('Native pending profile');
+      await nativeEditor.getByRole('status').filter({ hasText:words.hint }).waitFor();
+      assert.equal(await page.evaluate(() => window.latest), undefined);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertHeatingProfileBindingsStayExplicit(browser) {
   const labels = [
     { locale:'en', appearance:'Appearance', setup:'Customize home', profiles:'Boiler and heater controls',
@@ -10520,6 +10628,7 @@ try {
     await run('Room icon editor previews, validates, saves and clears custom icons', () => assertCustomRoomIcons(browser));
     await run('Room device picker admits paired devices after their state arrives', () => assertRoomPickerRefreshesLateDevices(browser));
     await run('Profile editor preserves Simple Timer targets and checks deliberate changes', () => assertHeatingProfileBindingsStayExplicit(browser));
+    await run('Dashboard save preserves unfinished profile edits', () => assertDashboardSaveKeepsPendingProfile(browser));
 
     await run('Home glass and accessibility', async () => {
       await assertHomeMaterial(browser);

@@ -2887,6 +2887,7 @@ export class BayitDashboard extends HTMLElement {
         void this.paintSetup();
       };
       save.onclick = async () => {
+        if (editor.focusPendingProfile()) return;
         const view = this.ownerDocument.defaultView;
         const initialUrl = view.location.href;
         const route = page.routeHash && view.location.hash === page.routeHash ? page.routeHash : null;
