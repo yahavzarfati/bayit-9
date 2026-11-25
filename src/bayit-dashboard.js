@@ -33,6 +33,15 @@ import { createBoilerSchedulePanel, isBoilerScheduleProfile } from './boiler-sch
 export const backgrounds = Object.freeze(Object.keys(wallpaperChoices));
 const options = { background: backgrounds, shape: ['soft', 'circle', 'square'], layout: ['classic', 'header'] };
 const setupDrafts = new Map();
+const appearanceReturns = new WeakMap();
+const appearanceReturnMs = 12000;
+
+function forgetAppearanceReturn(view, entry = appearanceReturns.get(view)) {
+  if (!entry || appearanceReturns.get(view) !== entry) return;
+  entry.watch.abort();
+  view.clearTimeout(entry.timer);
+  appearanceReturns.delete(view);
+}
 const iconPattern = /^mdi:[a-z0-9-]+$/;
 const entityPattern = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 const controlIcons = {
@@ -535,6 +544,7 @@ export class BayitDashboard extends HTMLElement {
 
   setConfig(raw) {
     const next = normalizeDashboardConfig(raw);
+    this.prepareAppearanceReturn(next);
     this.popupScroll.stop();
     this.nativeMoreInfoReturn?.();
     if (this.config?.storageKey !== next.storageKey) this.preferences = {};
@@ -581,6 +591,7 @@ export class BayitDashboard extends HTMLElement {
       this.frame = 0;
       this.update();
       this.popupHistory?.refresh();
+      this.restoreAppearanceReturn();
     });
   }
 
@@ -600,6 +611,11 @@ export class BayitDashboard extends HTMLElement {
   }
 
   disconnectedCallback() {
+    const returning = appearanceReturns.get(this.ownerDocument.defaultView);
+    if (returning?.owner === this) {
+      this.captureAppearanceReturn(returning);
+      returning.owner = undefined;
+    }
     this.popupScroll.stop();
     this.nativeMoreInfoReturn?.();
     this.popupHistory?.stop();
@@ -818,6 +834,84 @@ export class BayitDashboard extends HTMLElement {
     return this.t(['setup_storage', 'setup_conflict'].includes(error.code) ? error.code : 'setup_error');
   }
 
+  captureAppearanceReturn(returning) {
+    const { content, modal, modalBody, close } = this.nodes;
+    if (this.panel?.type !== 'settings' || !modal.open || modal.hasAttribute('data-closing') ||
+        location.href !== returning.href) return;
+    const layout = content.querySelector('.appearance-layout');
+    if (!layout || !this.wallpaperGallery) return;
+    const focused = this.shadowRoot.activeElement;
+    const previous = returning.snapshot;
+    const gallery = this.wallpaperGallery.captureView();
+    if (!this.isConnected) gallery.focus ??= previous?.gallery.focus;
+    returning.snapshot = {
+      layoutOpen:layout.open,
+      gallery,
+      scrollTop:this.isConnected ? modalBody.scrollTop : previous?.scrollTop ?? 0,
+      focus:focused?.dataset.preference ? { key:focused.dataset.preference, value:focused.value }
+        : focused === layout.querySelector('summary') ? 'layout' : focused === close ? 'close'
+          : this.isConnected ? undefined : previous?.focus,
+    };
+  }
+
+  keepAppearanceOnRefresh(config, userId, changes) {
+    const view = this.ownerDocument.defaultView;
+    if (!this.panel?.routeHash || view.location.hash !== this.panel.routeHash) return;
+    forgetAppearanceReturn(view);
+    const href = view.location.href;
+    const watch = new view.AbortController();
+    const expected = ['background','layout','shape'].map(key => [key, changes[key] ?? config[key]]);
+    const returning = { owner:this, storageKey:config.storageKey, href, userId, changes, expected, watch };
+    this.captureAppearanceReturn(returning);
+    if (!returning.snapshot) return;
+    appearanceReturns.set(view, returning);
+    const moved = () => { if (view.location.href !== href) forgetAppearanceReturn(view, returning); };
+    for (const event of ['location-changed','hashchange','popstate']) view.addEventListener(event, moved, { signal:watch.signal });
+    returning.timer = view.setTimeout(() => forgetAppearanceReturn(view, returning), appearanceReturnMs);
+    return returning;
+  }
+
+  prepareAppearanceReturn(next) {
+    this.pendingAppearanceReturn = undefined;
+    const view = this.ownerDocument.defaultView;
+    const returning = appearanceReturns.get(view);
+    if (!returning || returning.storageKey !== next.storageKey || returning.href !== view.location.href) return;
+    returning.owner?.captureAppearanceReturn(returning);
+    returning.owner = undefined;
+    if (!next.appearanceSync || !returning.expected.every(([key,value]) => next[key] === value)) {
+      if (returning.confirmed) forgetAppearanceReturn(view, returning);
+      return;
+    }
+    returning.confirmed = true;
+    this.pendingAppearanceReturn = returning;
+  }
+
+  restoreAppearanceReturn() {
+    const returning = this.pendingAppearanceReturn;
+    const { content, modal, modalBody, close } = this.nodes;
+    if (!returning || this.panel?.type !== 'settings' || !modal.open || modal.hasAttribute('data-closing') || !this._hass?.user) return;
+    this.pendingAppearanceReturn = undefined;
+    const view = this.ownerDocument.defaultView;
+    if (appearanceReturns.get(view) !== returning || returning.href !== view.location.href ||
+        returning.userId !== this._hass.user.id || !this.canSyncAppearance()) return;
+    const layout = content.querySelector('.appearance-layout');
+    if (!layout || !this.wallpaperGallery) return;
+    const { layoutOpen, gallery, scrollTop, focus } = returning.snapshot;
+    layout.open = layoutOpen;
+    const galleryFocus = this.wallpaperGallery.restoreView(gallery, !focus ? returning.changes.background : undefined);
+    const [key, value] = Object.entries(returning.changes)[0];
+    const choice = typeof focus === 'object' ? focus : { key, value };
+    const layoutFocus = layout.open ? [...layout.querySelectorAll('[data-preference]')]
+      .find(item => item.dataset.preference === choice.key && item.value === choice.value) : undefined;
+    const active = focus === 'close' ? close : focus === 'layout' ? layout.querySelector('summary')
+      : (typeof focus === 'object' ? layoutFocus : galleryFocus ?? layoutFocus);
+    returning.owner = this;
+    this.appearanceActions.status.textContent = this.t('appearance_saved');
+    this.applyPreferences();
+    active?.focus({ preventScroll:true });
+    modalBody.scrollTop = scrollTop;
+  }
+
   async saveAppearance(actions, direct) {
     const throughGallery = direct?.background !== undefined;
     const result = (applied, feedback = '') => {
@@ -843,6 +937,7 @@ export class BayitDashboard extends HTMLElement {
     actions.status.textContent = throughGallery ? '' : this.t('setup_saving');
     this.applyPreferences();
     let prepared;
+    let returning;
     const wallpaper = this.wallpaper;
     try {
       const current = await loadConfiguration(this._hass, pathname);
@@ -863,7 +958,11 @@ export class BayitDashboard extends HTMLElement {
       }
       if (entries.some(([key, value]) => current.strategy[key] !== value)) {
         const saved = await saveConfiguration(this._hass, current, { ...current.strategy, ...changes },
-          { shouldSave: currentView });
+          { shouldSave: () => {
+            if (!currentView()) return false;
+            if (direct) returning = this.keepAppearanceOnRefresh(config, userId, changes);
+            return true;
+          } });
         if (!saved) return result(false);
       }
       if (!this.isConnected || this.config?.storageKey !== config.storageKey || pathname !== location.pathname) return result(true);
@@ -876,6 +975,7 @@ export class BayitDashboard extends HTMLElement {
       this.persistPreferences();
       return result(true, this.t('appearance_saved'));
     } catch (error) {
+      if (returning) forgetAppearanceReturn(this.ownerDocument.defaultView, returning);
       return result(false, this.configurationErrorText(error));
     } finally {
       prepared?.dispose();
@@ -1384,6 +1484,7 @@ export class BayitDashboard extends HTMLElement {
     });
     if (panel.scrollHash) this.restorePopupScroll(panel);
     else n.modalBody.scrollTop = 0;
+    if (type === 'settings') this.restoreAppearanceReturn();
     this.update();
     if (!navigation.hash && this.popupHistory) {
       const route = type === 'room' ? { kind: type, room: room.id }
@@ -1432,6 +1533,11 @@ export class BayitDashboard extends HTMLElement {
   }
 
   dismissPanel(options) {
+    if (this.panel?.type === 'settings') {
+      const view = this.ownerDocument.defaultView;
+      const returning = appearanceReturns.get(view);
+      if (returning?.storageKey === this.config?.storageKey) forgetAppearanceReturn(view, returning);
+    }
     this.setup?.editor.shadowRoot.activeElement?.blur();
     this.popupScroll.stop();
     const routeHash = this.panel?.routeHash;

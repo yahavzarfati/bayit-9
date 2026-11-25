@@ -47,19 +47,32 @@ const hass = {
       }
       if (tracker.reject) { tracker.reject = false; throw new Error('Fixture rejected storage change'); }
       await fetch(profile, { method:'POST', body:JSON.stringify(request.config) });
+      if (tracker.rebuildOnSave) {
+        const replace = tracker.rebuildOnSave === 'replace';
+        tracker.rebuildOnSave = undefined;
+        await tracker.refresh(replace);
+      }
       return {};
     }
     throw new Error('Unexpected request ' + request.type);
   },
 };
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
-const card = document.createElement('bayit-dashboard');
-tracker.refresh = async () => {
-  card.setConfig(Strategy.generate((await read()).strategy, hass).views[0].cards[0]);
-  card.hass = hass;
+let card;
+tracker.refresh = async (replace = false) => {
+  const config = Strategy.generate((await read()).strategy, hass).views[0].cards[0];
+  if (replace || !card) {
+    const next = document.createElement('bayit-dashboard');
+    next.setConfig(config);
+    next.hass = hass;
+    document.querySelector('main').replaceChildren(next);
+    card = next;
+  } else {
+    card.setConfig(config);
+    card.hass = hass;
+  }
 };
 await tracker.refresh();
-document.querySelector('main').append(card);
 window.tracker = tracker;
 </script>`;
 const server = http.createServer(async (request, response) => {
@@ -124,7 +137,8 @@ try {
       assert.equal(await settings.getByRole('button',{name:'Save as household defaults',exact:true}).count(),0);
       await openLayout(settings);
 
-      await admin.evaluate(() => { tracker.hold = true; });
+      await admin.evaluate(() => { tracker.hold = true; tracker.rebuildOnSave = 'replace'; });
+      await pressed(settings,'shape','circle').focus();
       await pressed(settings,'shape','circle').click();
       await admin.waitForFunction(() => !!tracker.release);
       assert.equal(await current(admin,'shape'),'soft');
@@ -134,6 +148,13 @@ try {
       await admin.evaluate(() => tracker.release());
       await after(admin,'shape','circle');
       await settings.getByText('Household appearance saved.',{exact:true}).waitFor();
+      const focused = locator => locator.evaluate(item => item.getRootNode().activeElement === item);
+      assert.equal(await settings.locator('.appearance-layout').getAttribute('open'),'');
+      assert.equal(await focused(pressed(settings,'shape','circle')),true);
+      await admin.evaluate(() => tracker.refresh());
+      await settings.waitFor();
+      assert.equal(await settings.locator('.appearance-layout').getAttribute('open'),'');
+      assert.equal(await focused(pressed(settings,'shape','circle')),true);
       await member.evaluate(() => tracker.refresh());
       await after(member,'shape','circle');
 
@@ -200,10 +221,29 @@ try {
       await member.evaluate(() => tracker.refresh());
       await after(member,'background','shared-garden');
 
-      await gallery.getByRole('button',{name:'Nature',exact:true}).click();
-      await gallery.locator('[data-wallpaper-choice="jade"]').click();
+      await gallery.getByRole('button',{name:'All',exact:true}).click();
+      await gallery.getByRole('button',{name:'More wallpapers',exact:true}).click();
+      const jade = gallery.locator('[data-wallpaper-choice="jade"]');
+      await admin.evaluate(() => { tracker.hold = true; tracker.release = undefined; tracker.rebuildOnSave = 'same'; });
+      await jade.focus();
+      await jade.click();
+      await admin.waitForFunction(() => !!tracker.release);
+      const modalBody = settings.locator('.modal-body');
+      const scroll = await modalBody.evaluate(body => body.scrollTop);
+      assert.ok(scroll > 30);
+      await admin.evaluate(() => tracker.release());
       await after(admin,'background','jade');
       assert.equal(states.get(fixtureId).strategy.background,'jade');
+      assert.equal(await gallery.getAttribute('open'),'');
+      assert.equal(await gallery.getByRole('button',{name:'All',exact:true}).getAttribute('aria-pressed'),'true');
+      assert.equal(await gallery.getByRole('button',{name:'More wallpapers',exact:true}).count(),0);
+      assert.equal(await focused(jade),true);
+      assert.ok(Math.abs(await modalBody.evaluate(body => body.scrollTop) - scroll) <= 2);
+      assert.equal(await jade.evaluate(item => {
+        const visible = item.closest('.modal-body').getBoundingClientRect();
+        const bounds = item.getBoundingClientRect();
+        return bounds.bottom > visible.top && bounds.top < visible.bottom;
+      }),true);
 
       await gallery.getByRole('button',{name:'My photo',exact:true}).click();
       const beforePersonal = await saves(admin);
@@ -228,6 +268,14 @@ try {
       await settings.getByText('Save or discard your dashboard draft before changing the household appearance.',{exact:true}).waitFor();
       assert.equal(await saves(admin),beforePersonal);
       assert.equal(await current(admin,'shape'),'circle');
+
+      await settings.getByRole('button',{name:'Close',exact:true}).click();
+      await settings.waitFor({state:'hidden'});
+      await admin.evaluate(() => tracker.refresh(true));
+      assert.equal(await settings.isVisible(),false);
+      settings = await openSettings(admin);
+      assert.equal(await settings.locator('.appearance-layout').getAttribute('open'),null);
+      assert.equal(await settings.locator('.wallpaper-gallery').getAttribute('open'),null);
 
       await admin.goto(home + fixtureId + '-legacy');
       settings = await openSettings(admin);

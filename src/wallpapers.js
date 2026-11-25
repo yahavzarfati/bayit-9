@@ -429,6 +429,7 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
     : sharedById.has(selected) ? 'shared' : catalog[selected]?.group ?? 'nature';
   let request = 0;
   let expandedAll = false;
+  let orderSelection = selected;
   let disposed = false;
   let householdBusy = false;
   const view = element.ownerDocument.defaultView;
@@ -529,9 +530,10 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
     content.querySelector('.wallpaper-no-photo').hidden = !!image;
   }
 
-  function render(group) {
+  function render(group, firstChoice = selected) {
     if (disposed) return;
     category = group;
+    orderSelection = firstChoice;
     for (const [name, item] of categoryButtons) item.setAttribute('aria-pressed', String(name === category));
     releasePreviews();
     content.replaceChildren();
@@ -560,7 +562,7 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
     } else {
       content.className = 'wallpaper-options';
       const ids = group === 'all'
-        ? [...new Set(['design_default', selected, ...featuredWallpapers, ...Object.keys(catalog), ...sharedById.keys()])]
+        ? [...new Set(['design_default', firstChoice, ...featuredWallpapers, ...Object.keys(catalog), ...sharedById.keys()])]
           .filter(id => catalog[id] || sharedById.has(id))
         : group === 'shared' ? [...sharedById.keys()] : wallpaperGroups[group];
       const visibleIds = group === 'all' && !expandedAll ? ids.slice(0, 6) : ids;
@@ -587,6 +589,7 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
 
   for (const group of ['all', ...Object.keys(wallpaperGroups), ...(sharedById.size ? ['shared'] : []), 'personal']) {
     const item = button(words[group], 'wallpaper-category');
+    item.dataset.wallpaperCategory = group;
     item.onclick = () => { if (category !== group) render(group); };
     categories.append(item);
     categoryButtons.set(group, item);
@@ -602,6 +605,30 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
   return {
     element,
     select,
+    captureView() {
+      const active = element.getRootNode().activeElement;
+      const focus = active === summary ? { summary:true } : element.contains(active) ? {
+        category:active.dataset.wallpaperCategory, choice:active.dataset.wallpaperChoice,
+        more:active.classList.contains('wallpaper-more'),
+      } : undefined;
+      return { open:element.open, category, expandedAll, orderSelection, focus };
+    },
+    restoreView(state, preferredChoice) {
+      if (!state) return;
+      expandedAll = state.expandedAll;
+      if (categoryButtons.has(state.category)) category = state.category;
+      element.open = state.open;
+      if (!element.open) return state.focus ? summary : undefined;
+      render(category, state.orderSelection);
+      if (state.focus?.summary) return summary;
+      if (state.focus?.category) return categoryButtons.get(state.focus.category);
+      if (state.focus?.more) return content.querySelector('.wallpaper-more') ?? summary;
+      const choice = state.focus?.choice ?? preferredChoice;
+      if (choice !== undefined) {
+        return [...content.querySelectorAll('[data-wallpaper-choice]')]
+          .find(item => item.dataset.wallpaperChoice === choice) ?? summary;
+      }
+    },
     setHouseholdBusy(busy) {
       if (!householdSaving) return;
       householdBusy = busy;
