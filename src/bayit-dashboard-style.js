@@ -277,10 +277,13 @@ export const styles = `
     white-space: nowrap;
     overflow: hidden;
   }
-  .room[data-appliance-status] { grid-template-rows: minmax(17px,auto) minmax(0,1fr); }
-  .shell[data-layout=header] .room[data-appliance-status] { grid-template-rows: auto minmax(20px,auto) minmax(0,1fr); }
-  .room[data-appliance-status] .room-status-strip { flex-wrap: wrap; overflow: visible; }
-  .room[data-appliance-status] .room-status { flex: none; max-width: 100%; }
+  .shell[data-page=true] .rooms:has(.room[data-concurrent-activities]) {
+    grid-auto-rows: minmax(var(--room-block), auto);
+  }
+  .room:is([data-appliance-status],[data-concurrent-activities]) { grid-template-rows: minmax(17px,auto) minmax(0,1fr); }
+  .shell[data-layout=header] .room:is([data-appliance-status],[data-concurrent-activities]) { grid-template-rows: auto minmax(20px,auto) minmax(0,1fr); }
+  .room:is([data-appliance-status],[data-concurrent-activities]) .room-status-strip { flex-wrap: wrap; overflow: visible; }
+  .room:is([data-appliance-status],[data-concurrent-activities]) .room-status { flex: none; max-width: 100%; }
   .room-status[data-tone=finished] { color: #bcead0; border-color: rgba(160,224,188,.4); }
   .room-status ha-icon { --mdc-icon-size: 12px; width: 12px; height: 12px; }
   .room-status span { overflow: hidden; text-overflow: ellipsis; }
@@ -741,7 +744,7 @@ export const styles = `
     .toolbar-actions { justify-content: center; }
     .room-status-strip { gap: 2px; }
     .room-status { padding-inline: 2px; gap: 2px; font-size: 10px; }
-    .room-status-strip:has([data-badge=activity]:not([hidden])):has([data-badge=availability]:not([hidden]))
+    .room:not([data-concurrent-activities]) .room-status-strip:has([data-badge=activity]:not([hidden])):has([data-badge=availability]:not([hidden]))
       [data-badge=temperature] > ha-icon { display: none; }
     .shell[data-layout=header] .room-title {
       grid-template-areas: "label label label" "icon . count";
@@ -764,7 +767,7 @@ export const styles = `
       grid-template-columns: minmax(0,1fr);
       grid-template-rows: minmax(17px,1fr) auto 31px;
     }
-    .shell[data-page=true][data-layout=classic] .room[data-appliance-status] {
+    .shell[data-page=true][data-layout=classic] .room:is([data-appliance-status],[data-concurrent-activities]) {
       grid-template-rows: minmax(17px,auto) auto 31px;
     }
     .shell[data-page=true][data-layout=classic] .quick {
