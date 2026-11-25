@@ -8,7 +8,7 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 | `title` | Override the screen title. |
 | `room_selection` | `auto` displays discovered rooms. `manual` uses exactly the rooms listed in `area_ids`, including selected Areas with no devices. An empty manual list keeps those rooms hidden. The setting for devices without a room remains separate. |
 | `area_ids` | Area or dashboard-only room IDs to show in the listed order. Without `room_selection`, existing lists filter discovered rooms and an empty list uses automatic discovery. |
-| `room_overrides` | Room IDs mapped to objects with optional `name`, `icon`, `entities`, `entity_icons`, `entity_names`, `sections`, `panel_hidden_entities`, `read_only_entities`, `activities`, `media_panel_links` and `vacuum_panel_links`. Use an ID starting with `bayit_room_` to add a dashboard-only room. |
+| `room_overrides` | Room IDs mapped to objects with optional `name`, `icon`, `entities`, `additional_entities`, `entity_icons`, `entity_names`, `sections`, `panel_hidden_entities`, `read_only_entities`, `activities`, `media_panel_links` and `vacuum_panel_links`. Use an ID starting with `bayit_room_` to add a dashboard-only room. |
 | `discovery_mode` | `all` includes device controls and readable entities. `controls` discovers only directly controllable domains. You can still add a readable entity to a room manually. |
 | `show_unassigned` | Show unassigned devices in their own room. Default `true`. |
 | `hidden_entities` | Entity IDs to exclude from the dashboard. |
@@ -44,6 +44,8 @@ In **Customize home → Appearance**, **Align dashboard to the left on wide scre
 In **Rooms**, use **Room name line break in classic layout** to choose where a multiword room name breaks on its Home card. In YAML, set `classic_title_break: 1` in that room's `room_overrides` to break after the first word. The top-title layout and the room panel use the full room name.
 
 When adding a device from an automatic room, select **Keep in the automatic room too** to show it in both rooms. Its Home Assistant area stays the same. In YAML, list those devices under `keep_in_automatic_room_entities` in the destination room override.
+
+In an automatic room, open **Additional devices**, select a device and choose **Also show in this room**. Save the dashboard to apply the change. The device stays visible in its other rooms, and new devices assigned to this Home Assistant area still appear automatically. In YAML, list these IDs under `additional_entities` in the automatic room's override.
 
 You can arrange sections manually while **Devices in this room** stays **Automatic**. Devices later added to the room's Home Assistant area follow the default grouping until you move them to a custom section. A room override with `device_selection: auto` uses this arrangement. Existing sections-only overrides continue to select their listed entities unless this option is set.
 

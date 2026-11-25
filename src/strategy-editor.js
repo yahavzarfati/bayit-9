@@ -59,6 +59,9 @@ const WORDS = {
     moveUp: 'Move up', moveDown: 'Move down', hideRoom: 'Hide room',
     automaticDevices: 'Automatic', manualDevices: 'Choose devices and order',
     roomDevices: 'Devices in this room', deviceToAdd: 'Available devices', addDevice: 'Add device',
+    extraRoomDevices: 'Additional devices',
+    extraRoomDeviceHint: 'Home Assistant keeps adding new devices from this area. A device added here stays in its other rooms.',
+    addExtraRoomDevice: 'Also show in this room', noExtraRoomDevices: 'No additional devices.',
     roomDeviceSearch: 'Find a device to add',
     roomDeviceMove: 'After saving, the device will move from {room} to this room on the dashboard.',
     roomDeviceKeep: 'After saving, the device will also appear here and stay in {rooms}.',
@@ -178,6 +181,9 @@ const WORDS = {
     moveUp: 'העברה למעלה', moveDown: 'העברה למטה', hideRoom: 'הסתרת חדר',
     automaticDevices: 'בחירה אוטומטית', manualDevices: 'בחירת מכשירים וסדר',
     roomDevices: 'מכשירים בחדר', deviceToAdd: 'מכשירים זמינים', addDevice: 'הוספת מכשיר',
+    extraRoomDevices: 'מכשירים נוספים',
+    extraRoomDeviceHint: 'מכשירים חדשים באזור הזה ימשיכו להופיע בחדר אוטומטית. מכשיר שיוצג כאן יישאר גם בחדרים האחרים שלו.',
+    addExtraRoomDevice: 'הצגה גם בחדר הזה', noExtraRoomDevices: 'אין מכשירים נוספים.',
     roomDeviceSearch: 'חיפוש מכשיר להוספה',
     roomDeviceMove: 'לאחר השמירה המכשיר יעבור בדשבורד מחדר {room} לחדר הזה.',
     roomDeviceKeep: 'לאחר השמירה המכשיר יישאר ב־{rooms} ויופיע גם בחדר הזה.',
@@ -373,7 +379,7 @@ function moveItem(items, index, shift) {
   return copy;
 }
 
-function orderedList(items, change, words, removeLabel, protectLast = false, key = '') {
+function orderedList(items, change, words, removeLabel, protectLast = false, key = '', canReorder = true) {
   return node('ul', { className: 'room-list' }, items.map((item, index) => {
     const action = (symbol, actionLabel, disabled, actionKey, handler) => {
       const control = button(symbol, handler);
@@ -389,8 +395,10 @@ function orderedList(items, change, words, removeLabel, protectLast = false, key
         ...(item.secondary ? [node('small', { textContent: item.secondary })] : []),
       ]),
       node('span', { className: 'room-entry-buttons' }, [
-        action('↑', words.moveUp, index === 0, 'up', () => change(moveItem(items, index, -1), key + ':' + item.id + ':up')),
-        action('↓', words.moveDown, index === items.length - 1, 'down', () => change(moveItem(items, index, 1), key + ':' + item.id + ':down')),
+        ...(canReorder ? [
+          action('↑', words.moveUp, index === 0, 'up', () => change(moveItem(items, index, -1), key + ':' + item.id + ':up')),
+          action('↓', words.moveDown, index === items.length - 1, 'down', () => change(moveItem(items, index, 1), key + ':' + item.id + ':down')),
+        ] : []),
         action('×', removeLabel, protectLast && items.length === 1, 'remove', () =>
           change(items.filter(entry => entry.id !== item.id))),
       ]),
@@ -1106,6 +1114,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
       } else {
         delete next.device_selection;
         next.entities = this.#roomMembership(room, override, sections, language);
+        const extra = configuredIds(next.additional_entities).filter(id => next.entities.includes(id));
+        if (extra.length) next.keep_in_automatic_room_entities =
+          [...new Set([...configuredIds(next.keep_in_automatic_room_entities), ...extra])];
+        delete next.additional_entities;
       }
       this.#setRoomOverride(room.id, next, 'room-device-mode');
     });
@@ -1284,17 +1296,41 @@ export class Bayit9StrategyEditor extends HTMLElement {
         }
       }
     }
-    if (!manual) return [...children, ...options];
+    const membershipEditor = () => this.#roomDeviceMembership(room, {
+      override, sections, chosen, manual, words, language, areas,
+      available: available ?? new Map(selectableRoomEntities(this.#config, this.#hass).map(item => [item.entity, item])),
+    });
+    const membershipFields = manual ? membershipEditor() : [
+      disclosure(words.extraRoomDevices, this.#open.extraRoomDevices, open => { this.#open.extraRoomDevices = open; }, () => [
+        node('p', { textContent: words.extraRoomDeviceHint }), ...membershipEditor(),
+      ]),
+    ];
+    return [...children, ...membershipFields, ...options];
+  }
 
+  #roomDeviceMembership(room, { override, sections, chosen, manual, words, language, areas, available }) {
+    const memberIds = manual ? chosen : configuredIds(override.additional_entities);
     const areaNames = new Map(areas.map(area => [area.id, area.name]));
-    const records = chosen.map(id => {
+    const records = memberIds.map(id => {
       const device = available.get(id);
       const previousName = this.#hass.states?.[id]?.attributes?.friendly_name;
       return { id, name: device?.name || previousName || id, secondary: device ? '' : words.missing };
     });
     const change = (items, focusKey) => {
       const entities = items.map(item => item.id);
-      const next = { ...override, entities };
+      if (!focusKey) {
+        const removedIndex = memberIds.findIndex((id, index) => id !== entities[index]);
+        const nextDevice = entities[Math.min(removedIndex, entities.length - 1)];
+        focusKey = nextDevice ? 'devices:' + nextDevice + ':remove' : 'room-device-search';
+      }
+      const next = { ...override };
+      if (!manual) {
+        if (entities.length) next.additional_entities = entities;
+        else delete next.additional_entities;
+        this.#setRoomOverride(room.id, next, focusKey);
+        return;
+      }
+      next.entities = entities;
       if (!entities.includes(next.room_temperature_entity)) delete next.room_temperature_entity;
       if (!next.room_temperature_entity || !entities.includes(next.room_temperature_fallback_entity)) {
         delete next.room_temperature_fallback_entity;
@@ -1325,17 +1361,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
         const removed = new Set(chosen.filter(entity => !kept.has(entity)));
         next.sections = sections.map(section => ({ ...section, entities: section.entities.filter(entity => !removed.has(entity)) }));
       }
-      if (!focusKey) {
-        const removedIndex = chosen.findIndex((id, index) => id !== entities[index]);
-        const nextDevice = entities[Math.min(removedIndex, entities.length - 1)];
-        focusKey = nextDevice ? 'devices:' + nextDevice + ':remove' : 'room-device-search';
-      }
       this.#setRoomOverride(room.id, next, focusKey);
     };
-    const membership = records.length ? orderedList(records, change, words, words.remove, false, 'devices')
-      : node('p', { textContent: words.noDevices });
+    const membership = records.length ? orderedList(records, change, words, words.remove, false, 'devices', manual)
+      : node('p', { textContent: manual ? words.noDevices : words.noExtraRoomDevices });
 
-    const selected = new Set(chosen);
+    const selected = new Set([...chosen, ...memberIds]);
     const devices = [...available.values()].filter(device => !selected.has(device.entity)).map(device => ({
       id: device.entity, name: device.name || device.entity, area: entityArea(this.#hass, device.entity),
     }));
@@ -1344,6 +1375,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     for (const device of devices) nameCounts.set(device.name, (nameCounts.get(device.name) ?? 0) + 1);
 
     const addition = (id, preserveAutomatic) => {
+      if (!manual) return { ...override, additional_entities: [...memberIds, id] };
       const next = { ...override, entities: [...chosen, id] };
       const retained = new Set(configuredIds(override.keep_in_automatic_room_entities));
       if (preserveAutomatic) retained.add(id);
@@ -1354,16 +1386,16 @@ export class Bayit9StrategyEditor extends HTMLElement {
     };
     const keepAutomatic = checkbox(words.keepInAutomaticRoom, false, () => updatePlacement());
     const keep = keepAutomatic.firstElementChild;
-    const picker = addPicker(words.deviceToAdd, [], words.addDevice, words.choose,
+    const picker = addPicker(words.deviceToAdd, [], manual ? words.addDevice : words.addExtraRoomDevice, words.choose,
       id => this.#setRoomOverride(room.id, addition(id, !keepAutomatic.hidden && keep.checked), 'room-device-search'));
     const placement = node('p', { className: 'room-add-hint', id: picker.input.getAttribute('aria-labelledby') + '-placement' });
     placement.setAttribute('role', 'status');
-    picker.action.setAttribute('aria-describedby', placement.id);
+    if (manual) picker.action.setAttribute('aria-describedby', placement.id);
     const updatePlacement = () => {
       placement.textContent = '';
       keepAutomatic.hidden = true;
       const id = picker.input.value;
-      if (!id) return;
+      if (!manual || !id) return;
       const elsewhere = candidate => candidate.id !== room.id && candidate.entities.includes(id);
       const before = dashboardRoomMemberships(this.#config, this.#hass, language).filter(elsewhere);
       if (!before.length) return;
@@ -1410,7 +1442,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
     };
     filter.addEventListener('input', () => { this.#roomDeviceQuery = filter.value; refresh(); });
     refresh();
-    return [...children, field(words.roomDeviceSearch, filter), node('div', {}, [picker.wrapper, keepAutomatic, placement]), membership, ...options];
+    const controls = manual ? node('div', {}, [picker.wrapper, keepAutomatic, placement]) : picker.wrapper;
+    return [field(words.roomDeviceSearch, filter), controls, membership];
   }
 
   #customRoomForm(rooms, selection, words) {

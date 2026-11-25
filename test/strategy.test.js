@@ -964,6 +964,46 @@ test('keeps opted-in memberships in their automatic room without changing explic
   assert.deepEqual({ areas:hass.areas, entities:hass.entities, devices:hass.devices }, registry);
 });
 
+test('adds devices to automatic rooms without freezing discovery or changing other memberships', () => {
+  const hass = home();
+  const paired = 'light.fixture_paired_later';
+  const hidden = 'light.fixture_hidden';
+  const disabled = 'switch.demo_missing';
+  const fromLounge = 'light.demo_lamp';
+  const alreadyMoved = 'fan.demo_fan';
+  hass.states[disabled] = { state:'off', attributes:{} };
+  hass.states[hidden] = { state:'off', attributes:{} };
+  hass.entities[hidden] = { area_id:'studio' };
+  const custom = CUSTOM_ROOM_PREFIX + 'study';
+  const config = {
+    room_selection:'manual', area_ids:['studio', 'lounge', 'porch', custom], show_unassigned:false, hidden_entities:[hidden],
+    room_overrides:{
+      studio:{ additional_entities:[fromLounge, fromLounge, paired, hidden, disabled, 'climate.demo_air', 'light.no_state'] },
+      porch:{ entities:[alreadyMoved], additional_entities:[fromLounge] },
+      [custom]:{ name:'Study', entities:[], additional_entities:[fromLounge] },
+    },
+  };
+  const members = current => Object.fromEntries(discoverRooms(current, hass, 'en').map(room =>
+    [room.id, room.entities.map(item => item.entity)]));
+  assert.deepEqual(members(config), { studio:[fromLounge], lounge:[fromLounge], porch:[alreadyMoved], [custom]:[] });
+  hass.states[paired] = { state:'off', attributes:{} };
+  hass.entities[paired] = { area_id:'studio' };
+  const newlyDiscovered = 'switch.fixture_new';
+  hass.states[newlyDiscovered] = { state:'off', attributes:{} };
+  hass.entities[newlyDiscovered] = { area_id:'studio' };
+  const after = members(config);
+  assert.deepEqual(new Set(after.studio), new Set([fromLounge, paired, newlyDiscovered]));
+  assert.equal(after.studio.length, 3);
+  assert.deepEqual(after.lounge, [fromLounge]);
+  assert.deepEqual(after.porch, [alreadyMoved]);
+  assert.deepEqual(members({ ...config, area_ids:['lounge', 'porch'] }), { lounge:[fromLounge], porch:[alreadyMoved] });
+  const sections = [{ kind:'lights', entities:[fromLounge] }];
+  const sectioned = { ...config, room_overrides:{ ...config.room_overrides,
+    studio:{ ...config.room_overrides.studio, device_selection:'auto', sections },
+  } };
+  assert.deepEqual(discoverRooms(sectioned, hass, 'en')[0].sections[0].entities.map(item => item.entity), [fromLounge]);
+});
+
 test('lists only same-dashboard popup destinations, respecting rooms, hidden devices and screen visibility', () => {
   const hass = home();
   const config = { show_unassigned:false, hidden_entities:['light.demo_lamp'], toolbar:[

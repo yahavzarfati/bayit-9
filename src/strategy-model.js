@@ -378,6 +378,7 @@ function dashboardAreas(config, hass) {
       classicTitleBreak: override.classic_title_break,
       icon: icon ?? area?.icon ?? 'mdi:home-outline',
       entityIds,
+      additionalEntities: entityIds === undefined ? idList(override.additional_entities) : undefined,
       keepInAutomaticRoom: new Set(idList(override.keep_in_automatic_room_entities)),
       sections,
       readOnly: new Set(idList(override.read_only_entities)),
@@ -592,6 +593,13 @@ function groupRoomDevices(config, hass, areas) {
     if (areaId === unassigned ? config.show_unassigned === false : !isSelected(areaId) || area.entityIds) continue;
     if (!grouped.has(areaId)) grouped.set(areaId, []);
     grouped.get(areaId).push(entity);
+  }
+
+  // Additional entries mirror a device without taking it out of its other rooms.
+  for (const [id, room] of areas) {
+    if (!isSelected(id) || !room.additionalEntities?.length) continue;
+    const additions = room.additionalEntities.filter(visible);
+    if (additions.length) grouped.set(id, [...new Set([...(grouped.get(id) ?? []), ...additions])]);
   }
 
   return { grouped, unassigned, explicitOrder, visible, profiles };
