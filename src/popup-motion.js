@@ -167,7 +167,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
   }
 
   function onScroll() {
-    if (!current || Math.abs(clip.scrollTop - current.expectedScroll) <= 1.5) return;
+    if (!current || current.suspended || Math.abs(clip.scrollTop - current.expectedScroll) <= 1.5) return;
     current.externalScroll = true;
     stopFrame(current);
   }
@@ -190,9 +190,39 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     dialog.style.setProperty('--bayit-popup-area-top', roomTop + 'px');
   }
 
-  function watchResize() {
+  function watchPage() {
     view.addEventListener('resize', reposition);
     view.visualViewport?.addEventListener('resize', reposition);
+    view.addEventListener('pagehide', suspendMotion);
+    view.addEventListener('pageshow', resumeMotion);
+    doc.addEventListener('visibilitychange', onVisibilityChange);
+  }
+
+  function onVisibilityChange() {
+    if (doc.visibilityState === 'hidden') suspendMotion();
+    else resumeMotion();
+  }
+
+  function suspendMotion() {
+    const context = current;
+    if (!context) return;
+    if (context.closing) {
+      finishDismissal(context);
+      return;
+    }
+    context.suspended = true;
+    // An iPhone can suspend animation frames until long after the easing has elapsed.
+    stopFrame(context);
+    stopAnimation(context);
+  }
+
+  function resumeMotion() {
+    const context = current;
+    if (!context?.suspended || !dialog.open) return;
+    context.suspended = false;
+    context.expectedScroll = clip?.scrollTop;
+    updateArea(context);
+    if (isConnected(context.source)) setOrigin(context.source.getBoundingClientRect(), dialog.getBoundingClientRect());
   }
 
   function setOrigin(sourceRect, panelRect, delta = 0) {
@@ -275,6 +305,9 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     context.highlighted?.removeAttribute('data-popup-origin');
     view.removeEventListener('resize', reposition);
     view.visualViewport?.removeEventListener('resize', reposition);
+    view.removeEventListener('pagehide', suspendMotion);
+    view.removeEventListener('pageshow', resumeMotion);
+    doc.removeEventListener('visibilitychange', onVisibilityChange);
     clip?.removeEventListener('scroll', onScroll);
     context.spacer?.remove();
     if (isConnected(clip) && context.originalScroll !== undefined && !context.externalScroll) {
@@ -291,7 +324,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
 
   function reposition() {
     const context = current;
-    if (!context || context.closing || !dialog.open) return;
+    if (!context || context.closing || context.suspended || !dialog.open) return;
     const area = measureArea();
     // Dashboard integrations can dispatch a resize without changing the layout.
     if (area.geometry.every((value, index) => value === context.geometry[index])) return;
@@ -320,7 +353,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
       setDialogPosition(kind, roomPosition, centeredToolbar);
       updateArea(current);
       if (!dialog.open) dialog.showModal();
-      watchResize();
+      watchPage();
       focusWithoutScroll(focusTarget);
       return;
     }
@@ -347,7 +380,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     if (!dialog.open) dialog.showModal();
     const panelRect = dialog.getBoundingClientRect();
     context.highlighted.dataset.popupOrigin = '';
-    watchResize();
+    watchPage();
     clip?.addEventListener('scroll', onScroll, { passive: true });
     setOrigin(sourceRect, panelRect);
     liftSource(context, sourceRect, panelRect, media.matches ? 0 : OPEN_MS);
@@ -365,7 +398,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
   function dismiss({ immediate = false, restoreFocus = true } = {}) {
     if (!dialog.open) return;
     const context = current;
-    if (!context?.source || immediate || media.matches) {
+    if (!context?.source || context.suspended || immediate || media.matches) {
       if (context) context.restoreFocus = restoreFocus;
       finishDismissal(context);
       return;

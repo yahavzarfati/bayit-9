@@ -5720,6 +5720,75 @@ async function assertKitchenApplianceTiles(browser) {
 }
 
 
+async function assertPopupPageLifecycle(browser) {
+  const page = await browser.newPage({
+    viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: 'no-preference',
+  });
+  try {
+    for (const event of ['pagehide', 'visibilitychange']) {
+      await page.goto(base + '?popup-geometry&locale=he');
+      const title = page.getByRole('button', { name: 'Studio', exact: true });
+      const result = await title.evaluate(async (source, type) => {
+        const document = source.ownerDocument;
+        const root = source.getRootNode();
+        const clip = root.querySelector('.room-scroll');
+        const dialog = root.querySelector('dialog.modal');
+        const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+        const hide = () => {
+          if (type === 'visibilitychange') {
+            Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+            document.dispatchEvent(new Event('visibilitychange'));
+          } else window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+        };
+        const show = () => {
+          if (type === 'visibilitychange') {
+            delete document.visibilityState;
+            document.dispatchEvent(new Event('visibilitychange'));
+          } else window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+        };
+
+        try {
+          const start = clip.scrollTop;
+          source.click();
+          const opening = dialog.getAnimations()[0];
+          for (let remaining = 6; remaining > 0 && clip.scrollTop === start; remaining--) await frame();
+          const paused = clip.scrollTop;
+          hide();
+          const openingCancelled = !dialog.getAnimations().includes(opening);
+          await new Promise(resolve => setTimeout(resolve, 225));
+          show();
+          await frame();
+          const resumed = clip.scrollTop;
+          const stillOpen = dialog.open;
+          const sourceRect = source.getBoundingClientRect();
+          const originY = parseFloat(dialog.style.getPropertyValue('--motion-y'));
+          const expectedY = sourceRect.top + sourceRect.height / 2 - dialog.getBoundingClientRect().top;
+          const originAtSource = Math.abs(originY - expectedY) < 1;
+          dialog.querySelector('[data-role="close"]').click();
+          await frame();
+          const closing = dialog.hasAttribute('data-closing');
+          hide();
+          const closedWhileHidden = !dialog.open && !root.querySelector('[data-popup-origin], [data-popup-spacer]');
+          show();
+          await frame();
+          return {
+            start, paused, resumed, opening: Boolean(opening), openingCancelled, stillOpen, originAtSource,
+            closing, closedWhileHidden, finalScroll: clip.scrollTop, restoredFocus: root.activeElement === source,
+          };
+        } finally {
+          if (type === 'visibilitychange') delete document.visibilityState;
+        }
+      }, event);
+      assert.ok(result.opening && result.openingCancelled && result.stillOpen && result.originAtSource && result.paused > result.start, JSON.stringify({event,...result}));
+      assert.equal(result.resumed, result.paused, 'Returning to the app should not move the room grid');
+      assert.ok(result.closing && result.closedWhileHidden && result.restoredFocus, JSON.stringify({event,...result}));
+      assert.equal(result.finalScroll,result.start);
+    }
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertClippedRoomOrigin(browser) {
   const page = await browser.newPage({
     viewport: { width: 390, height: 640 }, isMobile:true, hasTouch:true, reducedMotion:'reduce',
@@ -6292,6 +6361,8 @@ try {
 
       await assertHomePreferenceAliases(browser);
       await assertSharedAppearance(browser);
+      await assertPopupPageLifecycle(browser);
+      console.log(engine + ': room popup motion pauses safely when leaving the phone app');
       await assertClippedRoomOrigin(browser);
       await assertPopupScrollMemory(browser);
       console.log(engine + ': popup scroll survives reload and remains scoped to the room and dashboard');
