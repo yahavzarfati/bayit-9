@@ -4019,6 +4019,7 @@ try {
       assert.equal(await toggle.getAttribute('aria-keyshortcuts'), null);
       assert.equal(await alternate.getAttribute('aria-haspopup'), 'dialog');
       const powerCalls = () => shortcutModePage.evaluate(() => window.bayitTest.calls.filter(request => request.domain === 'switch'));
+      assert.deepEqual(await powerCalls(), [], 'Opening and closing the details link does not toggle the switch');
       await toggle.evaluate(async button => {
         button.dispatchEvent(new PointerEvent('pointerdown', { button: 0, pointerId: 12, pointerType: 'touch', isPrimary: true }));
         await new Promise(resolve => setTimeout(resolve, 530));
@@ -4048,18 +4049,24 @@ try {
         button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       });
       assert.deepEqual(await powerCalls(), [], 'A synthesized click after a details key is consumed');
+      await toggle.evaluate(button => button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 })));
+      assert.deepEqual(await powerCalls(), [], 'An unpaired pointer click cannot toggle the switch');
       assert.equal(await switchDetails.count(), 0);
       await toggle.tap();
       await shortcutModePage.waitForFunction(() => window.bayitTest.calls.some(request => request.domain === 'switch'));
       assert.deepEqual(await powerCalls(), [{ type:'call_service', domain:'switch', service:'turn_on',
         service_data:{}, target:{entity_id:'switch.demo_heater'} }]);
+      await toggle.press('Enter');
+      await shortcutModePage.waitForFunction(() => window.bayitTest.calls.some(request => request.service === 'turn_off'));
+      assert.deepEqual((await powerCalls()).at(-1), { type:'call_service', domain:'switch', service:'turn_off',
+        service_data:{}, target:{entity_id:'switch.demo_heater'} });
       await alternate.press('Shift+Enter');
       await switchDetails.waitFor();
       assert.equal(new URL(shortcutModePage.url()).hash, '#device/bayit_room_den/switch.demo_heater');
       await shortcutModePage.keyboard.press('Escape');
       await switchDetails.waitFor({ state: 'hidden' });
 
-      assert.equal((await powerCalls()).length, 1);
+      assert.equal((await powerCalls()).length, 2);
       const shortcutSetup = await openRoomEditor(shortcutModePage);
       await shortcutSetup.getByText('Room shortcuts', { exact: true }).tap();
       await shortcutSetup.locator('[data-shortcut-room]').selectOption('studio');

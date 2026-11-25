@@ -19,6 +19,7 @@ export function bindDeviceDetails(button, openDetails) {
   let held;
   let suppressClickUntil = 0;
   let suppressKeyClickUntil = 0;
+  let shortTapUntil = 0;
 
   function finishPointer() {
     if (!held) return;
@@ -43,10 +44,11 @@ export function bindDeviceDetails(button, openDetails) {
     if (event.button !== 0 || event.isPrimary === false || button.disabled) return;
     finishPointer();
     suppressClickUntil = 0;
+    shortTapUntil = 0;
     const listeners = new AbortController();
     const options = { signal: listeners.signal, capture: true };
     held = { id: event.pointerId, x: event.clientX, y: event.clientY, touch: event.pointerType === 'touch',
-      startedAt: performance.now(), listeners };
+      startedAt: performance.now(), eventTime: event.timeStamp, listeners };
     held.timer = setTimeout(() => {
       if (!button.isConnected) finishPointer();
       else handleHold();
@@ -57,11 +59,17 @@ export function bindDeviceDetails(button, openDetails) {
     }, options);
     const release = end => {
       if (end.pointerId !== held?.id) return;
-      // A busy renderer can deliver pointerup before the hold timer callback.
-      if (end.type === 'pointerup' && performance.now() - held.startedAt >= HOLD_MS) handleHold();
+      if (end.type === 'pointerup') {
+        const now = performance.now();
+        // The release can arrive before a delayed timer callback.
+        const elapsed = Math.max(now - held.startedAt, end.timeStamp - held.eventTime);
+        if (elapsed >= HOLD_MS) handleHold();
+        if (!openDetails && !held.handled && end.composedPath().includes(button)) shortTapUntil = now + TRAILING_CLICK_MS;
+      }
       finishPointer();
     };
     doc.addEventListener('pointerup', release, options);
+    button.addEventListener('pointerup', release, options);
     doc.addEventListener('pointercancel', release, options);
     view?.addEventListener('blur', finishPointer, options);
   });
@@ -73,8 +81,13 @@ export function bindDeviceDetails(button, openDetails) {
   });
   button.addEventListener('click', event => {
     const byPointer = event.detail > 0 || Boolean(event.pointerType);
+    const now = performance.now();
+    if (byPointer && !openDetails && shortTapUntil > 0 && now <= shortTapUntil) {
+      shortTapUntil = 0;
+      return;
+    }
     const deadline = byPointer ? suppressClickUntil : suppressKeyClickUntil;
-    if (performance.now() > deadline) return;
+    if ((!byPointer || openDetails) && now > deadline) return;
     if (byPointer) suppressClickUntil = 0;
     else suppressKeyClickUntil = 0;
     event.preventDefault();
