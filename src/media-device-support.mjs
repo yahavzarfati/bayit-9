@@ -20,6 +20,20 @@ export function mediaServiceRegistered(hass, service) {
   return !!registered && Object.hasOwn(registered, service);
 }
 
+export function compactMediaMutePlaceholder(model) {
+  const features = model.attributes.supported_features;
+  return model.available && MEDIA_STANDBY_STATES.includes(model.state) &&
+    Number.isSafeInteger(features) && features >= 0 && (features & MEDIA.mute) === MEDIA.mute;
+}
+
+export function compactRoomMediaCommands(model) {
+  const { actions, state } = model;
+  if (!model.available || !(MEDIA_ON_STATES.includes(state) || MEDIA_STANDBY_STATES.includes(state))) return [];
+  const play = state === 'playing' ? actions.media_pause ? 'media_pause' : 'media_stop' : 'media_play';
+  const next = ['playing', 'paused'].includes(state) && 'media_next_track';
+  return ['turn_on', 'turn_off', play, next, 'mute', 'unmute'].filter(id => id && actions[id]);
+}
+
 function addRemoteActions(role, state, attributes, supports, add) {
   const remote = (id, fields) => add(id, { requiresMediaService: true, ...fields });
   if (role === 'transport') {

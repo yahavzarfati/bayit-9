@@ -245,6 +245,22 @@ test('a vacuum link opens on hold only for the selected vacuum and its valid roo
   assert.equal(get('porch').room_vacuum_presentation, undefined);
 });
 
+test('room compact devices are limited to selected visible writable locks and media players', () => {
+  const hass = home();
+  const targets = ['lock.fixture_compact','media_player.fixture_compact','lock.fixture_read_only',
+    'media_player.fixture_hidden','switch.fixture_ordinary'];
+  for (const id of targets) {
+    hass.states[id] = {state:'on',attributes:{}};
+    hass.entities[id] = {};
+  }
+  const {rooms} = generateDashboard({area_ids:['studio','lounge'],show_unassigned:false,room_overrides:{
+    studio:{entities:targets,compact_device_entities:targets,read_only_entities:[targets[2]],panel_hidden_entities:[targets[3]]},
+    lounge:{entities:targets},
+  }},hass).views[0].cards[0];
+  assert.deepEqual(rooms[0].entities.filter(item=>item.room_device_compact).map(item=>item.entity),targets.slice(0,2));
+  assert.ok(rooms[1].entities.every(item=>item.room_device_compact === undefined));
+});
+
 test('appliance tile selection keeps read-only switches and excludes a specialized boiler and hidden devices', () => {
   const hass = home();
   const oven = 'switch.fixture_oven';

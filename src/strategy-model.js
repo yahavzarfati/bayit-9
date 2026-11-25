@@ -325,6 +325,10 @@ export function supportsRoomApplianceTile(device) {
   return domainOf(device?.entity ?? '') === 'switch' && !device.timed && (!device.kind || device.kind === 'switch');
 }
 
+export function supportsRoomCompactDevice(device) {
+  return ['lock', 'media_player'].includes(domainOf(device?.entity ?? '')) && !isReadOnlyRole(device.role);
+}
+
 export function supportsRoomBoilerQuickPower(device) {
   const timing = device?.timed;
   return Boolean(idForDomain(device?.entity, 'switch') && device.kind === 'boiler' &&
@@ -393,6 +397,7 @@ function dashboardAreas(config, hass) {
       activities: override.activities,
       climatePower: new Set(idList(override.climate_power_entities)),
       compactMedia: new Set(idList(override.media_compact_entities)),
+      compactDevices: new Set(idList(override.compact_device_entities)),
       applianceTiles: new Set(idList(override.appliance_tile_entities)),
       boilerQuickPower: new Set(idList(override.boiler_quick_power_entities)),
       vacuumPanelHolds: new Set(idList(override.vacuum_panel_hold_entities)),
@@ -679,6 +684,8 @@ export function discoverRooms(config, hass, locale) {
       }
       if (domainOf(device.entity) === 'media_player' && device.role !== 'status' && area.compactMedia?.has(device.entity) &&
           !room.panel_hidden_entities?.includes(device.entity)) device.room_media_compact = true;
+      if (area.compactDevices?.has(device.entity) && supportsRoomCompactDevice(device) &&
+          !room.panel_hidden_entities?.includes(device.entity)) device.room_device_compact = true;
       if (area.applianceTiles?.has(device.entity) && supportsRoomApplianceTile(device) &&
           !room.panel_hidden_entities?.includes(device.entity)) device.room_appliance_tile = true;
       if (area.boilerQuickPower?.has(device.entity) && supportsRoomBoilerQuickPower(device) &&

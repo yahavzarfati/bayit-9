@@ -664,7 +664,44 @@ export const styles = `
     grid-template-columns: 36px minmax(0,1fr);
     gap: 5px;
   }
-  .device:is([data-compact=tile],[data-compact=cover]) { background: var(--room-tile-fill); }
+  .device:is([data-compact=tile],[data-compact=cover],[data-room-compact-device]) { background: var(--room-tile-fill); }
+  .device[data-room-compact-device] { padding: 5px 7px 7px; }
+  .device[data-room-compact-device] .device-panel-launch {
+    direction: ltr;
+    grid-template-columns: 36px minmax(0,1fr);
+    gap: 5px;
+    text-align: center;
+  }
+  .device[data-room-compact-device] .device-name { font-size: 13px; font-weight: 650; }
+  .device[data-room-compact-device] .current { display: none; }
+  .device[data-room-compact-device] .device-icon {
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    border: 1px solid var(--room-icon-line);
+    border-radius: 999px;
+    background: var(--room-icon-fill);
+    color: var(--ink);
+  }
+  .device[data-room-compact-device][data-lock-state=locked] .device-icon { color: var(--moving); }
+  .device[data-room-compact-device][data-lock-state=unlocked] .device-icon { color: var(--critical); }
+  .device[data-room-compact-device]:is([data-lock-state=locking],[data-lock-state=unlocking]) .device-icon { color: var(--warm); }
+  .device[data-room-compact-device] .action-list { margin-block-start: 4px; }
+  .device[data-room-compact-device] .basic-actions {
+    direction: ltr;
+    grid-template-columns: repeat(auto-fit,minmax(min(44px,100%),1fr));
+    gap: 4px;
+  }
+  .device[data-room-compact-device] .basic-actions .control-button {
+    min-width: 0;
+    padding: 4px;
+    border-color: var(--room-command-line);
+    border-radius: 12px;
+    background: var(--room-command-fill);
+  }
+  .device[data-room-compact-device] .basic-actions .control-button:not(:disabled):hover { background: rgba(255,255,255,.12); }
+  .device[data-room-compact-device] .basic-actions .control-button[data-action=unlock] { color: var(--ink); }
+  .shell[dir=rtl] .device[data-room-compact-device] .device-detail { direction: rtl; }
   .device[data-compact=cover] .device-head:has(> .round-action:not([hidden])) > .device-icon { display: none; }
   .device[data-compact=cover] .device-head > .round-action,
   .device[data-compact=cover] .device-panel-launch > .device-icon {
@@ -853,9 +890,14 @@ export const styles = `
     inset-block-end: var(--page-bottom);
   }
   @media (min-width: 300px) {
-    .devices[data-room=true] .device-group[data-group=room_devices]:has(> [data-room-appliance-tile] + [data-room-appliance-tile]) {
+    .devices[data-room=true] .device-group[data-group=room_devices]:has(> [data-room-compact-device] + [data-room-compact-device]) {
+      direction: ltr;
+    }
+    .devices[data-room=true] .device-group[data-group=room_devices]:has(
+      > :is([data-room-appliance-tile],[data-room-compact-device]) + :is([data-room-appliance-tile],[data-room-compact-device])
+    ) {
       grid-template-columns: repeat(2,minmax(0,1fr));
-      > .device:not([data-room-appliance-tile]) { grid-column: 1 / -1; }
+      > .device:not([data-room-appliance-tile],[data-room-compact-device]) { grid-column: 1 / -1; }
     }
     .devices[data-room=true] .device-group[data-group=room_lights]:has(> .device[data-compact=tile]) {
       grid-template-columns: repeat(2,minmax(0,1fr));

@@ -680,6 +680,9 @@ if (query.has('toolbar-panels')) {
         ...(query.has('room-media-test') && {supported_features:23997,volume_level:.42,media_title:'Evening news',
           source_list:['HDMI','Live TV'],source:'Live TV'}),
       }},
+    ...(query.has('room-compact-pair-test') && {
+      'lock.demo_room_compact': {state:'unlocked',attributes:{friendly_name:'Room lock'}},
+    }),
     ...(query.has('appliance-tile-test') && {
       'switch.demo_oven': {state:'off',attributes:{friendly_name:'Oven'}},
       'switch.demo_cooktop': {state:'off',attributes:{friendly_name:'Cooktop'}},
@@ -898,7 +901,13 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
   ...(query.has('room-link') && { room_overrides: { studio: {
     entities:['light.demo_lamp','media_player.demo_tv','vacuum.demo_robot',
       ...(query.has('appliance-tile-test') ? ['switch.demo_oven','switch.demo_cooktop','switch.demo_appliance_boiler'] : []),
-      ...(query.has('boiler-quick-test') ? ['switch.demo_quick_boiler'] : [])],
+      ...(query.has('boiler-quick-test') ? ['switch.demo_quick_boiler'] : []),
+      ...(query.has('room-compact-pair-test') ? ['lock.demo_room_compact'] : [])],
+    ...(query.has('room-compact-pair') && {
+      compact_device_entities:['lock.demo_room_compact','media_player.demo_tv'],
+      sections:[{kind:'devices',entities:['lock.demo_room_compact','media_player.demo_tv']}],
+      ...(query.has('compact-pair-read-only') && {read_only_entities:['lock.demo_room_compact']}),
+    }),
     ...(query.has('boiler-quick') && {boiler_quick_power_entities:['switch.demo_quick_boiler']}),
     ...(query.has('appliance-tile-test') && {
       read_only_entities:['switch.demo_cooktop'],
@@ -3693,6 +3702,132 @@ async function assertRoomClimatePower(browser) {
   }
 }
 
+async function assertCompactRoomDevicePair(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const id = 'lock.demo_room_compact';
+    const media = 'media_player.demo_tv';
+    const url = base + '/fixture-home/home?toolbar-panels&room-link&room-media-test&room-compact-pair-test&native-more-info=modern&locale=' + locale;
+    const room = page.getByRole('dialog',{name:'Studio',exact:true});
+    const lock = room.locator('[data-entity="' + id + '"]');
+    const tv = room.locator('[data-entity="' + media + '"]');
+    const panel = page.getByRole('dialog',{name:he ? 'מדיה' : 'Media',exact:true});
+    const native = page.getByRole('dialog',{name:'Native entity details',exact:true});
+    const action = (node, name) => node.locator('button[data-action="' + name + '"]');
+    const actions = node => node.locator('button[data-action]').evaluateAll(nodes=>nodes.map(control=>control.dataset.action));
+    const calls = () => page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service'));
+    const state = (entity,value) => page.evaluate(([entity,value])=>window.bayitTest.setRoomState(entity,value),[entity,value]);
+    const attrs = (entity,value) => page.evaluate(([entity,value])=>window.bayitTest.setFixtureAttributes(entity,value),[entity,value]);
+    const open = async flags => {
+      await page.goto(url + flags);
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+      await room.waitFor();
+    };
+    const closeNative = async entity => {
+      await native.waitFor();
+      assert.equal(new URL(page.url()).searchParams.get('more-info-entity-id'),entity);
+      await native.getByRole('button',{name:'Close native details',exact:true}).tap();
+      await native.waitFor({state:'hidden'});
+      await page.waitForFunction(()=>!new URL(location.href).searchParams.has('more-info-entity-id'));
+    };
+    try {
+      await open('&room-compact-pair');
+      await lock.waitFor();
+      await tv.waitFor();
+      const [left,right] = await Promise.all([lock.boundingBox(),tv.boundingBox()]);
+      assert.ok(right.y === left.y && (right.x >= left.x + left.width || left.x >= right.x + right.width));
+      assert.equal(await lock.getAttribute('data-room-compact-device'),'lock');
+      assert.equal(await tv.getAttribute('data-room-compact-device'),'media_player');
+      assert.deepEqual(await actions(lock),['lock']);
+      assert.deepEqual(await actions(tv),['turn_off','media_pause','media_next_track','mute']);
+      assert.equal(await action(lock,'lock').textContent(),'');
+      assert.equal(await action(tv,'mute').textContent(),'');
+      assert.ok(await tv.evaluate(node=>node.scrollWidth <= node.clientWidth));
+      assert.equal(await lock.locator('.current').isVisible(),false);
+      assert.match(await lock.locator('.device-panel-launch').getAttribute('aria-description'),he ? /לא נעול|פתוח/ : /Unlocked/i);
+      assert.deepEqual(await calls(),[]);
+
+      await lock.locator('.device-panel-launch').press('Shift+Enter');
+      await closeNative(id);
+      await tv.locator('.device-panel-launch').tap();
+      await closeNative(media);
+      await tv.locator('.device-panel-launch').press('Shift+Enter');
+      await panel.waitFor();
+      await panel.getByRole('button',{name:he ? 'חזרה לחדר' : 'Back to room',exact:true}).tap();
+      await room.waitFor();
+      assert.deepEqual(await calls(),[]);
+
+      await state(media,'off');
+      const placeholder = tv.locator('[data-room-mute-placeholder]');
+      await placeholder.waitFor();
+      assert.equal(await placeholder.isDisabled(),true);
+      assert.deepEqual(await actions(tv),['turn_on']);
+      await placeholder.evaluate(button=>button.click());
+      await attrs(media,{supported_features:128});
+      await placeholder.waitFor({state:'hidden'});
+      await attrs(media,{supported_features:136,is_volume_muted:true});
+      await placeholder.waitFor();
+      assert.equal(await placeholder.locator('ha-icon').getAttribute('icon'),'mdi:volume-off');
+      await state(media,'unavailable');
+      await placeholder.waitFor({state:'hidden'});
+      assert.deepEqual(await actions(tv),[]);
+      assert.deepEqual(await calls(),[]);
+
+      await action(lock,'lock').tap();
+      await page.waitForFunction(()=>window.bayitTest.calls.some(call=>call.domain === 'lock'));
+      await state(id,'locked');
+      const unlock = action(lock,'unlock');
+      await unlock.waitFor();
+      const accept = page.locator('[data-role="accept"]');
+      await unlock.tap();
+      await accept.waitFor();
+      assert.equal((await calls()).length,1);
+      await state(id,'unlocked');
+      await accept.tap();
+      assert.equal((await calls()).length,1);
+      await state(id,'locking');
+      await action(lock,'lock').waitFor({state:'hidden'});
+      assert.deepEqual(await actions(lock),[]);
+      await state(id,'unavailable');
+      assert.deepEqual(await actions(lock),[]);
+
+      await attrs(id,{code_format:'^[0-9]+$'});
+      await state(id,'locked');
+      await unlock.tap();
+      await accept.tap();
+      await closeNative(id);
+      assert.equal((await calls()).length,1);
+      await attrs(id,{code_format:undefined});
+      await unlock.tap();
+      await accept.tap();
+      await page.waitForFunction(()=>window.bayitTest.calls.filter(call=>call.domain === 'lock').length === 2);
+      assert.deepEqual(await calls(),['lock','unlock'].map(service=>({type:'call_service',domain:'lock',service,
+        target:{entity_id:id},service_data:{}})));
+
+      await open('&room-compact-pair&compact-pair-read-only');
+      assert.equal(await lock.getAttribute('data-room-compact-device'),null);
+      assert.deepEqual(await actions(lock),[]);
+      assert.deepEqual(await calls(),[]);
+
+      await page.goto(url + '&room-compact-pair&editor');
+      await page.getByText(he ? 'חדרים' : 'Rooms',{exact:true}).tap();
+      await page.getByLabel(he ? 'חדר להתאמה אישית' : 'Room to customize',{exact:true}).selectOption('studio');
+      await page.getByText(he ? 'תצוגת מכשירים' : 'Device display',{exact:true}).tap();
+      const picker = page.getByLabel(he ? 'מכשיר להתאמה אישית' : 'Device to customize',{exact:true});
+      await picker.selectOption(id);
+      const compact = page.getByRole('checkbox',{name:he ? 'הצגה ככרטיס מכשיר קומפקטי' : 'Show as a compact device card',exact:true});
+      assert.equal(await compact.isChecked(),true);
+      await compact.uncheck();
+      assert.deepEqual(await page.evaluate(()=>window.latest.room_overrides.studio.compact_device_entities),[media]);
+      assert.deepEqual(await calls(),[]);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertCompactRoomMedia(browser) {
   for (const locale of ['en','he']) {
     const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
@@ -4704,6 +4839,7 @@ try {
       await mediaPage.close();
       console.log(engine + ': curated media and vacuum controls, Now Playing, and the original room shortcuts');
       await assertCompactRoomMedia(browser);
+      await assertCompactRoomDevicePair(browser);
       await assertKitchenApplianceTiles(browser);
       await assertKitchenBoilerQuickPower(browser);
       await assertRoomVacuumGestures(browser);

@@ -460,6 +460,12 @@ function validNumber(value, { min, max, step }) {
   return value === max || Math.abs(increments - Math.round(increments)) < 1e-7;
 }
 
+export function compactRoomLockCommand(model) {
+  if (model.domain !== 'lock' || !model.available || model.attributes.assumed_state === true) return;
+  const action = model.state === 'locked' ? 'unlock' : model.state === 'unlocked' ? 'lock' : undefined;
+  if (action && Object.hasOwn(model.actions, action)) return action;
+}
+
 export function roomClimatePowerState(model) {
   if (model.domain === 'climate' && model.available && HVAC_MODES.includes(model.state)) return model.state !== 'off';
 }

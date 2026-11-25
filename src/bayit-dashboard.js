@@ -4,11 +4,11 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   isCompactAutomationActions, isEnergyReadingCards, isWeatherReadingsList,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
   normalizeRoomVacuumSummary, normalizeToolbarReadout, normalizeRoomTemperatureGraphColor, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
-  ROOM_PANEL_KINDS, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
+  ROOM_PANEL_KINDS, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomCompactDevice, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
   sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
-import { allowsCoverRailAction, climatePowerServiceRegistered, createDeviceController, getDeviceModel, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
+import { allowsCoverRailAction, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
   simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupScrollMemory } from './popup-scroll.js';
@@ -23,7 +23,7 @@ import { createRoomGraphs, roomTemperatureChartStyles } from './room-temperature
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
 import { normalizeMediaStage } from './now-playing.js';
-import { normalizeMediaRemote } from './media-device-support.mjs';
+import { compactMediaMutePlaceholder, compactRoomMediaCommands, normalizeMediaRemote } from './media-device-support.mjs';
 import { calendarAccent, normalizeCalendarAgenda } from './calendar-agenda.js';
 import { createWallpaperController, createWallpaperGallery, personalWallpaperId, wallpaperChoices, wallpaperStyles } from './wallpapers.js';
 import { normalizeSharedWallpapers } from './shared-wallpapers.js';
@@ -271,6 +271,7 @@ function normalizeEntity(item) {
   if (domain === 'media_player' && entry.role !== 'status' && item.room_media_compact === true) entry.room_media_compact = true;
   if (item.room_appliance_tile === true && supportsRoomApplianceTile(entry)) entry.room_appliance_tile = true;
   if (item.room_boiler_quick_power === true && supportsRoomBoilerQuickPower(entry)) entry.room_boiler_quick_power = true;
+  if (item.room_device_compact === true && supportsRoomCompactDevice(entry)) entry.room_device_compact = true;
   if (domain === 'calendar') {
     const accent = calendarAccent(item.accent_color);
     if (accent) entry.accent_color = accent;
@@ -1646,8 +1647,8 @@ export class BayitDashboard extends HTMLElement {
   defaultRoomSections(entities) {
     const groups = new Map();
     for (const config of entities) {
-      const key = config.kind === 'heater' || config.kind === 'boiler'
-        ? 'room_heating' : deviceGroups[domainFor(config)] ?? 'room_devices';
+      const key = (config.kind === 'heater' || config.kind === 'boiler') ? 'room_heating'
+        : config.room_device_compact ? 'room_devices' : deviceGroups[domainFor(config)] ?? 'room_devices';
       if (!groups.has(key)) groups.set(key, { key, entities: [] });
       groups.get(key).entities.push(config);
     }
@@ -1673,12 +1674,14 @@ export class BayitDashboard extends HTMLElement {
     const cover = domain === 'cover' && (!!room || toolbarCoverRail);
     const coverPanel = cover && config.role !== 'status';
     const boilerPanel = !!room && config.kind === 'boiler' && config.role !== 'status';
-    const launchFromHeader = !!panelTarget || boilerPanel || coverPanel;
+    const compactDevice = !!room && config.room_device_compact === true;
+    const launchFromHeader = !!panelTarget || boilerPanel || coverPanel || compactDevice;
     item.dataset.entity = config.entity;
     item.dataset.treatment = config.kind || domain;
     item.toggleAttribute('data-inline-climate', inlineClimate);
     item.toggleAttribute('data-room-appliance-tile', applianceTile);
     item.toggleAttribute('data-room-boiler-quick', boilerQuick);
+    if (compactDevice) item.dataset.roomCompactDevice = domain;
     const glyph = icon(config.icon || 'mdi:information-outline');
     glyph.className = 'device-icon';
     const name = make(tileMode || launchFromHeader ? 'span' : room ? 'h4' : 'h3', 'device-name');
@@ -1692,7 +1695,8 @@ export class BayitDashboard extends HTMLElement {
       .find(entry => entry.entity === vacuumSummary.status_entity && entry.readout?.state_labels)?.readout.state_labels;
     const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactHeater,
       standaloneBoiler, compactCover: cover, vacuumCleaningControls: vacuumDisplay === 'cleaning-controls',
-      vacuumSummary, vacuumStatusLabels, roomPowerTile, compactMedia: !!room && config.room_media_compact === true,
+      vacuumSummary, vacuumStatusLabels, roomPowerTile, compactDevice,
+      compactMedia: !!room && domain === 'media_player' && (compactDevice || config.room_media_compact === true),
       dualLightDetail: titleInDialog && config.room_dual_light_detail === true,
       compactLightReading: (titleInDialog || !!room) && config.room_compact_light_reading === true };
     const bindPanelLaunch = source => {
@@ -1758,10 +1762,10 @@ export class BayitDashboard extends HTMLElement {
       const more = launchFromHeader ? button('device-head device-panel-launch')
         : button('round-action', this.t(hasPanel ? 'device_controls' : 'more_info'),
           cover ? config.icon || DEVICE_ICONS.cover : 'mdi:information-outline', true);
-      if (hasPanel || nativeRoomCover) more.setAttribute('aria-haspopup', 'dialog');
+      if (hasPanel || nativeRoomCover || compactDevice) more.setAttribute('aria-haspopup', 'dialog');
       more.onclick = () => {
         if (hasPanel) this.openPanel('device', more, room, config.entity);
-        else if (!nativeRoomCover || isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities,
+        else if (!(nativeRoomCover || compactDevice) || isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities,
           this.config.hiddenEntities)) this.moreInfo(config, more);
       };
       const head = launchFromHeader ? more : make('header', 'device-head');
@@ -1771,13 +1775,14 @@ export class BayitDashboard extends HTMLElement {
         name.hidden = true;
       }
       if (panelTarget) {
-        head.append(glyph, details, icon(panelOpensOnTap ? 'mdi:arrow-top-right' : 'mdi:information-outline'));
+        head.append(glyph, details);
+        if (!compactDevice) head.append(icon(panelOpensOnTap ? 'mdi:arrow-top-right' : 'mdi:information-outline'));
         bindPanelLaunch(more);
-      } else if (boilerPanel || coverPanel) {
+      } else if (boilerPanel || coverPanel || compactDevice) {
         bindDeviceDetails(more, more.onclick);
         head.append(glyph, details);
         if (boilerPanel) head.append(icon('mdi:arrow-top-right'));
-        const native = toolbarCoverRail || nativeRoomCover;
+        const native = toolbarCoverRail || nativeRoomCover || compactDevice;
         view.panelLaunch = { action: this.t(native ? 'more_info' : 'device_controls'), native };
       } else {
         if (titleInDialog && domain === 'light' && config.role !== 'status' &&
@@ -2066,10 +2071,14 @@ export class BayitDashboard extends HTMLElement {
         const reading = parts.filter(Boolean).join(' · ');
         setText(view.state, reading);
         if (view.panelLaunch) {
-          const description = view.panelLaunch.hint + ' · ' + reading;
+          const description = [view.panelLaunch.hint, reading].filter(Boolean).join(' · ');
           if (view.more.getAttribute('aria-description') !== description) view.more.setAttribute('aria-description', description);
         }
       } else setText(view.state, deviceStatus + (media ? ' · ' + media : ''));
+      if (view.compactDevice && model.domain === 'lock') {
+        view.more.setAttribute('aria-description', deviceStatus);
+        view.item.dataset.lockState = model.available ? model.state : '';
+      }
       view.state.dataset.tone = feedback ? 'moving' : this.tone(model);
       if (view.roomPowerTile) {
         const action = !pending && this.roomPowerTileAction(view.config, model);
@@ -2109,11 +2118,14 @@ export class BayitDashboard extends HTMLElement {
       const confirmedIdle = model.available && model.state === 'off' && model.timer?.state === 'idle';
       const hideIdleTimedOff = confirmedIdle &&
         (view.compactHeater || (view.standaloneBoiler && !!model.actions.start_timed));
+      const compactCommands = view.compactDevice && this.roomCompactCommands(model);
+      const mutePlaceholder = view.compactDevice && view.compactMedia && compactMediaMutePlaceholder(model);
       const signature = JSON.stringify([actionsInOrder.map(id => model.actions[id] || null), timerLayout,
-        model.levelAction, coverClass, hideIdleTimedOff]);
+        model.levelAction, coverClass, hideIdleTimedOff, compactCommands, mutePlaceholder, mutePlaceholder && model.attributes.is_volume_muted === true]);
+
       if (signature !== view.signature) {
         view.signature = signature;
-        this.buildActions(view, model, hideIdleTimedOff);
+        this.buildActions(view, model, hideIdleTimedOff, compactCommands, mutePlaceholder);
       }
       if (view.lightPower && view.compactLight) {
         const power = view.lightPower;
@@ -2125,7 +2137,7 @@ export class BayitDashboard extends HTMLElement {
       }
       view.item.setAttribute('aria-busy', String(!!pending));
       for (const control of view.group.querySelectorAll('button,input,select')) {
-        if (control.dataset.lightMode) continue;
+        if (control.dataset.lightMode || control.hasAttribute('data-room-mute-placeholder')) continue;
         const id = control.dataset.action;
         control.disabled = !this.canRequest(view.config.entity, id) || (view.compactCover && !allowsCoverRailAction(model, id));
       }
@@ -2365,7 +2377,18 @@ export class BayitDashboard extends HTMLElement {
 
   actionLabel(id) { return this.t(id === 'close' ? 'close_device' : id); }
 
-  buildActions(view, model, hideIdleTimedOff) {
+  roomCompactCommands(model) {
+    if (model.domain !== 'lock') return compactRoomMediaCommands(model);
+    const action = compactRoomLockCommand(model);
+    return action ? [action] : [];
+  }
+
+  canUseRoomCompactCommand(config, model, action) {
+    return isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities) &&
+      this.roomCompactCommands(model).includes(action);
+  }
+
+  buildActions(view, model, hideIdleTimedOff, compactCommands, mutePlaceholder) {
     const active = this.shadowRoot.activeElement;
     const focused = active && view.group.contains(active) ? active.dataset : undefined;
     view.fields = [];
@@ -2401,7 +2424,7 @@ export class BayitDashboard extends HTMLElement {
         advancedClimate.append(control);
       } : undefined,
       request: (id, value, control) => this.requestAction(view.config, id, value, control) });
-    for (const id of actionsInOrder) {
+    for (const id of compactCommands || actionsInOrder) {
       if (view.climatePower && (id === 'turn_on' || id === 'turn_off')) continue;
       if (view.vacuumCleaningControls && !roomVacuumCleaningActions.has(id)) continue;
       if (view.compactMedia && !roomCompactMediaActions.has(id)) continue;
@@ -2427,10 +2450,22 @@ export class BayitDashboard extends HTMLElement {
         continue;
       }
       const name = this.actionLabel(id);
-      const control = button('control-button', name, (curtain && curtainControlIcons[id]) || controlIcons[id]);
+      const compactIcon = view.compactDevice && ({ turn_on:'mdi:power', turn_off:'mdi:power', mute:'mdi:volume-high',
+        unmute:'mdi:volume-off' })[id];
+      const control = button('control-button', view.compactDevice ? undefined : name,
+        compactIcon || (curtain && curtainControlIcons[id]) || controlIcons[id]);
       label(control, name);
       control.dataset.action = id;
-      control.onclick = () => this.requestAction(view.config, id, undefined, control, { compactCover: view.compactCover });
+      control.onclick = () => this.requestAction(view.config, id, undefined, control,
+        { compactCover: view.compactCover, compactDevice: view.compactDevice });
+      basic.append(control);
+    }
+    if (mutePlaceholder) {
+      const muted = model.attributes.is_volume_muted === true;
+      const control = button('control-button', undefined, muted ? 'mdi:volume-off' : 'mdi:volume-high');
+      label(control, this.t(muted ? 'unmute' : 'mute'));
+      control.dataset.roomMutePlaceholder = '';
+      control.disabled = true;
       basic.append(control);
     }
     if (view.effectGallery) organizeLightModes(complex, view.lightMode, mode => { view.lightMode = mode; },
@@ -2605,17 +2640,18 @@ export class BayitDashboard extends HTMLElement {
     return !previous || (id === 'stop' && movement.has(previous.id));
   }
 
-  requestAction(config, id, value, source, { confirmShortcut = false, compactCover = false, roomPowerTile = false } = {}) {
+  requestAction(config, id, value, source, { confirmShortcut = false, compactCover = false, compactDevice = false, roomPowerTile = false } = {}) {
     if (!this.canRequest(config.entity, id)) return;
     const roomBoilerQuickPower = roomPowerTile && config.room_boiler_quick_power === true;
     const model = this.model(config, { roomBoilerQuickPower });
     const action = model.actions[id];
     if (this.staleScriptAction(id, action, value) || this.staleUsageReset(config, id, action, value) || !action ||
-        (compactCover && !allowsCoverRailAction(model, id))) return;
+        (compactCover && !allowsCoverRailAction(model, id)) ||
+        (compactDevice && !this.canUseRoomCompactCommand(config, model, id))) return;
     if (!action.requiresConfirmation && !confirmShortcut) {
       return action.requiresCode ? this.moreInfo(config, source) : this.send(config, id, value, false, roomBoilerQuickPower);
     }
-    this.confirming = { config, id, value, source, compactCover, roomPowerTile, roomBoilerQuickPower, native: action.requiresCode };
+    this.confirming = { config, id, value, source, compactCover, compactDevice, roomPowerTile, roomBoilerQuickPower, native: action.requiresCode };
     const n = this.nodes;
     const prompt = id === 'reset_daily_usage' ? this.t('timer_reset_confirm').replace('{name}', model.name)
       : this.t('confirm_action').replace('{name}', model.name).replace('{action}', this.actionLabel(id));
@@ -2630,6 +2666,8 @@ export class BayitDashboard extends HTMLElement {
     this.nodes.confirm.close();
     if (request.compactCover && !allowsCoverRailAction(this.model(request.config), request.id)) return;
     if (request.roomPowerTile && this.roomPowerTileAction(request.config) !== request.id) return;
+    if (request.compactDevice &&
+        !this.canUseRoomCompactCommand(request.config, this.model(request.config), request.id)) return;
     if (request.native) return this.moreInfo(request.config, request.source);
     return this.send(request.config, request.id, request.value, true, request.roomBoilerQuickPower);
   }

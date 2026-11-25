@@ -7,7 +7,7 @@ import {
   popupAliasDestinations, PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, roomShortcutDevices, roomVacuumPresentation, ROOM_VACUUM_SUMMARY_DOMAINS,
   selectableRoomEntities, selectedRoomIds,
   shortcutPanelOptions, STRATEGY_NAME, supportsNativeShortcutDetails, supportsShortcutWithoutDetails,
-  supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, usesAutomaticRoomDevices,
+  supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomCompactDevice, usesAutomaticRoomDevices,
 } from './strategy-model.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { climateOptionLabel } from './panel-controls.js';
@@ -69,6 +69,7 @@ const WORDS = {
       power_entity: 'Power state', done_entity: 'Completion sensor', progress_entity: 'Progress (%)',
       boiler_entity: 'Boiler in this room', started_at_entity: 'Boiler start date and time helper' },
     roomCompactMedia: 'Show compact media controls in this room',
+    roomCompactDevice: 'Show as a compact device card',
     roomMediaLink: 'Open on media press and hold', roomMediaNone: 'No panel', roomMediaDefault: 'Media',
     roomTemperatureSource: 'Temperature on home card', roomTemperatureAuto: 'Automatic',
     roomTemperatureGraph: 'Compact temperature graph', roomTemperatureGraphColor: 'Graph line color',
@@ -184,6 +185,7 @@ const WORDS = {
       power_entity: 'מצב הפעלה', done_entity: 'חיישן סיום', progress_entity: 'התקדמות (%)',
       boiler_entity: 'דוד בחדר הזה', started_at_entity: 'עזר תאריך ושעת הפעלת הדוד' },
     roomCompactMedia: 'הצגת פקדי מדיה קומפקטיים בחדר',
+    roomCompactDevice: 'הצגה ככרטיס מכשיר קומפקטי',
     roomMediaLink: 'פתיחה בלחיצה ארוכה על מכשיר מדיה', roomMediaNone: 'ללא חלונית', roomMediaDefault: 'מדיה',
     roomTemperatureSource: 'טמפרטורה בכרטיס הבית', roomTemperatureAuto: 'אוטומטי',
     roomTemperatureGraph: 'גרף טמפרטורה קומפקטי', roomTemperatureGraphColor: 'צבע קו הגרף',
@@ -954,7 +956,21 @@ export class Bayit9StrategyEditor extends HTMLElement {
           power.firstElementChild.dataset.roomFocus = 'room-boiler-quick-power';
           fields.append(power, node('small', { textContent: words.roomBoilerQuickPowerHint }));
         }
-        if (id.startsWith('media_player.') && !configuredIds(override.read_only_entities).includes(id)) {
+        if (supportsRoomCompactDevice({ entity:id }) && !configuredIds(override.read_only_entities).includes(id)) {
+          const compact = checkbox(words.roomCompactDevice, configuredIds(override.compact_device_entities).includes(id), checked => {
+            const next = { ...this.#roomOverride(room.id) };
+            const ids = new Set(configuredIds(next.compact_device_entities));
+            if (checked) ids.add(id);
+            else ids.delete(id);
+            if (ids.size) next.compact_device_entities = [...ids];
+            else delete next.compact_device_entities;
+            this.#setRoomOverride(room.id, next, 'room-compact-device');
+          });
+          compact.firstElementChild.dataset.roomFocus = 'room-compact-device';
+          fields.append(compact);
+        }
+        if (id.startsWith('media_player.') && !configuredIds(override.read_only_entities).includes(id) &&
+            !configuredIds(override.compact_device_entities).includes(id)) {
           const compact = checkbox(words.roomCompactMedia, configuredIds(override.media_compact_entities).includes(id), checked => {
             const next = { ...this.#roomOverride(room.id) };
             const ids = new Set(configuredIds(next.media_compact_entities));
@@ -1269,7 +1285,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       for (const key of ['keep_in_automatic_room_entities', 'read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
         'inline_light_entities', 'dual_light_detail_entities', 'compact_light_reading_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details',
         'vacuum_panel_hold_entities', 'climate_power_entities', 'media_compact_entities', 'appliance_tile_entities',
-        'boiler_quick_power_entities']) {
+        'boiler_quick_power_entities', 'compact_device_entities']) {
         if (!Array.isArray(next[key])) continue;
         next[key] = next[key].filter(id => entities.includes(id));
         if (!next[key].length) delete next[key];
