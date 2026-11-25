@@ -6,6 +6,8 @@ const colors = ['#78A9FF', '#FF91AF', '#C8ACFF', '#78DCA0', '#FFA264', '#F5CC65'
 const plotWidth = 1000;
 const plotHeight = 230;
 const minuteMs = 60000;
+const refreshDelayMs = 1500;
+const historyTimeoutMs = 10000;
 let nextComparisonId = 0;
 const clip = (value, max) => Math.min(max, Math.max(0, value));
 
@@ -90,8 +92,9 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
   const view = document.defaultView;
   const pathname = view.location.pathname;
   const step = settings.bucket_minutes * minuteMs;
-  const endMs = Date.now();
-  const startMs = endMs - settings.hours * 60 * minuteMs;
+  const span = settings.hours * 60 * minuteMs;
+  let endMs = Date.now();
+  let startMs = endMs - span;
   const x = time => plotWidth * clip((time - startMs) / (endMs - startMs), 1);
   const slot = make('div', 'temperature-comparison');
   const message = make('p', 'comparison-message', t('comparison_loading'));
@@ -131,7 +134,9 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
 
   let hass = context.hass;
   let disposed = false;
-  let timeout;
+  let refreshTimer;
+  let refreshQueued = false;
+  let pendingRequest;
   let pending = true;
   let data;
   let failure;
@@ -157,6 +162,13 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
     const currentUnit = readingUnit(hass?.states?.[item.entity]);
     return visible(item.entity, hass) && (currentUnit === undefined || currentUnit === item.unit);
   });
+
+  const sourceSnapshot = () => new Map(activeSources().map(({ entity }) => {
+    const current = hass.states[entity];
+    return [entity, JSON.stringify([current.state, current.last_changed])];
+  }));
+  let seenSources = sourceSnapshot();
+  let hasRecorder = typeof hass?.callWS === 'function';
 
   function selectTime(index, updateInput = true) {
     const at = selectedTimes[index];
@@ -230,8 +242,9 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
     const visibleSeries = series.filter(item => !hiddenSeries.has(item.entity));
     const bounds = numericBounds(visibleSeries);
     visual.hidden = picker.hidden = !bounds;
-    message.hidden = !!bounds;
-    message.textContent = t(pending ? 'comparison_loading' : failure ? 'comparison_unavailable' : 'comparison_empty');
+    message.hidden = !!bounds && !failure;
+    message.textContent = t(pending ? 'comparison_loading' : failure
+      ? bounds ? 'comparison_refresh_failed' : 'comparison_unavailable' : 'comparison_empty');
     valueViews = series.map(item => {
       const { li, control, value } = readingView(item);
       const showing = !hiddenSeries.has(item.entity);
@@ -270,6 +283,9 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
       if (at > startMs) times.push(at);
     }
     times.push(endMs);
+    if (selectedTime > startMs && selectedTime < endMs && !times.includes(selectedTime)) {
+      times.splice(times.findIndex(at => at > selectedTime), 0, selectedTime);
+    }
     selectedTimes = times;
     input.max = String(times.length - 1);
     selectTime(Math.max(0, times.findIndex(at => at >= selectedTime)));
@@ -280,48 +296,86 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
     const bounds = svg.getBoundingClientRect();
     if (!bounds.width) return;
     const fraction = clip((event.clientX - bounds.x) / bounds.width, 1);
-    selectTime(Math.round(fraction * (selectedTimes.length - 1)));
+    const at = startMs + fraction * (endMs - startMs);
+    const nearest = selectedTimes.reduce((best, time, index) =>
+      Math.abs(time - at) < Math.abs(selectedTimes[best] - at) ? index : best, 0);
+    selectTime(nearest);
   });
 
-  function settle(history, failed = false) {
-    if (!pending || !active()) return;
-    view.clearTimeout(timeout);
+  function queueRefresh() {
+    if (!refreshQueued || pendingRequest || refreshTimer !== undefined || !active()) return;
+    refreshTimer = view.setTimeout(() => {
+      refreshTimer = undefined;
+      if (refreshQueued) refresh();
+    }, refreshDelayMs);
+  }
+
+  function settle(attempt, history, failed = false) {
+    if (pendingRequest !== attempt || !active()) return;
+    view.clearTimeout(attempt.timeout);
+    pendingRequest = undefined;
     pending = false;
     failure = failed;
     key = undefined;
-    if (!failed) data = buildComparisonSeries(history, activeSources(), { startMs, endMs, bucketMinutes:settings.bucket_minutes });
+    if (!failed) {
+      const followLatest = selectedTime === endMs;
+      startMs = attempt.start;
+      endMs = attempt.end;
+      selectedTime = followLatest ? endMs : Math.min(endMs, Math.max(startMs, selectedTime));
+      data = buildComparisonSeries(history, activeSources(), { startMs, endMs, bucketMinutes:settings.bucket_minutes });
+    }
     paint();
+    queueRefresh();
   }
 
-  const launch = view.requestAnimationFrame(() => {
-    if (!active()) return;
+  function refresh() {
+    if (!active() || pendingRequest) return;
+    refreshQueued = false;
+    const end = Date.now();
+    const attempt = { start: end - span, end };
+    pendingRequest = attempt;
     const selected = activeSources();
-    if (!selected.length) { settle({}); return; }
-    if (typeof hass?.callWS !== 'function') { settle(null, true); return; }
-    timeout = view.setTimeout(() => settle(null, true), 10000);
+    if (!selected.length) { settle(attempt, {}); return; }
+    if (typeof hass?.callWS !== 'function') { settle(attempt, null, true); return; }
+    attempt.timeout = view.setTimeout(() => settle(attempt, null, true), historyTimeoutMs);
     const request = {
       type:'history/history_during_period', entity_ids:selected.map(item => item.entity),
-      start_time:new Date(startMs - step).toISOString(), end_time:new Date(endMs).toISOString(),
+      start_time:new Date(attempt.start - step).toISOString(), end_time:new Date(attempt.end).toISOString(),
       minimal_response:true, no_attributes:true, significant_changes_only:false,
     };
-    Promise.resolve().then(() => hass.callWS(request)).then(
+    let response;
+    try { response = hass.callWS(request); }
+    catch { settle(attempt, null, true); return; }
+    Promise.resolve(response).then(
       result => {
         const valid = result && typeof result === 'object' && !Array.isArray(result);
-        settle(valid ? result : null, !valid);
+        settle(attempt, valid ? result : null, !valid);
       },
-      () => settle(null, true),
+      () => settle(attempt, null, true),
     );
-  });
+  }
+
+  const launch = view.requestAnimationFrame(refresh);
 
   return {
     update(nextHass) {
       hass = nextHass;
-      if (active()) paint();
+      if (!active()) return;
+      const snapshot = sourceSnapshot();
+      const recorderReady = typeof hass?.callWS === 'function';
+      const changed = [...snapshot].some(([entity, state]) => seenSources.get(entity) !== state);
+      if (changed || (recorderReady && !hasRecorder)) refreshQueued = true;
+      seenSources = snapshot;
+      hasRecorder = recorderReady;
+      queueRefresh();
+      paint();
     },
     dispose() {
       disposed = true;
       view.cancelAnimationFrame(launch);
-      view.clearTimeout(timeout);
+      view.clearTimeout(refreshTimer);
+      view.clearTimeout(pendingRequest?.timeout);
+      pendingRequest = undefined;
     },
   };
 }

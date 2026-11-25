@@ -9,7 +9,7 @@ const fixture = `<!doctype html><meta charset="utf-8"><meta name="viewport" cont
 <main></main><div id="editor"></div><script type="module">
 import '/bayit-9.js';
 const options = new URL(location.href).searchParams;
-const tracker = { requests:[], native:[] };
+const tracker = { requests:[], native:[], readings:[], held:[] };
 const inside = 'sensor.fixture_inside';
 const outside = 'sensor.fixture_outside';
 const excluded = 'sensor.fixture_excluded';
@@ -28,14 +28,21 @@ const hass = {
     if (request.type !== 'history/history_during_period') throw new Error('Unexpected request: ' + request.type);
     if (options.has('error')) return Promise.reject(new Error('Fixture Recorder failure'));
     if (options.has('empty')) return Promise.resolve({});
-    const end = Date.parse(request.end_time);
+    const end = Date.parse(options.has('live-history') ? tracker.requests[0].end_time : request.end_time);
     const row = (minute, s) => ({ s, lu:(end + minute * 60000) / 1000 });
     const data = {
       [inside]:[row(-1450,'20'),row(-1435,'22'),row(-1430,'24'),row(-608,'unavailable'),row(-514,'18'),row(-30,'22')],
       [outside]:[row(-1450,'10'),row(-550,'14'),row(-80,'16')],
       [excluded]:[row(-390,'30')],
     };
-    if (options.has('delayed')) return new Promise(resolve => { tracker.complete = () => resolve(data); });
+    if (options.has('live-history')) data[inside].push(...tracker.readings);
+    if (options.has('delayed') || tracker.holdNext) {
+      tracker.holdNext = false;
+      return new Promise(resolve => {
+        tracker.complete = () => resolve(data);
+        tracker.held.push(tracker.complete);
+      });
+    }
     return Promise.resolve(data);
   },
 };
@@ -71,6 +78,12 @@ tracker.dropInside = () => {
 };
 tracker.changeInside = state => {
   hass.states[inside] = sensor(state, 'Inside', unit);
+  const previous = (tracker.readings.at(-1)?.lu ?? 0) * 1000;
+  tracker.readings.push({ s:state, lu:Math.max(previous + 2, Date.now()) / 1000 });
+  dashboard.hass = { ...hass, states:{ ...hass.states } };
+};
+tracker.changeUnrelated = () => {
+  hass.states['sensor.unrelated'] = sensor('25','Unrelated',unit);
   dashboard.hass = { ...hass, states:{ ...hass.states } };
 };
 if (options.has('editor')) {
@@ -98,6 +111,97 @@ const home = 'http://127.0.0.1:' + server.address().port + '/fixture-home/home';
 const hash = '#panel/chart-fixture';
 const inside = 'sensor.fixture_inside';
 const outside = 'sensor.fixture_outside';
+
+async function assertLiveComparison(browser) {
+  const page = await browser.newPage({ viewport:{ width:390,height:844 },hasTouch:true,reducedMotion:'reduce' });
+  page.setDefaultTimeout(8000);
+  const panel = page.getByRole('dialog',{name:'Fixture Sensors',exact:true});
+  const comparison = panel.locator('.temperature-comparison');
+  const range = comparison.getByRole('slider');
+  const time = comparison.locator('.comparison-selected-time');
+  const insideReading = comparison.locator('.comparison-reading').filter({hasText:'Inside'}).locator('.comparison-value');
+  const outsideLegend = comparison.getByRole('button',{name:'Show or hide Outside',exact:true});
+  const recordedRequests = () => page.evaluate(() => tracker.requests);
+  const waitRequests = count => page.waitForFunction(count => tracker.requests.length === count,count);
+  const updateFrame = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+  const setInside = async state => {
+    await page.evaluate(state=>tracker.changeInside(state),state);
+    await updateFrame();
+  };
+  try {
+    await page.clock.install({time:new Date('2026-11-25T12:00:00Z')});
+    await page.goto(home+'?live-history'+hash);
+    await range.waitFor();
+    await insideReading.getByText('22 °C',{exact:true}).waitFor();
+    await range.fill('6');
+    const chosenTime = await time.textContent();
+    const first = (await recordedRequests())[0];
+    await outsideLegend.click();
+    await page.evaluate(()=>tracker.changeUnrelated());
+    await updateFrame();
+    await page.clock.fastForward(35 * 60000);
+    assert.equal((await recordedRequests()).length,1);
+
+    await page.evaluate(() => {
+      tracker.changeInside('32');
+      tracker.changeInside('34');
+      tracker.changeInside('36');
+    });
+    await updateFrame();
+    await page.clock.fastForward(1250);
+    assert.equal((await recordedRequests()).length,1);
+    await page.clock.fastForward(350);
+    await waitRequests(2);
+    const second = (await recordedRequests())[1];
+    assert.deepEqual(second.entity_ids,[inside,outside]);
+    assert.ok(Date.parse(second.end_time) - Date.parse(first.end_time) >= 35 * 60000);
+    assert.equal(Date.parse(second.end_time) - Date.parse(second.start_time),24.5 * 3600000);
+    assert.equal(await time.textContent(),chosenTime);
+    assert.equal(await outsideLegend.getAttribute('aria-pressed'),'false');
+    await range.press('End');
+    await insideReading.getByText('34 °C',{exact:true}).waitFor();
+
+    // Reading changes during a request are picked up with a single trailing refresh.
+    await page.evaluate(() => { tracker.holdNext = true; });
+    await setInside('38');
+    await page.clock.fastForward(1650);
+    await waitRequests(3);
+    await setInside('40');
+    await page.clock.fastForward(1650);
+    assert.equal((await recordedRequests()).length,3);
+    await page.evaluate(() => tracker.held[0]());
+    await page.clock.fastForward(1650);
+    await waitRequests(4);
+    await insideReading.getByText('36 °C',{exact:true}).waitFor();
+
+    // A timed-out older response must not replace a newer successful plot or its time.
+    await page.evaluate(() => { tracker.holdNext = true; });
+    await setInside('50');
+    await page.clock.fastForward(1650);
+    await waitRequests(5);
+    await setInside('60');
+    await page.clock.fastForward(10050);
+    await panel.getByText('Could not refresh sensor history.',{exact:true}).waitFor();
+    assert.equal(await insideReading.textContent(),'36 °C');
+    await page.clock.fastForward(1650);
+    await waitRequests(6);
+    await panel.getByText('Could not refresh sensor history.',{exact:true}).waitFor({state:'hidden'});
+    const afterLatest = await insideReading.textContent();
+    const afterLatestTime = await time.textContent();
+    assert.notEqual(afterLatest,'36 °C');
+    await page.evaluate(() => tracker.held[1]());
+    await updateFrame();
+    assert.equal(await insideReading.textContent(),afterLatest);
+    assert.equal(await time.textContent(),afterLatestTime);
+    assert.equal(await outsideLegend.getAttribute('aria-pressed'),'false');
+
+    await setInside('70');
+    await panel.getByRole('button',{name:'Close',exact:true}).click();
+    await panel.waitFor({state:'hidden'});
+    await page.clock.fastForward(2000);
+    assert.equal((await recordedRequests()).length,6);
+  } finally { await page.close(); }
+}
 
 try {
   for (const [name, engine] of [['Chromium', chromium], ['WebKit', webkit]]) {
@@ -258,6 +362,8 @@ try {
       assert.equal(draft.entities[0].series_color, '#12AACC');
       assert.deepEqual(mediaRequests, []);
       assert.deepEqual(errors, []);
+      await assertLiveComparison(browser);
+      console.log(name + ': rolling Recorder refresh, historical selection, one trailing refresh, stale response and teardown');
       console.log(name + ': responsive sensor comparison, recorder gaps, keyboard values, native fallback, disposal and editor');
     } finally {
       await browser.close();
