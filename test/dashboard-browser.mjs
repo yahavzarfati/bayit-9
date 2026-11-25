@@ -4392,10 +4392,13 @@ async function assertCompactClimateRail(browser) {
     page.setDefaultTimeout(8000);
     const baseUrl = base + '/fixture-home/home?device-panel&preset-shortcut&climate-power-test&room-climate-power&compact-climate-summary&locale=' + locale;
     const layoutUrl = baseUrl + '&compact-climate-controls';
+    const fourControlsUrl = layoutUrl + '&climate-labels=positioned';
     const detail = '#device/studio/climate.demo_air';
     const room = '#room-studio';
     const rail = page.locator('dialog[open] .compact-climate-rail > .climate-controls');
     const calls = () => page.evaluate(()=>window.bayitTest.calls.filter(request=>request.type === 'call_service'));
+    const swing = rail.locator('select[data-action=set_swing_mode]');
+    const visibleSwing = rail.locator('.climate-selector:has(select[data-action=set_swing_mode]) .climate-selection');
     const geometry = () => rail.evaluate(container => {
       const result = new Map();
       const bounds = container.getBoundingClientRect();
@@ -4416,12 +4419,23 @@ async function assertCompactClimateRail(browser) {
       for (const width of [320,375,391]) {
         await page.setViewportSize({width,height:844});
         for (const surface of [room,detail]) {
-          await page.goto(layoutUrl + surface);
+          await page.goto(fourControlsUrl + surface);
           await rail.waitFor();
           const four = await geometry();
           assert.deepEqual(four.rows,width === 320 ? [2,2] : [4]);
           assert.ok(four.allInside && four.timerAfter && four.targetFits, JSON.stringify({locale,width,surface,...four}));
-          assert.equal(await rail.locator('select[data-action=set_swing_mode]').count(),1);
+          assert.equal(await swing.count(),1);
+          assert.equal(await visibleSwing.textContent(),he ? 'ללא נדנוד' : 'No swing');
+          assert.equal(await visibleSwing.getAttribute('aria-hidden'),'true');
+          const caption = await visibleSwing.evaluate(el => {
+            const field = el.parentElement;
+            const control = field.querySelector('select');
+            const rect = control.getBoundingClientRect();
+            return { text:control.selectedOptions[0].textContent, matches:el.textContent === control.selectedOptions[0].textContent,
+              fits:el.scrollWidth <= el.clientWidth + 1, height:Math.round(rect.height),
+              onTop:field.querySelector('.climate-selector-chevron').getBoundingClientRect().left >= el.getBoundingClientRect().right };
+          });
+          assert.ok(caption.matches && caption.fits && caption.height >= 44 && caption.onTop, JSON.stringify({locale,width,surface,...caption}));
           assert.equal(await page.locator('dialog[open] .room-climate-power:enabled').count(),1);
           await rail.locator('select[data-action=set_fan_mode]').focus();
           assert.deepEqual(await calls(),[]);
@@ -4436,6 +4450,14 @@ async function assertCompactClimateRail(browser) {
           assert.deepEqual(await calls(),[]);
         }
       }
+
+      await page.goto(fourControlsUrl + detail);
+      await swing.waitFor();
+      await swing.selectOption('full_swing');
+      await rail.getByText(he ? 'נדנוד מלא' : 'Full swing',{exact:true}).filter({visible:true}).waitFor();
+      assert.equal(await visibleSwing.textContent(),he ? 'נדנוד מלא' : 'Full swing');
+      assert.deepEqual((await calls()).map(call=>[call.domain,call.service,call.service_data.swing_mode]),
+        [['climate','set_swing_mode','full_swing']]);
 
       await page.goto(layoutUrl + '#device/bayit_room_other_preset/climate.demo_air');
       await page.locator('dialog[open] .climate-controls').waitFor();
