@@ -24,14 +24,21 @@ const script = function () {
     'switch.demo_wash': { state: 'on', attributes: {} },
     'binary_sensor.demo_wash_done': { state: 'off', attributes: {} },
     'sensor.demo_wash_progress': { state: '35', attributes: { unit_of_measurement: '%' } },
+    'vacuum.demo_robot': { state: 'cleaning', attributes: {} },
+    'sensor.demo_robot_status': { state: 'segment_cleaning', attributes: {} },
+    'binary_sensor.demo_robot_cleaning': { state: 'on', attributes: {} },
+    'sensor.demo_robot_progress': { state: '64', attributes: { unit_of_measurement: '%' } },
+    'select.demo_robot_mop': { state: 'high', attributes: {} },
   };
   const mappings = [
     { kind: 'oven', operation_entity: 'sensor.demo_oven_mode', finish_entity: 'sensor.demo_oven_finish' },
     { kind: 'hob', operation_entity: 'sensor.demo_hob_mode', power_entity: 'switch.demo_hob' },
     { kind: 'dishwasher', operation_entity: 'sensor.demo_dish_mode', finish_entity: 'sensor.demo_dish_finish' },
+    { kind: 'vacuum', vacuum_entity: 'vacuum.demo_robot', status_entity: 'sensor.demo_robot_status',
+      cleaning_entity: 'binary_sensor.demo_robot_cleaning', progress_entity: 'sensor.demo_robot_progress', mop_mode_entity: 'select.demo_robot_mop' },
   ];
   const config = {
-    type: 'custom:bayit-9', locale: 'he', layout: query.has('header') ? 'header' : 'classic',
+    type: 'custom:bayit-9', locale: query.get('locale') || 'he', layout: query.has('header') ? 'header' : 'classic',
     area_ids: ['kitchen','laundry'], show_unassigned: false,
     profiles: [{ kind: 'boiler', entity: 'switch.demo_boiler' }],
     room_overrides: {
@@ -51,8 +58,11 @@ const script = function () {
   const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
   if (query.has('editor')) {
     const editor = Strategy.getConfigElement();
-    editor.addEventListener('config-changed', event => { window.latestConfig = event.detail.config; });
-    editor.setConfig({ ...config, room_overrides: {} });
+    editor.addEventListener('config-changed', event => {
+      window.latestConfig = event.detail.config;
+      sessionStorage.setItem('fixture-appliances', JSON.stringify(window.latestConfig));
+    });
+    editor.setConfig(JSON.parse(sessionStorage.getItem('fixture-appliances')) ?? { ...config, room_overrides: {} });
     editor.hass = hass;
     document.body.append(editor);
   } else {
@@ -60,6 +70,13 @@ const script = function () {
     card.setConfig(Strategy.generate(config, hass).views[0].cards[0]);
     card.hass = hass;
     document.body.append(card);
+    window.robotState = (vacuum, status, cleaning, progress) => {
+      states['vacuum.demo_robot'].state = vacuum;
+      states['sensor.demo_robot_status'].state = status;
+      states['binary_sensor.demo_robot_cleaning'].state = cleaning;
+      states['sensor.demo_robot_progress'].state = progress;
+      card.hass = { ...hass, states: { ...states } };
+    };
     window.useCompleted = () => {
       states['sensor.demo_oven_mode'].state = 'ready';
       states['sensor.demo_dish_mode'].state = 'finished';
@@ -92,27 +109,38 @@ try {
         const page = await browser.newPage({ viewport: { width: 320, height: 700 } });
         const errors = [];
         page.on('pageerror', error => errors.push(error.message));
-        await page.goto(base + '?' + layout);
+        const he = layout === 'classic';
+        await page.goto(base + '?' + layout + '&locale=' + (he ? 'he' : 'en'));
         const kitchen = page.locator('[data-room="kitchen"]');
-        const oven = kitchen.getByRole('img', { name: /^תנור/ });
-        const hob = kitchen.getByRole('img', { name: /^כיריים/ });
-        const dish = kitchen.getByRole('img', { name: /^מדיח כלים/ });
-        const washer = page.locator('[data-room="laundry"]').getByRole('img', { name: /^מכונת כביסה/ });
+        const oven = kitchen.getByRole('img', { name: he ? /^תנור/ : /^Oven/ });
+        const hob = kitchen.getByRole('img', { name: he ? /^כיריים/ : /^Cooktop/ });
+        const dish = kitchen.getByRole('img', { name: he ? /^מדיח כלים/ : /^Dishwasher/ });
+        const robot = kitchen.getByRole('img', { name: he ? /^שואב רובוטי/ : /^Robot vacuum/ });
+        const washer = page.locator('[data-room="laundry"]').getByRole('img', { name: he ? /^מכונת כביסה/ : /^Washing machine/ });
         await oven.getByText('00:01', { exact: false }).waitFor();
-        assert.match(await hob.getAttribute('aria-label'), /זמן פעולה/);
-        assert.match(await dish.getAttribute('aria-label'), /זמן שנותר/);
-        assert.match(await washer.getAttribute('aria-label'), /רץ/);
+        assert.match(await hob.getAttribute('aria-label'), he ? /זמן פעולה/ : /Time running/);
+        assert.match(await dish.getAttribute('aria-label'), he ? /זמן שנותר/ : /Time remaining/);
+        assert.match(await washer.getAttribute('aria-label'), he ? /רץ/ : /Running/);
+        assert.match(await robot.getAttribute('aria-label'), he ? /שוטף.*התקדמות.*64%/ : /Mopping.*Progress.*64%/);
         const layoutFits = await kitchen.evaluate(room => {
           const strip = room.querySelector('.room-status-strip');
           const chips = [...strip.children].filter(chip => !chip.hidden);
           const bounds = room.getBoundingClientRect(), bottom = room.querySelector('.quick').getBoundingClientRect().top;
-          return chips.length === 4 && chips.every(chip => {
+          return chips.length === 5 && chips.every(chip => {
             const box = chip.getBoundingClientRect();
             return box.left >= bounds.left && box.right <= bounds.right && box.bottom <= bottom + 1
               && chip.scrollWidth <= chip.clientWidth + 1;
           });
         });
         assert.equal(layoutFits, true);
+        await page.evaluate(() => window.robotState('returning', 'returning_home', 'on', '64'));
+        await robot.getByText(he ? 'בדרך לעמדה' : 'Returning to dock', { exact: true }).waitFor();
+        await page.evaluate(() => window.robotState('docked', 'washing_the_mop', 'off', '64'));
+        await robot.getByText(he ? 'שוטף מגב' : 'Washing mop', { exact: true }).waitFor();
+        await page.evaluate(() => window.robotState('docked', 'emptying_the_bin', 'off', '64'));
+        await robot.getByText(he ? 'מרוקן אבק' : 'Emptying bin', { exact: true }).waitFor();
+        await page.evaluate(() => window.robotState('docked', 'charging', 'off', '64'));
+        await robot.waitFor({ state: 'hidden' });
         await page.waitForFunction(() => document.querySelector('bayit-dashboard').applianceUpdateAt > 0);
         await kitchen.evaluate(room => { room.style.display = 'none'; });
         await page.waitForFunction(() => document.querySelector('bayit-dashboard').applianceUpdateAt === 0);
@@ -121,8 +149,8 @@ try {
         await page.evaluate(() => window.useCompleted());
         await oven.waitFor({ state: 'hidden' });
         await hob.waitFor({ state: 'hidden' });
-        await dish.getByText('סיים', { exact: true }).waitFor();
-        await washer.getByText('סיים', { exact: true }).waitFor();
+        await dish.getByText(he ? 'סיים' : 'Done', { exact: true }).waitFor();
+        await washer.getByText(he ? 'סיים' : 'Done', { exact: true }).waitFor();
         await page.waitForFunction(() => document.querySelector('bayit-dashboard').applianceUpdateAt === 0);
         assert.deepEqual(await page.evaluate(() => window.fixtureCalls), []);
         assert.deepEqual(errors, []);
@@ -156,7 +184,38 @@ try {
       ]);
       assert.deepEqual(await editor.evaluate(() => window.fixtureCalls), []);
       await editor.close();
-      console.log(launcher.name() + ' Hebrew 320px: appliance display, minute tick, no writes and native editor passed');
+      for (const locale of ['en','he']) {
+        const he = locale === 'he';
+        const page = await browser.newPage({ viewport: { width: 320, height: 700 } });
+        const fields = [
+          ['vacuum_entity', he ? 'ישות שואב רובוטי' : 'Robot vacuum entity', 'vacuum.demo_robot'],
+          ['status_entity', he ? 'חיישן מצב מפורט של השואב' : 'Detailed robot status sensor', 'sensor.demo_robot_status'],
+          ['cleaning_entity', he ? 'חיישן בינארי לניקוי' : 'Cleaning binary sensor', 'binary_sensor.demo_robot_cleaning'],
+          ['progress_entity', he ? 'התקדמות (%)' : 'Progress (%)', 'sensor.demo_robot_progress'],
+          ['mop_mode_entity', he ? 'מצב שטיפה' : 'Mop mode', 'select.demo_robot_mop'],
+        ];
+        const kind = page.getByLabel(he ? 'מכשיר' : 'Appliance', { exact: true });
+        const open = async () => {
+          await page.getByText(he ? 'חדרים' : 'Rooms', { exact: true }).click();
+          await page.getByLabel(he ? 'חדר להתאמה אישית' : 'Room to customize', { exact: true }).selectOption('kitchen');
+          await page.getByText(he ? 'חיווי פעילות מכשירים' : 'Appliance activity badges', { exact: true }).click();
+        };
+        await page.goto(base + '?editor&locale=' + locale);
+        await open();
+        await kind.selectOption('vacuum');
+        for (const [, label, value] of fields) await page.getByLabel(label, { exact: true }).selectOption(value);
+        await page.getByRole('button', { name: he ? 'שמירת חיווי' : 'Save badge', exact: true }).click();
+        assert.deepEqual(await page.evaluate(() => window.latestConfig.room_overrides.kitchen.activities), [
+          { kind: 'vacuum', ...Object.fromEntries(fields.map(([key, , value]) => [key, value])) },
+        ]);
+        await page.reload();
+        await open();
+        assert.equal(await kind.inputValue(), 'vacuum');
+        for (const [, label, value] of fields) assert.equal(await page.getByLabel(label, { exact: true }).inputValue(), value);
+        assert.deepEqual(await page.evaluate(() => window.fixtureCalls), []);
+        await page.close();
+      }
+      console.log(launcher.name() + ' 320px: appliance and robot activity, editor persistence, no service calls');
     } finally { await browser.close(); }
   }
 } finally { server.close(); }

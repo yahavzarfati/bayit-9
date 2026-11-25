@@ -16,6 +16,50 @@ const profiles = normalizeRoomActivities([
     progress_entity: 'sensor.fixture_washer_pct' },
 ]);
 const [oven, hob, dishwasher, washer] = profiles;
+const robot = {
+  kind: 'vacuum', vacuum_entity: 'vacuum.fixture_robot', status_entity: 'sensor.fixture_robot_status',
+  cleaning_entity: 'binary_sensor.fixture_robot_cleaning', progress_entity: 'sensor.fixture_robot_progress',
+  mop_mode_entity: 'select.fixture_robot_mop',
+};
+
+test('robot badges preserve valid independent room sources and reject missing or private robot entities', () => {
+  assert.deepEqual(normalizeRoomActivities([robot, oven]), [robot, oven]);
+  assert.deepEqual(normalizeRoomActivities([{ ...robot, vacuum_entity: 'switch.fixture_robot' }]), []);
+  assert.deepEqual(normalizeRoomActivities([robot], id => id !== robot.vacuum_entity), []);
+  const { progress_entity, ...remaining } = robot;
+  assert.deepEqual(normalizeRoomActivities([robot], id => id !== progress_entity), [remaining]);
+});
+
+test('robot badges report cleaning progress from validated current states and favor actual dock activity', () => {
+  const states = {
+    [robot.vacuum_entity]: source('cleaning'),
+    [robot.status_entity]: source('segment_cleaning'),
+    [robot.cleaning_entity]: source('on'),
+    [robot.progress_entity]: source('53.6', { attributes: { unit_of_measurement: '%' } }),
+    [robot.mop_mode_entity]: source('off'),
+  };
+  const activity = (updates = {}, visible) => applianceActivity(robot, { ...states, ...updates }, now, visible);
+  assert.deepEqual(activity(), { type: 'vacuum_cleaning', progress: 54 });
+  assert.deepEqual(activity({ [robot.mop_mode_entity]: source('high') }), { type: 'vacuum_mopping', progress: 54 });
+  assert.deepEqual(activity({ [robot.cleaning_entity]: source('off') }), { type: 'vacuum_cleaning' });
+  assert.deepEqual(activity({}, id => id !== robot.progress_entity), { type: 'vacuum_cleaning' });
+  for (const bad of [source('unavailable'), source('55%'), source('101'), source('-1'),
+    source('0'), source('45', { attributes: { unit_of_measurement: '°C' } })]) {
+    assert.deepEqual(activity({ [robot.progress_entity]: bad }), { type: 'vacuum_cleaning' });
+  }
+  for (const [status, type] of [
+    ['returning_home', 'vacuum_returning'], ['going_to_wash_the_mop', 'vacuum_mop_travel'],
+    ['washing_the_mop', 'vacuum_mop_wash'], ['emptying_the_bin', 'vacuum_emptying'],
+  ]) {
+    assert.deepEqual(activity({ [robot.vacuum_entity]: source('docked'), [robot.status_entity]: source(status) }), { type });
+  }
+  for (const off of ['unavailable', 'paused', 'error']) assert.equal(activity({ [robot.vacuum_entity]: source(off) }), null);
+  assert.equal(activity({ [robot.vacuum_entity]: source('docked'), [robot.status_entity]: source('charging'),
+    [robot.cleaning_entity]: source('off') }), null);
+  assert.equal(activity({}, id => id !== robot.vacuum_entity), null);
+  assert.deepEqual(applianceActivity({ kind: 'vacuum', vacuum_entity: robot.vacuum_entity }, states, now),
+    { type: 'vacuum_cleaning' });
+});
 
 test('room activities validate roles, preserve order and exclude sources invisible in Home Assistant', () => {
   const malformed = [

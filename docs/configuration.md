@@ -136,6 +136,8 @@ In **Rooms**, open **Appliance activity badges** to map the room's oven, cooktop
 
 Choose **Boiler elapsed time** to show `HH:MM` for an existing boiler switch in that room. In YAML, add an `activities` entry with `kind: boiler`, `boiler_entity` pointing to the boiler switch in that room and `started_at_entity` pointing to a date-and-time `input_datetime` that records the start of the current run. When that timestamp is unavailable or from an earlier run, the room shows the usual countdown or power state.
 
+Choose **Robot vacuum** to show cleaning or dock activity on the Home room card. Select the robot and, if your integration publishes them, the detailed status, cleaning, progress, and mop mode sources. In YAML, use `kind: vacuum` and `vacuum_entity`. Optional fields are `status_entity` and `progress_entity` (`sensor`), `cleaning_entity` (`binary_sensor`), and `mop_mode_entity` (`select`, `input_select`, or `sensor`). The badge shows a reported percentage during cleaning and names the current phase during return, mop washing, or bin emptying.
+
 Use `read_only_entities` on a room to display a device's state and let users open Home Assistant's details from that room. Bayit omits the device's direct controls in that room and its shortcuts. This is a dashboard display setting. Home Assistant permissions still govern the underlying device and its native details.
 
 A cover shortcut shows the requested direction while Home Assistant is responding. If the cover supports Stop, press the shortcut again during movement to send Stop. The position shown in the dashboard comes from Home Assistant.

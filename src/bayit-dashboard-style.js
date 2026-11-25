@@ -314,14 +314,14 @@ export const styles = `
     white-space: nowrap;
     overflow: hidden;
   }
-  .shell[data-page=true] .rooms:has(.room[data-concurrent-activities]) {
+  .shell[data-page=true] .rooms:has(.room:is([data-appliance-status],[data-concurrent-activities])) {
     grid-auto-rows: minmax(var(--room-block), auto);
   }
   .room:is([data-appliance-status],[data-concurrent-activities]) { grid-template-rows: minmax(17px,auto) minmax(0,1fr); }
   .shell[data-layout=header] .room:is([data-appliance-status],[data-concurrent-activities]) { grid-template-rows: auto minmax(20px,auto) minmax(0,1fr); }
   .room:is([data-appliance-status],[data-concurrent-activities]) .room-status-strip { flex-wrap: wrap; overflow: visible; }
   .room:is([data-appliance-status],[data-concurrent-activities]) .room-status { flex: none; max-width: 100%; }
-  .room-status[data-tone=finished] { color: #bcead0; border-color: rgba(160,224,188,.4); }
+  .room-status:is([data-tone=finished],[data-tone=success]) { color: #bcead0; border-color: rgba(160,224,188,.4); }
   .room-status ha-icon { --mdc-icon-size: 12px; width: 12px; height: 12px; }
   .room-status[data-badge=temperature] ha-icon { color: #dfeaff; }
   .room-status span { overflow: hidden; text-overflow: ellipsis; }

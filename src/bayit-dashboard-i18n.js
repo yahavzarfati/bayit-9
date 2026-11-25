@@ -2,6 +2,10 @@ export const languages = {
   en: {
     activity_oven: 'Oven', activity_hob: 'Cooktop', activity_dishwasher: 'Dishwasher', activity_washer: 'Washing machine',
     activity_boiler: 'Boiler elapsed time',
+    activity_vacuum: 'Robot vacuum',
+    activity_vacuum_cleaning: 'Vacuuming', activity_vacuum_mopping: 'Mopping',
+    activity_vacuum_returning: 'Returning to dock', activity_vacuum_mop_travel: 'Heading to wash mop',
+    activity_vacuum_mop_wash: 'Washing mop', activity_vacuum_emptying: 'Emptying bin',
     activity_remaining: 'Time remaining', activity_elapsed: 'Time running', activity_short_minutes: 'min',
     activity_finished: 'Done', activity_running: 'Running',
     home: 'Home', overview: 'Home overview', settings: 'Appearance', close: 'Close', activity: 'Active devices', rooms: 'Rooms',
@@ -149,6 +153,10 @@ export const languages = {
   he: {
     activity_oven: 'תנור', activity_hob: 'כיריים', activity_dishwasher: 'מדיח כלים', activity_washer: 'מכונת כביסה',
     activity_boiler: 'זמן פעולה של הדוד',
+    activity_vacuum: 'שואב רובוטי',
+    activity_vacuum_cleaning: 'שואב', activity_vacuum_mopping: 'שוטף',
+    activity_vacuum_returning: 'בדרך לעמדה', activity_vacuum_mop_travel: 'הולך לשטוף',
+    activity_vacuum_mop_wash: 'שוטף מגב', activity_vacuum_emptying: 'מרוקן אבק',
     activity_remaining: 'זמן שנותר', activity_elapsed: 'זמן פעולה', activity_short_minutes: 'דק׳',
     activity_finished: 'סיים', activity_running: 'רץ',
     home: 'בית', overview: 'מבט על הבית', settings: 'מראה', close: 'סגירה', activity: 'מכשירים פעילים', rooms: 'חדרים',

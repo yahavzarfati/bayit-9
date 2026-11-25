@@ -1,4 +1,4 @@
-import { normalizeRoomActivities } from './room-appliance.mjs';
+import { normalizeRoomActivities, sensorPercentage } from './room-appliance.mjs';
 import { HEATING_DOMAINS, isPairedLightCompanion, isPairedLightStatusRefresh, isReadOnlyRole, supportsHomeHeaterPower, supportsRoomShutdown } from './device-control.mjs';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
@@ -67,19 +67,11 @@ const vacuumActiveJob = new Set([
 export function roomVacuumSummary(sources, stateFor, ownState, labels) {
   const reported = readoutText(stateFor(sources.status_entity)?.state, 80);
   const status = reported && !['unknown', 'unavailable'].includes(reported.toLowerCase()) ? reported : undefined;
-  const percent = id => {
-    const record = stateFor(id);
-    const raw = record?.state;
-    const unit = record?.attributes?.unit_of_measurement;
-    if ((unit && unit !== '%') || typeof raw !== 'string' || !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(raw.trim())) return;
-    const value = Number(raw);
-    if (Number.isFinite(value) && value >= 0 && value <= 100) return Math.round(value);
-  };
   const active = stateFor(sources.cleaning_entity)?.state === 'on' || vacuumActiveJob.has(status ?? ownState);
   return {
     status: status && (labels && Object.hasOwn(labels, status) ? labels[status] : status.replaceAll('_', ' ')),
-    battery: percent(sources.battery_entity),
-    progress: active ? percent(sources.progress_entity) : undefined,
+    battery: sensorPercentage(stateFor(sources.battery_entity)),
+    progress: active ? sensorPercentage(stateFor(sources.progress_entity)) : undefined,
   };
 }
 

@@ -1527,6 +1527,11 @@ export class BayitDashboard extends HTMLElement {
   applianceBadge(kind, status, name = this.t('activity_' + kind)) {
     const { type, minutes } = status;
     const state = this.t('activity_' + type);
+    if (kind === 'vacuum') {
+      const progress = status.progress === undefined ? undefined : ltr(status.progress + '%');
+      return { text: progress ?? state, tone: 'success',
+        label: [name, state, progress && this.t('vacuum_room_progress').replace('{value}', progress)].filter(Boolean).join(' · ') };
+    }
     const tone = kind === 'boiler' ? 'heat' : 'warm';
     if (minutes === undefined) return { text: state, label: name + ' · ' + state,
       tone: type === 'finished' ? 'finished' : tone };
@@ -1541,6 +1546,7 @@ export class BayitDashboard extends HTMLElement {
     n.emptySetup.hidden = !this.config.setupRoomsOnEmpty || this.roomViews.size > 0 || !this._hass?.user?.is_admin;
     const active = new Map();
     const haveStates = !!this._hass?.states;
+    const visible = entity => this.shortcutEntityVisible(entity);
     const now = Date.now();
     let applianceNext = Infinity;
     let countdown = false;
@@ -1635,7 +1641,7 @@ export class BayitDashboard extends HTMLElement {
       updateRoomActivities(view, activities);
       let visibleAppliance = false;
       for (const { mapping, badge } of view.appliances) {
-        const status = applianceActivity(mapping, this._hass?.states, now);
+        const status = applianceActivity(mapping, this._hass?.states, now, visible);
         updateRoomBadge(badge, status && this.applianceBadge(mapping.kind, status));
         if (!status) continue;
         visibleAppliance = true;
