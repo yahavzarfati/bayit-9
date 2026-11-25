@@ -272,6 +272,7 @@ if (query.has('shortcut-detail-target')) {
   states['light.demo_other_room'] = { state: 'off', attributes: { friendly_name: 'Den light', supported_color_modes: ['onoff'] } };
 }
 let rejectSetupSave = false;
+let rejectQuickBoiler = false;
 let holdSetupSave = false;
 let finishSetupSave;
 const hass = {
@@ -321,6 +322,11 @@ const hass = {
     if (query.has('shortcut-no-details') && request.domain === 'switch' && request.target?.entity_id === 'switch.demo_heater') {
       states['switch.demo_heater'] = { ...states['switch.demo_heater'], state: request.service === 'turn_on' ? 'on' : 'off' };
       card.hass = { ...hass, states: { ...states } };
+    }
+    if (rejectQuickBoiler && (request.target?.entity_id === 'switch.demo_quick_boiler' ||
+        request.service_data?.entity_id === 'sensor.demo_boiler_runtime')) {
+      rejectQuickBoiler = false;
+      return Promise.reject(new Error('Fixture rejected boiler action'));
     }
     if (request.domain === 'light') {
       if (rejectInlineLight) {
@@ -684,6 +690,14 @@ if (query.has('toolbar-panels')) {
     'calendar.demo_household': {state:'off',attributes:{friendly_name:'Household'}},
     'calendar.demo_birthdays': {state:'off',attributes:{friendly_name:'Birthdays'}},
   });
+  if (query.has('boiler-quick-test')) {
+    hass.services = { switch:{turn_on:{},turn_off:{}}, simple_timer:{cancel_timer:{}} };
+    hass.entities['sensor.demo_boiler_runtime'] = { platform:'simple_timer' };
+    states['switch.demo_quick_boiler'] = {state:'off',attributes:{friendly_name:'Quick boiler'}};
+    states['sensor.demo_boiler_runtime'] = {state:'0',attributes:{
+      timer_state:'idle',switch_entity_id:'switch.demo_quick_boiler',device_active:false,reverse_mode:false,
+    }};
+  }
   if (query.has('presence-icons')) {
     states['person.demo_friend'].state = 'not_home';
     states['person.demo_guest'] = {state:'not_home',attributes:{friendly_name:'Noa'}};
@@ -870,10 +884,14 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
 } : query.has('toolbar-panels') ? {
   ...(query.has('appliance-tile-test') && {profiles:[{entity:'switch.demo_appliance_boiler',kind:'boiler',
     timed:{timer_entity:'timer.demo_appliance_boiler'}}]}),
+  ...(query.has('boiler-quick-test') && {profiles:[{entity:'switch.demo_quick_boiler',kind:'boiler',
+    timed:{simple_timer_entity:'sensor.demo_boiler_runtime'}}]}),
   ...(linkedPanels && { popup_aliases: { '#legacy-media-panel': '#panel/media-panel' } }),
   ...(query.has('room-link') && { room_overrides: { studio: {
     entities:['light.demo_lamp','media_player.demo_tv','vacuum.demo_robot',
-      ...(query.has('appliance-tile-test') ? ['switch.demo_oven','switch.demo_cooktop','switch.demo_appliance_boiler'] : [])],
+      ...(query.has('appliance-tile-test') ? ['switch.demo_oven','switch.demo_cooktop','switch.demo_appliance_boiler'] : []),
+      ...(query.has('boiler-quick-test') ? ['switch.demo_quick_boiler'] : [])],
+    ...(query.has('boiler-quick') && {boiler_quick_power_entities:['switch.demo_quick_boiler']}),
     ...(query.has('appliance-tile-test') && {
       read_only_entities:['switch.demo_cooktop'],
       sections:[{kind:'lights',entities:['light.demo_lamp']},{kind:'devices',
@@ -1028,6 +1046,7 @@ window.bayitTest = {
     card.hass = { ...hass, entities: hass.entities };
   },
   rejectNextSetupSave() { rejectSetupSave = true; },
+  rejectNextBoilerAction() { rejectQuickBoiler = true; },
   holdNextSetupSave() { holdSetupSave = true; },
   finishHeldSetupSave() { finishSetupSave(); },
   remountDashboardBeforeSaveResult() {
@@ -3425,6 +3444,120 @@ async function assertCompactRoomMedia(browser) {
   }
 }
 
+async function assertKitchenBoilerQuickPower(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const relay = 'switch.demo_quick_boiler';
+    const sensor = 'sensor.demo_boiler_runtime';
+    const url = base + '/fixture-home/home?toolbar-panels&room-link&boiler-quick-test&locale=' + locale;
+    const room = page.getByRole('dialog',{name:'Studio',exact:true});
+    const boiler = page.getByRole('dialog',{name:'Quick boiler',exact:true});
+    const tile = room.locator('[data-room-boiler-quick] .device-tile');
+    const visibleAction = action => room.locator('[data-room-boiler-quick] [data-action="' + action + '"]');
+    const calls = () => page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service'));
+    const update = (state, timer) => page.evaluate(([relay,sensor,state,timer])=>{
+      window.bayitTest.setRoomState(relay,state);
+      window.bayitTest.setFixtureAttributes(sensor,timer);
+    },[relay,sensor,state,timer]);
+    const open = async flags => {
+      await page.goto(url + flags);
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+      await room.waitFor();
+    };
+    const returnToRoom = async () => {
+      await boiler.waitFor();
+      await boiler.getByRole('button',{name:he ? 'חזרה לחדר' : 'Back to room',exact:true}).tap();
+      await room.waitFor();
+      assert.ok(await tile.evaluate(button=>button.getRootNode().activeElement === button));
+    };
+    try {
+      await open('&boiler-quick');
+      await visibleAction('turn_on').waitFor();
+      assert.equal(await tile.getAttribute('aria-pressed'),'false');
+      assert.match(await tile.getAttribute('aria-description'),/Shift\+Enter/);
+      await tile.evaluate(button=>button.click());
+      await tile.press('Shift+Enter');
+      await returnToRoom();
+
+      const bounds = await tile.boundingBox();
+      await page.mouse.move(bounds.x + bounds.width / 2,bounds.y + bounds.height / 2);
+      await page.mouse.down();
+      await boiler.waitFor();
+      await page.mouse.up();
+      await returnToRoom();
+      assert.deepEqual(await calls(),[]);
+
+      await tile.tap();
+      await room.locator('[data-room-boiler-quick] [aria-busy="true"]').waitFor();
+      assert.equal(await tile.getAttribute('aria-pressed'),'false');
+      await tile.tap();
+      assert.equal((await calls()).length,1);
+      await update('on',{device_active:true});
+      await visibleAction('turn_off').waitFor();
+      await tile.press('Enter');
+      await room.locator('[data-room-boiler-quick] [aria-busy="true"]').waitFor();
+      assert.equal(await tile.getAttribute('aria-pressed'),'true');
+      await update('off',{device_active:false});
+      await visibleAction('turn_on').waitFor();
+
+      const active = {timer_state:'active',timer_finishes_at:new Date(Date.now()+60_000).toISOString()};
+      await update('off',active);
+      await room.locator('[data-room-boiler-quick] .device-tile:not([data-action])').waitFor();
+      await tile.tap();
+      await update('on',{device_active:true,reverse_mode:true});
+      await tile.tap();
+      await update('on',{reverse_mode:false,switch_entity_id:'switch.incorrect_target'});
+      await tile.tap();
+      assert.equal((await calls()).length,2);
+      await update('on',{switch_entity_id:relay});
+      await visibleAction('stop_timed').waitFor();
+      assert.match(await tile.getAttribute('aria-label'),he ? /כיבוי הדוד וביטול הטיימר/ : /Switch off and cancel the timer/);
+      await tile.tap();
+      await room.locator('[data-room-boiler-quick] [aria-busy="true"]').waitFor();
+      await update('off',{device_active:false});
+      assert.equal(await tile.getAttribute('aria-busy'),'true');
+      await update('off',{timer_state:'idle'});
+      await visibleAction('turn_on').waitFor();
+      assert.deepEqual(await calls(), [
+        ...['turn_on','turn_off'].map(service=>({
+          type:'call_service',domain:'switch',service,service_data:{},target:{entity_id:relay},
+        })),
+        {type:'call_service',domain:'simple_timer',service:'cancel_timer',service_data:{entity_id:sensor,turn_off_entity:true}},
+      ]);
+
+      await page.evaluate(()=>window.bayitTest.rejectNextBoilerAction());
+      await tile.tap();
+      await room.getByText(he ? 'הפעולה לא הושלמה.' : 'Could not complete the action.',{exact:true}).waitFor();
+      assert.equal(await tile.getAttribute('aria-pressed'),'false');
+      assert.equal(await tile.getAttribute('aria-busy'),'false');
+
+      await open('');
+      assert.equal(await tile.count(),0);
+      await room.locator('[data-entity="' + relay + '"] .device-panel-launch').tap();
+      await boiler.waitFor();
+      assert.deepEqual(await calls(),[]);
+
+      await page.goto(url + '&boiler-quick&editor');
+      await page.getByText(he ? 'חדרים' : 'Rooms',{exact:true}).tap();
+      await page.getByLabel(he ? 'חדר להתאמה אישית' : 'Room to customize',{exact:true}).selectOption('studio');
+      await page.getByText(he ? 'תצוגת מכשירים' : 'Device display',{exact:true}).tap();
+      const device = page.getByLabel(he ? 'מכשיר להתאמה אישית' : 'Device to customize',{exact:true});
+      const option = page.getByRole('checkbox',{name:he ? 'הפעלה מהירה של הדוד' : 'Boiler quick power',exact:true});
+      await device.selectOption(relay);
+      assert.ok(await option.isChecked());
+      await option.uncheck();
+      assert.equal(await page.evaluate(()=>window.latest.room_overrides.studio.boiler_quick_power_entities),undefined);
+      await option.check();
+      assert.deepEqual(await page.evaluate(()=>window.latest.room_overrides.studio.boiler_quick_power_entities),[relay]);
+      assert.deepEqual(await calls(),[]);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertKitchenApplianceTiles(browser) {
   for (const locale of ['en','he']) {
     const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
@@ -4242,6 +4375,7 @@ try {
       console.log(engine + ': curated media and vacuum controls, Now Playing, and the original room shortcuts');
       await assertCompactRoomMedia(browser);
       await assertKitchenApplianceTiles(browser);
+      await assertKitchenBoilerQuickPower(browser);
       await assertRoomVacuumGestures(browser);
       await assertRoomVacuumPresentation(browser);
       await assertRoomVacuumSummary(browser);

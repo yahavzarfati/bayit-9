@@ -1,11 +1,54 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { allowsCoverRailAction, createDeviceController, DeviceControlError, getDeviceModel, planDeviceAction, roomShutdownTargets } from "../src/device-control.mjs";
+import { allowsCoverRailAction, createDeviceController, DeviceControlError, getDeviceModel, planDeviceAction, roomBoilerQuickPowerAction, roomShutdownTargets } from "../src/device-control.mjs";
 
 const entity = (state, attributes = {}) => ({ state, attributes });
 const config = (id, fields) => ({ entity: id, ...fields });
 const code = value => error => error instanceof DeviceControlError && error.code === value;
 const actionIds = model => Object.keys(model.actions).sort();
+
+test("boiler quick power revalidates the latest relay, timer and native service before dispatch", async () => {
+  const relay = "switch.fixture_boiler";
+  const sensor = "sensor.fixture_runtime";
+  const device = config(relay, { kind:"boiler", timed:{simple_timer_entity:sensor}, room_boiler_quick_power:true });
+  const timer = (state, attrs = {}) => entity("15",{switch_entity_id:relay,timer_state:state,reverse_mode:false,...attrs});
+  const calls = [];
+  const hass = {
+    states:{ [relay]:entity("off"), [sensor]:timer("idle",{device_active:false}) },
+    services:{ switch:{turn_on:{},turn_off:{}}, simple_timer:{cancel_timer:{}} },
+    entities:{ [sensor]:{pl:"simple_timer"} },
+    callWS:request=>{calls.push(request);},
+  };
+  const quick = { roomBoilerQuickPower:true };
+  const current = () => roomBoilerQuickPowerAction(hass,getDeviceModel(device,hass.states,Date.now(),quick));
+  const controller = createDeviceController({ getHass:()=>hass, confirmationTimeoutMs:0 });
+  assert.equal(getDeviceModel(device,hass.states).actions.turn_on,undefined);
+  assert.equal(current(),"turn_on");
+  await controller.execute(device,"turn_on",undefined,quick);
+  hass.states[relay] = entity("on");
+  await assert.rejects(controller.execute(device,"turn_on",undefined,quick),code("action_unavailable"));
+  hass.states[sensor] = timer("idle",{device_active:true});
+  assert.equal(current(),"turn_off");
+  hass.states[sensor] = timer("active",{reverse_mode:true});
+  assert.equal(current(),undefined);
+  hass.states[sensor] = timer("active",{switch_entity_id:"switch.other"});
+  assert.equal(current(),undefined);
+  hass.states[sensor] = timer("active",{device_active:false});
+  assert.equal(current(),undefined);
+  hass.states[sensor] = timer("active",{device_active:true});
+  hass.entities[sensor].hidden = true;
+  assert.equal(current(),undefined);
+  hass.entities[sensor].hidden = false;
+  delete hass.services.simple_timer.cancel_timer;
+  assert.equal(current(),undefined);
+  hass.services.simple_timer.cancel_timer = {};
+  assert.equal(current(),"stop_timed");
+  await controller.execute(device,"stop_timed",undefined,quick);
+  assert.deepEqual(calls,[
+    {type:"call_service",domain:"switch",service:"turn_on",target:{entity_id:relay},service_data:{}},
+    {type:"call_service",domain:"simple_timer",service:"cancel_timer",service_data:{entity_id:sensor,turn_off_entity:true}},
+  ]);
+});
 
 test("compact cover rails honor reported endpoints, direction and assumed state", () => {
   const device = config("cover.shade");

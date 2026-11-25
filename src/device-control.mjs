@@ -202,7 +202,7 @@ function verifiedLevel(record, steps) {
     max >= steps && step === 1 && value >= min && value <= steps ? value : null;
 }
 
-function supportedActions(config, states, record, timer, nowMs) {
+function supportedActions(config, states, record, timer, nowMs, roomBoilerQuickPower) {
   const actions = {};
   const confirmationText = typeof config.confirmation === "string" ? config.confirmation.trim().slice(0, 200) : "";
   const add = (id, fields) => {
@@ -320,9 +320,13 @@ function supportedActions(config, states, record, timer, nowMs) {
         add("turn_off", { service: "set_percentage", fixedData: { percentage: 0 } });
       }
     }
-    for (const action of ["turn_on", "set_hvac_mode", "set_operation_mode", "set_percentage",
-      "set_temperature", "set_temperature_range", "set_fan_mode", "set_swing_mode",
-      "set_swing_horizontal_mode", "set_preset_mode"]) {
+    const quickStart = roomBoilerQuickPower && config.room_boiler_quick_power === true &&
+      config.domain === "switch" && config.kind === "boiler" && timing.simple_timer_entity &&
+      !timing.start_script && !timing.stop_script && (timing.simple_timer_target ?? config.entity) === config.entity &&
+      timer?.state === "idle" && record.state === "off";
+    if (!quickStart) delete actions.turn_on;
+    for (const action of ["set_hvac_mode", "set_operation_mode", "set_percentage", "set_temperature",
+      "set_temperature_range", "set_fan_mode", "set_swing_mode", "set_swing_horizontal_mode", "set_preset_mode"]) {
       delete actions[action];
     }
   }
@@ -376,7 +380,7 @@ function supportedActions(config, states, record, timer, nowMs) {
   return actions;
 }
 
-function deviceModel(config, states, nowMs) {
+function deviceModel(config, states, nowMs, roomBoilerQuickPower) {
   const record = states?.[config.entity];
   const attributes = record?.attributes ?? {};
   const timer = config.timed?.simple_timer_entity
@@ -407,7 +411,7 @@ function deviceModel(config, states, nowMs) {
     state: record?.state ?? "missing",
     available: isAvailable(record),
     attributes,
-    actions: supportedActions(config, states, record, timer, nowMs),
+    actions: supportedActions(config, states, record, timer, nowMs, roomBoilerQuickPower),
     level: preselect ? verifiedLevel(states?.[config.level_preselect_entity], config.level_steps)
       : config.level_select_script ? verifiedLevel(level, config.level_steps)
       : Number.isFinite(explicitLevel) ? explicitLevel : percentageLevel,
@@ -421,8 +425,8 @@ function deviceModel(config, states, nowMs) {
   };
 }
 
-export function getDeviceModel(config, states, nowMs = Date.now()) {
-  return deviceModel(normalizedConfig(config), states, nowMs);
+export function getDeviceModel(config, states, nowMs = Date.now(), { roomBoilerQuickPower = false } = {}) {
+  return deviceModel(normalizedConfig(config), states, nowMs, roomBoilerQuickPower);
 }
 
 export function allowsCoverRailAction(model, action) {
@@ -470,6 +474,31 @@ export function roomClimatePowerAction(model) {
 export function climatePowerServiceRegistered(hass, action) {
   const services = hass?.services?.climate;
   return !!action && !!services && Object.hasOwn(services, action);
+}
+
+export function roomBoilerQuickPowerAction(hass, model) {
+  if (model.domain !== 'switch' || model.kind !== 'boiler' || !model.available ||
+      !['on', 'off'].includes(model.state) || model.attributes.assumed_state === true) return;
+  const timer = model.timer;
+  const attributes = hass?.states?.[timer?.entity]?.attributes;
+  if (!timer || !attributes || attributes.switch_entity_id !== model.entity || attributes.timer_state !== timer.state) return;
+  const relay = hass?.entities?.[model.entity];
+  const runtime = hass?.entities?.[timer.entity];
+  const platform = runtime?.platform ?? runtime?.pl;
+  if ((platform && platform !== 'simple_timer') ||
+      [relay, runtime].some(entry => entry?.hidden || entry?.hidden_by || entry?.disabled_by)) return;
+  const powered = model.state === 'on';
+  if (typeof attributes.device_active === 'boolean' && attributes.device_active !== powered) return;
+  if (timer.state === 'active') {
+    // Reverse timers only cancel the schedule, even with turn_off_entity enabled.
+    if (powered && attributes.reverse_mode === false && model.actions.stop_timed &&
+        Object.hasOwn(hass?.services?.simple_timer ?? {}, 'cancel_timer')) return 'stop_timed';
+    return;
+  }
+  if (timer.state === 'idle') {
+    const action = powered ? 'turn_off' : 'turn_on';
+    if (model.actions[action] && Object.hasOwn(hass?.services?.switch ?? {}, action)) return action;
+  }
 }
 
 function expectedState(config, action, value, states) {
@@ -541,9 +570,9 @@ function expectedState(config, action, value, states) {
   }
 }
 
-export function planDeviceAction(config, states, actionId, value, { confirmed = false, code } = {}) {
+export function planDeviceAction(config, states, actionId, value, { confirmed = false, code, roomBoilerQuickPower = false } = {}) {
   config = normalizedConfig(config);
-  const model = deviceModel(config, states, Date.now());
+  const model = deviceModel(config, states, Date.now(), roomBoilerQuickPower);
   const action = typeof actionId === "string" && Object.hasOwn(model.actions, actionId) && model.actions[actionId];
   if (!action) throw new DeviceControlError("action_unavailable", "This entity does not currently support that action.");
   const climatePower = config.domain === 'climate' && config.room_climate_power === true &&
@@ -753,6 +782,12 @@ export function createDeviceController({
     },
     async execute(config, actionId, value, options) {
       const hass = getHass();
+      if (options?.roomBoilerQuickPower) {
+        const model = getDeviceModel(config, hass?.states, Date.now(), options);
+        if (config.room_boiler_quick_power !== true || roomBoilerQuickPowerAction(hass, model) !== actionId) {
+          throw new DeviceControlError("action_unavailable", "The boiler or its timer changed before the command was sent.");
+        }
+      }
       const plan = planDeviceAction(config, hass?.states, actionId, value, options);
       if (plan.kind === "more_info") return { status: "more_info", entity: plan.entity };
       if (actionId === "reset_daily_usage" && !simpleTimerUsageResetAvailable(hass, plan.expected.entity)) {

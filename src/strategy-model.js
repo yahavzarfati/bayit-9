@@ -319,6 +319,13 @@ export function supportsRoomApplianceTile(device) {
   return domainOf(device?.entity ?? '') === 'switch' && !device.timed && (!device.kind || device.kind === 'switch');
 }
 
+export function supportsRoomBoilerQuickPower(device) {
+  const timing = device?.timed;
+  return Boolean(idForDomain(device?.entity, 'switch') && device.kind === 'boiler' &&
+    !isReadOnlyRole(device.role) && idForDomain(timing?.simple_timer_entity, 'sensor') &&
+    !timing.start_script && !timing.stop_script && (!timing.simple_timer_target || timing.simple_timer_target === device.entity));
+}
+
 export function supportsNativeShortcutDetails(device) {
   return !isReadOnlyRole(device.role);
 }
@@ -380,6 +387,7 @@ function dashboardAreas(config, hass) {
       climatePower: new Set(idList(override.climate_power_entities)),
       compactMedia: new Set(idList(override.media_compact_entities)),
       applianceTiles: new Set(idList(override.appliance_tile_entities)),
+      boilerQuickPower: new Set(idList(override.boiler_quick_power_entities)),
       vacuumPanelHolds: new Set(idList(override.vacuum_panel_hold_entities)),
       vacuumPanelPresentations: override.vacuum_panel_presentation,
       vacuumPanelSummaries: override.vacuum_panel_summary,
@@ -661,6 +669,8 @@ export function discoverRooms(config, hass, locale) {
           !room.panel_hidden_entities?.includes(device.entity)) device.room_media_compact = true;
       if (area.applianceTiles?.has(device.entity) && supportsRoomApplianceTile(device) &&
           !room.panel_hidden_entities?.includes(device.entity)) device.room_appliance_tile = true;
+      if (area.boilerQuickPower?.has(device.entity) && supportsRoomBoilerQuickPower(device) &&
+          !room.panel_hidden_entities?.includes(device.entity)) device.room_boiler_quick_power = true;
       const panelKind = ROOM_PANEL_KINDS.get(domainOf(device.entity));
       const links = area.panelLinks?.[panelKind];
       if (links && Object.hasOwn(links, device.entity)) {

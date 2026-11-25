@@ -7,7 +7,7 @@ import {
   PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, roomShortcutDevices, roomVacuumPresentation, ROOM_VACUUM_SUMMARY_DOMAINS,
   selectableRoomEntities, selectedRoomIds,
   shortcutPanelOptions, STRATEGY_NAME, supportsNativeShortcutDetails, supportsShortcutWithoutDetails,
-  supportsRoomTemperatureSource, supportsRoomApplianceTile, usesAutomaticRoomDevices,
+  supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, usesAutomaticRoomDevices,
 } from './strategy-model.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { climateOptionLabel } from './panel-controls.js';
@@ -39,6 +39,8 @@ const WORDS = {
     roomCompactLightReading: 'Show reported values in compact light controls',
     roomNativeLightHold: 'Open Home Assistant details with a long press on this light',
     roomApplianceTile: 'Show as an appliance tile',
+    roomBoilerQuickPower: 'Boiler quick power',
+    roomBoilerQuickPowerHint: 'Tap for manual power. Hold to choose a timer duration.',
     roomClimatePower: 'Show quick power for this climate device',
     climatePresetShortcut: 'Preset shortcut', climatePresetNone: 'No shortcut', climatePresetLabel: 'Shortcut label',
     climatePresetIcon: 'Shortcut icon', climatePresetHighlight: 'Highlight when this preset is reported',
@@ -144,6 +146,8 @@ const WORDS = {
     roomCompactLightReading: 'הצגת ערכים מדווחים בפקדי תאורה קומפקטיים',
     roomNativeLightHold: 'פתיחת פרטי Home Assistant בלחיצה ארוכה על התאורה',
     roomApplianceTile: 'הצגה כאריח מכשיר חשמלי',
+    roomBoilerQuickPower: 'הפעלה מהירה של הדוד',
+    roomBoilerQuickPowerHint: 'לחיצה קצרה להפעלה או לכיבוי ידני. לחיצה ארוכה לבחירת משך הטיימר.',
     roomClimatePower: 'הצגת כפתור הפעלה וכיבוי מהיר למזגן',
     climatePresetShortcut: 'קיצור לתוכנית מזגן', climatePresetNone: 'ללא קיצור', climatePresetLabel: 'שם הקיצור',
     climatePresetIcon: 'סמל הקיצור', climatePresetHighlight: 'הדגשה כשהמזגן מדווח על תוכנית זו',
@@ -894,6 +898,20 @@ export class Bayit9StrategyEditor extends HTMLElement {
           appliance.firstElementChild.dataset.roomFocus = 'room-appliance-tile';
           fields.append(appliance);
         }
+        if (supportsRoomBoilerQuickPower(profile) && !configuredIds(override.read_only_entities).includes(id)) {
+          const power = checkbox(words.roomBoilerQuickPower,
+            configuredIds(override.boiler_quick_power_entities).includes(id), checked => {
+              const next = { ...this.#roomOverride(room.id) };
+              const ids = new Set(configuredIds(next.boiler_quick_power_entities));
+              if (checked) ids.add(id);
+              else ids.delete(id);
+              if (ids.size) next.boiler_quick_power_entities = [...ids];
+              else delete next.boiler_quick_power_entities;
+              this.#setRoomOverride(room.id, next, 'room-boiler-quick-power');
+            });
+          power.firstElementChild.dataset.roomFocus = 'room-boiler-quick-power';
+          fields.append(power, node('small', { textContent: words.roomBoilerQuickPowerHint }));
+        }
         if (id.startsWith('media_player.') && !configuredIds(override.read_only_entities).includes(id)) {
           const compact = checkbox(words.roomCompactMedia, configuredIds(override.media_compact_entities).includes(id), checked => {
             const next = { ...this.#roomOverride(room.id) };
@@ -1208,7 +1226,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
       }
       for (const key of ['keep_in_automatic_room_entities', 'read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
         'inline_light_entities', 'dual_light_detail_entities', 'compact_light_reading_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details',
-        'vacuum_panel_hold_entities', 'climate_power_entities', 'media_compact_entities', 'appliance_tile_entities']) {
+        'vacuum_panel_hold_entities', 'climate_power_entities', 'media_compact_entities', 'appliance_tile_entities',
+        'boiler_quick_power_entities']) {
         if (!Array.isArray(next[key])) continue;
         next[key] = next[key].filter(id => entities.includes(id));
         if (!next[key].length) delete next[key];

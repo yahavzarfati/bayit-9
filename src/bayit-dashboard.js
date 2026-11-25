@@ -4,11 +4,11 @@ import { classicRoomTitle, DEVICE_ICONS, hasDynamicPresenceIcon, isAutomationScr
   isCompactAutomationActions, isEnergyReadingCards, isWeatherReadingsList,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
   normalizeRoomVacuumSummary, normalizeToolbarReadout, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
-  ROOM_PANEL_KINDS, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
+  ROOM_PANEL_KINDS, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
   sensorComparisonOptions, sensorSeriesColor, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
-import { allowsCoverRailAction, climatePowerServiceRegistered, createDeviceController, getDeviceModel, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
+import { allowsCoverRailAction, climatePowerServiceRegistered, createDeviceController, getDeviceModel, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
   simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupScrollMemory } from './popup-scroll.js';
@@ -266,6 +266,7 @@ function normalizeEntity(item) {
   }
   if (domain === 'media_player' && entry.role !== 'status' && item.room_media_compact === true) entry.room_media_compact = true;
   if (item.room_appliance_tile === true && supportsRoomApplianceTile(entry)) entry.room_appliance_tile = true;
+  if (item.room_boiler_quick_power === true && supportsRoomBoilerQuickPower(entry)) entry.room_boiler_quick_power = true;
   if (domain === 'calendar') {
     const accent = calendarAccent(item.accent_color);
     if (accent) entry.accent_color = accent;
@@ -991,9 +992,9 @@ export class BayitDashboard extends HTMLElement {
     }
   }
 
-  model(config) {
+  model(config, options) {
     try {
-      const model = getDeviceModel(config, this._hass?.states ?? {});
+      const model = getDeviceModel(config, this._hass?.states ?? {}, Date.now(), options);
       return { ...model, icon: validIcon(model.icon, DEVICE_ICONS[model.kind || model.domain]) };
     }
     catch {
@@ -1054,7 +1055,17 @@ export class BayitDashboard extends HTMLElement {
     } else if (details) this.openDeviceDetails(config, source, room);
   }
 
-  applianceTileAction(model) {
+  roomPowerTileAction(config, reported = null) {
+    if (config.room_boiler_quick_power) {
+      const model = this.model(config, { roomBoilerQuickPower: true });
+      const { states = {}, entities } = this._hass ?? {};
+      if (isVisibleEntity(config.entity, states, entities, this.config.hiddenEntities) &&
+          isVisibleEntity(model.timer?.entity ?? '', states, entities, this.config.hiddenEntities)) {
+        return roomBoilerQuickPowerAction(this._hass, model);
+      }
+      return;
+    }
+    const model = reported ?? this.model(config);
     if (!model.available || !['on', 'off'].includes(model.state)) return;
     const next = model.state === 'off' ? 'turn_on' : 'turn_off';
     if (model.actions[next]) return next;
@@ -1648,7 +1659,9 @@ export class BayitDashboard extends HTMLElement {
       entry => entry.kind === panelKind && entry.id === panelId);
     const vacuumDisplay = panelTarget && panelKind === 'vacuum' ? config.room_vacuum_presentation : undefined;
     const applianceTile = !!room && config.room_appliance_tile === true;
-    const tileMode = applianceTile || vacuumDisplay === 'tile' || toolbarLightTile ||
+    const boilerQuick = !!room && config.room_boiler_quick_power === true;
+    const roomPowerTile = applianceTile || boilerQuick;
+    const tileMode = roomPowerTile || vacuumDisplay === 'tile' || toolbarLightTile ||
       groupKey === 'room_lights' && ['light', 'switch'].includes(domain) && !config.kind;
     const panelOpensOnTap = panelKind === 'vacuum' && config.room_vacuum_panel_on_hold !== true;
     const cover = domain === 'cover' && (!!room || toolbarCoverRail);
@@ -1659,6 +1672,7 @@ export class BayitDashboard extends HTMLElement {
     item.dataset.treatment = config.kind || domain;
     item.toggleAttribute('data-inline-climate', inlineClimate);
     item.toggleAttribute('data-room-appliance-tile', applianceTile);
+    item.toggleAttribute('data-room-boiler-quick', boilerQuick);
     const glyph = icon(config.icon || 'mdi:information-outline');
     glyph.className = 'device-icon';
     const name = make(tileMode || launchFromHeader ? 'span' : room ? 'h4' : 'h3', 'device-name');
@@ -1672,7 +1686,7 @@ export class BayitDashboard extends HTMLElement {
       .find(entry => entry.entity === vacuumSummary.status_entity && entry.readout?.state_labels)?.readout.state_labels;
     const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactHeater,
       standaloneBoiler, compactCover: cover, vacuumCleaningControls: vacuumDisplay === 'cleaning-controls',
-      vacuumSummary, vacuumStatusLabels, applianceTile, compactMedia: !!room && config.room_media_compact === true,
+      vacuumSummary, vacuumStatusLabels, roomPowerTile, compactMedia: !!room && config.room_media_compact === true,
       dualLightDetail: titleInDialog && config.room_dual_light_detail === true,
       compactLightReading: (titleInDialog || !!room) && config.room_compact_light_reading === true };
     const bindPanelLaunch = source => {
@@ -1693,21 +1707,24 @@ export class BayitDashboard extends HTMLElement {
       tile.append(glyph, name, state);
       tile.setAttribute('aria-haspopup', 'dialog');
       if (vacuumDisplay === 'tile') bindPanelLaunch(tile);
-      else if (applianceTile) {
+      else if (roomPowerTile) {
         let activationAction;
         const visible = () => tile.isConnected && this.panel?.room === room && this.nodes.modal.open &&
           isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities);
-        tile.setAttribute('aria-description', this.t('appliance_room_hold'));
+        tile.setAttribute('aria-description', this.t(boilerQuick ? 'boiler_room_hold' : 'appliance_room_hold'));
+        if (boilerQuick) tile.setAttribute('aria-keyshortcuts', 'Shift+Enter Shift+Space Shift+F10');
         bindDeviceDetails(tile, () => {
           activationAction = undefined;
-          if (visible()) this.moreInfo(config, tile, visible);
+          if (!visible()) return;
+          if (boilerQuick) this.openDeviceDetails(config, tile, room);
+          else this.moreInfo(config, tile, visible);
         }, { requireShortTap: true, activationStart: () => { activationAction = tile.dataset.action ?? ''; } });
         tile.onclick = () => {
           const armed = activationAction ?? tile.dataset.action;
           activationAction = undefined;
-          const action = this.applianceTileAction(this.model(config));
+          const action = this.roomPowerTileAction(config);
           if (action && action === armed && action === tile.dataset.action && visible()) {
-            this.requestAction(config, action, undefined, tile, { applianceTile: true });
+            this.requestAction(config, action, undefined, tile, { roomPowerTile: true });
           }
         };
       } else {
@@ -2048,12 +2065,14 @@ export class BayitDashboard extends HTMLElement {
         }
       } else setText(view.state, deviceStatus + (media ? ' · ' + media : ''));
       view.state.dataset.tone = feedback ? 'moving' : this.tone(model);
-      if (view.applianceTile) {
-        const action = !pending && this.applianceTileAction(model);
+      if (view.roomPowerTile) {
+        const action = !pending && this.roomPowerTileAction(view.config, model);
         if (action) view.tile.dataset.action = action;
         else delete view.tile.dataset.action;
-        label(view.tile, labelName + ' · ' + (action ? this.t(action) : deviceStatus));
-        if (model.available && view.config.role !== 'status' && ['on','off'].includes(model.state)) {
+        const actionLabel = action === 'stop_timed' ? this.t('boiler_room_stop') : action ? this.t(action) : deviceStatus;
+        label(view.tile, labelName + ' · ' + actionLabel);
+        const assumedBoiler = view.config.room_boiler_quick_power && model.attributes.assumed_state === true;
+        if (!assumedBoiler && model.available && view.config.role !== 'status' && ['on','off'].includes(model.state)) {
           view.tile.setAttribute('aria-pressed', String(model.state === 'on'));
         } else view.tile.removeAttribute('aria-pressed');
         view.tile.setAttribute('aria-busy', String(!!pending));
@@ -2585,14 +2604,17 @@ export class BayitDashboard extends HTMLElement {
     return !previous || (id === 'stop' && movement.has(previous.id));
   }
 
-  requestAction(config, id, value, source, { confirmShortcut = false, compactCover = false, applianceTile = false } = {}) {
+  requestAction(config, id, value, source, { confirmShortcut = false, compactCover = false, roomPowerTile = false } = {}) {
     if (!this.canRequest(config.entity, id)) return;
-    const model = this.model(config);
+    const roomBoilerQuickPower = roomPowerTile && config.room_boiler_quick_power === true;
+    const model = this.model(config, { roomBoilerQuickPower });
     const action = model.actions[id];
     if (this.staleScriptAction(id, action, value) || this.staleUsageReset(config, id, action, value) || !action ||
         (compactCover && !allowsCoverRailAction(model, id))) return;
-    if (!action.requiresConfirmation && !confirmShortcut) return action.requiresCode ? this.moreInfo(config, source) : this.send(config, id, value);
-    this.confirming = { config, id, value, source, compactCover, applianceTile, native: action.requiresCode };
+    if (!action.requiresConfirmation && !confirmShortcut) {
+      return action.requiresCode ? this.moreInfo(config, source) : this.send(config, id, value, false, roomBoilerQuickPower);
+    }
+    this.confirming = { config, id, value, source, compactCover, roomPowerTile, roomBoilerQuickPower, native: action.requiresCode };
     const n = this.nodes;
     const prompt = id === 'reset_daily_usage' ? this.t('timer_reset_confirm').replace('{name}', model.name)
       : this.t('confirm_action').replace('{name}', model.name).replace('{action}', this.actionLabel(id));
@@ -2606,14 +2628,14 @@ export class BayitDashboard extends HTMLElement {
     if (!request || !this.nodes.confirm.open) return;
     this.nodes.confirm.close();
     if (request.compactCover && !allowsCoverRailAction(this.model(request.config), request.id)) return;
-    if (request.applianceTile && this.applianceTileAction(this.model(request.config)) !== request.id) return;
+    if (request.roomPowerTile && this.roomPowerTileAction(request.config) !== request.id) return;
     if (request.native) return this.moreInfo(request.config, request.source);
-    return this.send(request.config, request.id, request.value, true);
+    return this.send(request.config, request.id, request.value, true, request.roomBoilerQuickPower);
   }
 
-  async send(config, id, value, confirmed = false) {
+  async send(config, id, value, confirmed = false, roomBoilerQuickPower = false) {
     if (!this.canRequest(config.entity, id)) return;
-    const model = this.model(config);
+    const model = this.model(config, { roomBoilerQuickPower });
     if (this.staleScriptAction(id, model.actions[id], value) || this.staleUsageReset(config, id, model.actions[id], value) || !model.actions[id]) return;
     const token = { id, value };
     if (model.domain === 'cover' && movement.has(id)) {
@@ -2631,7 +2653,7 @@ export class BayitDashboard extends HTMLElement {
     this.update();
     let confirmedByHomeAssistant = false;
     try {
-      const result = await this.controller.execute(config, id, value, { confirmed });
+      const result = await this.controller.execute(config, id, value, { confirmed, roomBoilerQuickPower });
       if (this.pending.get(config.entity) !== token) return;
       const key = ['confirmed','sent','unconfirmed'].includes(result?.status) ? result.status : 'sent';
       const status = key === 'confirmed' ? ({preselect_heating_level: 'heating_preselect_saved',

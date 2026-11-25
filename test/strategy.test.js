@@ -264,6 +264,30 @@ test('appliance tile selection keeps read-only switches and excludes a specializ
     .map(item=>[item.entity,item.role]),[[oven,undefined],[cooktop,'status']]);
 });
 
+test('boiler quick power is selected per room for exact writable Simple Timer profiles', () => {
+  const hass = home();
+  const boiler = 'switch.fixture_boiler';
+  const readOnly = 'switch.fixture_read_only';
+  const standard = 'switch.fixture_standard';
+  const hidden = 'switch.fixture_boiler_hidden';
+  const timer = 'sensor.fixture_runtime';
+  const targets = [boiler, readOnly, standard, hidden];
+  for (const entity of [...targets, timer]) {
+    hass.states[entity] = { state:'off', attributes:{} };
+    hass.entities[entity] = {};
+  }
+  const profiles = targets.map(entity => ({ entity, kind:'boiler', timed:entity === standard
+    ? { timer_entity:'timer.local' } : { simple_timer_entity:timer } }));
+  const {rooms} = generateDashboard({ area_ids:['studio','lounge'], show_unassigned:false, profiles,
+    room_overrides:{
+      studio:{ entities:targets, boiler_quick_power_entities:targets, read_only_entities:[readOnly], panel_hidden_entities:[hidden] },
+      lounge:{ entities:[boiler] },
+    },
+  },hass).views[0].cards[0];
+  assert.deepEqual(rooms[0].entities.filter(entry=>entry.room_boiler_quick_power).map(entry=>entry.entity),[boiler]);
+  assert.equal(rooms[1].entities.find(entry=>entry.entity===boiler).room_boiler_quick_power,undefined);
+});
+
 test('reported compact light readings are projected only for selected writable room lights', () => {
   const hass = home();
   const light = 'light.demo_lamp';
