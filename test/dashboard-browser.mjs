@@ -8461,9 +8461,16 @@ async function assertCompactRoomMedia(browser) {
       await header.press('Shift+Enter');
       await panel.waitFor();
       await panel.locator('[data-entity="media_player.demo_tv"] input[data-action=volume_set]').waitFor();
-      await panel.getByRole('button',{name:he ? 'חזרה לחדר' : 'Back to room',exact:true}).tap();
+      const back = panel.getByRole('button',{name:he ? 'חזרה לחדר' : 'Back to room',exact:true});
+      await back.waitFor();
+      await page.evaluate(() => history.back());
       await room.waitFor();
-      assert.ok(await header.evaluate(button => button.getRootNode().activeElement === button));
+      await tv.locator('.device-panel-launch:focus').waitFor();
+      await page.evaluate(() => history.forward());
+      await panel.waitFor();
+      await back.tap();
+      await room.waitFor();
+      await tv.locator('.device-panel-launch:focus').waitFor();
       assert.deepEqual(await page.evaluate(() => window.bayitTest.calls),[]);
 
       await openRoom('');
@@ -10250,8 +10257,26 @@ try {
       await studioHeading.waitFor();
       assert.equal(await routesPage.locator('[data-popup-origin]').count(), 0);
       assert.equal(await routesPage.locator('.room[data-current]').count(), 0);
+      await routeDialog.locator('[data-entity="light.demo_lamp"] .device-tile:focus').waitFor();
       await routesPage.evaluate(() => history.forward());
       await deskHeading.waitFor();
+      await routeBack.waitFor();
+
+      // Revalidation also runs in the handler, before the next render can hide the old button.
+      assert.equal(await routeBack.evaluate(button => {
+        window.bayitTest.setFixtureRegistry('light.demo_lamp', { hidden_by:'user' });
+        button.click();
+        return location.hash;
+      }), '#device/studio/light.demo_lamp');
+      await routeBack.waitFor({ state:'hidden' });
+      assert.equal(new URL(routesPage.url()).hash, '#device/studio/light.demo_lamp');
+      await routesPage.evaluate(() => window.bayitTest.setFixtureRegistry('light.demo_lamp', {}));
+      await routeBack.tap();
+      await studioHeading.waitFor();
+      await routeDialog.locator('[data-entity="light.demo_lamp"] .device-tile:focus').waitFor();
+      await routesPage.evaluate(() => history.forward());
+      await deskHeading.waitFor();
+      await routeBack.waitFor();
       await routeClose.tap();
       await routeDialog.waitFor({ state: 'hidden' });
       await routesPage.waitForURL(delayedUrl);

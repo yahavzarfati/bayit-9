@@ -773,7 +773,7 @@ export class BayitDashboard extends HTMLElement {
     return matches.length === 1 || !this.config.toolbar ? matches[0] : undefined;
   }
 
-  showPopupRoute({ route, hash, reason, source }) {
+  showPopupRoute({ route, hash, reason, source, roomLink }) {
     if (reason === 'open' || reason === 'close') return;
     this.setup?.editor.shadowRoot.activeElement?.blur();
     if (this.nodes.confirm.open) {
@@ -784,13 +784,16 @@ export class BayitDashboard extends HTMLElement {
       if (this.panel?.routeHash) this.popupMotion.dismiss({ immediate: true, restoreFocus: false });
       return;
     }
+    const linkedRoom = roomLink && this.roomViews.get(roomLink.room)?.room;
+    const returnTo = linkedRoom && { room:linkedRoom, entity:roomLink.entity };
     if (route.kind === 'panel') {
       const panel = this.popupToolbar(route.panel);
-      this.openPanel(panel.kind, null, undefined, undefined, panel, undefined, { hash });
+      this.openPanel(panel.kind, null, undefined, undefined, panel, undefined, { hash, returnTo });
     } else {
       const room = this.roomViews.get(route.room)?.room;
-      if (reason === 'room-return') this.restoreRoomFromPanel(room, source, { hash });
-      else this.openPanel(route.kind, null, room, route.entity, undefined, undefined, { hash, detail:route.detail });
+      if (reason === 'room-return' || reason === 'browser-room-return') {
+        this.restoreRoomFromPanel(room, source, { hash, browserReturn:reason === 'browser-room-return' });
+      } else this.openPanel(route.kind, null, room, route.entity, undefined, undefined, { hash, detail:route.detail, returnTo });
     }
   }
 
@@ -1695,6 +1698,7 @@ export class BayitDashboard extends HTMLElement {
       ? applianceNext : 0);
     this.activeDevices = active;
     const panel = this.panel?.type;
+    if (this.panel?.returnTo) this.nodes.back.hidden = !this.roomReturnAvailable(this.panel.returnTo);
     if (panel === 'room' || panel === 'device' || panel === 'overview' || contextKeys.includes(panel)) {
       const activeTimer = this.updateDevices();
       countdown ||= activeTimer;
@@ -1740,7 +1744,7 @@ export class BayitDashboard extends HTMLElement {
       this.panel.room === room && n.modal.open && n.content.contains(source);
     const fromLinkedRoom = (type === 'media' || type === 'vacuum') && returnFromRoom && this.panel?.type === 'room' &&
       this.panel.room === returnFromRoom.room && n.modal.open && n.content.contains(source);
-    const returnTo = fromRoomDetail ? { room, entity: selected.entity } : fromLinkedRoom ? returnFromRoom : undefined;
+    const returnTo = fromRoomDetail ? { room, entity: selected.entity } : fromLinkedRoom ? returnFromRoom : navigation.returnTo;
     this.popupScroll.stop();
     const scrollRoute = type === 'room' ? { kind: 'room', room: room.id }
       : boilerControls && this.config.page ? { kind: 'device', room: room.id, entity, detail:navigation.detail } : null;
@@ -1748,7 +1752,7 @@ export class BayitDashboard extends HTMLElement {
       setupRooms: type === 'setup' && navigation.setupRooms === true,
       scrollHash: popupRouteFragment(scrollRoute), routeHash: navigation.hash ?? this.panel?.routeHash };
     this.panel = panel;
-    n.back.hidden = !returnTo;
+    n.back.hidden = !this.roomReturnAvailable(returnTo);
     n.setupFooter.hidden = true;
     n.setupFooter.replaceChildren();
     this.setup = null;
@@ -1807,7 +1811,8 @@ export class BayitDashboard extends HTMLElement {
         : toolbar ? { kind: 'panel', panel: toolbar.id || type } : null;
       const hash = popupRouteFragment(route);
       if (hash) {
-        this.popupHistory.open(route, { source, replace: navigation.replace, fromRoom: returnTo?.room.id });
+        this.popupHistory.open(route, { source, replace: navigation.replace,
+          fromRoom: returnTo?.room.id, fromEntity: returnTo?.entity });
         const location = this.ownerDocument.defaultView.location;
         if (location.pathname === this.popupHistoryPath && popupRouteFragment(this.resolvePopup(location.hash)) === hash) {
           panel.routeHash = location.hash;
@@ -1829,12 +1834,24 @@ export class BayitDashboard extends HTMLElement {
     });
   }
 
+  roomReturnAvailable(target) {
+    const room = target?.room;
+    const launcher = room && this.roomViews.get(room.id);
+    return Boolean(this.isConnected && launcher && launcher.room === room && launcher.heading.isConnected &&
+      !launcher.heading.disabled && !launcher.heading.closest('[hidden]') &&
+      room.entities.some(item => item.entity === target.entity) && !room.panelHidden?.has(target.entity) &&
+      this.entityVisible(target.entity));
+  }
+
   backToRoom() {
     const panel = this.panel;
-    const { room, entity } = panel?.returnTo ?? {};
-    if (!entity || !room || !this.nodes.modal.open) return;
+    const { modal } = this.nodes;
+    if (!modal.open || modal.hasAttribute('data-closing') || !this.roomReturnAvailable(panel?.returnTo)) return;
+    const { room, entity } = panel.returnTo;
     const fallback = () => {
-      if (this.panel === panel && this.nodes.modal.open) this.restoreRoomFromPanel(room, entity, { replace: true });
+      if (this.panel === panel && modal.open && !modal.hasAttribute('data-closing') && this.roomReturnAvailable(panel.returnTo)) {
+        this.restoreRoomFromPanel(room, entity, { replace: true });
+      }
     };
     if (!this.popupHistory?.backToRoom(room.id, { source: entity, fallback })) fallback();
   }
@@ -1842,9 +1859,11 @@ export class BayitDashboard extends HTMLElement {
   restoreRoomFromPanel(room, entity, navigation) {
     const source = room && this.roomViews.get(room.id)?.heading;
     if (!source) return;
-    this.openPanel('room', source, room, undefined, undefined, undefined, navigation);
+    this.openPanel('room', navigation?.browserReturn ? null : source, room, undefined, undefined, undefined, navigation);
+    if (!this.roomReturnAvailable({ room, entity })) return;
     const view = Array.from(this.deviceViews).find(item => item.config.entity === entity);
-    (view?.more ?? view?.tile)?.focus({ preventScroll: true });
+    const control = view?.more ?? view?.tile;
+    if (control?.isConnected && !control.disabled && !control.closest('[hidden]')) control.focus({ preventScroll: true });
   }
 
   dismissPanel(options) {

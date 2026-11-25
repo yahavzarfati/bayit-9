@@ -151,9 +151,10 @@ test('keeps a linked Bayit parent across native More Info history and removes it
     const child = new URL(parent);
     if (mode !== 'legacy') child.searchParams.set('more-info-entity-id', device.entity);
     if (mode === 'unrelated') child.searchParams.set('unrelated', '1');
-    view.history.pushState({ dialog: 'ha-more-info-dialog' }, '', child.href);
+    view.history.pushState({ ...view.history.state, dialog: 'ha-more-info-dialog' }, '', child.href);
     view.dispatchEvent(new Event('location-changed'));
     navigation.refresh();
+    assert.equal(navigation.backToRoom(room.room, { fallback: assert.fail }), false);
     view.history.back();
     assert.equal(view.location.href, parent);
     assert.equal(navigation.backToRoom(room.room, { source: {}, fallback: () => assert.fail() }), mode !== 'unrelated');
@@ -194,6 +195,32 @@ test('returns once to the exact preceding room entry and retains the original br
   view.move(2);
   assert.equal(view.location.hash, deviceHash);
   assert.equal(navigation.backToRoom(room.room, { fallback: assert.fail }), false);
+});
+
+test('context and return focus follow authored entries through browser Back and Forward', () => {
+  const path = '/dashboard/home?kiosk=1';
+  const { view, observations, navigation } = fixture(path);
+  navigation.start();
+  navigation.open(room);
+  navigation.open(panel, { fromRoom:room.room, fromEntity:'media_player.tv' });
+  const { bayit9RoomEntry } = view.history.state;
+  const linked = { room:room.room, entity:'media_player.tv' };
+
+  view.move(-1);
+  assert.equal(observations.at(-1).reason, 'browser-room-return');
+  assert.equal(observations.at(-1).source, linked.entity);
+  view.move(1);
+  assert.deepEqual(observations.at(-1).roomLink, linked);
+  assert.equal(navigation.backToRoom(room.room, { fallback:assert.fail }), true);
+  assert.equal(view.location.hash, roomHash);
+  assert.equal(view.entries.length, 3);
+  assert.equal(navigation.backToRoom(room.room, { fallback:assert.fail }), false);
+
+  const direct = fixture(path + panelHash);
+  direct.view.history.replaceState({ bayit9RoomEntry }, '', path + panelHash);
+  direct.navigation.start();
+  assert.equal(direct.observations.at(-1).roomLink, undefined);
+  assert.equal(direct.navigation.backToRoom(room.room, { fallback:assert.fail }), false);
 });
 
 test('skips unlinked entries and fallbacks immediately if the browser refuses to traverse', () => {

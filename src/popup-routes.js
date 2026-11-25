@@ -68,12 +68,16 @@ export function normalizePopupAliases(config) {
 }
 
 export function createPopupHistory({ view, resolve, onChange, pathname = view.location.pathname }) {
+  const roomEntries = new Map();
   let listening = false;
   let observed;
+  let observedHref;
   let linkedEntry;
+  let canReturn;
   let returning;
   const withinView = () => view.location.pathname === pathname;
-  const isCurrent = link => view.location.href === link.href && view.history.state?.bayit9RoomEntry === link.id;
+  const isCurrent = link => view.location.href === link.href && view.history.state?.bayit9RoomEntry === link.id &&
+    view.history.state?.dialog !== MORE_INFO_DIALOG;
 
   function cancelReturn() {
     if (returning) view.clearTimeout(returning.timer);
@@ -83,22 +87,32 @@ export function createPopupHistory({ view, resolve, onChange, pathname = view.lo
   function sync(reason = 'location', source) {
     if (!listening) return;
     const { pathname, hash } = view.location;
+    const href = view.location.href;
     const inScope = withinView();
     const route = inScope ? resolve(hash) : null;
-    const nativeChild = linkedEntry && view.history.state?.dialog === MORE_INFO_DIALOG &&
-      sameMoreInfoPage(view.location.href, linkedEntry.href);
-    if (linkedEntry && !isCurrent(linkedEntry) && !nativeChild) linkedEntry = undefined;
-    if (returning && !isCurrent(returning.link)) {
-      if (view.location.href === returning.link.previous && route?.kind === 'room' && route.room === returning.link.room) {
-        reason = 'room-return';
-        source = returning.source;
+    const previousLink = linkedEntry;
+    const recorded = roomEntries.get(view.history.state?.bayit9RoomEntry);
+    const nativeChild = previousLink && view.history.state?.dialog === MORE_INFO_DIALOG &&
+      sameMoreInfoPage(href, previousLink.href);
+    linkedEntry = recorded && isCurrent(recorded) ? recorded : nativeChild ? previousLink : undefined;
+    // Retain return authority from the exact room, or through its native details dialog.
+    canReturn = Boolean(linkedEntry && (observedHref === linkedEntry.previous || (canReturn && previousLink === linkedEntry)));
+    observedHref = href;
+    if (previousLink && !linkedEntry && inScope && hash === previousLink.hash) roomEntries.delete(previousLink.id);
+    const returningLink = returning?.link ?? previousLink;
+    if (returningLink && !isCurrent(returningLink)) {
+      if (href === returningLink.previous && route?.kind === 'room' && route.room === returningLink.room) {
+        reason = returning ? 'room-return' : 'browser-room-return';
+        source = returning?.source ?? returningLink.entity;
       }
       cancelReturn();
     }
-    const identity = JSON.stringify([pathname, hash, popupRouteFragment(route)]);
+    const identity = JSON.stringify([pathname, hash, popupRouteFragment(route), linkedEntry?.id]);
     if (identity === observed) return;
     observed = identity;
-    onChange({ route, hash, inScope, reason, source });
+    const roomLink = route && linkedEntry && isCurrent(linkedEntry) ? linkedEntry : undefined;
+    onChange({ route, hash, inScope, reason, source,
+      ...(roomLink && { roomLink: { room:roomLink.room, entity:roomLink.entity } }) });
   }
   const onLocation = () => sync();
 
@@ -122,28 +136,33 @@ export function createPopupHistory({ view, resolve, onChange, pathname = view.lo
       if (!listening) return;
       listening = false;
       observed = undefined;
+      observedHref = undefined;
       linkedEntry = undefined;
+      canReturn = false;
+      roomEntries.clear();
       cancelReturn();
       for (const event of navigationEvents) view.removeEventListener(event, onLocation);
     },
-    open(route, { replace = false, source, fromRoom } = {}) {
+    open(route, { replace = false, source, fromRoom, fromEntity } = {}) {
       const hash = popupRouteFragment(route);
       if (!listening || !withinView() || !hash || hash === view.location.hash ||
           popupRouteFragment(resolve(hash)) !== hash) return false;
       cancelReturn();
+      if (replace && linkedEntry) roomEntries.delete(linkedEntry.id);
       linkedEntry = undefined;
       const parent = fromRoom && resolve(view.location.hash);
       if (!replace && route.kind !== 'room' && parent?.kind === 'room' && parent.room === fromRoom) {
         const previous = view.location.href;
         const href = new URL(hash, previous).href;
-        linkedEntry = { id: ++roomEntryId, href, previous, room: fromRoom };
+        linkedEntry = { id: ++roomEntryId, hash, href, previous, room:fromRoom, entity:fromEntity ?? route.entity };
+        roomEntries.set(linkedEntry.id, linkedEntry);
       }
       write(hash, replace, 'open', source, linkedEntry ? { bayit9RoomEntry: linkedEntry.id } : null);
       return true;
     },
     backToRoom(room, { source, fallback }) {
       if (returning) return true;
-      if (!listening || !withinView() || !linkedEntry || linkedEntry.room !== room || !isCurrent(linkedEntry)) return false;
+      if (!listening || !withinView() || !canReturn || !linkedEntry || linkedEntry.room !== room || !isCurrent(linkedEntry)) return false;
       const link = linkedEntry;
       linkedEntry = undefined;
       const timer = view.setTimeout(() => {
@@ -160,6 +179,7 @@ export function createPopupHistory({ view, resolve, onChange, pathname = view.lo
     },
     close(expectedHash = view.location.hash) {
       if (!listening || !withinView() || expectedHash !== view.location.hash || !resolve(expectedHash)) return false;
+      if (linkedEntry) roomEntries.delete(linkedEntry.id);
       linkedEntry = undefined;
       cancelReturn();
       write('', true, 'close');
