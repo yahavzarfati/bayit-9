@@ -7,6 +7,9 @@ export const OREF_MAP_DEFAULTS = Object.freeze({
 
 const TAG = 'oref-alert-map';
 const READ_SERVICES = ['last_update', 'areas_status'];
+const RETRY_DELAYS = [1500, 4000, 10000];
+// Home Assistant's frontend forwards the websocket connection-loss result.
+const CONNECTION_LOST_CODES = new Set([3, 'connection_lost']);
 const EMPTY = Object.freeze({});
 // A regional view of Israel, independent of Home Assistant's configured location.
 const REGION = Object.freeze({
@@ -60,7 +63,7 @@ function mapHass(hass, active, readFailed) {
         const reply = await hass.callService('oref_alert', service, {}, undefined, false, true);
         return active() ? reply : { response: {} };
       } catch (error) {
-        readFailed();
+        readFailed(error);
         throw error;
       }
     },
@@ -77,6 +80,8 @@ export function createOrefMap({ slot, dialog, fallback, loadingText, options }) 
   let scopedHass;
   let card;
   let request;
+  let retryTimer;
+  let attempts = 0;
   let failed = false;
   let disposed = false;
   let leftPage = false;
@@ -100,20 +105,43 @@ export function createOrefMap({ slot, dialog, fallback, loadingText, options }) 
     fallback.hidden = false;
   }
 
+  function cancelRetry() {
+    if (retryTimer === undefined) return;
+    view.clearTimeout(retryTimer);
+    retryTimer = undefined;
+  }
+
   function assignHass() {
     if (!card || scopedHass === currentHass) return;
     scopedHass = currentHass;
     const attached = card;
     const reachable = () => active() && card === attached && attached.isConnected;
-    attached.hass = mapHass(currentHass, reachable, () => {
+    attached.hass = mapHass(currentHass, reachable, error => {
       if (!reachable()) return;
-      failed = true;
       remove();
+      const code = error?.error?.code ?? error?.code ?? error;
+      if (!CONNECTION_LOST_CODES.has(code) || attempts >= RETRY_DELAYS.length || !ready()) {
+        failed = true;
+        return;
+      }
+      retryTimer = view.setTimeout(() => {
+        retryTimer = undefined;
+        if (!active()) return;
+        if (!ready()) {
+          failed = true;
+          return;
+        }
+        sync();
+      }, RETRY_DELAYS[attempts++]);
     });
   }
 
   function sync() {
     if (!active() || !ready()) {
+      if (retryTimer !== undefined) {
+        cancelRetry();
+        failed = true;
+      }
       remove();
       return;
     }
@@ -121,7 +149,7 @@ export function createOrefMap({ slot, dialog, fallback, loadingText, options }) 
       assignHass();
       return;
     }
-    if (request || failed) return;
+    if (request || retryTimer !== undefined || failed) return;
     const pending = {};
     request = pending;
     fallback.textContent = loadingText;
@@ -173,6 +201,7 @@ export function createOrefMap({ slot, dialog, fallback, loadingText, options }) 
       disposed = true;
       events.abort();
       observer.disconnect();
+      cancelRetry();
       remove();
     },
   };

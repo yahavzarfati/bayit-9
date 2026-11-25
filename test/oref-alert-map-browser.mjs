@@ -11,6 +11,9 @@ const fixture = `<!doctype html><html><meta charset="utf-8"><meta name="viewport
 import '/bayit-9.js';
 const options = new URL(location.href).searchParams;
 const tracker = { factories: 0, calls: [], configs: [], reads: [], escaped: [], detached: 0, details: [] };
+const mapServices = { oref_alert: { last_update: {}, areas_status: {}, synthetic_alert: {} } };
+const failure = options.get('failure');
+const failuresAt = new Set((options.get('fail-at') ?? '1').split(',').map(Number));
 document.addEventListener('hass-more-info', event => tracker.details.push(event.detail));
 const hass = {
   locale: { language: options.has('he') ? 'he' : 'en' }, themes: {},
@@ -20,10 +23,16 @@ const hass = {
   },
   areas: {}, devices: {}, entities: { 'lock.fixture': {} },
   config: { latitude: 1.234, longitude: 2.345 },
-  services: options.has('missing-services') ? {} : { oref_alert: { last_update: {}, areas_status: {}, synthetic_alert: {} } },
+  services: options.has('missing-services') ? {} : mapServices,
   callService(...args) {
     tracker.calls.push(args);
     if (options.has('read-fails')) return Promise.reject(new Error('Fixture blocked read'));
+    if (failure && (failuresAt.has(tracker.calls.length) || options.has('repeat'))) {
+      const error = failure === 'socket'
+        ? { type: 'result', success: false, error: { code: 3, message: 'Connection lost' } }
+        : { code: failure };
+      return Promise.reject(error);
+    }
     return Promise.resolve({ response: {} });
   },
 };
@@ -94,6 +103,10 @@ tracker.setState = (entity, state) => {
   hass.states[entity] = { ...hass.states[entity], state };
   dashboard.hass = { ...hass, states: { ...hass.states } };
 };
+tracker.setMapServices = available => {
+  hass.services = available ? mapServices : {};
+  dashboard.hass = { ...hass };
+};
 document.querySelector('main').append(dashboard);
 if (options.has('editor')) {
   const editor = Strategy.getConfigElement();
@@ -133,6 +146,7 @@ try {
         await page.getByText('Front door', { exact: true }).waitFor();
         assert.equal(await fallback.isVisible(), usesFallback);
         assert.equal(await factories(), 0);
+        assert.deepEqual(await page.evaluate(() => tracker.calls), []);
       }
 
       await openFixture('');
@@ -195,6 +209,90 @@ try {
       await fallback.waitFor();
       assert.equal(await map.count(), 0);
       await page.getByText('Front door', { exact: true }).waitFor();
+
+      await page.clock.install();
+      const readCount = () => page.evaluate(() => tracker.calls.length);
+      async function startWithFailedMap(query) {
+        await openFixture(query);
+        await security();
+        await page.waitForFunction(() => tracker.detached === 1);
+        await fallback.waitFor();
+        assert.equal(await map.count(), 0);
+        assert.equal(await readCount(), 1);
+      }
+      const refreshSnapshot = () => page.evaluate(() => tracker.setState('lock.fixture', 'locked'));
+      const leaveDashboard = () => page.evaluate(() => {
+        history.pushState({}, '', '/a-different-dashboard');
+        window.dispatchEvent(new CustomEvent('location-changed'));
+      });
+
+      await startWithFailedMap('?failure=socket');
+      await refreshSnapshot();
+      await refreshSnapshot();
+      await page.clock.fastForward(500);
+      assert.equal(await factories(), 1);
+      assert.equal(await fallback.isVisible(), true);
+      await page.clock.fastForward(1300);
+      await map.waitFor();
+      assert.equal(await fallback.isVisible(), false);
+      assert.equal(await factories(), 2);
+      assert.equal(await readCount(), 2);
+      await page.clock.fastForward(20000);
+      assert.equal(await factories(), 2);
+
+      await openFixture('?failure=socket&fail-at=2,4,6,8');
+      await security();
+      await map.waitFor();
+      for (const [delay, retries] of [[1800, true], [4300, true], [10300, true], [30000, false]]) {
+        await page.evaluate(() => tracker.scoped.callService('oref_alert', 'areas_status').catch(() => {}));
+        await fallback.waitFor();
+        assert.equal(await map.count(), 0);
+        await page.clock.fastForward(delay);
+        if (retries) await map.waitFor();
+      }
+      assert.equal(await map.count(), 0);
+      assert.equal(await factories(), 4);
+      assert.equal(await fallback.isVisible(), true);
+      assert.deepEqual(await page.evaluate(() => tracker.calls.map(args => args[1])),
+        Array.from({ length: 4 }, () => ['last_update', 'areas_status']).flat());
+
+      await startWithFailedMap('?failure=connection_lost&repeat');
+      for (const [delay, expected] of [[1800, 2], [4300, 3], [10300, 4]]) {
+        await page.clock.fastForward(delay);
+        await page.waitForFunction(total => tracker.detached === total, expected);
+        await refreshSnapshot();
+        assert.equal(await factories(), expected);
+        assert.equal(await readCount(), expected);
+        assert.equal(await fallback.isVisible(), true);
+        assert.equal(await map.count(), 0);
+      }
+      await page.clock.fastForward(30000);
+      assert.equal(await factories(), 4);
+      assert.equal(await readCount(), 4);
+
+      for (const code of ['forbidden', 'not_found']) {
+        await startWithFailedMap('?failure=' + code);
+        await refreshSnapshot();
+        await page.clock.fastForward(30000);
+        assert.equal(await readCount(), 1);
+      }
+
+      for (const end of [close, leaveDashboard, () => page.evaluate(() => tracker.setMapServices(false))]) {
+        await startWithFailedMap('?failure=socket');
+        await end();
+        await page.clock.fastForward(30000);
+        if (end === leaveDashboard) {
+          await page.evaluate(() => {
+            history.replaceState({}, '', '/fixture-home/home');
+            window.dispatchEvent(new CustomEvent('location-changed'));
+          });
+        }
+        await page.evaluate(() => tracker.setMapServices(true));
+        await page.clock.fastForward(30000);
+        assert.equal(await factories(), 1);
+        assert.equal(await readCount(), 1);
+        assert.equal(await map.count(), 0);
+      }
 
       await openFixture('?readouts&disabled');
       await security();
@@ -269,7 +367,7 @@ try {
       assert.equal(await page.evaluate(() => tracker.draft.toolbar[0].oref_map.enabled), false);
       assert.equal(await preAlerts.isVisible(), false);
       assert.deepEqual(errors, []);
-      console.log(name + ': optional alert map, ' + stripHeight + ' px read-only status tiles, isolated context, navigation and visual editor passed');
+      console.log(name + ': optional alert map, capped transient recovery, ' + stripHeight + ' px read-only status tiles, isolated context, navigation and visual editor passed');
     } finally {
       await browser.close();
     }
