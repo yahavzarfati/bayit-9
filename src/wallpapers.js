@@ -1,29 +1,4 @@
-const catalog = Object.freeze({
-  aurora: { en: 'Aurora', he: 'זוהר צפוני', group: 'nature', background:
-    'radial-gradient(ellipse at 78% -5%,rgba(145,250,199,.55),transparent 46%), radial-gradient(ellipse at 5% 40%,rgba(76,207,178,.37),transparent 47%), radial-gradient(ellipse at 80% 75%,rgba(125,103,230,.34),transparent 50%), linear-gradient(148deg,#092328 0%,#102c35 38%,#1a1738 68%,#080e1d 100%)' },
-  lagoon: { en: 'Lagoon', he: 'לגונה', group: 'nature', background:
-    'radial-gradient(ellipse at 98% 28%,#335c79,transparent 45%), radial-gradient(ellipse at 20% 72%,#11635d,transparent 58%), linear-gradient(138deg,#111e36 12%,#174152 75%,#142533)' },
-  dunes: { en: 'Dunes', he: 'דיונות', group: 'nature', background:
-    'radial-gradient(ellipse at 86% 18%,#84543d,transparent 52%), radial-gradient(ellipse at 15% 85%,#59374a,transparent 55%), linear-gradient(146deg,#321f29 11%,#4c3334 66%,#241d32)' },
-  jade: { en: 'Misty forest', he: 'יער ערפילי', group: 'nature', background:
-    'repeating-linear-gradient(90deg,transparent 0px,transparent 39px,rgba(6,27,25,.30) 40px,rgba(6,27,25,.30) 45px,transparent 46px,transparent 87px), radial-gradient(ellipse at 50% 32%,rgba(157,211,174,.30),transparent 58%), linear-gradient(180deg,#355b4c 0%,#193c35 47%,#0b211e 100%)' },
-  blue_hour: { en: 'Blue hour', he: 'השעה הכחולה', group: 'nature', background:
-    'radial-gradient(circle at 72% 18%,#aec2da 0 4%,transparent 4.4%), linear-gradient(157deg,transparent 0 49%,#3c5967 49.3% 63%,transparent 63.3%), linear-gradient(203deg,transparent 0 56%,#223b50 56.3% 71%,transparent 71.3%), linear-gradient(180deg,#27384d 0 66%,#1c4c5c 66.3%,#102432)' },
-  graphite: { en: 'Graphite', he: 'גרפיט', group: 'materials', background:
-    'radial-gradient(ellipse at 90% 16%,#464c52,transparent 50%), radial-gradient(ellipse at 20% 96%,#293c46,transparent 60%), linear-gradient(150deg,#1c2227,#16191d 78%)' },
-  bronze: { en: 'Brushed bronze', he: 'ברונזה מוברשת', group: 'materials', background:
-    'repeating-linear-gradient(133deg,transparent 0 7px,#f4d5ad12 8px,transparent 9px 27px), linear-gradient(130deg,#251c1a 12%,#57504b 39%,#302724 53%,#4b3c35 76%,#1b1c22)' },
-  architecture: { en: 'Soft architecture', he: 'אדריכלות רכה', group: 'materials', darkInk: true, background:
-    'linear-gradient(125deg,transparent 0 46%,#95796c36 46.1% 46.5%,transparent 46.6%), linear-gradient(55deg,transparent 0 61%,#85746d26 61.1% 61.5%,transparent 61.6%), linear-gradient(125deg,#f4eae0 0 46%,#e8e4e1 46.1% 71%,#dbe4e9 71.1%)' },
-  porcelain: { en: 'Porcelain', he: 'פורצלן', group: 'materials', darkInk: true, background:
-    'repeating-linear-gradient(132deg,transparent 0 58px,#7e7d7a2a 59px,transparent 62px 98px), radial-gradient(ellipse at 12% 15%,#fff,transparent 60%), linear-gradient(135deg,#f6f5f0,#dedfdb)' },
-  evening: { en: 'Evening glow', he: 'זוהר ערב', group: 'light', background:
-    'radial-gradient(ellipse at 5% 8%,#fb7d9f96,transparent 47%), radial-gradient(ellipse at 100% 37%,#7d94ff9e,transparent 48%), radial-gradient(ellipse at 20% 90%,#e0996661,transparent 46%), linear-gradient(160deg,#352337,#201f44 58%,#271a30)' },
-  clouds: { en: 'Cloud colors', he: 'ענני צבע', group: 'light', darkInk: true, background:
-    'radial-gradient(ellipse at 5% 8%,#fb9db97d,transparent 47%), radial-gradient(ellipse at 100% 37%,#99a8ff7a,transparent 48%), radial-gradient(ellipse at 20% 90%,#f5bc9461,transparent 46%), linear-gradient(160deg,#fff0f4,#ecebff 58%,#fff2ed)' },
-  starlight: { en: 'Starlight', he: 'שמיים זרועי כוכבים', group: 'light', background:
-    'radial-gradient(circle at 15% 16%,#fff 0 1px,transparent 2px), radial-gradient(circle at 76% 12%,#eef4ff 0 1.4px,transparent 2.2px), radial-gradient(circle at 37% 49%,#dbe7ff 0 1px,transparent 2px), radial-gradient(circle at 85% 62%,#eef4ff 0 1px,transparent 2px), radial-gradient(ellipse at 70% 5%,#324b87,transparent 55%), linear-gradient(155deg,#121f41,#070a1b 75%)' },
-});
+import { catalog, featuredWallpapers, wallpaperGroups } from './wallpaper-catalog.js';
 
 export const wallpaperChoices = Object.freeze(Object.fromEntries(
   Object.entries(catalog).map(([id, { en, he }]) => [id, Object.freeze({ en, he })]),
@@ -312,13 +287,15 @@ export function createWallpaperController(shell, { storageKey = 'default', fallb
 
 const labels = {
   en: {
-    legend: 'Wallpaper', nature: 'Nature', materials: 'Materials', light: 'Color and light', personal: 'My photo',
+    legend: 'Wallpaper', all: 'All', new: 'New', basic: 'Basic', nature: 'Nature', materials: 'Materials',
+    light: 'Color and light', personal: 'My photo', more: 'More wallpapers',
     upload: 'Choose a photo', saved: 'Use my saved photo', preparing: 'Preparing photo…',
     failed: 'Could not load this wallpaper.', uploadFailed: 'Could not save the photo. Choose an image up to 20 MB.',
     noPhoto: 'Choose a photo from this device.',
   },
   he: {
-    legend: 'רקע', nature: 'טבע', materials: 'חומרים', light: 'אור וצבע', personal: 'תמונה שלי',
+    legend: 'רקע', all: 'הכל', new: 'חדשים', basic: 'בסיס', nature: 'טבע ונוף', materials: 'חומרים וצורות',
+    light: 'אור וצבע', personal: 'תמונה שלי', more: 'עוד רקעים',
     upload: 'בחירת תמונה', saved: 'שימוש בתמונה השמורה', preparing: 'מכין את התמונה…',
     failed: 'לא ניתן לטעון את הרקע.', uploadFailed: 'לא ניתן לשמור את התמונה. בחרו תמונה בגודל של עד 20 מ״ב.',
     noPhoto: 'בחרו תמונה מהמכשיר הזה.',
@@ -349,6 +326,7 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
   const categoryButtons = new Map();
   let category = selected === personalWallpaperId ? 'personal' : catalog[selected]?.group ?? 'nature';
   let request = 0;
+  let expandedAll = false;
 
   function button(text, className) {
     const item = document.createElement('button');
@@ -433,14 +411,28 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
       void fillPersonalPreview();
     } else {
       content.className = 'wallpaper-options';
-      for (const [id, wallpaper] of Object.entries(catalog)) {
-        if (wallpaper.group === group) content.append(wallpaperButton(id, wallpaper[locale] ?? wallpaper.en, wallpaper.background));
+      const ids = group === 'all'
+        ? [...new Set(['design_default', selected, ...featuredWallpapers, ...Object.keys(catalog)])].filter(id => catalog[id])
+        : wallpaperGroups[group];
+      const visibleIds = group === 'all' && !expandedAll ? ids.slice(0, 6) : ids;
+      for (const id of visibleIds) {
+        const wallpaper = catalog[id];
+        content.append(wallpaperButton(id, wallpaper[locale] ?? wallpaper.en, wallpaper.background));
+      }
+      if (visibleIds.length < ids.length) {
+        const more = button(words.more, 'wallpaper-upload wallpaper-more');
+        more.onclick = () => {
+          expandedAll = true;
+          render('all');
+          content.children[visibleIds.length]?.focus({ preventScroll: true });
+        };
+        content.append(more);
       }
     }
     select(selected);
   }
 
-  for (const group of ['nature', 'materials', 'light', 'personal']) {
+  for (const group of ['all', ...Object.keys(wallpaperGroups), 'personal']) {
     const item = button(words[group], 'wallpaper-category');
     item.onclick = () => { if (category !== group) render(group); };
     categories.append(item);
@@ -549,6 +541,7 @@ export const wallpaperStyles = `
     border: 1px solid rgba(255,255,255,.14);
     border-radius: 7px;
   }
+  .wallpaper-more { grid-column: 1 / -1; }
   .wallpaper-personal { display: grid; gap: 7px; }
   .wallpaper-personal .wallpaper-option { width: min(200px,100%); }
   .wallpaper-message, .wallpaper-no-photo { color: var(--secondary); font-size: 12px; margin: 6px 1px 0; }
