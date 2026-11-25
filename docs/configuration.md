@@ -37,6 +37,8 @@ Entity-level room assignment takes precedence over device-level assignment. Home
 
 Each room section has a `kind`, optional `id` and `title`, and an ordered list of `entities`. Available kinds are `lights`, `covers`, `climate`, `heating`, `sensors`, `devices`, `garage`, `weather`, `security`, `media`, `vacuum` and `laundry`. Use an empty title to hide the heading. Devices without an assigned section follow the default grouping.
 
+For a manually arranged covers section, choose **Cover card layout → Two columns when there is room** to keep the second column even when the section has one cover. In YAML, set `columns: 2` on that section. On narrow screens the covers use one column so the open, stop and close buttons have room.
+
 In **Rooms → Device display**, a temperature sensor can use **Compact temperature graph** and a custom line color. The tile shows the reported temperature and the last 24 hours. Select it to open the sensor's Home Assistant details. In YAML, map each sensor to a six-digit hex color under `room_temperature_graph_colors` in its room override.
 
 In **Customize home → Appearance**, **Align dashboard to the left on wide screens** places the toolbar and room grid together on the left on tablets and desktop. In YAML, set `wide_alignment: left`.

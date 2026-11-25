@@ -920,6 +920,16 @@ export const styles = `
       .device:not([data-compact=cover]) { grid-column: 1 / -1; }
       .device[data-compact=cover] { padding: 5px; }
     }
+    .devices[data-room=true] .device-group[data-group=room_covers][data-columns="2"]:has(> .device[data-compact=cover]) {
+      /* Three 44px commands, two 2px gaps, padding and a border need 146px. */
+      grid-template-columns: repeat(auto-fill,minmax(min(100%,max(146px,calc((100% - 7px) / 2))),1fr));
+      .device:not([data-compact=cover]) { grid-column: 1 / -1; }
+      .device[data-compact=cover] { padding: 4px; }
+      .device[data-compact=cover] .basic-actions {
+        grid-template-columns: repeat(auto-fit,minmax(min(44px,100%),1fr));
+        gap: 2px;
+      }
+    }
   }
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     .modal {

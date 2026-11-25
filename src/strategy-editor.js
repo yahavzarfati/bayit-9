@@ -90,6 +90,7 @@ const WORDS = {
     manualSections: 'Arrange sections manually',
     editSection: 'Section to customize', addSection: 'Add section', removeSection: 'Delete section',
     sectionType: 'Section type', sectionTitle: 'Section heading', sectionDevice: 'Room device',
+    coverSectionLayout: 'Cover card layout', coverColumnsAuto: 'Automatic', coverColumnsTwo: 'Two columns when there is room',
     addToSection: 'Move to this section', removeFromSection: 'Remove from section', sectionEmpty: 'No devices in this section.',
     noDevices: 'No devices selected.', noMatches: 'No matching devices', missing: 'Unavailable',
     discovery: 'Automatic device selection', controls: 'Controls only', allDevices: 'All supported devices',
@@ -212,6 +213,7 @@ const WORDS = {
     manualSections: 'סידור ידני של הקבוצות',
     editSection: 'קבוצה לעריכה', addSection: 'הוספת קבוצה', removeSection: 'מחיקת קבוצה',
     sectionType: 'סוג הקבוצה', sectionTitle: 'כותרת הקבוצה', sectionDevice: 'מכשיר בחדר',
+    coverSectionLayout: 'פריסת כרטיסי התריסים', coverColumnsAuto: 'אוטומטית', coverColumnsTwo: 'שני טורים כשיש מקום',
     addToSection: 'העברה לקבוצה זו', removeFromSection: 'הסרה מהקבוצה', sectionEmpty: 'אין מכשירים בקבוצה זו.',
     noDevices: 'לא נבחרו מכשירים.', noMatches: 'לא נמצאו מכשירים מתאימים', missing: 'לא זמין',
     discovery: 'בחירת מכשירים אוטומטית', controls: 'מכשירים נשלטים בלבד', allDevices: 'כל המכשירים הנתמכים',
@@ -674,7 +676,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const update = (section, focusKey) => saveSections(sections.map(item => item.id === active.id ? section : item), focusKey);
     const kind = select(ROOM_SECTION_TYPES.map(type => [type, typeTitle(type)]), active.kind);
     kind.dataset.roomFocus = 'room-section-kind';
-    kind.addEventListener('change', () => update({ ...active, kind: kind.value }, 'room-section-kind'));
+    kind.addEventListener('change', () => {
+      const next = { ...active, kind: kind.value };
+      if (next.kind !== 'covers') delete next.columns;
+      update(next, 'room-section-kind');
+    });
     const title = node('input', { value: active.title ?? '', placeholder: typeTitle(active.kind), maxLength: 80 });
     title.dataset.roomFocus = 'room-section-title';
     const saveTitle = () => {
@@ -692,6 +698,17 @@ export class Bayit9StrategyEditor extends HTMLElement {
       saveTitle();
     });
     children.push(field(words.editSection, sectionPicker), field(words.sectionType, kind), field(words.sectionTitle, title));
+    if (active.kind === 'covers') {
+      const columns = select([['auto', words.coverColumnsAuto], ['2', words.coverColumnsTwo]], active.columns === 2 ? '2' : 'auto');
+      columns.dataset.roomFocus = 'room-section-columns';
+      columns.addEventListener('change', () => {
+        const next = { ...active };
+        if (columns.value === '2') next.columns = 2;
+        else delete next.columns;
+        update(next, 'room-section-columns');
+      });
+      children.push(field(words.coverSectionLayout, columns));
+    }
 
     const entityName = entity => this.#hass.states?.[entity]?.attributes?.friendly_name || entity;
     const members = active.entities.map(id => ({ id, name: entityName(id) }));

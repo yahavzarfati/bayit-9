@@ -5321,10 +5321,106 @@ async function assertCompactLightReadings(browser) {
   }
 }
 
+async function assertRoomCoverColumns(browser) {
+  for (const locale of ['en', 'he']) {
+    const he = locale === 'he';
+    const coverName = he ? 'תריס חדר האורחים' : 'Guest bedroom shade';
+    const page = await browser.newPage({ viewport: { width:391, height:640 }, hasTouch:true, reducedMotion:'reduce' });
+    const url = base + '/fixture-home/home?configuration&cover-grid&locale=' + locale;
+    const section = { id:'window', kind:'covers', columns:2, entities:['cover.demo_shade'] };
+    await page.addInitScript(({ coverName, section }) => {
+      const key = 'bayit9-browser-fixture';
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, JSON.stringify({ strategy:{ type:'custom:bayit-9',
+        area_ids:['studio', 'bayit_room_playroom'], show_unassigned:false, room_overrides:{
+          studio:{ entities:['cover.demo_shade', 'light.demo_lamp', 'switch.demo_heater'], sections:[section],
+            entity_names:{ 'cover.demo_shade':coverName } },
+          bayit_room_playroom:{ name:'Playroom', sections:[{ kind:'covers', entities:['cover.demo_curtain'] }] },
+        } } }));
+    }, { coverName, section });
+    const openRoom = async (room) => {
+      await page.getByRole('button', { name:room, exact:true }).tap();
+      const dialog = page.getByRole('dialog', { name:room, exact:true });
+      await dialog.waitFor();
+      return dialog;
+    };
+    const geometry = dialog => dialog.locator('[data-group=room_covers] > [data-compact=cover]').evaluate(tile => {
+      const group = tile.parentElement;
+      const style = getComputedStyle(group);
+      const innerWidth = group.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const name = tile.querySelector('.device-name');
+      const detail = name.closest('.device-detail').getBoundingClientRect();
+      const text = document.createRange();
+      text.selectNodeContents(name);
+      return {
+        columns: group.dataset.columns ?? null,
+        width: tile.getBoundingClientRect().width, innerWidth, gap:parseFloat(style.columnGap),
+        name: name.textContent, fullNameFits: [...text.getClientRects()].every(rect =>
+          rect.left >= detail.left - 1 && rect.right <= detail.right + 1),
+        controls: [...tile.querySelectorAll('.basic-actions button')].map(button => {
+          const rect = button.getBoundingClientRect();
+          return { action:button.dataset.action, width:rect.width, height:rect.height, top:rect.top };
+        }),
+      };
+    });
+    const close = async dialog => {
+      await dialog.getByRole('button', { name:he ? 'סגירה' : 'Close', exact:true }).tap();
+      await dialog.waitFor({state:'hidden'});
+    };
+    try {
+      await page.goto(url);
+      for (const width of [391, 320]) {
+        await page.setViewportSize({ width, height:640 });
+        const dialog = await openRoom('Studio');
+        const box = await geometry(dialog);
+        assert.equal(box.columns,'2');
+        const expectedWidth = width === 391 ? (box.innerWidth - box.gap) / 2 : box.innerWidth;
+        assert.ok(Math.abs(box.width - expectedWidth) <= 1, JSON.stringify({locale,width,...box}));
+        assert.equal(box.name,coverName);
+        assert.equal(box.fullNameFits,true);
+        assert.deepEqual(box.controls.map(control => control.action),['open','stop','close']);
+        assert.equal(new Set(box.controls.map(control => control.top)).size,1);
+        assert.ok(box.controls.every(control => control.width >= 44 && control.height >= 44));
+        await close(dialog);
+      }
+      await page.setViewportSize({ width:391, height:640 });
+      const defaultDialog = await openRoom('Playroom');
+      const full = await geometry(defaultDialog);
+      assert.equal(full.columns,null);
+      assert.ok(Math.abs(full.width - full.innerWidth) <= 1);
+      await close(defaultDialog);
+
+      await page.getByRole('button', { name:he ? 'מראה' : 'Appearance', exact:true }).tap();
+      const setupName = he ? 'התאמת הבית' : 'Customize home';
+      await page.getByRole('button', { name:setupName, exact:true }).tap();
+      const setup = page.getByRole('dialog', { name:setupName, exact:true });
+      await setup.getByText(he ? 'חדרים' : 'Rooms', {exact:true}).tap();
+      await setup.getByLabel(he ? 'חדר להתאמה אישית' : 'Room to customize', {exact:true}).selectOption('studio');
+      await setup.getByText(he ? 'קבוצות בחדר' : 'Room sections', {exact:true}).tap();
+      const option = setup.getByLabel(he ? 'פריסת כרטיסי התריסים' : 'Cover card layout', {exact:true});
+      assert.equal(await option.inputValue(),'2');
+      await option.selectOption('auto');
+      await setup.getByRole('button', { name:he ? 'שמירת הדשבורד' : 'Save dashboard', exact:true }).tap();
+      await setup.waitFor({state:'hidden'});
+      const updated = await openRoom('Studio');
+      const updatedBox = await geometry(updated);
+      assert.equal(updatedBox.columns,null);
+      assert.ok(Math.abs(updatedBox.width - updatedBox.innerWidth) <= 1);
+      const saved = await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.room_overrides.studio.sections[0]);
+      assert.equal(saved.columns,undefined);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain || call.type === 'call_service')),[]);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
     try {
+      await assertRoomCoverColumns(browser);
+      console.log(engine + ': authored single-cover columns keep readable names and full-sized commands');
       await assertHomePreferenceAliases(browser);
       await assertSharedAppearance(browser);
       await assertClippedRoomOrigin(browser);

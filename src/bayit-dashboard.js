@@ -359,6 +359,7 @@ export function normalizeDashboardConfig(config = {}) {
     if (Array.isArray(room.sections)) {
       parsed.sections = room.sections.filter(section => roomSectionKinds.has(section?.kind)).map(section => ({
         id: text(section.id), kind: section.kind, title: typeof section.title === 'string' ? section.title : undefined,
+        ...(section.kind === 'covers' && section.columns === 2 && { columns: 2 }),
         entities: [...new Set((Array.isArray(section.entities) ? section.entities : []).map(item => item?.entity ?? item))]
           .map(entity => unique.get(entity)).filter(Boolean),
       }));
@@ -1643,10 +1644,11 @@ export class BayitDashboard extends HTMLElement {
       const configured = new Set(explicit.flatMap(section => section.entities.map(device => device.entity)));
       const ungrouped = entities.filter(device => shown(device) && !configured.has(device.entity));
       const groups = [...explicit, ...this.defaultRoomSections(ungrouped)];
-      for (const { key, title, entities: members } of groups) {
+      for (const { key, title, columns, entities: members } of groups) {
         if (!members.length) continue;
         const group = make('section', 'device-group');
         group.dataset.group = key;
+        if (columns === 2) group.dataset.columns = '2';
         if (title !== '') group.append(make('h3', 'device-group-title', title ?? this.t(key)));
         const single = members.length === 1 ? members[0] : null;
         const timed = single?.timed;

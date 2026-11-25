@@ -248,7 +248,8 @@ export function roomSections(value) {
     if (!SECTION_KINDS.has(section?.kind) || !Array.isArray(section.entities)) return [];
     const id = layoutId(section.id, 'section-' + (index + 1), seen);
     const title = typeof section.title === 'string' ? section.title.trim().slice(0, 80) : undefined;
-    return [{ id, kind: section.kind, ...(title !== undefined && { title }), entities: idList(section.entities) }];
+    return [{ id, kind: section.kind, ...(title !== undefined && { title }),
+      ...(section.kind === 'covers' && section.columns === 2 && { columns: 2 }), entities: idList(section.entities) }];
   });
 }
 

@@ -1264,6 +1264,21 @@ test('keeps configured room section order, roles and empty headings without chan
   assert.deepEqual({ config, hass }, previous);
 });
 
+test('passes an explicit two-column cover layout through authored room sections only', () => {
+  const config = { room_overrides:{ lounge:{ sections:[
+    { kind:'covers', columns:2, entities:['cover.example'] },
+    { kind:'covers', columns:'2', entities:['cover.example'] },
+    { kind:'covers', columns:3, entities:['cover.example'] },
+    { kind:'lights', columns:2, entities:['light.demo_lamp'] },
+  ] } } };
+  const hass = home();
+  hass.states['cover.example'] = { state:'closed', attributes:{ supported_features:15 } };
+  hass.entities['cover.example'] = { area_id:'lounge' };
+  const [room] = generateDashboard(config, hass).views[0].cards[0].rooms.filter(({id}) => id === 'lounge');
+  assert.deepEqual(room.sections.map(section => section.columns), [2, undefined, undefined, undefined]);
+  assert.deepEqual(room.sections[0].entities.map(device => device.entity), ['cover.example']);
+});
+
 test('derives room membership from sections when flat membership is omitted', () => {
   const hass = home();
   const custom = CUSTOM_ROOM_PREFIX + 'controlled';
