@@ -10,6 +10,10 @@ Tap a timer's **Used today** reading to open details for the sensor supplying th
 
 In YAML, use `allow_daily_usage_reset: true` under the profile’s `timed` settings. Reset is available for the linked Simple Timer’s own usage reading while it reports a positive value and publishes the reset service.
 
+## Vertical swing reporting
+
+In a climate profile, **Display when vertical swing is unreported** offers the modes advertised by that air conditioner. Set `unreported_swing_mode` in YAML to the same native mode. Bayit 9 displays the configured label when vertical swing is unreported and identifies it as a fallback. Choose an available mode to send it explicitly. Reported modes take priority.
+
 ## Boiler schedule and usage history
 
 Open the dedicated boiler panel to see the last seven days of usage. Home Assistant Recorder supplies the running intervals, and the Activity log supplies the attributed source when it is available. The list shows confirmed runs of at least two minutes.

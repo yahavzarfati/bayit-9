@@ -1,11 +1,12 @@
 import {
   BACKGROUNDS, classicRoomTitle, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
-  normalizeClimatePresetShortcut, normalizeRoomControlName,
+  normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeUnreportedSwingMode,
   PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomPanelOptions, roomSections, roomShortcutDevices, selectableRoomEntities, selectedRoomIds,
   STRATEGY_NAME, supportsShortcutWithoutDetails,
   usesAutomaticRoomDevices,
 } from './strategy-model.js';
 import { languages } from './bayit-dashboard-i18n.js';
+import { climateOptionLabel } from './panel-controls.js';
 import { buildToolbarEditor } from './toolbar-editor.js';
 import { activityKinds, activitySources, normalizeRoomActivities } from './room-appliance.mjs';
 import { getDeviceModel, supportsRoomShutdown } from './device-control.mjs';
@@ -72,7 +73,7 @@ const WORDS = {
     noShortcutRooms: 'Add a device to a visible room to set its shortcuts.',
     profiles: 'Boiler and heater controls', entity: 'Heating device', kind: 'Control profile',
     heater: 'Room heater', boiler: 'Water heater or boiler', displayName: 'Display name',
-    climate: 'Air conditioner or thermostat', timerSource: 'Timer source', serverTimer: 'Home Assistant timer or script',
+    climate: 'Air conditioner or thermostat', swingFallback: 'Display when vertical swing is unreported', timerSource: 'Timer source', serverTimer: 'Home Assistant timer or script',
     simpleTimer: 'Simple Timer', simpleTimerDevice: 'Simple Timer sensor', simpleTimerTarget: 'Device linked to Simple Timer',
     timerLinkError: 'Choose a Simple Timer sensor linked to this heating device or its supported proxy.',
     dailyUsage: 'Daily usage sensor', allowDailyUsageReset: 'Allow reset of this daily usage counter', presets: 'Preset minutes', presetError: 'Use preset minutes within the selected range and step.',
@@ -149,7 +150,7 @@ const WORDS = {
     noShortcutRooms: 'הוסיפו מכשיר לחדר שמוצג בדשבורד כדי לבחור קיצורים.',
     profiles: 'שליטה בדוד ובתנורים', entity: 'מכשיר חימום', kind: 'סוג בקר',
     heater: 'תנור חימום', boiler: 'דוד או מחמם מים', displayName: 'שם לתצוגה',
-    climate: 'מזגן או תרמוסטט', timerSource: 'מקור הטיימר', serverTimer: 'טיימר או סקריפט של Home Assistant',
+    climate: 'מזגן או תרמוסטט', swingFallback: 'תצוגה כשאין דיווח על נדנוד אנכי', timerSource: 'מקור הטיימר', serverTimer: 'טיימר או סקריפט של Home Assistant',
     simpleTimer: 'Simple Timer', simpleTimerDevice: 'חיישן Simple Timer', simpleTimerTarget: 'המכשיר שמקושר ל־Simple Timer',
     timerLinkError: 'בחרו חיישן Simple Timer שמקושר למכשיר החימום הזה או לפקד שמפעיל אותו.',
     dailyUsage: 'חיישן שימוש יומי', allowDailyUsageReset: 'אפשרות לאפס את מונה השימוש היומי הזה', presets: 'הגדרות דקות מהירות', presetError: 'בחרו דקות בטווח ובמרווח שנקבעו.',
@@ -1259,6 +1260,23 @@ export class Bayit9StrategyEditor extends HTMLElement {
     }
     const kind = select([['heater', words.heater], ['boiler', words.boiler], ['climate', words.climate]], current.kind || 'heater');
     const title = node('input', { value: current.name ?? '', maxLength: 80 });
+    const swingFallback = select([['', words.none]], '');
+    const swingField = field(words.swingFallback, swingFallback);
+    const swingLabels = languages[languageFor(this.#config.locale, this.#hass)];
+    let swingEntity;
+    let swingMode;
+    swingFallback.addEventListener('change', () => { swingMode = swingFallback.value; });
+    const syncSwing = id => {
+      if (id !== swingEntity) {
+        swingEntity = id;
+        swingMode = id === current.entity ? normalizeUnreportedSwingMode(current.unreported_swing_mode) : undefined;
+      }
+      const options = id ? getDeviceModel({ entity: id }, this.#hass.states).actions.set_swing_mode?.options ?? [] : [];
+      swingField.hidden = !options.length;
+      swingFallback.replaceChildren(option('', words.none), ...options.map(value =>
+        option(value, climateOptionLabel('set_swing_mode', value, options, key => swingLabels[key] ?? key))));
+      swingFallback.value = options.includes(swingMode) ? swingMode : '';
+    };
     const entityInput = (domain, value, filter = () => true) => {
       const choices = entityOptions(this.#hass, new Set([domain])).filter(([id]) => filter(id));
       if (value && !choices.some(([id]) => id === value)) choices.unshift([value, value]);
@@ -1317,6 +1335,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const domain = entity.value.split('.')[0];
       kind.querySelector('[value="climate"]').disabled = domain !== 'climate';
       if (domain !== 'climate' && kind.value === 'climate') kind.value = 'heater';
+      syncSwing(kind.value === 'climate' ? entity.value : '');
       const fanHeater = domain === 'fan' && kind.value === 'heater';
       fanLevels.hidden = !fanHeater || Boolean(level.value);
       const usingSimple = timerSource.value === 'simple';
@@ -1342,7 +1361,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     sync();
 
     children.push(
-      field(words.entity, entity), field(words.kind, kind), field(words.displayName, title),
+      field(words.entity, entity), field(words.kind, kind), field(words.displayName, title), swingField,
       field(words.level, level), fanLevels,
       field(words.timerSource, timerSource), serverFields, simpleFields, schedule,
       field(words.dailyUsage, usage), field(words.presets, presets),
@@ -1365,7 +1384,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
           const profile = normalizeProfile({
             entity: entity.value, kind: kind.value, name: title.value, level_entity: level.value,
             level_steps: levelSteps.valueAsNumber, level_read_entity: levelRead.value, level_select_script: levelSelectId,
-            level_preselect_entity: nextLevelId,
+            level_preselect_entity: nextLevelId, unreported_swing_mode: swingMode,
             schedule: {save_script:scheduleSave.value,delete_script:scheduleDelete.value},
             timed: {
               ...(usingSimple

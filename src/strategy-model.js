@@ -78,12 +78,19 @@ function numberOr(value, fallback) {
   return Number.isInteger(value) && value > 0 && value <= 360 ? value : fallback;
 }
 
+export function normalizeUnreportedSwingMode(value) {
+  return typeof value === 'string' && value.length <= 80 && value && value.trim() === value &&
+    !/[\u0000-\u001f\u007f]/u.test(value) ? value : undefined;
+}
+
 export function normalizeProfile(value) {
   if (!value || typeof value.entity !== 'string' || !ENTITY_ID.test(value.entity)
       || !PROFILE_KINDS.has(value.kind)) return null;
   const domain = domainOf(value.entity);
   if (!PROFILE_DOMAINS.includes(domain) || (value.kind === 'climate' && domain !== 'climate')) return null;
   const profile = { entity: value.entity, kind: value.kind };
+  const unreportedSwing = value.kind === 'climate' && normalizeUnreportedSwingMode(value.unreported_swing_mode);
+  if (unreportedSwing) profile.unreported_swing_mode = unreportedSwing;
   if (typeof value.name === 'string' && value.name.trim()) profile.name = value.name.trim().slice(0, 80);
   const level = idForDomain(value.level_entity, 'number');
   if (level) profile.level_entity = level;
@@ -275,6 +282,7 @@ function presentEntity(entity, state, registry, profile) {
     ...(typeof name === 'string' && name && { name }),
     ...(typeof icon === 'string' && icon && { icon }),
     ...(profile && { kind: profile.kind }),
+    ...(profile?.unreported_swing_mode && { unreported_swing_mode: profile.unreported_swing_mode }),
     ...(profile?.level_entity && { level_entity: profile.level_entity }),
     ...(profile?.level_steps && { level_steps: profile.level_steps }),
     ...(profile?.level_read_entity && { level_read_entity: profile.level_read_entity }),

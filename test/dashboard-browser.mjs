@@ -93,6 +93,12 @@ const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection'
   ...(query.has('cross-area-room-device') && { room_overrides: { lounge: { entities: ['light.demo_lamp'] } } }),
   ...(query.has('sole-room') && { area_ids: ['bayit_room_only'],
     room_overrides: { bayit_room_only: { name: 'Reading nook', entities: [] } } }),
+  ...(query.has('swing-unreported') && {
+    profiles: [{ entity: 'climate.demo_air', kind: 'climate', unreported_swing_mode: 'default', timed: {
+      simple_timer_entity: 'sensor.demo_air_usage', simple_timer_target: 'input_boolean.demo_air_timer',
+      min_minutes: 15, max_minutes: 120, step_minutes: 15,
+    } }],
+  }),
   ...(query.has('room-control-names') && {
     show_unassigned: false, area_ids: ['studio', 'bayit_room_den'],
     profiles: [{ entity: 'climate.demo_air', kind: 'climate', name: 'Dedicated thermostat' }],
@@ -387,6 +393,12 @@ if (query.has('device-panel')) {
     swing_horizontal_modes: ['default', 'full_swing', 'left', 'left_center', 'center', 'right_center', 'right'],
     swing_horizontal_mode: null,
   });
+  if (query.has('swing-unreported')) {
+    attributes.swing_mode = null;
+    states['climate.demo_no_swing'] = { state: 'off', attributes: {
+      ...attributes, friendly_name: 'No swing thermostat', supported_features: attributes.supported_features & ~32,
+    } };
+  }
   if (query.get('climate-labels') === 'lounge') Object.assign(attributes, {
     supported_features: attributes.supported_features & ~32, swing_horizontal_modes: ['left', 'right'],
     fan_modes: ['auto', 'sleep', 'quiet', 'low', 'health', 'medium', 'natural', 'strong', 'high'], fan_mode: 'quiet',
@@ -741,7 +753,8 @@ if (query.has('editor')) {
   const editor = Strategy.getConfigElement();
   editor.setConfig({ type: 'custom:bayit-9',
     ...((query.has('toolbar-panels') || query.has('overview-opt-in') || query.has('lighting-count') ||
-      query.has('preset-shortcut') || query.has('entrance-popup-position') || query.has('timer-usage')) && selected) });
+      query.has('preset-shortcut') || query.has('entrance-popup-position') || query.has('timer-usage') ||
+      query.has('swing-unreported')) && selected) });
   editor.hass = hass;
   editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
   document.querySelector('#editor').append(editor);
@@ -2703,6 +2716,80 @@ try {
       ]));
       await labelPage.close();
       console.log(engine + ' 320: horizontal and vertical climate controls keep independent native values and respect advertised capabilities');
+
+      const swingPage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+      swingPage.setDefaultTimeout(8000);
+      const swingUrl = base + '?configuration&device-panel&climate-labels=positioned&swing-unreported';
+      await swingPage.goto(swingUrl + '&locale=' + labelLang);
+      await swingPage.locator('.quick-button[data-entity="climate.demo_air"]').press('Shift+Enter');
+      const swingDetails = swingPage.getByRole('dialog', { name: 'Studio air conditioner', exact: true });
+      const choice = panel => panel.getByRole('combobox', { name:swingName, exact:true });
+      const vertical = choice(swingDetails);
+      const write = (attributes) => swingPage.evaluate(attributes =>
+        window.bayitTest.setFixtureAttributes('climate.demo_air', attributes), attributes);
+      const labelOf = select => select.locator('option:checked').textContent();
+      const noSwingLabel = rightToLeft ? 'ללא נדנוד' : 'No swing';
+      const noReport = rightToLeft ? /לא מדווח/ : /is not reporting/;
+      await vertical.waitFor();
+      assert.equal(await vertical.inputValue(), '');
+      assert.equal(await labelOf(vertical), noSwingLabel);
+      assert.match(await vertical.getAttribute('aria-description'), noReport);
+      const placeholder = vertical.locator('option[value=""]');
+      assert.equal(await placeholder.evaluate(option => option.disabled && option.hidden), true);
+      await vertical.evaluate(select => select.dispatchEvent(new Event('change', { bubbles:true })));
+      assert.deepEqual(await swingPage.evaluate(() => window.bayitTest.calls), []);
+      await vertical.selectOption('default');
+      await vertical.locator('option:checked[value="default"]').waitFor({ state:'attached' });
+      await swingPage.waitForFunction(() => {
+        const select = document.querySelector('bayit-dashboard').shadowRoot.querySelector('select[data-action=set_swing_mode]');
+        return !select.disabled && !select.hasAttribute('aria-description');
+      });
+      assert.deepEqual(await swingPage.evaluate(() => window.bayitTest.calls), [{
+        type:'call_service', domain:'climate', service:'set_swing_mode', target:{ entity_id:'climate.demo_air' },
+        service_data:{ swing_mode:'default' },
+      }]);
+      await write({ swing_mode:'fixed_upper_middle' });
+      await vertical.locator('option:checked[value="fixed_upper_middle"]').waitFor({ state:'attached' });
+      assert.equal(await vertical.getAttribute('aria-description'), null);
+      await write({ swing_mode:'unknown' });
+      await vertical.locator('option:checked[value=""]').waitFor({ state:'attached' });
+      assert.equal(await labelOf(vertical), '—');
+      assert.equal(await vertical.getAttribute('aria-description'), null);
+      await swingPage.evaluate(() =>
+        window.bayitTest.setFixtureAttributes('climate.demo_air', { swing_mode:undefined }));
+      await vertical.locator('option:checked[value=""]').filter({ hasText:noSwingLabel }).waitFor({ state:'attached' });
+      assert.match(await vertical.getAttribute('aria-description'), noReport);
+      await swingPage.keyboard.press('Escape');
+      await swingDetails.waitFor({ state:'hidden' });
+      await swingPage.getByRole('button', { name:'Studio', exact:true }).tap();
+      const inline = choice(swingPage.getByRole('dialog', { name:'Studio', exact:true }).locator('[data-inline-climate]'));
+      await inline.waitFor();
+      assert.equal(await labelOf(inline), noSwingLabel);
+      assert.equal(await inline.inputValue(), '');
+      assert.match(await inline.getAttribute('aria-description'), noReport);
+      await write({ swing_modes:['full_swing','fixed_upper_middle'] });
+      await inline.locator('option[value="full_swing"]').waitFor({ state:'attached' });
+      await inline.locator('option[value="default"]').waitFor({ state:'detached' });
+      assert.equal(await labelOf(inline), '—');
+      assert.equal(await inline.getAttribute('aria-description'), null);
+      assert.equal(await swingPage.evaluate(() => window.bayitTest.calls.length), 1);
+
+      await swingPage.goto(swingUrl + '&editor');
+      await swingPage.getByText('Boiler and heater controls', { exact:true }).click();
+      await swingPage.getByRole('button', { name:'Edit', exact:true }).click();
+      const fallbackEditor = swingPage.getByLabel('Display when vertical swing is unreported', { exact:true });
+      await fallbackEditor.waitFor();
+      assert.equal(await fallbackEditor.inputValue(), 'default');
+      assert.equal(await fallbackEditor.locator('option').count(), 13);
+      const editorEntity = swingPage.getByLabel('Heating device', { exact:true });
+      await editorEntity.selectOption('climate.demo_no_swing');
+      await fallbackEditor.waitFor({ state:'hidden' });
+      await editorEntity.selectOption('climate.demo_air');
+      await fallbackEditor.selectOption('fixed_upper_middle');
+      await swingPage.getByRole('button', { name:'Save profile', exact:true }).click();
+      assert.equal(await swingPage.evaluate(() => window.latest.profiles[0].unreported_swing_mode), 'fixed_upper_middle');
+      await swingPage.close();
+      console.log(engine + ' 320: unreported vertical swing is a distinct placeholder with one explicit native command and profile editing');
 
       const presetPage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
       const presetURL = base + '?device-panel&preset-shortcut';

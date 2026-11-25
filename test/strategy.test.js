@@ -213,6 +213,22 @@ function home() {
   };
 }
 
+test('preserves a bounded unreported swing label only on explicit climate profiles', () => {
+  const entity = 'climate.demo_air';
+  const kind = 'climate';
+  const profile = { entity, kind, unreported_swing_mode: 'default' };
+  assert.deepEqual(normalizeProfile(profile), profile);
+  for (const unreported_swing_mode of [true, '', ' default ', 'a'.repeat(81), 'default\u0000']) {
+    assert.deepEqual(normalizeProfile({ entity, kind, unreported_swing_mode }), { entity, kind });
+  }
+  assert.deepEqual(normalizeProfile({ ...profile, kind: 'heater' }), { entity, kind: 'heater' });
+  assert.equal(normalizeProfile({ ...profile, entity: 'switch.demo_heat' }), null);
+  const hass = home();
+  delete hass.entities[entity].hidden_by;
+  const [room] = discoverRooms({ area_ids: ['lounge'], show_unassigned: false, profiles: [profile] }, hass, 'en');
+  assert.deepEqual(room.entities.find(item => item.entity === entity), profile);
+});
+
 test('installs as a native panel dashboard from a Hebrew Home Assistant', () => {
   const mock = home();
   const output = generateDashboard({}, mock);

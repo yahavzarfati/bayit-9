@@ -51,7 +51,7 @@ export function climateOptionLabel(action, value, options, t) {
 
 export function buildPanelControls(model, {
   make, button, icon, label, t, request, compactTimer = false, timerPreferenceKey, buildClimateDetail,
-  usageInfo, canShowUsage, canResetUsage, resetOptIn,
+  usageInfo, canShowUsage, canResetUsage, resetOptIn, unreportedSwingMode,
 }) {
   const used = new Set();
   const updates = [];
@@ -108,14 +108,26 @@ export function buildPanelControls(model, {
       unavailable.disabled = true;
       input.append(unavailable);
       const options = actions[id].options;
+      const fallback = id === 'set_swing_mode' && options.includes(unreportedSwingMode)
+        ? climateOptionLabel(id, unreportedSwingMode, options, t) : undefined;
+      unavailable.hidden = fallback !== undefined;
       for (const option of options) {
         const item = make('option', '', climateOptionLabel(id, option, options, t));
         item.value = option;
         input.append(item);
       }
-      input.onchange = () => request(id, input.value, input);
+      input.onchange = () => {
+        if (options.includes(input.value)) request(id, input.value, input);
+      };
       updates.push((current, pending) => {
         const value = pending?.id === id ? pending.value : active(current);
+        if (fallback !== undefined) {
+          const unreported = value === null || value === undefined;
+          const caption = unreported ? fallback : '—';
+          if (unavailable.textContent !== caption) unavailable.textContent = caption;
+          if (unreported) input.setAttribute('aria-description', t('climate_swing_unreported'));
+          else input.removeAttribute('aria-description');
+        }
         input.value = options.includes(value) ? value : '';
         input.disabled = !!pending;
       });

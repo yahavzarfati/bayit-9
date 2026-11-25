@@ -1,7 +1,7 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isVacuumProgramAction,
-  isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName,
+  isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeUnreportedSwingMode,
   overviewSectionOptions, ROOM_PANEL_KINDS, roomShortcutDevices, STRATEGY_NAME, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
@@ -237,6 +237,8 @@ function normalizeEntity(item) {
   if (domain === 'climate' && entry.role !== 'status' && !['heater', 'boiler'].includes(entry.kind)) {
     const shortcut = normalizeClimatePresetShortcut(item.room_climate_preset);
     if (shortcut) entry.room_climate_preset = shortcut;
+    const unreported = item.kind === 'climate' && normalizeUnreportedSwingMode(item.unreported_swing_mode);
+    if (unreported) entry.unreported_swing_mode = unreported;
   }
   if (domain === 'calendar') {
     const accent = calendarAccent(item.accent_color);
@@ -1826,6 +1828,7 @@ export class BayitDashboard extends HTMLElement {
       (timing.simple_timer_entity ?? timing.timer_entity ?? view.config.entity);
     view.special = buildPanelControls(model, { make, button, icon, label, t: key => this.t(key),
       compactTimer: view.inlineClimate || view.compactHeater || standaloneClimate, timerPreferenceKey,
+      unreportedSwingMode: view.config.unreported_swing_mode,
       usageInfo: (entity, source) => { if (this.canShowTimerUsage(entity)) this.moreInfo({ entity }, source); },
       canShowUsage: entity => this.canShowTimerUsage(entity),
       canResetUsage: entity => this.canResetTimerUsage(entity),
