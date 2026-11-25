@@ -177,7 +177,7 @@ const words = {
   en: {
     loading: 'Loading calendars…', empty: 'No upcoming events in the next 7 days.',
     unavailable: 'Calendars are unavailable right now.', partial: 'Some calendars are unavailable right now.',
-    partialDetail: 'Events from available calendars are shown below.',
+    partialDetail: 'Only events from available calendars are included.',
     partialEmpty: 'No upcoming events in the available calendars.',
     choose: 'Choose calendars in the dashboard settings.', show: 'Show the full week', hide: 'Show less',
     allDay: 'All day', until: 'Until', back: 'Back to agenda', when: 'When',
@@ -186,7 +186,7 @@ const words = {
   he: {
     loading: 'טוען יומנים…', empty: 'אין אירועים ב־7 הימים הקרובים.',
     unavailable: 'היומנים אינם זמינים כרגע.', partial: 'חלק מהיומנים אינם זמינים כרגע.',
-    partialDetail: 'מוצגים כאן האירועים מהיומנים הזמינים.',
+    partialDetail: 'רק יומנים זמינים נכללים בתצוגה.',
     partialEmpty: 'אין אירועים קרובים ביומנים הזמינים.',
     choose: 'אפשר לבחור יומנים בהגדרות הדשבורד.', show: 'הצגת השבוע המלא', hide: 'תצוגה מקוצרת',
     allDay: 'כל היום', until: 'עד', back: 'חזרה ליומן', when: 'מועד',
@@ -246,12 +246,15 @@ export function createCalendarAgenda({ host, context, items, settings }) {
   const statusDetail = make('span', 'calendar-agenda-status-detail');
   statusCopy.append(statusText, statusDetail);
   status.append(alertIcon, statusCopy);
+  const loading = make('p', 'calendar-agenda-loading', labels.loading);
+  loading.setAttribute('role', 'status');
+  loading.hidden = true;
   const content = make('div', 'calendar-agenda-days');
   content.id = 'bayit-agenda-' + ++nextAgendaId;
   const expand = button('control-button', labels.show);
   expand.classList.add('calendar-agenda-expand');
   expand.setAttribute('aria-controls', content.id);
-  panel.append(status, content, expand);
+  panel.append(status, loading, content, expand);
   const detailView = settings.event_details ? make('section', 'calendar-agenda-detail') : undefined;
   const detailTitle = detailView && make('h3');
   const detailFields = detailView && make('dl');
@@ -624,9 +627,10 @@ export function createCalendarAgenda({ host, context, items, settings }) {
       .find(row => row.detail.key === detailKey);
     const vanished = detailKey !== undefined && !selected;
     if (vanished) detailKey = undefined;
-    const text = !sources.length ? labels.choose : !ready ? (pending ? labels.loading : labels.unavailable)
-      : partial ? labels.partial : !model.count ? (pending ? labels.loading : labels.empty) : '';
-    const detail = text === labels.partial ? (model.count ? labels.partialDetail : pending ? labels.loading : labels.partialEmpty) : '';
+    const waiting = pending && !model.count;
+    const text = !sources.length ? labels.choose : !ready && !pending ? labels.unavailable
+      : partial ? labels.partial : !model.count && !waiting ? labels.empty : '';
+    const detail = text === labels.partial ? (model.count || waiting ? labels.partialDetail : labels.partialEmpty) : '';
     if (!model.canExpand) expanded = false;
     const shown = expanded ? model.full : model.compact;
     const forecastByDay = new Map();
@@ -638,7 +642,7 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     const unit = ['°C','°F','K'].includes(unitValue) ? unitValue : '°';
     const timePreference = hass?.locale?.time_format;
     const hourCycle = timePreference === '24' ? 'h23' : timePreference === '12' ? 'h12' : undefined;
-    const order = JSON.stringify([text, detail, shown, selected, [...forecastByDay], expanded, model.canExpand, unit, hourCycle, calendar.timeZone]);
+    const order = JSON.stringify([text, detail, waiting, shown, selected, [...forecastByDay], expanded, model.canExpand, unit, hourCycle, calendar.timeZone]);
     if (alarmAt !== model.nextChange) {
       view.clearTimeout(alarm);
       alarmAt = model.nextChange;
@@ -656,8 +660,9 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     statusDetail.hidden = !detail;
     statusDetail.textContent = detail;
     status.hidden = !text;
+    loading.hidden = !waiting || !!selected;
     expand.hidden = !!selected || !model.canExpand;
-    content.hidden = !!selected;
+    content.hidden = !!selected || waiting;
     expand.textContent = expanded ? labels.hide : labels.show;
     expand.setAttribute('aria-expanded', String(expanded));
     content.dataset.expandable = String(model.canExpand);
@@ -762,6 +767,11 @@ export const calendarAgendaStyles = `
   .calendar-agenda-event-title { flex-wrap: wrap; font-size: 13px; font-weight: 680; }
   .calendar-agenda-event-title bdi { flex: 1 1 130px; min-width: 0; overflow-wrap: anywhere; }
   .calendar-agenda-status { margin: 0; }
+  .calendar-agenda-loading {
+    display: grid; place-items: center; min-block-size: 96px; margin: 0; padding: 12px;
+    border: 1px solid var(--soft-line); border-radius: 12px; background: var(--room-tile-fill);
+    color: var(--secondary); font-size: 12px; text-align: center;
+  }
   .calendar-agenda-status[data-warning] {
     display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px;
     border: 1px solid var(--soft-line); border-radius: 8px; background: var(--room-tile-fill);

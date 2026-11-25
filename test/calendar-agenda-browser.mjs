@@ -34,6 +34,7 @@ const fixture = function () {
       ] }] },
   ] };
   if (query.has('automatic')) delete selected.toolbar[1].sections;
+  if (query.has('loading-single')) selected.toolbar[1].sections[0].entities = [primary];
   const state = (name, status = 'off', attributes = {}) => ({state:status, attributes:{friendly_name:name,...attributes}});
   const states = {
     [primary]:state('Primary'), [secondary]:state('Secondary'), [offline]:state('Offline',query.has('missing') ? 'off' : 'unavailable'),
@@ -174,6 +175,48 @@ server.listen(0,'127.0.0.1');
 await once(server,'listening');
 const base = 'http://127.0.0.1:' + server.address().port;
 
+async function assertCalendarLoadingGeometry(browser, locale, name) {
+  const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+  page.setDefaultTimeout(8000);
+  const dialog = page.getByRole('dialog', { name, exact:true });
+  const loading = dialog.locator('.calendar-agenda-loading');
+  const warning = dialog.locator('.calendar-agenda-status[data-warning]');
+  const close = dialog.locator('[data-role=close]');
+  const url = base + '?month&details&locale=' + locale;
+  try {
+    for (const width of [320,391]) {
+      await page.setViewportSize({ width, height:844 });
+      await page.goto(url + '&loading-width=' + width + '#panel/demo-calendar');
+      await loading.waitFor();
+      await warning.waitFor();
+      assert.equal(await loading.getAttribute('role'), 'status');
+      assert.equal(await dialog.locator('.calendar-agenda-event').count(), 0);
+      const waiting = await close.boundingBox();
+      assert.ok((await loading.boundingBox()).height >= 96);
+
+      await page.evaluate(() => window.fixture.emitPrimary());
+      await dialog.getByText('Recovered appointment', { exact:true }).waitFor();
+      await loading.waitFor({ state:'hidden' });
+      await warning.waitFor();
+      const ready = await close.boundingBox();
+      assert.ok(Math.abs(ready.y - waiting.y) <= 26, JSON.stringify({ locale, width, waiting, ready }));
+      assert.equal(await close.evaluate(node => node.getRootNode().activeElement === node), true);
+    }
+
+    await page.goto(url + '&loading-single#panel/demo-calendar');
+    await loading.waitFor();
+    assert.equal(await warning.isVisible(), false);
+    const initialHeight = (await dialog.boundingBox()).height;
+    await page.evaluate(() => window.fixture.send(0, { events:[] }));
+    await loading.waitFor({ state:'hidden' });
+    assert.ok((await dialog.boundingBox()).height < initialHeight - 44, 'An empty agenda does not retain the loading height');
+    await page.evaluate(() => window.fixture.dropPrimary());
+    await warning.waitFor();
+    assert.equal(await loading.isVisible(), false);
+    assert.deepEqual(await page.evaluate(() => window.fixture.mutations), []);
+  } finally { await page.close(); }
+}
+
 async function assertCalendarRestPoll(browser, locale, name) {
   const page = await browser.newPage({viewport:{width:391,height:844},hasTouch:true,reducedMotion:'reduce',
     timezoneId:'America/New_York'});
@@ -249,6 +292,7 @@ try {
       const names = { settings:hebrew ? 'מראה' : 'Appearance', calendar:hebrew ? 'יומן' : 'Calendar',
         show:hebrew ? 'הצגת השבוע המלא' : 'Show the full week', hide:hebrew ? 'תצוגה מקוצרת' : 'Show less',
         partial:hebrew ? 'חלק מהיומנים אינם זמינים כרגע.' : 'Some calendars are unavailable right now.' };
+      await assertCalendarLoadingGeometry(browser, locale, names.calendar);
       const open = async () => {
         await page.getByRole('button',{name:names.settings,exact:true}).tap();
         await page.getByRole('dialog').getByRole('button',{name:names.calendar,exact:true}).tap();
