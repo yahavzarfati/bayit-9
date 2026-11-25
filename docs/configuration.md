@@ -172,7 +172,7 @@ In YAML use `layout: readouts` on the status section. A binary sensor can use `r
 
 In a **Weather** readings section, enable **Show readings as a compact read-only list** to show each sensor's name and current value on one row. Graphs in the section keep their history charts. In YAML, set `layout: readings-list` on the readings section.
 
-In an **Energy** electricity or water section, enable **Show readings with large values** to use Home Assistant's sensor cards for devices displayed as **Status**. Tap a reading to open its details. History charts keep their configured durations. In YAML, set `layout: reading-cards` on the section.
+In an **Energy** electricity or water section, enable **Show readings with large values** to use Home Assistant's sensor cards for devices displayed as **Status**. Tap a reading to open its details. History charts keep their configured durations. In YAML, set `layout: reading-cards` on the section. In the Energy screen settings, switch off **Show the Home Assistant Energy dashboard link** to keep just the readings and charts. The YAML equivalent is `energy_dashboard_link: false` on the toolbar entry.
 
 To add the regional warnings map, edit a **Security** button in **Toolbar and extra screens** and enable **Show the Oref alert map**. This uses the frontend card supplied by the installed [Oref Alert integration](https://github.com/amitfin/oref_alert). In YAML, set `oref_map: {enabled: true}` on a `kind: security` toolbar entry. The optional settings are `auto_fit`, `hebrew_basemap`, `show_pre_alert`, and `show_end`. The map starts at a regional view and keeps the home and device location markers disabled.
 

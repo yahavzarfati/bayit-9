@@ -1027,6 +1027,7 @@ function dashboardToolbar(config, hass, roomIds) {
       isVisibleEntity(entity, states, registry, hidden) &&
       supportsDailyForecast(states[entity])) : undefined;
     return { id, kind: entry.kind, ...(label && { label }), ...(ROOM_ICON.test(icon) && { icon }),
+      ...(entry.kind === 'energy' && entry.energy_dashboard_link === false && { energy_dashboard_link: false }),
       ...(entry.kind === 'presence' && typeof entry.presence_dynamic_icon === 'boolean' &&
         { presence_dynamic_icon: entry.presence_dynamic_icon }),
       ...(path && { path }), ...(placement && { placement }),

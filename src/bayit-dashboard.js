@@ -382,6 +382,7 @@ export function normalizeDashboardConfig(config = {}) {
     const placement = toolbarPlacement(item.kind, item.placement);
     return [{ kind: item.kind, id: text(item.id), label: text(item.label), path: item.path,
       ...(item.kind === 'presence' && { presence_dynamic_icon: hasDynamicPresenceIcon(item) }),
+      ...(item.kind === 'energy' && item.energy_dashboard_link === false && { energy_dashboard_link: false }),
       ...(placement && { placement }),
       ...(usesRoomPopupPosition(item) && { popup_position: 'room' }),
       ...(orefMap && { oref_map: orefMap }),
@@ -1513,8 +1514,8 @@ export class BayitDashboard extends HTMLElement {
     if (type === 'activity') this.paintActivity();
     const kind = type === 'room' || type === 'device' ? type : 'toolbar';
     const roomPosition = usesRoomPopupPosition(toolbar);
-    // Settings, Energy and secondary navigation use the available room band.
-    const centeredToolbar = kind === 'toolbar' && !roomPosition &&
+    const energyReadings = type === 'energy' && toolbar?.sections?.some(section => isEnergyReadingCards(type, section));
+    const centeredToolbar = kind === 'toolbar' && !roomPosition && !energyReadings &&
       (type === 'settings' || type === 'energy' || !n.toolbarActions.contains(source ?? null));
     this.popupMotion.open(source, {
       kind,
@@ -1858,6 +1859,7 @@ export class BayitDashboard extends HTMLElement {
       mediaStage: toolbar?.media_stage,
       mediaRemote: toolbar?.media_remote,
       calendarAgenda: toolbar?.calendar_agenda,
+      energyDashboardLink: toolbar?.energy_dashboard_link !== false,
     }, {
       host: content, dialog: this.nodes.modal, hass: this._hass, getHass: () => this._hass,
       locale: this.config.locale, hiddenEntities: this.config.hiddenEntities,

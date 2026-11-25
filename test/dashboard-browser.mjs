@@ -282,6 +282,7 @@ let holdSetupSave = false;
 let finishSetupSave;
 const hass = {
   user: { is_admin: query.has('configuration') && !query.has('member') },
+  ...(query.has('with-energy-dashboard') && {panels:{energy:{}}}),
   locale: { language: new URL(location.href).searchParams.get('locale') || 'en' },
   ...(query.has('sun-horizon') && { config: { time_zone:'Asia/Tokyo' } }),
   states,
@@ -973,7 +974,7 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
       ...(query.has('utility-graph-details') ? [{kind:'readings',entities:[
         {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24},
       ]}] : [])]},
-    {kind:'energy',sections:[{kind:'electricity',
+    {kind:'energy',...(query.has('hide-energy-dashboard-link') && {energy_dashboard_link:false}),sections:[{kind:'electricity',
       ...(query.has('energy-readings') && {title:'Electricity'}),
       ...(query.has('energy-reading-cards') && {layout:'reading-cards'}),
       entities:[{entity:'sensor.demo_meter',role:'graph',graph_hours:168},
@@ -3418,6 +3419,55 @@ async function assertMediaRemotePower(browser) {
     } finally {
       await page.close();
     }
+  }
+}
+
+async function assertEnergyPopupPlacement(browser) {
+  for(const locale of ['en','he']){
+    const he=locale==='he';
+    const page=await browser.newPage({viewport:{width:391,height:846},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const title=he?'אנרגיה':'Energy';
+    const url=base+'/fixture-home/home?toolbar-panels&energy-readings&with-energy-dashboard&locale='+locale;
+    const compact='&energy-reading-cards';
+    const hidden='&hide-energy-dashboard-link';
+    const dialog=page.getByRole('dialog',{name:title,exact:true});
+    const link=dialog.getByRole('link',{name:he?'פתיחת דשבורד האנרגיה':'Open energy dashboard',exact:true});
+    const geometry=()=>dialog.evaluate(el=>({centered:el.hasAttribute('data-centered-toolbar'),y:Math.round(el.getBoundingClientRect().top),width:Math.round(el.getBoundingClientRect().width)}));
+    try {
+      await page.goto(url);
+      await page.getByRole('button',{name:title,exact:true}).tap();
+      await dialog.waitFor();
+      const old=await geometry();
+      assert.equal(old.centered,true);
+      assert.equal(await link.getAttribute('href'),'/energy');
+      const route=new URL(page.url()).hash;
+      assert.match(route,/^#panel\//);
+      await page.goto(url+compact+hidden+route);
+      await dialog.waitFor();
+      const fitted=await geometry();
+      assert.equal(fitted.centered,false, 'The reading cards align with the toolbar even from a direct URL');
+      assert.equal(fitted.width,359);
+      assert.ok(fitted.y < old.y, 'The fitted Energy panel starts above the centered one');
+      assert.equal(await link.count(),0);
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.calls),[]);
+      await page.goto(url+compact);
+      await page.getByRole('button',{name:title,exact:true}).tap();
+      await dialog.waitFor();
+      assert.deepEqual(await geometry(),fitted);
+      assert.equal(await link.getAttribute('href'),'/energy');
+
+      await page.goto(url+compact+hidden+'&editor');
+      await page.getByText(he?'סרגל ומסכים נוספים':'Toolbar and extra screens',{exact:true}).tap();
+      await page.getByRole('button',{name:title,exact:true}).tap();
+      const toggle=page.getByRole('checkbox',{name:he?'הצגת קישור לדשבורד האנרגיה של Home Assistant':'Show the Home Assistant Energy dashboard link',exact:true});
+      assert.equal(await toggle.isChecked(),false);
+      await toggle.check();
+      const configured=()=>page.evaluate(()=>window.latest.toolbar.find(item=>item.kind==='energy').energy_dashboard_link);
+      assert.equal(await configured(),undefined);
+      await toggle.uncheck();
+      assert.equal(await configured(),false);
+    } finally { await page.close(); }
   }
 }
 
@@ -6917,6 +6967,7 @@ try {
       await assertRoomTemperatureCharts(browser);
       console.log(engine + ': room temperature source, fallback, units and editor');
       await assertEnergyReadingCards(browser);
+      await assertEnergyPopupPlacement(browser);
       console.log(engine + ': optional Energy headline readings, native details, fallback and editor');
       await assertCompactWeatherReadings(browser);
       console.log(engine + ': optional passive Weather readings, RTL, updates, existing charts and editor');

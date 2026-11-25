@@ -842,7 +842,7 @@ export function createToolbarPanel(kind, configuration, context) {
       pager.append(...panels, tabs);
     } else host.prepend(tabs);
   }
-  if (kind === 'energy' && currentHass?.panels?.energy) {
+  if (kind === 'energy' && configuration.energyDashboardLink !== false && currentHass?.panels?.energy) {
     const energy = make('a', 'control-button toolbar-link', t('open_energy'));
     energy.href = '/energy';
     host.append(energy);

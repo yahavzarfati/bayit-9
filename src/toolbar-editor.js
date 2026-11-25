@@ -69,6 +69,7 @@ const WORDS = {
     weatherReadingsList: 'Show readings as a compact read-only list',
     hourlyForecast: 'Show the 24-hour forecast above the daily forecast',
     energyReadingCards: 'Show readings with large values',
+    energyDashboardLink: 'Show the Home Assistant Energy dashboard link',
     sensorComparison: 'Compare trends in a single chart', comparisonHours: 'Time range in hours',
     comparisonInterval: 'Average interval in minutes', seriesColor: 'Line color for this sensor',
     compactReadouts: 'Show compact read-only status tiles', readoutOn: 'Label for on', readoutOff: 'Label for off',
@@ -140,6 +141,7 @@ const WORDS = {
     weatherReadingsList: 'הצגת המדדים ברשימה קומפקטית לקריאה בלבד',
     hourlyForecast: 'הצגת תחזית ל־24 שעות מעל התחזית היומית',
     energyReadingCards: 'הצגת ערכי המדידה בגדול',
+    energyDashboardLink: 'הצגת קישור לדשבורד האנרגיה של Home Assistant',
     sensorComparison: 'השוואת מגמות בגרף אחד', comparisonHours: 'טווח תצוגה בשעות',
     comparisonInterval: 'מרווח ממוצע בדקות', seriesColor: 'צבע הקו של החיישן',
     compactReadouts: 'הצגת אריחי מצב קומפקטיים לקריאה בלבד', readoutOn: 'תווית למצב פעיל', readoutOff: 'תווית למצב כבוי',
@@ -950,6 +952,11 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       const roomPosition = node('input', { type: 'checkbox', checked: usesRoomPopupPosition(entry) });
       roomPosition.addEventListener('change', () => changeEntry({ popup_position: roomPosition.checked ? 'room' : undefined }));
       fields.push(node('label', { className: 'check' }, [roomPosition, words.roomPopupPosition]));
+    }
+    if (entry.kind === 'energy') {
+      const shortcut = node('input', { type:'checkbox', checked:entry.energy_dashboard_link !== false });
+      shortcut.addEventListener('change', () => changeEntry({ energy_dashboard_link: shortcut.checked ? undefined : false }));
+      fields.push(node('label', { className:'check' }, [shortcut, words.energyDashboardLink]));
     }
     if (entry.kind === 'security') fields.push(editOrefMap(entry));
     if (entry.kind === 'vacuum') fields.push(editVacuumMap(entry));
