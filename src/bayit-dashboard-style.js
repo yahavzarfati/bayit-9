@@ -375,7 +375,7 @@ export const styles = `
       --home-room-outline: 58%;
       --home-toolbar-outline: 58%;
       --home-badge-outline: 31%;
-      --home-cover-availability-outline: 58%;
+      --home-shortcut-availability-outline: 58%;
     }
     .shell[data-page=true] .quick-button[data-tone=quiet]:not(:disabled) { border-color: var(--soft-line); }
   }
@@ -413,9 +413,9 @@ export const styles = `
     background: rgba(122,167,255,.18);
     border-color: rgba(122,167,255,.38);
   }
-  .shell[data-page=true] .quick-button[data-entity^="cover."][data-unavailable] {
+  .shell[data-page=true] .room .quick-button[data-unavailable] {
     border-style: dashed;
-    border-color: color-mix(in srgb,var(--ink) var(--home-cover-availability-outline,48%),transparent);
+    border-color: color-mix(in srgb,var(--ink) var(--home-shortcut-availability-outline,48%),transparent);
   }
   .quick-button[data-transition=heating-level] {
     box-shadow: inset 0 0 0 1.5px var(--home-heating-update-ink,#ffb278);

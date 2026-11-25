@@ -1467,8 +1467,7 @@ export class BayitDashboard extends HTMLElement {
         label(shortcut, [model.name, status, updateLabel, actionLabel].filter(Boolean).join(' · '));
         shortcut.dataset.tone = feedback ? 'moving' : tone;
         shortcut.dataset.transition = feedback?.direction || (heatingLevel ? 'heating-level' : '');
-        shortcut.toggleAttribute('data-unavailable',
-          this.config.page && haveStates && model.domain === 'cover' && !model.available);
+        shortcut.toggleAttribute('data-unavailable', this.config.page && haveStates && !model.available);
         const busy = heatingLevel || (!!pending && (model.available || (model.domain !== 'cover' && !levelPending)));
         shortcut.setAttribute('aria-busy', String(busy));
       }

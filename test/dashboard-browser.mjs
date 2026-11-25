@@ -4902,9 +4902,17 @@ async function assertHomeMaterial(browser) {
         await setMedia('no-preference', 'no-preference');
       }
     }
-    const unrelated = homeRoom.locator('.quick-button[data-entity="light.demo_unavailable"]');
-    assert.equal(await unrelated.getAttribute('data-unavailable'), null);
-    assert.equal(await unrelated.evaluate(control => getComputedStyle(control).borderStyle), 'solid');
+    const light = homeRoom.locator('.quick-button[data-entity="light.demo_unavailable"]');
+    for (const [state, unavailable] of [['unavailable', true], ['unknown', true], ['off', false], ['on', false]]) {
+      await quietPage.evaluate(async state => {
+        window.bayitTest.setRoomState('light.demo_unavailable', state);
+        await new Promise(requestAnimationFrame);
+      }, state);
+      assert.equal(await light.getAttribute('data-unavailable') !== null, unavailable);
+      assert.equal(await light.evaluate(control => getComputedStyle(control).borderStyle), unavailable ? 'dashed' : 'solid');
+      assert.equal((await light.getAttribute('aria-label')).includes(unavailableLabel), unavailable);
+      assert.equal(await light.getAttribute('data-tone'), state === 'on' ? 'warm' : 'quiet');
+    }
     assert.equal(await quietPage.evaluate(() => window.bayitTest.calls.length), 0);
     const quietRoomName = homeRoom.locator('.room-name');
     const nameLines = () => quietRoomName.evaluate(name => {
