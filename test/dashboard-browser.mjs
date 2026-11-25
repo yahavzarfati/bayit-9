@@ -6406,7 +6406,8 @@ async function assertHomeMaterial(browser) {
   });
   try {
     const quietLocale = engine === 'webkit' ? 'he' : 'en';
-    await quietPage.goto(base + '?room-status&classic-quiet&locale=' + quietLocale);
+    const fixture = '?room-status&classic-quiet&locale=' + quietLocale;
+    await quietPage.goto(base + fixture);
     const homeRoom = quietPage.locator('.room[data-room="bayit_room_status"]');
     await homeRoom.waitFor();
     const quietShortcut = homeRoom.locator('.quick-button[data-entity="light.demo_side1"]');
@@ -6445,6 +6446,7 @@ async function assertHomeMaterial(browser) {
         stronger: matchMedia('(prefers-contrast: more)').matches,
         background: pixel(style.backgroundColor),
         rim: pixel(style.borderColor)[3],
+        shadow: style.boxShadow,
         strongRim: pixel(style.getPropertyValue('--soft-line'))[3],
         toolbarAlpha: pixel(toolbarStyle.backgroundColor)[3],
         chromeAlpha: pixel(chromeStyle.backgroundColor)[3],
@@ -6490,7 +6492,9 @@ async function assertHomeMaterial(browser) {
         else for (const value of current.background.slice(0, 3)) near(value, 62);
         assert.equal(current.background[3], 255);
       } else assert.equal(current.background[3], 0);
-      near(current.rim, current.stronger ? current.strongRim : 41);
+      near(current.rim, current.stronger ? current.strongRim : transparentGlass ? 0 : 41);
+      if (transparentGlass) assert.match(current.shadow, /0px 1px 0px 0px inset/);
+      else assert.equal(current.shadow, 'none');
       for (const [index, { fill, rim }] of current.badges.entries()) {
         assert.equal(fill[3], fallback ? 255 : 0);
         if (fallback && dark) assert.ok(fill.slice(0, 3).every(value => value > 190));
@@ -6523,6 +6527,44 @@ async function assertHomeMaterial(browser) {
     }
 
     await setMedia('no-preference', 'no-preference');
+    const shortcutBox = await quietShortcut.boundingBox();
+    await quietShortcut.focus();
+    const focus = await quietShortcut.evaluate(control => {
+      const style = getComputedStyle(control);
+      return [control.matches(':focus-visible'), style.outlineStyle, style.outlineWidth];
+    });
+    assert.deepEqual(focus, [true, 'solid', '2px']);
+    const focusMaterial = await appearance('light');
+    near(focusMaterial.rim, 41);
+    assert.equal(focusMaterial.shadow, 'none');
+    assert.deepEqual(await quietShortcut.boundingBox(), shortcutBox);
+    await quietShortcut.evaluate(control => control.blur());
+
+    for (const [attribute, value, expectedShadow] of [
+      ['aria-busy', 'true', /^none$/],
+      ['data-popup-origin', '', /0px 0px 0px 2px inset/],
+    ]) {
+      const { border, shadow } = await quietShortcut.evaluate((control, [name, value]) => {
+        const original = control.getAttribute(name);
+        control.setAttribute(name, value);
+        const style = getComputedStyle(control);
+        const material = { border: style.borderColor, shadow: style.boxShadow };
+        if (original === null) control.removeAttribute(name);
+        else control.setAttribute(name, original);
+        return material;
+      }, [attribute, value]);
+      assert.notEqual(border, 'rgba(0, 0, 0, 0)');
+      assert.match(shadow, expectedShadow);
+    }
+
+    await quietPage.emulateMedia({ forcedColors: 'active' });
+    if (await quietPage.evaluate(() => matchMedia('(forced-colors: active)').matches)) {
+      const material = await appearance('light');
+      assert.equal(material.rim, 255);
+      assert.equal(material.shadow, 'none');
+    }
+    await quietPage.emulateMedia({ forcedColors: 'none' });
+
     const he = quietLocale === 'he';
     const unavailableLabel = he ? 'לא זמין' : 'Unavailable';
     for (const [state, tone, direction, label] of [
@@ -6588,6 +6630,19 @@ async function assertHomeMaterial(browser) {
     assert.equal(await quietRoomName.textContent(), rawName);
     assert.equal(await nameLines(), 1);
     assert.equal(await quietPage.evaluate(() => window.bayitTest.calls.length), 0);
+
+    const wallpaper = he ? 'porcelain' : 'jade';
+    await quietPage.evaluate(background => {
+      localStorage.setItem('bayit-9.preferences.v1:/fixture-home/home', JSON.stringify({ background }));
+    }, wallpaper);
+    await quietPage.goto(base + '/fixture-home/home' + fixture);
+    await quietPage.locator('.shell[data-background="' + wallpaper + '"]').waitFor();
+    const wallpaperMaterial = await appearance(he ? 'dark' : 'light');
+    if (wallpaperMaterial.glass) {
+      assert.equal(wallpaperMaterial.rim, 0);
+      assert.match(wallpaperMaterial.shadow, /0px 1px 0px 0px inset/);
+      assert.deepEqual(wallpaperMaterial.shortcutInk, [255, 255, 255, 255]);
+    }
   } finally {
     await quietPage.close();
   }

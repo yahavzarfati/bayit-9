@@ -380,8 +380,19 @@ export const styles = `
   .shell[data-page=true] .quick-button[data-tone=quiet]:not(:disabled) {
     border-color: color-mix(in srgb,var(--ink) 16%,transparent);
   }
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .shell[data-page=true] .quick-button[data-tone=quiet]:not(:disabled):where(:not(
+      :hover, :active, :focus-visible, [data-unavailable], [data-popup-origin], [aria-busy=true],
+      [data-transition]:not([data-transition=""])
+    )) {
+      border-color: transparent;
+      box-shadow: var(--idle-shortcut-rim,inset 0 1px 0 rgba(255,255,255,.12));
+    }
+  }
   @media (prefers-reduced-transparency: reduce) {
+    .shell[data-page=true] { --idle-shortcut-rim: none; }
     .shell[data-page=true] .quick-button[data-tone=quiet]:not(:disabled,:hover) {
+      border-color: color-mix(in srgb,var(--ink) 16%,transparent);
       background-color: color-mix(in srgb,var(--ink) 10%,var(--surface));
     }
   }
@@ -393,8 +404,13 @@ export const styles = `
       --home-toolbar-outline: 58%;
       --home-badge-outline: 31%;
       --home-shortcut-availability-outline: 58%;
+      --idle-shortcut-rim: none;
     }
     .shell[data-page=true] .quick-button[data-tone=quiet]:not(:disabled) { border-color: var(--soft-line); }
+  }
+  @media (forced-colors: active) {
+    .shell[data-page=true] { --idle-shortcut-rim: none; }
+    .shell[data-page=true] .quick-button[data-tone=quiet]:not(:disabled) { border-color: ButtonText; }
   }
   .shell[data-layout=header] .quick {
     grid-template-columns: repeat(3,var(--shortcut-width));
