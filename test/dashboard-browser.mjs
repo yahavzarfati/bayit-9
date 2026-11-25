@@ -1182,7 +1182,8 @@ if (query.has('home-room-sizing')) {
     for (let j = 0; j < [6,1,2,6,3,4,5,2,6,3][i]; j++) {
       const entity = 'light.' + room + '_' + j;
       hass.entities[entity] = { area_id:room };
-      hass.states[entity] = { state:'off', attributes:{friendly_name:'Fixture light ' + j,supported_color_modes:['onoff']} };
+      const state = query.has('active-room-count') && i === 0 && j === 0 ? 'on' : 'off';
+      hass.states[entity] = { state, attributes:{friendly_name:'Fixture light ' + j,supported_color_modes:['onoff']} };
     }
   }
   if (count !== 3) selected.room_overrides = { fixture_room_0:{classic_title_break:1} };
@@ -3322,8 +3323,29 @@ async function assertClassicRoomTitleLanes(browser) {
         assert.ok(Math.abs(single.rowWidth - single.cards[0].width) < 1);
         assert.equal(single.cards[0].titleText,locale === 'he' ? 'חדר\nפנאי' : 'Media\nRoom');
 
-        await page.goto(source + '10');
+        await page.goto(source + '10&active-room-count');
         await cards.nth(9).waitFor();
+        const activeRoom = page.locator('.room[data-room="fixture_room_0"]');
+        const countBadge = activeRoom.locator('.room-count');
+        await activeRoom.locator('.room-count[data-tone=warm]').waitFor();
+        const badge = await countBadge.evaluate(element => {
+          const rect = element.getBoundingClientRect();
+          const title = element.parentElement.querySelector('.room-name').getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return {
+            width: rect.width, height: rect.height, beforeTitle: rect.right <= title.left,
+            color: style.backgroundColor, weight: style.fontWeight,
+            increasedContrast: matchMedia('(prefers-contrast: more)').matches ||
+              matchMedia('(prefers-reduced-transparency: reduce)').matches,
+          };
+        });
+        assert.equal(await countBadge.innerText(), '1');
+        assert.equal(badge.width, 28);
+        assert.equal(badge.height, 18);
+        assert.equal(badge.beforeTitle, true);
+        assert.equal(badge.color, badge.increasedContrast ? 'rgba(0, 0, 0, 0)' : 'rgba(244, 201, 93, 0.16)',
+          JSON.stringify(badge));
+        assert.equal(badge.weight, '800');
         const regular = await grid();
         assert.equal(regular.cards.length,10);
         assert.equal(new Set(regular.cards.map(item=>item.x)).size,2);
@@ -6469,11 +6491,11 @@ async function assertHomeMaterial(browser) {
         assert.equal(current.background[3], 255);
       } else assert.equal(current.background[3], 0);
       near(current.rim, current.stronger ? current.strongRim : 41);
-      for (const { fill, rim } of current.badges) {
+      for (const [index, { fill, rim }] of current.badges.entries()) {
         assert.equal(fill[3], fallback ? 255 : 0);
         if (fallback && dark) assert.ok(fill.slice(0, 3).every(value => value > 190));
         else if (fallback) for (const value of fill.slice(0, 3)) near(value, 64);
-        near(rim, (current.stronger ? .31 : current.reduced ? .10 : dark ? .22 : .18) * 255);
+        near(rim, (current.stronger ? .31 : current.reduced || index === 1 ? .10 : dark ? .22 : .18) * 255);
       }
       assert.deepEqual(current.coverInk, dark ? (fallback ? [0, 63, 104, 255] : [0, 30, 77, 255])
         : fallback ? [122, 167, 255, 255] : [164, 200, 255, 255]);

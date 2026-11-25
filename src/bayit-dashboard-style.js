@@ -330,6 +330,22 @@ export const styles = `
   .room-status[data-tone=warm], .room-count[data-tone=warm] { color: var(--warm); border-color: rgba(255,223,146,.31); }
   .room-status[data-tone=moving], .room-count[data-tone=moving] { color: var(--moving); border-color: rgba(158,220,255,.32); }
   .room-status[data-tone=critical], .room-count[data-tone=critical] { color: var(--critical); border-color: rgba(255,187,187,.42); }
+  .shell[data-page=true] .room-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-inline-size: 28px;
+    padding: 2px 4px;
+    font-weight: 800;
+    line-height: 1.2;
+    border-color: color-mix(in srgb,var(--ink) 10%,transparent);
+    box-shadow: inset 0 1px 0 color-mix(in srgb,var(--ink) 5.5%,transparent);
+  }
+  .shell[data-page=true] .room-count[data-tone=warm] { background: rgba(244,201,93,.16); }
+  @media (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
+    .shell[data-page=true] .room-count { box-shadow: none; }
+    .shell[data-page=true] .room-count[data-tone=warm] { background: transparent; border-color: rgba(255,223,146,.31); }
+  }
   .quick {
     grid-area: quick;
     display: grid;
@@ -1158,6 +1174,7 @@ export const styles = `
       grid-template-areas: "icon count label";
       grid-template-columns: 22px auto minmax(0,1fr);
       grid-template-rows: 1fr;
+      column-gap: 5px;
       font-size: 12px;
       padding-block: 1px;
     }
