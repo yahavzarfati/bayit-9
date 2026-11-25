@@ -2563,6 +2563,16 @@ try {
       const horizontalName = rightToLeft ? 'נדנוד אופקי' : 'Horizontal swing';
       const swing = positioned.getByRole('combobox', { name: swingName, exact: true });
       const fan = positioned.getByRole('combobox', { name: fanName, exact: true });
+      await labelPage.setViewportSize({ width: 391, height: 845 });
+      const primaryControls = await positioned.locator('.climate-controls > *').evaluateAll(controls =>
+        controls.map(control => {
+          const { top, width, height } = control.getBoundingClientRect();
+          return { top: Math.round(top), width, height };
+        }));
+      assert.equal(primaryControls.length, 4);
+      assert.equal(new Set(primaryControls.map(control => control.top)).size, 1);
+      assert.ok(primaryControls.every(control => control.width >= 44 && control.height >= 44));
+      await labelPage.setViewportSize({ width: 320, height: 844 });
       const expectedOptions = rows => rows.map(([value, en, he]) => [value, rightToLeft ? he : en]);
       assert.deepEqual(await optionValues(swing), expectedOptions([
         ['default', 'No swing', 'ללא נדנוד'], ['full_swing', 'Full swing', 'נדנוד מלא'],

@@ -294,6 +294,7 @@ export const panelControlStyles = `
   .climate-controls { display: flex; gap: 5px; flex-wrap: wrap; direction: ltr; }
   .climate-controls > * { flex: 1 1 76px; min-width: 0; }
   .climate-controls > .temperature-stepper { flex-basis: 90px; }
+  .modal[data-kind=device] .climate-controls > .climate-selector { flex-basis: 65px; }
   .temperature-stepper, .climate-selector {
     display: flex; align-items: center; justify-content: space-between; gap: 3px;
     border: 1px solid var(--soft-line); border-radius: 10px; background: var(--control);
