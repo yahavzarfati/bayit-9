@@ -2004,17 +2004,13 @@ export class BayitDashboard extends HTMLElement {
       if (compactDeviceHeading) {
         more.classList.add('compact-device-heading-info');
         more.setAttribute('aria-haspopup', 'dialog');
+        glyph.hidden = false;
         more.replaceChildren(glyph);
         this.nodes.modalHeading.append(more, state);
-        if (view.climatePower) {
-          this.nodes.modalHeadingActions.append(view.climatePower);
-          this.nodes.modalHeadingActions.hidden = false;
-        }
-        if (view.presetShortcut) {
-          head.className = 'compact-climate-preset-row';
-          head.replaceChildren(view.presetShortcut);
-          item.append(head);
-        }
+        const headingActions = this.nodes.modalHeadingActions;
+        if (view.presetShortcut) headingActions.append(view.presetShortcut);
+        if (view.climatePower) headingActions.append(view.climatePower);
+        headingActions.hidden = !headingActions.childElementCount;
       } else item.append(head);
       item.append(group);
       Object.assign(view, { more, group });

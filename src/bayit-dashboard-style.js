@@ -535,6 +535,7 @@ export const styles = `
   .modal-heading-actions { display: flex; flex: none; }
   .modal:is([data-standalone-heater],[data-standalone-climate]) { --modal-header-end: 6px; --modal-title-height: 0px; }
   .modal[data-standalone-climate] .modal-header { gap: 8px; }
+  .modal[data-standalone-climate] .modal-heading-actions { gap: 4px; }
   .modal:is([data-standalone-heater],[data-standalone-climate]) .modal-heading {
     flex: 1; min-width: 0; display: grid; align-items: center; column-gap: 8px;
     grid-template-columns: 44px minmax(0,1fr); grid-template-areas: "info title" "info state";
@@ -703,7 +704,6 @@ export const styles = `
     width: 44px; height: 44px; grid-template-rows: 16px 11px; align-content: center; gap: 2px;
     color: var(--secondary);
   }
-  .compact-climate-preset-row { display: flex; justify-content: end; }
   .climate-preset-shortcut[data-highlighted] { color: var(--warm); }
   .climate-preset-shortcut > ha-icon { width: 16px; height: 16px; --mdc-icon-size: 16px; }
   .climate-preset-shortcut > span {

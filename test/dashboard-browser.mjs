@@ -6307,10 +6307,12 @@ async function assertStandaloneTimedClimate(browser) {
       assert.equal(await panel.getByRole('heading', { name: 'Studio air conditioner', exact: true }).count(), 1);
       const shortcutIcon = page.locator('.quick-button[data-entity="' + entity + '"] ha-icon').first();
       assert.equal(await info.locator('ha-icon').getAttribute('icon'), await shortcutIcon.getAttribute('icon'));
+      assert.ok(await info.locator('ha-icon').isVisible());
       assert.equal(await power.locator('ha-icon').getAttribute('icon'), 'mdi:power');
       assert.equal(await power.getAttribute('aria-pressed'), 'false');
       assert.equal(await currentStatus(), (he ? 'כבוי' : 'Off') + ' · 22.5 °C');
       assert.equal(await presets.count(), 1);
+      assert.equal(await panel.locator('.modal-heading-actions .climate-preset-shortcut').count(), 1);
       assert.equal(await summary.textContent(), he ? 'פקדי מזגן נוספים' : 'More climate controls');
       assert.equal(await swing.count(), 0);
       for (const width of [320, 391]) {
@@ -6322,12 +6324,13 @@ async function assertStandaloneTimedClimate(browser) {
           const title = dialog.querySelector('h2').getBoundingClientRect();
           const status = dialog.querySelector('.modal-heading .current').getBoundingClientRect();
           const info = dialog.querySelector('.compact-device-heading-info').getBoundingClientRect();
-          const power = dialog.querySelector('.modal-heading-actions button').getBoundingClientRect();
+          const preset = dialog.querySelector('.modal-heading-actions .climate-preset-shortcut').getBoundingClientRect();
+          const power = dialog.querySelector('.modal-heading-actions .room-climate-power').getBoundingClientRect();
           const close = dialog.querySelector('[data-role=close]').getBoundingClientRect();
           return {
             titleFits: Math.abs(status.left - title.left) <= 1 && status.top >= title.bottom - 1 &&
-              status.bottom <= bounds.bottom + 1 && info.right <= title.left + 1 && title.right <= power.left + 1 &&
-              power.right <= close.left + 1,
+              status.bottom <= bounds.bottom + 1 && info.right <= title.left + 1 && title.right <= preset.left + 1 &&
+              preset.right <= power.left + 1 && power.right <= close.left + 1,
             rows: new Set(positions).size,
             fits: [dialog.querySelector('.modal-body'), controls].every(el => el.scrollWidth <= el.clientWidth + 1),
             sizes: [...dialog.querySelectorAll('.modal-heading button, .modal-heading-actions button, [data-role=close], .step-control,' +
