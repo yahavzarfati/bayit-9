@@ -73,7 +73,7 @@ export function bindDeviceDetails(button, openDetails, { requireShortTap = false
     doc.addEventListener('pointerup', release, options);
     button.addEventListener('pointerup', release, options);
     doc.addEventListener('pointercancel', release, options);
-    view?.addEventListener('blur', finishPointer, options);
+    view?.addEventListener('blur', event => { if (event.target === view) finishPointer(); }, options);
   });
   // Mobile browsers may start the callout before the hold timer has run.
   button.addEventListener('contextmenu', event => {
