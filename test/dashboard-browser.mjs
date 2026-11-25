@@ -2378,15 +2378,43 @@ async function assertCompactAutomationActions(browser) {
       await openActions();
       const section = panel.locator('[data-layout=compact-actions]');
       const buttons = section.locator('.tile-row:not([hidden])');
+      await section.waitFor();
+      await page.evaluate(async () => {
+        await document.fonts.ready;
+        await new Promise(requestAnimationFrame);
+      });
       assert.equal(await buttons.count(), 2);
-      assert.ok(await buttons.evaluateAll(tiles => tiles.every(tile => {
-        const bounds = tile.getBoundingClientRect();
-        const icon = tile.querySelector('.tile-mark').getBoundingClientRect();
-        const label = tile.querySelector('.tile-label').getBoundingClientRect();
-        const rtl = getComputedStyle(tile).direction === 'rtl';
-        return bounds.height === 56 && tile.scrollWidth === tile.clientWidth &&
-          (rtl ? icon.left > label.left : icon.left < label.left);
-      })));
+      const measure = wrapLock => buttons.evaluateAll((tiles, wrap) => {
+        if (wrap) {
+          const label = tiles[0].querySelector('.tile-label');
+          const [first, ...rest] = label.textContent.trim().split(' ');
+          label.replaceChildren(first + ' ', document.createElement('br'), rest.join(' '));
+        }
+        return tiles.map(tile => {
+          const label = tile.querySelector('.tile-label');
+          const caption = tile.querySelector('.tile-state');
+          const mark = tile.querySelector('.tile-mark').getBoundingClientRect();
+          const text = label.getBoundingClientRect();
+          const font = getComputedStyle(label);
+          const rtl = getComputedStyle(tile).direction === 'rtl';
+          return { name:label.textContent, caption:caption.textContent, rtl, font:font.fontFamily,
+            offsetHeight:tile.offsetHeight, height:tile.getBoundingClientRect().height,
+            scrollWidth:tile.scrollWidth, clientWidth:tile.clientWidth,
+            scrollHeight:tile.scrollHeight, clientHeight:tile.clientHeight,
+            lines:Math.round(text.height / parseFloat(font.lineHeight)),
+            iconClearance:rtl ? mark.left - text.right : text.left - mark.right };
+        });
+      }, wrapLock);
+      for (const wrapLock of [false, true]) {
+        const tiles = await measure(wrapLock);
+        const metrics = JSON.stringify({ locale, wrapLock, tiles });
+        if (wrapLock) assert.equal(tiles[0].lines, 2, metrics);
+        for (const tile of tiles) {
+          assert.equal(tile.offsetHeight, 56, metrics);
+          assert.ok(tile.scrollWidth <= tile.clientWidth && tile.scrollHeight <= tile.clientHeight, metrics);
+          assert.ok(tile.iconClearance >= 0, metrics);
+        }
+      }
       await page.keyboard.press('Escape');
       await panel.waitFor({ state:'hidden' });
     }
