@@ -1677,6 +1677,7 @@ export class BayitDashboard extends HTMLElement {
     }
     if (isRange) {
       field.output = make('output', 'duration-label');
+      field.output.dir = 'ltr';
       caption.append(field.output);
     }
     if (isRange) field.unit = id === 'set_color_temp_kelvin' ? ' K' : '%';

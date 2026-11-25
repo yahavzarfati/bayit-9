@@ -2531,6 +2531,7 @@ try {
       const warmer = inlineCard.getByRole('slider', { name: 'White temperature', exact: true });
       assert.equal(await brighter.inputValue(), '40');
       assert.equal(await warmer.inputValue(), '3000');
+      assert.equal(await inlineCard.locator('output').last().getAttribute('dir'), 'ltr');
       assert.ok(await inlineCard.evaluate(card => card.scrollWidth <= card.clientWidth));
       assert.ok(await brighter.evaluate(slider => slider.offsetHeight >= 44));
       assert.equal(await inlineCard.getByRole('button', { name: /^Apply/ }).count(), 0);
@@ -2568,7 +2569,10 @@ try {
       const inlineOption = inlineEditor.getByRole('checkbox', { name: 'Show brightness and temperature in this room', exact: true });
       assert.equal(await inlineOption.isChecked(), true);
       await inlineOption.uncheck();
-      await inlineEditor.getByRole('button', { name: 'Save dashboard', exact: true }).tap();
+      await Promise.all([
+        inlinePage.waitForEvent('load'),
+        inlineEditor.getByRole('button', { name: 'Save dashboard', exact: true }).tap(),
+      ]);
       await inlineStudio.waitFor();
       assert.equal(await inlinePage.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture'))
         .strategy.room_overrides.studio.inline_light_entities?.includes('light.demo_lamp')), false);
