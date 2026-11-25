@@ -3,7 +3,8 @@ import {
   isToolbarReadoutEntity, isToolbarReadouts, isWeatherReadingsList, normalizeOverviewDiscovery, normalizeToolbarReadout, overviewSectionOptions, roomPanelOptions,
   securityReadoutLabelStates, selectableRoomEntities, sensorComparisonMaxHours, sensorComparisonOptions,
   SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
-  supportsCompactAutomationActions, supportsCompactToolbarStatus, supportsEnergyReadingCards, supportsOverviewLightsOff, supportsToolbarReadouts, supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
+  supportsCompactAutomationActions, supportsCompactToolbarStatus, supportsEnergyReadingCards, supportsHourlyWeatherForecast,
+  supportsOverviewLightsOff, supportsToolbarReadouts, supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
 } from './strategy-model.js';
@@ -66,6 +67,7 @@ const WORDS = {
     compactStatus: 'Show status items side by side',
     compactAutomationActions: 'Show compact action buttons',
     weatherReadingsList: 'Show readings as a compact read-only list',
+    hourlyForecast: 'Allow switching to a 24-hour forecast',
     energyReadingCards: 'Show readings with large values',
     sensorComparison: 'Compare trends in a single chart', comparisonHours: 'Time range in hours',
     comparisonInterval: 'Average interval in minutes', seriesColor: 'Line color for this sensor',
@@ -136,6 +138,7 @@ const WORDS = {
     compactStatus: 'הצגת פריטי הסטטוס זה לצד זה',
     compactAutomationActions: 'הצגת כפתורי פעולה קומפקטיים',
     weatherReadingsList: 'הצגת המדדים ברשימה קומפקטית לקריאה בלבד',
+    hourlyForecast: 'לאפשר מעבר לתחזית ל־24 שעות',
     energyReadingCards: 'הצגת ערכי המדידה בגדול',
     sensorComparison: 'השוואת מגמות בגרף אחד', comparisonHours: 'טווח תצוגה בשעות',
     comparisonInterval: 'מרווח ממוצע בדקות', seriesColor: 'צבע הקו של החיישן',
@@ -397,6 +400,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     role.addEventListener('change', () => save({
       role: role.value || undefined,
       ...(role.value && role.value !== 'status' && { readout: undefined }),
+      ...(role.value && role.value !== 'forecast' && { hourly_forecast: undefined }),
       ...(role.value !== 'graph' && { graph_hours: undefined, graph_room_id: undefined, vacuum_panel_id: undefined, series_color: undefined }),
       ...(role.value !== 'action' && { command: undefined,
         ...(toolbar[entryIndex].sections[sectionIndex].entities[index]?.confirmation === false && { confirmation: undefined }) }),
@@ -411,6 +415,11 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       iconField(record.icon, value => save({ icon: value || undefined })),
     ];
     const kind = toolbar[entryIndex].kind;
+    if (supportsHourlyWeatherForecast(kind, section, record)) {
+      const hourly = node('input', { type: 'checkbox', checked: record.hourly_forecast === true });
+      hourly.addEventListener('change', () => save({ hourly_forecast: hourly.checked || undefined }));
+      fields.push(node('label', { className: 'check' }, [hourly, words.hourlyForecast]));
+    }
     if (isToolbarReadouts(kind, section) && isToolbarReadoutEntity(kind, record)) {
       let settings = normalizeToolbarReadout(kind, section, record) ?? {};
       const updateReadout = edits => {

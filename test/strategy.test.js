@@ -1344,6 +1344,29 @@ test('keeps curated toolbar sections ordered, visibly scoped and restricted to s
   assert.deepEqual(toolbar[3].sections.map(section => section.kind), ['electricity', 'water']);
 });
 
+test('optional 24-hour forecasts are scoped to a visible Weather forecast source', () => {
+  const hass = home();
+  for (const entity of ['weather.local', 'weather.unset', 'weather.hidden', 'weather.status', 'sensor.fixture']) {
+    hass.states[entity] = { state: 'cloudy', attributes: {} };
+    hass.entities[entity] = {};
+  }
+  hass.entities['weather.hidden'].hidden_by = 'user';
+  const hourly = { entity: 'weather.local', role: 'forecast', hourly_forecast: true };
+  const { toolbar } = generateDashboard({ toolbar: [
+    { kind: 'weather', sections: [
+      { kind: 'forecast', entities: [hourly, { entity: 'weather.unset', hourly_forecast: 'true' },
+        { entity: 'weather.hidden', hourly_forecast: true }, { entity: 'weather.status', role: 'status', hourly_forecast: true },
+        { entity: 'sensor.fixture', hourly_forecast: true }] },
+      { kind: 'readings', entities: [hourly] },
+    ] },
+    { kind: 'energy', sections: [{ kind: 'forecast', entities: [hourly] }] },
+  ] }, hass).views[0].cards[0];
+  assert.deepEqual(toolbar[0].sections[0].entities, [hourly, { entity: 'weather.unset' },
+    { entity: 'weather.status', role: 'status' }, { entity: 'sensor.fixture' }]);
+  assert.equal(toolbar[0].sections[1].entities[0].hourly_forecast, undefined);
+  assert.equal(toolbar[1].sections[0].entities[0].hourly_forecast, undefined);
+});
+
 test('only an individual Sensors history graph can link to an existing Vacuum panel', () => {
   const hass = home();
   hass.states['sensor.fixture'] = { state: '25', attributes: {} };

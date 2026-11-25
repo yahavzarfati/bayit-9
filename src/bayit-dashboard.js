@@ -5,7 +5,7 @@ import { classicRoomTitle, DEVICE_ICONS, hasDynamicPresenceIcon, isAutomationScr
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
   normalizeRoomVacuumSummary, normalizeToolbarReadout, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
   ROOM_PANEL_KINDS, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
-  sensorComparisonOptions, sensorSeriesColor, supportsShortcutWithoutDetails,
+  sensorComparisonOptions, sensorSeriesColor, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { allowsCoverRailAction, climatePowerServiceRegistered, createDeviceController, getDeviceModel, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
@@ -394,6 +394,9 @@ export function normalizeDashboardConfig(config = {}) {
           if (readout) entity.readout = readout;
           const seriesColor = comparison && sensorSeriesColor(raw);
           if (seriesColor) entity.series_color = seriesColor;
+          if (raw?.hourly_forecast === true && supportsHourlyWeatherForecast(item.kind, section, raw)) {
+            entity.hourly_forecast = true;
+          }
           if (item.kind === 'sensors' && section.kind !== 'series' && entity.role === 'graph' &&
               domainFor(entity) === 'sensor' && known.has(raw.graph_room_id)) entity.graph_room_id = raw.graph_room_id;
           return entity;
