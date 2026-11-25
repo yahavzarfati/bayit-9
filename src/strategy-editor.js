@@ -1136,7 +1136,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
         }
         const compactReading = configuredIds(override.compact_light_reading_entities).includes(id);
         if (lightActions && !configuredIds(override.read_only_entities).includes(id) &&
-            (compactReading || lightActions.set_brightness && lightActions.set_color_temp_kelvin && !lightActions.set_light_color && !lightActions.set_effect)) {
+            (compactReading || lightActions.set_brightness &&
+              (lightActions.set_color_temp_kelvin || lightActions.set_light_color || lightActions.set_effect))) {
           const reported = checkbox(words.roomCompactLightReading, compactReading, checked => {
             const next = { ...this.#roomOverride(room.id) };
             const lights = new Set(configuredIds(next.compact_light_reading_entities));

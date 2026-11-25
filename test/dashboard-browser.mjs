@@ -871,6 +871,8 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
 } : query.has('room-grid') ? {
   room_overrides: { studio: { entities: ['light.demo_lamp', 'light.demo_wall', 'light.demo_pendant', 'light.demo_monitor'],
     read_only_entities: ['light.demo_monitor'],
+    ...(query.has('inline-color-light') && {inline_light_entities:['light.demo_pendant']}),
+    ...(query.has('compact-color-light') && {compact_light_reading_entities:['light.demo_pendant']}),
     ...(query.has('room-shutdown') && {turn_off_entities:['light.demo_lamp', 'light.demo_pendant', 'light.demo_monitor']}),
     ...(query.has('lighting-count') && {lighting_count_entities:['light.demo_wall']}) } },
   ...(query.has('light-status-refresh') && {
@@ -5479,6 +5481,121 @@ async function assertCompactRoomMedia(browser) {
   }
 }
 
+async function assertCompactColorLightDetail(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const url = base + '?room-grid&grouped-effects&light-status-refresh&inline-color-light&locale=' + locale;
+    const light = 'light.demo_pendant';
+    const dialog = page.getByRole('dialog',{name:'Pendant lamp',exact:true});
+    const power = dialog.locator('.compact-light-power');
+    const bright = dialog.locator('.compact-brightness input');
+    const value = dialog.locator('.compact-brightness output');
+    const modes = dialog.locator('.light-mode-bar [data-light-mode]');
+    const refresh = dialog.locator('.light-status-refresh');
+    const calls = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service'));
+    const open = async flags => {
+      await page.goto(url + flags);
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+      const room = page.getByRole('dialog',{name:'Studio',exact:true});
+      await room.locator('.device[data-entity="light.demo_pendant"] .device-tile').press('Shift+Enter');
+      await dialog.waitFor();
+    };
+    try {
+      await open('');
+      assert.equal(await power.isHidden(),true);
+      assert.equal(await bright.count(),0);
+      assert.equal(await dialog.locator('.basic-actions button').count(),2);
+      assert.equal(await dialog.locator('.field-row:has(input[data-action=set_brightness]) > button').count(),1);
+
+      await open('&compact-color-light');
+      await bright.waitFor();
+      assert.equal(await dialog.locator('.basic-actions button[data-action^=turn_]').count(),0);
+      assert.equal(await dialog.locator('.compact-brightness > button').count(),0);
+      assert.equal(await bright.getAttribute('min'),'1');
+      assert.equal(await value.textContent(),'—');
+      assert.deepEqual(await modes.evaluateAll(buttons=>buttons.map(button=>button.dataset.lightMode)),
+        ['set_effect','set_light_color','set_color_temp_kelvin']);
+
+      for (const width of [320,391]) {
+        await page.setViewportSize({width,height:844});
+        const sizes = await dialog.locator('.device-state-head').evaluate(header=>{
+          const bounds = node => {
+            const {left,top,width,height} = node.getBoundingClientRect();
+            return {left,top,width,height};
+          };
+          const actions = [...header.querySelectorAll('button:not([hidden])')].map(bounds);
+          const state = bounds(header.querySelector('.current'));
+          const rail = bounds(header.parentElement.querySelector('.compact-brightness input'));
+          const host = bounds(header.closest('dialog'));
+          return {actions,state,rail,host};
+        });
+        const {actions,state,rail,host} = sizes;
+        assert.equal(actions.length,3);
+        assert.ok(actions.every(action=>action.width >= 44 && action.height >= 44 && action.top === actions[0].top &&
+          action.left >= host.left && action.left + action.width <= host.left + host.width),JSON.stringify({locale,width,...sizes}));
+        assert.ok(state.top >= actions[0].top && state.top < actions[0].top + actions[0].height);
+        assert.ok(rail.width >= 44 && rail.height >= 44 && rail.top >= actions[0].top + actions[0].height);
+      }
+
+      await bright.dispatchEvent('change');
+      assert.deepEqual(await calls(),[]);
+      await bright.evaluate(input=>{
+        input.value = '40';
+        input.dispatchEvent(new Event('input',{bubbles:true}));
+      });
+      assert.equal(await value.textContent(),'40%');
+      assert.deepEqual(await calls(),[]);
+      await bright.dispatchEvent('change');
+      await page.waitForFunction(()=>window.bayitTest.calls.filter(call=>call.type==='call_service').length === 1);
+      assert.deepEqual(await calls(),[{
+        type:'call_service',domain:'light',service:'turn_on',service_data:{brightness_pct:40},target:{entity_id:light},
+      }]);
+      await dialog.locator('.compact-light-power[data-action=turn_off]:enabled').tap();
+      await dialog.locator('.compact-light-power[data-action=turn_on]:enabled').waitFor();
+
+      await dialog.locator('.light-mode-bar [data-light-mode=set_light_color]').tap();
+      await dialog.locator('input[type=color]').waitFor();
+      await dialog.locator('.light-mode-bar [data-light-mode=set_color_temp_kelvin]').tap();
+      await dialog.locator('input[data-action=set_color_temp_kelvin]').waitFor();
+      assert.equal(await dialog.locator('.field-row:has(input[data-action=set_color_temp_kelvin]) > button').count(),1);
+      await dialog.locator('.light-mode-bar [data-light-mode=set_effect]').tap();
+      await dialog.getByRole('region',{name:he ? 'אפקט תאורה' : 'Light effect'}).waitFor();
+      assert.ok(await dialog.locator('[data-effect-favorite-control]').count() > 0);
+
+      await refresh.tap();
+      await dialog.locator('.light-status-refresh[aria-busy=true]').waitFor();
+      assert.deepEqual((await calls()).slice(1).map(call=>[call.domain,call.service,call.target.entity_id]),
+        [['light','turn_off',light],['button','press','button.fixture_refresh_lamp']]);
+      await page.evaluate(()=>window.bayitTest.finishLightStatusRefresh());
+      await page.evaluate(id=>window.bayitTest.setRoomState(id,'unavailable'),light);
+      await bright.waitFor({state:'detached'});
+      assert.equal(await power.isHidden(),true);
+      assert.equal(await refresh.isEnabled(),true);
+      assert.equal((await calls()).length,3);
+
+      await page.goto(url + '&editor');
+      await page.getByText(he ? 'חדרים' : 'Rooms',{exact:true}).tap();
+      await page.getByLabel(he ? 'חדר להתאמה אישית' : 'Room to customize',{exact:true}).selectOption('studio');
+      await page.getByText(he ? 'תצוגת מכשירים' : 'Device display',{exact:true}).tap();
+      await page.getByLabel(he ? 'מכשיר להתאמה אישית' : 'Device to customize',{exact:true}).selectOption(light);
+      const setting = page.getByRole('checkbox',{name:he ? 'הצגת ערכים מדווחים בפקדי תאורה קומפקטיים'
+        : 'Show reported values in compact light controls',exact:true});
+      assert.equal(await setting.isChecked(),false);
+      await setting.check();
+      const stored = () => page.evaluate(()=>window.latest.room_overrides.studio);
+      assert.deepEqual((await stored()).compact_light_reading_entities,[light]);
+      assert.deepEqual((await stored()).inline_light_entities,[light]);
+      await setting.uncheck();
+      assert.equal((await stored()).compact_light_reading_entities,undefined);
+      assert.deepEqual(await calls(),[]);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertLightStatusRefresh(browser) {
   for (const locale of ['en','he']) {
     const page = await browser.newPage({ viewport:{width:320,height:760}, hasTouch:true, reducedMotion:'reduce' });
@@ -7050,6 +7167,8 @@ try {
       await assertCompactRoomDevicePair(browser);
       await assertAuthoredKitchenDeviceGrid(browser);
       await assertKitchenApplianceTiles(browser);
+      await assertCompactColorLightDetail(browser);
+      console.log(engine + ': opted-in color light keeps compact direct brightness, modes and guarded refresh');
       await assertLightStatusRefresh(browser);
       await assertKitchenBoilerQuickPower(browser);
       await assertRoomVacuumGestures(browser);

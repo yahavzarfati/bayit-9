@@ -2278,7 +2278,7 @@ export class BayitDashboard extends HTMLElement {
         view.signature = signature;
         this.buildActions(view, model, hideIdleTimedOff, compactCommands, mutePlaceholder);
       }
-      if (view.lightPower && view.compactLight) {
+      if (view.lightPower && (view.compactLight || view.compactColorLight)) {
         const power = view.lightPower;
         const actionId = model.state === 'on' ? 'turn_off' : 'turn_on';
         power.dataset.action = actionId;
@@ -2560,9 +2560,12 @@ export class BayitDashboard extends HTMLElement {
     const { actions } = model;
     view.compactLight = !!((view.lightPower || view.inlineLight) && actions.set_brightness && actions.set_color_temp_kelvin &&
       actions.turn_on && actions.turn_off && !actions.set_light_color && !actions.set_effect);
-    view.item.toggleAttribute('data-compact-light', view.compactLight);
+    view.compactColorLight = Boolean(view.lightPower && view.compactLightReading && actions.set_brightness &&
+      actions.turn_on && actions.turn_off && (actions.set_light_color || actions.set_effect));
+    const compactLightPower = view.compactLight || view.compactColorLight;
+    view.item.toggleAttribute('data-compact-light', compactLightPower);
     if (view.lightPower) {
-      view.lightPower.hidden = !view.compactLight;
+      view.lightPower.hidden = !compactLightPower;
       if (view.lightPower.hidden && active === view.lightPower) view.more.focus({ preventScroll: true });
     }
     if (view.compactLight) complex.set('compact_light', this.buildCompactLightAdjustments(view, model));
@@ -2593,7 +2596,8 @@ export class BayitDashboard extends HTMLElement {
       if (!action || view.special.used.has(id) || (view.compactCover && id === 'set_position')) continue;
       if (hideIdleTimedOff && id === 'turn_off') continue;
       if (view.inlineLight && !inlineLightActions.has(id)) continue;
-      if (view.compactLight && (inlineLightActions.has(id) || id === 'turn_on' || id === 'turn_off')) continue;
+      if (compactLightPower && (id === 'turn_on' || id === 'turn_off')) continue;
+      if (view.compactLight && inlineLightActions.has(id)) continue;
       if (action.color && this.panel?.type !== 'device') continue;
       if (id === 'set_effect' && this.panel?.type === 'device') {
         view.effectGallery = createLightEffectGallery(view.config.effect_groups, action.options, { make, button, icon,
@@ -2689,15 +2693,17 @@ export class BayitDashboard extends HTMLElement {
     const row = make('div', 'field-row');
     const title = id === 'start_timed' ? this.t('duration') : this.actionLabel(id);
     const compactInline = view.inlineLight && view.compactLight;
-    const caption = make('label', '', compactInline ? undefined : title);
+    const compactBrightness = view.compactColorLight && id === 'set_brightness';
+    row.classList.toggle('compact-brightness', compactBrightness);
+    const caption = make('label', '', compactInline || compactBrightness ? undefined : title);
     const isRange = rangeActions.has(id);
     const compactRange = view.compactLight && inlineLightActions.has(id);
     const dualLightRange = compactRange && view.dualLightDetail;
-    const compactLightReading = compactRange && !dualLightRange && view.compactLightReading;
+    const compactLightReading = compactBrightness || (compactRange && !dualLightRange && view.compactLightReading);
     const reportedLightRange = dualLightRange || compactLightReading;
     const minimumBrightness = compactLightReading && id === 'set_brightness';
     const range = minimumBrightness ? { ...action, min: 1 } : action;
-    const directRange = view.inlineLight || (compactRange && !dualLightRange);
+    const directRange = view.inlineLight || compactBrightness || (compactRange && !dualLightRange);
     const field = { action: range, id, reportedLightRange, compactLightReading };
     if (dualLightRange) field.valid = () => field.observed || field.dirty;
     if (action.options) {

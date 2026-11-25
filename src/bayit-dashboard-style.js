@@ -816,6 +816,18 @@ export const styles = `
   .device[data-compact-light] .device-state-head {
     direction: ltr; grid-template-columns: 44px minmax(0,1fr) 44px;
   }
+  .device-head.device-state-head:has(> .light-status-refresh) {
+    grid-template-columns: minmax(0,1fr) 44px 44px;
+  }
+  .device[data-compact-light] .device-state-head:has(> .light-status-refresh) {
+    grid-template-columns: 44px minmax(0,1fr) 44px 44px;
+  }
+  .compact-brightness { grid-template-columns: minmax(0,1fr); }
+  .compact-brightness > label {
+    grid-template-columns: minmax(3ch,auto) minmax(0,1fr); align-items: center; gap: 6px; direction: ltr;
+  }
+  .compact-brightness input { grid-area: 1 / 2; width: 100%; }
+  .compact-brightness output { grid-area: 1 / 1; white-space: nowrap; }
   .device[data-compact-light] .device-detail { text-align: left; }
   .compact-light-power[data-powered] { color: var(--warm); }
   .dual-light-detail-controls { display: grid; gap: 8px; min-width: 0; }
