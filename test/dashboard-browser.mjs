@@ -7069,7 +7069,6 @@ async function assertFilledWhiteLightRail(browser) {
     const route = '#device/studio/' + entity;
     const attrs = attributes => page.evaluate(({ entity, attributes }) => window.bayitTest.setFixtureAttributes(entity, attributes),
       { entity, attributes });
-    const power = state => page.evaluate(({ entity, state }) => window.bayitTest.setRoomState(entity, state), { entity, state });
     const modes = modes => attrs({ supported_color_modes: modes });
     const serviceCalls = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service'));
     const details = page.getByRole('dialog', { name: 'Desk lamp', exact: true });
@@ -7085,9 +7084,14 @@ async function assertFilledWhiteLightRail(browser) {
       assert.equal(await brightness.getAttribute('aria-valuetext'), he ? 'אין ערך מדווח' : 'No reported value');
       assert.equal(await control.locator('output:visible').textContent(), '—');
       assert.equal(await style(brightness, '--white-rail-progress'), '0%');
-      await attrs({ brightness: 153, color_temp_kelvin: 2500, color_mode: 'color_temp', rgb_color: [246, 144, 80] });
-      await power('on');
-      await brightness.and(control.locator('[aria-valuetext="60%"]')).waitFor();
+      await page.evaluate(id => {
+        window.bayitTest.setFixtureAttributes(id, {
+          brightness: 153, color_temp_kelvin: 2500, color_mode: 'color_temp', rgb_color: [246, 144, 80],
+        });
+        window.bayitTest.setRoomState(id, 'on');
+      }, entity);
+      await details.locator('.compact-light-power[data-powered]').waitFor();
+      assert.equal(await brightness.getAttribute('aria-valuetext'), '60%');
       assert.equal(await style(brightness, '--white-rail-progress'), '60%');
       assert.equal(await style(brightness, '--white-rail-fill'), '#f69050');
       for (const width of [320, 391]) {
