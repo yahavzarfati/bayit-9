@@ -3751,8 +3751,10 @@ async function assertCompactRoomDevicePair(browser) {
 
       await lock.locator('.device-panel-launch').press('Shift+Enter');
       await closeNative(id);
+      await lock.locator('.device-panel-launch:focus').waitFor();
       await tv.locator('.device-panel-launch').tap();
       await closeNative(media);
+      await tv.locator('.device-panel-launch:focus').waitFor();
       await tv.locator('.device-panel-launch').press('Shift+Enter');
       await panel.waitFor();
       await panel.getByRole('button',{name:he ? 'חזרה לחדר' : 'Back to room',exact:true}).tap();
