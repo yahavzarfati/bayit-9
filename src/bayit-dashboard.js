@@ -2,7 +2,7 @@ import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isToolbarReadouts, isVacuumProgramAction,
   isCompactAutomationActions, isEnergyReadingCards, isWeatherReadingsList,
-  isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
+  isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeRoomIcon, normalizeShortcutDetailEntities,
   normalizeRoomVacuumSummary, normalizeToolbarReadout, normalizeRoomTemperatureGraphColor, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
   ROOM_PANEL_KINDS, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomCompactDevice, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
   sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
@@ -381,9 +381,11 @@ export function normalizeDashboardConfig(config = {}) {
     const mediaRemote = item.kind === 'media' ? normalizeMediaRemote(item.media_remote) : undefined;
     const agenda = item.kind === 'calendar' ? normalizeCalendarAgenda(item.calendar_agenda) : undefined;
     const placement = toolbarPlacement(item.kind, item.placement);
+    const panelIcon = item.kind === 'energy' ? normalizeRoomIcon(item.panel_icon) : undefined;
     return [{ kind: item.kind, id: text(item.id), label: text(item.label), path: item.path,
       ...(item.kind === 'presence' && { presence_dynamic_icon: hasDynamicPresenceIcon(item) }),
       ...(item.kind === 'energy' && item.energy_dashboard_link === false && { energy_dashboard_link: false }),
+      ...(panelIcon && { panel_icon: panelIcon }),
       ...(placement && { placement }),
       ...(usesRoomPopupPosition(item) && { popup_position: 'room' }),
       ...(orefMap && { oref_map: orefMap }),
@@ -1508,7 +1510,8 @@ export class BayitDashboard extends HTMLElement {
     this.deviceViews.clear();
     this.activitySignature = null;
     setText(n.modalNotice, '');
-    const glyph = model?.icon || room?.icon || toolbar?.icon || source?.querySelector('ha-icon')?.getAttribute('icon');
+    const glyph = model?.icon || room?.icon || toolbar?.panel_icon || toolbar?.icon ||
+      source?.querySelector('ha-icon')?.getAttribute('icon');
     const title = model?.name || room?.name || toolbar?.name || toolbar?.label || this.t(type);
     n.modal.setAttribute('aria-label', title);
     n.modalTitle.replaceChildren(icon(glyph), title);

@@ -46,6 +46,8 @@ const query = new URL(location.href).searchParams;
 if (query.has('energy-borderless-theme')) {
   document.documentElement.style.setProperty('--ha-card-border-width', '0px');
   document.documentElement.style.setProperty('--ha-card-border-radius', '20px');
+  document.documentElement.style.setProperty('--state-icon-color', '#276fb4');
+  document.documentElement.style.setProperty('--accent-color', '#f69c13');
 }
 if (query.has('overview-climate-discovery')) {
   for (const [id, name, state] of [
@@ -766,6 +768,7 @@ if (query.has('toolbar-panels')) {
     if (query.has('energy-borderless-theme') && configuration.type === 'sensor') {
       card.style.border = 'var(--ha-card-border-width, 1px) solid var(--ha-card-border-color)';
       card.style.borderRadius = 'var(--ha-card-border-radius, 12px)';
+      card.style.minBlockSize = configuration.graph ? '124px' : '94px';
     }
     if (query.has('energy-readings') && configuration.type === 'sensor' && !configuration.graph) {
       card.dataset.sensorIcon = configuration.icon ?? '';
@@ -983,7 +986,9 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
       ...(query.has('utility-graph-details') ? [{kind:'readings',entities:[
         {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24},
       ]}] : [])]},
-    {kind:'energy',...(query.has('hide-energy-dashboard-link') && {energy_dashboard_link:false}),sections:[{kind:'electricity',
+    {kind:'energy',...(query.has('hide-energy-dashboard-link') && {energy_dashboard_link:false}),
+      ...(query.has('energy-panel-icon') && {icon:'mdi:meter-electric-outline',panel_icon:'mdi:lightning-bolt'}),
+      sections:[{kind:'electricity',
       ...(query.has('energy-readings') && {title:'Electricity'}),
       ...(query.has('energy-reading-cards') && {layout:'reading-cards'}),
       entities:[{entity:'sensor.demo_meter',role:'graph',graph_hours:168},
@@ -3780,15 +3785,18 @@ async function assertEnergyPopupPlacement(browser) {
       const old=await geometry();
       assert.equal(old.centered,true);
       assert.equal(await link.getAttribute('href'),'/energy');
+      assert.equal(await dialog.locator('h2 ha-icon').getAttribute('icon'),'mdi:meter-electric-outline');
       const route=new URL(page.url()).hash;
       assert.match(route,/^#panel\//);
-      await page.goto(url+compact+hidden+route);
+      await page.goto(url+compact+hidden+'&energy-panel-icon'+route);
       await dialog.waitFor();
       const fitted=await geometry();
       assert.equal(fitted.centered,false, 'The reading cards align with the toolbar even from a direct URL');
       assert.equal(fitted.width,359);
       assert.ok(fitted.y < old.y, 'The fitted Energy panel starts above the centered one');
       assert.equal(await link.count(),0);
+      assert.equal(await dialog.locator('h2 ha-icon').getAttribute('icon'),'mdi:lightning-bolt');
+      assert.equal(await page.locator('button[data-role=energy] ha-icon').getAttribute('icon'),'mdi:meter-electric-outline');
       assert.deepEqual(await page.evaluate(()=>window.bayitTest.calls),[]);
       await page.goto(url+compact);
       await page.getByRole('button',{name:title,exact:true}).tap();
@@ -3796,7 +3804,7 @@ async function assertEnergyPopupPlacement(browser) {
       assert.deepEqual(await geometry(),fitted);
       assert.equal(await link.getAttribute('href'),'/energy');
 
-      await page.goto(url+compact+hidden+'&editor');
+      await page.goto(url+compact+hidden+'&energy-panel-icon&editor');
       await page.getByText(he?'סרגל ומסכים נוספים':'Toolbar and extra screens',{exact:true}).tap();
       await page.getByRole('button',{name:title,exact:true}).tap();
       const toggle=page.getByRole('checkbox',{name:he?'הצגת קישור לדשבורד האנרגיה של Home Assistant':'Show the Home Assistant Energy dashboard link',exact:true});
@@ -3806,6 +3814,16 @@ async function assertEnergyPopupPlacement(browser) {
       assert.equal(await configured(),undefined);
       await toggle.uncheck();
       assert.equal(await configured(),false);
+      const headerIcon = page.getByLabel(he ? 'סמל בכותרת החלונית' : 'Popup header icon', { exact:true });
+      assert.equal(await headerIcon.inputValue(),'mdi:lightning-bolt');
+      const editedEntry = () => page.evaluate(() => window.latest.toolbar.find(item => item.kind === 'energy'));
+      await headerIcon.fill('mdi:flash-outline');
+      await headerIcon.blur();
+      assert.equal((await editedEntry()).panel_icon,'mdi:flash-outline');
+      assert.equal((await editedEntry()).icon,'mdi:meter-electric-outline');
+      await headerIcon.fill('');
+      await headerIcon.blur();
+      assert.equal((await editedEntry()).panel_icon,undefined);
     } finally { await page.close(); }
   }
 }
@@ -3840,10 +3858,18 @@ async function assertEnergyReadingCards(browser) {
       for (const section of [electricity, water]) {
         const cards = section.locator('[data-native-type=sensor]');
         await cards.nth(1).waitFor();
-        assert.deepEqual(await cards.evaluateAll(nodes => nodes.map(node => {
+        const style = await cards.evaluateAll(nodes => nodes.map(node => {
           const style = getComputedStyle(node);
-          return [style.borderTopWidth, style.borderTopLeftRadius];
-        })), [['1px', '8px'], ['1px', '8px']]);
+          const accent = style.getPropertyValue('--accent-color').trim();
+          const icon = style.getPropertyValue('--state-icon-color').trim();
+          const secondary = style.getPropertyValue('--secondary').trim();
+          return { border:style.borderTopWidth, radius:style.borderTopLeftRadius, weight:style.fontWeight,
+            neutral:accent === secondary && icon === secondary, height:node.getBoundingClientRect().height };
+        }));
+        assert.deepEqual(style, Array.from({length:2}, () =>
+          ({ border:'1px', radius:'8px', weight:'400', neutral:true, height:style[0].height })));
+        assert.ok(style[0].height >= 124);
+        assert.equal(await section.locator('.toolbar-section-title').evaluate(node => getComputedStyle(node).fontSize), '13px');
         const order = await section.evaluate(panel => {
           const [history, reading] = panel.querySelector('.toolbar-section-items').children;
           return {
@@ -3881,6 +3907,11 @@ async function assertEnergyReadingCards(browser) {
       const fallback = await open('&energy-reading-cards&no-native-charts');
       const fallbackReading = fallback.locator('.energy-reading').getByRole('button', { name: /Bill estimate/ });
       await fallbackReading.waitFor();
+      const fallbackChart = fallback.locator('[data-section=electricity] > .toolbar-section-items > .native-panel-card button');
+      await fallbackChart.evaluate(node => { node.style.minBlockSize = '124px'; });
+      const height = async card => (await card.boundingBox()).height;
+      assert.equal(await height(fallbackReading), await height(fallbackChart));
+      assert.ok(await height(fallbackReading) >= 124);
       assert.match(await fallbackReading.locator('.tile-state').textContent(), /145 USD/);
       await fallbackReading.tap();
       assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), ['sensor.demo_bill_forecast']);
@@ -3892,8 +3923,9 @@ async function assertEnergyReadingCards(browser) {
       await legacyCharts.nth(1).waitFor();
       assert.deepEqual(await legacyCharts.evaluateAll(nodes => nodes.map(node => {
         const style = getComputedStyle(node);
-        return [style.borderTopWidth, style.borderTopLeftRadius];
-      })), [['0px', '20px'], ['0px', '20px']]);
+        return [style.borderTopWidth, style.borderTopLeftRadius, style.getPropertyValue('--accent-color').trim(),
+          style.getPropertyValue('--state-icon-color').trim()];
+      })), Array.from({length:2}, () => ['0px', '20px', '#f69c13', '#276fb4']));
 
       await page.goto(url + '&energy-reading-cards&editor');
       await page.getByText(locale === 'he' ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens', { exact: true }).tap();

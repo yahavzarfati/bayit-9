@@ -941,6 +941,9 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .shell[dir=rtl] .toolbar-section[data-layout=compact] > .toolbar-section-items > * { direction: rtl; }
   .toolbar-section[data-layout=reading-cards] > .toolbar-section-items { direction: ltr; }
   .shell[dir=rtl] .toolbar-section[data-layout=reading-cards] > .toolbar-section-items > * { direction: rtl; }
+  .toolbar-section[data-layout=reading-cards] > .toolbar-section-title {
+    color: var(--secondary); font-size: 13px; font-weight: 700;
+  }
   .toolbar-section[data-layout=compact-actions] { border: 0; padding: 8px 4px 2px; }
   .toolbar-section[data-layout=compact-actions]:has(> .toolbar-section-title) { padding-block-start: 18px; }
   .toolbar-section[data-layout=compact-actions] > .toolbar-section-title { margin-block-end: 14px; }
@@ -1025,10 +1028,14 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   @media (hover: hover) {
     [data-overview-active-rows] > .toolbar-section-items > .tile-row:hover { background: var(--glass); }
   }
-  .energy-reading { min-width: 0; }
   .native-panel-card { min-width: 0; --ha-card-background: transparent; --ha-card-box-shadow: none;
     --ha-card-border-color: var(--soft-line); --primary-text-color: var(--ink); --secondary-text-color: var(--secondary); }
-  .energy-native-card { --ha-card-border-width: 1px; --ha-card-border-radius: 8px; }
+  .energy-reading, .energy-native-card { display: grid; min-width: 0; }
+  .energy-native-card {
+    --ha-card-border-width: 1px; --ha-card-border-radius: 8px;
+    --state-icon-color: var(--secondary); --accent-color: var(--secondary);
+    font-weight: var(--ha-font-weight-normal,400);
+  }
   .toolbar-device, .toolbar-link { min-width: 0; }
   .toolbar-section[data-section=covers] .toolbar-section-items:has(> [data-cover-rail] ~ [data-cover-rail]) {
     /* Three 44px commands, two 3px gaps, padding and a border. */

@@ -1023,6 +1023,7 @@ function dashboardToolbar(config, hass, roomIds) {
   return entries.map(({ entry, id, path }) => {
     const label = toolbarEntryLabel(entry);
     const icon = typeof entry.icon === 'string' ? entry.icon.trim() : '';
+    const panelIcon = entry.kind === 'energy' ? normalizeRoomIcon(entry.panel_icon) : undefined;
     const placement = toolbarPlacement(entry.kind, entry.placement);
     const entities = Array.isArray(entry.entities) ? idList(entry.entities).map(describe).filter(Boolean) : undefined;
     const sections = entry.kind !== 'link'
@@ -1038,6 +1039,7 @@ function dashboardToolbar(config, hass, roomIds) {
       isVisibleEntity(entity, states, registry, hidden) &&
       supportsDailyForecast(states[entity])) : undefined;
     return { id, kind: entry.kind, ...(label && { label }), ...(ROOM_ICON.test(icon) && { icon }),
+      ...(panelIcon && { panel_icon: panelIcon }),
       ...(entry.kind === 'energy' && entry.energy_dashboard_link === false && { energy_dashboard_link: false }),
       ...(entry.kind === 'presence' && typeof entry.presence_dynamic_icon === 'boolean' &&
         { presence_dynamic_icon: entry.presence_dynamic_icon }),

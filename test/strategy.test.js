@@ -1680,6 +1680,18 @@ test('native reading cards are opt-in only for Energy electricity and water', ()
   assert.equal(sections[0].entities[0].name, 'Cost');
 });
 
+test('Energy popup may use an independent validated header icon', () => {
+  const entries = [
+    { kind:'energy', icon:'mdi:meter-electric-outline', panel_icon:' mdi:lightning-bolt ' },
+    { kind:'energy', panel_icon:'https://fixture.invalid/image' },
+    { kind:'energy' },
+    { kind:'weather', panel_icon:'mdi:lightning-bolt' },
+  ];
+  const { toolbar } = generateDashboard({ toolbar:entries }, home()).views[0].cards[0];
+  assert.equal(toolbar[0].icon, 'mdi:meter-electric-outline');
+  assert.deepEqual(toolbar.map(entry => entry.panel_icon), ['mdi:lightning-bolt', undefined, undefined, undefined]);
+});
+
 test('compact readings are opt-in for Weather readings and preserve graph configuration', () => {
   const hass = home();
   const sensor = 'sensor.fixture_outside';
