@@ -199,7 +199,7 @@ In an **Overview** status section, choose **Discover active climate devices**. E
 
 In a **Sensors** readings section, enable **Show readings as chart cards** to keep the configured cards in left-to-right order in either language while each card uses the interface language. In YAML, set `layout: reading-cards` on the readings section.
 
-A single-sensor history graph in **Sensors** can open a room or a configured Vacuum panel when you tap its heading or reading. In the graph's display settings, select a destination under **Open on graph tap**. In YAML, add `graph_room_id: studio` or `vacuum_panel_id: robot` to the graph entity entry. Choose the ID of a room shown on this dashboard or a configured Vacuum panel.
+A single-sensor history graph in **Sensors** opens the sensor's Home Assistant details when you tap its heading or reading. To open a room or a configured Vacuum panel, select a destination under **Open on graph tap**. In YAML, add `graph_room_id: studio` or `vacuum_panel_id: robot` to the graph entity entry. Choose the ID of a room shown on this dashboard or a configured Vacuum panel.
 
 In a Sensors section shown as a combined graph, enable **Compare trends in a single chart**. Set a shared time range and averaging interval, then choose an optional six-digit line color for each sensor configured as a graph. Choose sensors that report the same unit. The graph shows gaps where Home Assistant reports that a reading is unavailable. Tap a sensor in the legend to hide or show its line while keeping at least one sensor visible.
 

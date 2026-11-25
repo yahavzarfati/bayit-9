@@ -6599,6 +6599,57 @@ async function assertEnergyPopupPlacement(browser) {
   }
 }
 
+async function assertUnlinkedSensorGraphDetails(browser) {
+  for (const locale of ['en', 'he']) {
+    for (const fallback of [false, true]) {
+      const page = await browser.newPage({ viewport:{width:391,height:844}, hasTouch:true, reducedMotion:'reduce' });
+      page.setDefaultTimeout(8000);
+      const hash = '#panel/sensors-panel';
+      const sensor = 'sensor.demo_meter';
+      const url = base + '/fixture-home/home?toolbar-panels&native-more-info=modern&native-focus-anchor&locale=' + locale;
+      const panel = page.getByRole('dialog',{name:locale === 'he' ? 'חיישנים' : 'Sensors',exact:true});
+      const native = page.getByRole('dialog',{name:'Native entity details',exact:true});
+      const graph = fallback ? panel.getByRole('button',{name:/Energy meter/})
+        : panel.locator('[data-native-type=sensor]').filter({hasText:'Energy meter'});
+      const launcher = panel.locator('.native-panel-card[aria-label="Energy meter"]');
+      const calls = () => page.evaluate(() => window.bayitTest.moreInfoCalls);
+      const assertDetails = async () => {
+        await native.waitFor();
+        assert.equal(new URL(page.url()).searchParams.get('more-info-entity-id'),sensor);
+        assert.equal(new URL(page.url()).hash,hash);
+        await native.getByRole('button',{name:'Close native details',exact:true}).tap();
+        await page.waitForURL(url => !url.searchParams.has('more-info-entity-id'));
+        await panel.waitFor();
+        await page.waitForFunction(() => document.querySelector('bayit-dashboard').shadowRoot.activeElement
+          ?.matches('.native-panel-card[aria-label="Energy meter"]'));
+      };
+      try {
+        await page.goto(url + (fallback ? '&no-native-charts' : '') + hash);
+        await graph.waitFor();
+        if (!fallback) {
+          assert.equal(await graph.getAttribute('data-tap-action'),'fire-dom-event');
+          assert.equal(await graph.getAttribute('data-hold-action'),'none');
+          assert.equal(await graph.getAttribute('data-double-tap-action'),'none');
+          await graph.getByText('Plot',{exact:true}).tap();
+          await graph.dispatchEvent('ll-custom',{bubbles:true,composed:true,detail:{bayit_graph_link:true}});
+          assert.deepEqual(await calls(),[]);
+        }
+        await graph.press('Enter');
+        await assertDetails();
+        await launcher.press('Space');
+        await assertDetails();
+        assert.deepEqual(await calls(),[sensor,sensor]);
+
+        await page.evaluate(entity => window.bayitTest.setFixtureRegistry(entity,{hidden_by:'user'}), sensor);
+        await launcher.press('Enter');
+        assert.deepEqual(await calls(),[sensor,sensor]);
+        assert.deepEqual(await page.evaluate(() => window.bayitTest.calls),[]);
+        assert.equal(new URL(page.url()).hash,hash);
+      } finally { await page.close(); }
+    }
+  }
+}
+
 async function assertUtilityAndSensorGrid(browser) {
   for (const locale of ['en','he']) {
     const he = locale === 'he';
@@ -12073,7 +12124,7 @@ try {
       const staleGraph = sensors.locator('[data-native-type="sensor"]').filter({ hasText: 'Energy meter' });
       await temperatureGraph.waitFor();
       await staleGraph.waitFor();
-      assert.equal(await staleGraph.getAttribute('data-tap-action'), 'none');
+      assert.equal(await staleGraph.getAttribute('data-tap-action'), 'fire-dom-event');
       await staleGraph.click();
       assert.equal(await sensors.isVisible(), true);
       await temperatureGraph.getByText('Plot', { exact: true }).click();
@@ -12106,6 +12157,8 @@ try {
       await panelsPage.getByRole('dialog',{name:'Calendar',exact:true}).getByText('2 calendars',{exact:true}).waitFor();
       await panelsPage.close();
     });
+
+    await run('Unlinked Sensors graph details', () => assertUnlinkedSensorGraphDetails(browser));
 
     await run('Energy, Weather, Sensors and native details', async () => {
       const utilityPage = await browser.newPage({ viewport: { width: 391, height: 845 }, hasTouch: true, reducedMotion: 'reduce' });

@@ -805,24 +805,42 @@ export function createToolbarPanel(kind, configuration, context) {
       return nativeCard({ type: 'calendar', entities: [item.entity], initial_view: 'listWeek' }, renderTile(item, 'status'));
     }
     if (domain(item) === 'sensor' && (item.graph_hours || itemKind === 'graph')) {
-      const moreInfo = compactStatus || kind === 'weather' && section === 'readings' ||
+      const nativeMoreInfo = compactStatus || kind === 'weather' && section === 'readings' ||
         kind === 'energy' && (section === 'electricity' || section === 'water');
-      const config = sensorGraphConfig(item, { moreInfo });
+      const config = sensorGraphConfig(item, { moreInfo: nativeMoreInfo });
       const fallback = renderTile(item, 'status');
       if (readingCards && kind === 'weather') fallback.classList.add('weather-history-value');
       const destination = itemKind === 'graph' && graphDestination?.(item);
-      if (destination) {
-        config.tap_action = { action: 'fire-dom-event', bayit_graph_link: true };
+      const details = kind === 'sensors' && itemKind === 'graph' && !destination;
+      const eventKey = destination ? 'bayit_graph_link' : details ? 'bayit_graph_details' : undefined;
+      if (eventKey) {
+        config.tap_action = { action: 'fire-dom-event', [eventKey]: true };
         config.hold_action = { action: 'none' };
         config.double_tap_action = { action: 'none' };
       }
       const chart = nativeCard(config, fallback);
       if (readingCards) chart.classList.add('reading-native-card');
-      if (!destination) return chart;
-      const open = () => openGraphDestination(destination, chart);
+      if (!eventKey) return chart;
+      const open = destination ? () => openGraphDestination(destination, chart) : () => {
+        const hass = context.getHass();
+        if (dialog?.open && !dialog.hasAttribute('data-closing') && chart.isConnected && host.contains(chart) &&
+            isVisibleEntity(item.entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities)) {
+          moreInfo(item, chart);
+        }
+      };
+      if (details) {
+        // The stable wrapper can receive focus even if the native card replaces its fallback.
+        chart.tabIndex = -1;
+        chart.setAttribute('aria-label', modelFor(item).name);
+        chart.addEventListener('keydown', event => {
+          if (event.target !== chart || !['Enter', ' '].includes(event.key) || event.repeat) return;
+          event.preventDefault();
+          open();
+        });
+      }
       fallback.onclick = open;
       chart.addEventListener('ll-custom', event => {
-        if (event.target !== chart.firstElementChild || event.detail?.bayit_graph_link !== true) return;
+        if (event.target !== chart.firstElementChild || event.detail?.[eventKey] !== true) return;
         event.stopPropagation();
         open();
       });

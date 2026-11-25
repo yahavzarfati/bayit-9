@@ -44,7 +44,7 @@ const WORDS = {
     ask: 'Ask before running', skip: 'Run immediately', askCustom: 'Custom confirmation',
     confirmation: 'Confirmation', confirmationText: 'Confirmation message', dangerAction: 'Highlight this action in red',
     graphHours: 'History hours',
-    graphDestination: 'Open on graph tap', noGraphLink: 'No shortcut', graphLinkUnavailable: 'Destination unavailable', graphRoom: 'Room',
+    graphDestination: 'Open on graph tap', graphDetails: 'Sensor details', graphLinkUnavailable: 'Destination unavailable', graphRoom: 'Room',
     runScript: 'Run script from this button',
     scriptButton: 'Script button behavior', scriptStartOnly: 'Start script only', scriptToggle: 'Start or stop script',
     mediaRemote: 'Media remote', mediaTransport: 'Playback device', mediaVolume: 'Volume device', mediaPower: 'Power device',
@@ -126,7 +126,7 @@ const WORDS = {
     ask: 'בקשת אישור לפני ההפעלה', skip: 'הפעלה מיידית', askCustom: 'הודעת אישור מותאמת',
     confirmation: 'אישור פעולה', confirmationText: 'הודעת אישור', dangerAction: 'הדגשת הפעולה באדום',
     graphHours: 'שעות היסטוריה',
-    graphDestination: 'פתיחה בלחיצה על הגרף', noGraphLink: 'ללא קיצור דרך', graphLinkUnavailable: 'היעד אינו זמין', graphRoom: 'חדר',
+    graphDestination: 'פתיחה בלחיצה על הגרף', graphDetails: 'פרטי החיישן', graphLinkUnavailable: 'היעד אינו זמין', graphRoom: 'חדר',
     runScript: 'הפעלת התסריט מהכפתור',
     scriptButton: 'פעולת כפתור התרחיש', scriptStartOnly: 'הפעלת תרחיש בלבד', scriptToggle: 'הפעלה או עצירה של תרחיש',
     mediaRemote: 'שלט מדיה', mediaTransport: 'מכשיר לניגון', mediaVolume: 'מכשיר לעוצמת שמע',
@@ -563,7 +563,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         if (links.size || chosen) {
           const stale = chosen && !links.has(chosen);
           if (stale) links.set(chosen, words.graphLinkUnavailable);
-          const destination = select([['', words.noGraphLink], ...links], chosen);
+          const destination = select([['', words.graphDetails], ...links], chosen);
           if (stale) destination.selectedOptions[0].disabled = true;
           destination.addEventListener('change', () => {
             const [kind, id] = destination.value.split(':');
