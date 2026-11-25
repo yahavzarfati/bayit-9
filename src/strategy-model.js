@@ -5,6 +5,7 @@ import { normalizeVacuumMap } from './vacuum-map.js';
 import { normalizeMediaStage } from './now-playing.js';
 import { normalizeMediaRemote } from './media-device-support.mjs';
 import { wallpaperChoices } from './wallpapers.js';
+import { normalizeSharedWallpapers } from './shared-wallpapers.js';
 import { normalizeLightEffectGroups } from './light-effects.js';
 import { normalizePopupAliases } from './popup-routes.js';
 import { calendarAccent, normalizeCalendarAgenda, supportsDailyForecast } from './calendar-agenda.js';
@@ -928,7 +929,11 @@ export function generateDashboard(config = {}, hass = {}) {
     const hidden = idList(config.hidden_entities);
     if (hidden.length && toolbar.some(entry => entry.sections?.some(section => section.discover))) card.hidden_entities = hidden;
   }
-  if (Object.hasOwn(BACKGROUNDS, config.background)) card.background = config.background;
+  const sharedWallpapers = normalizeSharedWallpapers(config.shared_wallpapers);
+  if (sharedWallpapers.length) card.shared_wallpapers = sharedWallpapers;
+  if (Object.hasOwn(BACKGROUNDS, config.background) || sharedWallpapers.some(item => item.id === config.background)) {
+    card.background = config.background;
+  }
   if (['soft', 'circle', 'square'].includes(config.shape)) card.shape = config.shape;
   if (['classic', 'header'].includes(config.layout)) card.layout = config.layout;
   if (typeof config.preference_key === 'string' && config.preference_key.trim()) {

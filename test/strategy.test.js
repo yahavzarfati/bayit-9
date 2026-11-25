@@ -6,6 +6,26 @@ import {
   selectableRoomEntities, shortcutDetailPanels, suggestedDashboard,
 } from '../src/strategy-model.js';
 import { getDeviceModel } from '../src/device-control.mjs';
+import { normalizeSharedWallpapers, normalizeSharedWallpaperPath } from '../src/shared-wallpapers.js';
+
+test('normalizes local shared backgrounds without shadowing personal or built-in choices', () => {
+  const first = { id:'summer', name:' בבית ', path:'/local/walls/summer photo.webp', preview:'/local/walls/tiny.webp' };
+  const invalid = ['/remote/a.jpg', '//elsewhere.example/local/test.png', '/local/../private.png',
+    '/local/walls/%2e%2e/private.png', '/local/walls/%2Fescape.png', '/local/%255csecret.png',
+    '/local/walls/test.svg', '/local/walls/a.jpg?outside=1', '/local/walls/a.jpg#fragment'];
+  for (const value of invalid) assert.equal(normalizeSharedWallpaperPath(value), undefined);
+  const shared = [first, { ...first, name:'Duplicate' }, { ...first, id:'personal' },
+    { ...first, id:'aurora' }, { ...first, id:'bad', path:invalid[0] },
+    { ...first, id:'fall', path:'/local/walls/fall.png', preview:invalid[1] }];
+  const expected = [{ id:'summer', name:'בבית', path:'/local/walls/summer%20photo.webp', preview:'/local/walls/tiny.webp' },
+    { id:'fall', name:'בבית', path:'/local/walls/fall.png' }];
+  assert.deepEqual(normalizeSharedWallpapers(shared), expected);
+  const card = generateDashboard({ shared_wallpapers:shared, background:'summer' }, home()).views[0].cards[0];
+  assert.deepEqual(card.shared_wallpapers,expected);
+  assert.equal(card.background,'summer');
+  assert.equal(generateDashboard({ background:'summer' },home()).views[0].cards[0].background,undefined);
+  assert.equal(generateDashboard({ background:'aurora' },home()).views[0].cards[0].background,'aurora');
+});
 
 test('discovers only visible active lights from an opted-in Overview section', () => {
   const hass = home();
