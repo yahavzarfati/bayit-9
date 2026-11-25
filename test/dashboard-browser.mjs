@@ -4016,13 +4016,15 @@ async function assertStandaloneTimedHeater(browser) {
 
       await setRuntime('180');
       await start.waitFor();
+      const linkedHistory = await page.evaluate(() => window.bayitTest.moreInfoCalls);
       await history.evaluate(button => {
         window.bayitTest.repointTimer();
         button.click();
       });
       await start.waitFor({ state: 'detached' });
       await history.waitFor({ state: 'hidden' });
-      assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), [entity, runtime, runtime, runtime]);
+      await countdown.waitFor({ state: 'hidden' });
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), linkedHistory);
       assert.equal(await native.count(), 0);
       await page.evaluate(() => window.bayitTest.repointTimer('switch.demo_step_power'));
       await start.waitFor();
