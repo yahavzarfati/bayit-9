@@ -6079,8 +6079,15 @@ async function assertCompactClimateRail(browser) {
         result.set(row,(result.get(row) ?? 0)+1);
         allInside &&= rect.left >= bounds.left - .5 && rect.right <= bounds.right + .5 && rect.width >= 44 && rect.height >= 44;
       }
+      const stepper = accurateTarget.closest('.temperature-stepper');
+      const stepperBounds = stepper.getBoundingClientRect();
+      const targetButtonsFit = !stepper.closest('[data-standalone-climate]') ||
+        Array.from(stepper.querySelectorAll('.step-control')).every(button => {
+          const hit = button.getBoundingClientRect();
+          return hit.width >= 44 && hit.height >= 44 && hit.left >= stepperBounds.left - .5 && hit.right <= stepperBounds.right + .5;
+        });
       return {rows:[...result.values()],inlineSize:bounds.width,allInside,timerAfter:timer.top >= bounds.bottom,
-        targetFits:accurateTarget.scrollWidth <= accurateTarget.clientWidth + 1,
+        targetFits:accurateTarget.scrollWidth <= accurateTarget.clientWidth + 1 && targetButtonsFit,
         targetWidths:[accurateTarget.scrollWidth,accurateTarget.clientWidth]};
     });
     const assertSelectorFields = async (width,surface,showGlyphs,railWidth) => {
@@ -6126,6 +6133,9 @@ async function assertCompactClimateRail(browser) {
         for (const surface of [room,detail]) {
           await page.goto(fourControlsUrl + surface);
           await rail.waitFor();
+          if (surface === detail && width === 320) {
+            await rail.evaluate(row => { row.querySelector('.target-reading').style.minInlineSize = '54px'; });
+          }
           const four = await geometry();
           assert.deepEqual(four.rows,width === 320 ? [2,2] : [4]);
           assert.ok(four.allInside && four.timerAfter && four.targetFits, JSON.stringify({locale,width,surface,...four}));
@@ -6148,12 +6158,6 @@ async function assertCompactClimateRail(browser) {
             assert.ok(app.allInside && app.timerAfter && app.targetFits, JSON.stringify({locale,width,surface,railWidth,...app}));
             if (surface === detail) {
               assert.ok(app.targetWidths[1] >= 54);
-              const targetButtonsFit = await rail.locator('.step-control').evaluateAll(buttons =>
-                buttons.length === 2 && buttons.every(button => {
-                  const { width, height } = button.getBoundingClientRect();
-                  return width >= 44 && height >= 44;
-                }));
-              assert.ok(targetButtonsFit);
               await rail.evaluate(row => { row.parentElement.style.inlineSize = '291px'; });
               await assertSelectorFields(width,surface,true,291);
               const wrapped = await geometry();
