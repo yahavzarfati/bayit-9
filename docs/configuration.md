@@ -191,9 +191,9 @@ A Media screen can also include a remote. In the toolbar editor choose a playbac
 
 In YAML add `media_remote: { transport_entity: media_player.streamer, volume_entity: media_player.television, power_entity: media_player.television, allow_standby: true }` to a Media toolbar entry. Each device assignment is optional.
 
-Use **Device display → Preset shortcut** on a climate device to add a one-tap native preset in its room and its dedicated details. The preset and highlight can be different. The highlight reflects the preset reported by Home Assistant. You can also set a short label and an MDI icon. Only presets currently advertised by the device can be sent.
+Use **Device display → Preset shortcut** on a climate device to add a one-tap native preset in its room and its dedicated details. The preset and highlight can be different. The highlight reflects the preset reported by Home Assistant. You can also set a short label and an MDI icon. **Show only the preset shortcut** keeps the configured button as the preset control in the room and in its device popup. The full preset picker is available when the shortcut is unavailable, and Home Assistant device details remain accessible. Only presets currently advertised by the device can be sent.
 
-In YAML, set `climate_preset_shortcuts` on a room override. For example `climate_preset_shortcuts: {climate.study: {preset: none, label: SE, icon: 'mdi:leaf', highlight_when: eco}}` adds a shortcut to the default preset and highlights it while Eco is reported. Other rooms keep their own settings.
+In YAML, set `climate_preset_shortcuts` on a room override. For example `climate_preset_shortcuts: {climate.study: {preset: none, label: SE, icon: 'mdi:leaf', highlight_when: eco, shortcut_only: true}}` adds a shortcut to the default preset and highlights it while Eco is reported. Other rooms keep their own settings.
 
 For a vacuum in a room, choose a panel under **Vacuum panel**, then select **Tap** or **Press and hold** under **Open the vacuum panel with**. The other gesture opens the vacuum's Home Assistant details. **Back to room** returns to the source row. In YAML, `vacuum_panel_links` maps the vacuum entity ID to a Vacuum toolbar entry ID. To open a linked panel with a hold, list that entity in the room's `vacuum_panel_hold_entities`.
 

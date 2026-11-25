@@ -2335,6 +2335,7 @@ export class BayitDashboard extends HTMLElement {
         const active = model.attributes.preset_mode;
         const observed = model.actions.set_preset_mode?.options.includes(active);
         action.hidden = !this.canUseRoomPreset(view.config, model);
+        view.onlyPresetShortcut = shortcut.shortcut_only === true && !action.hidden;
         action.disabled = action.hidden || !!pending;
         action.toggleAttribute('data-highlighted', !!observed && active === (shortcut.highlight_when ?? shortcut.preset));
         action.setAttribute('aria-busy', String(pending?.id === 'set_preset_mode'));
@@ -2428,7 +2429,7 @@ export class BayitDashboard extends HTMLElement {
         model.actions.set_color_temp_kelvin && Array.isArray(lightModes) && lightModes.every(mode => whiteLightModes.has(mode)));
       const signature = JSON.stringify([actionsInOrder.map(id => model.actions[id] || null), timerLayout,
         model.levelAction, coverClass, hideIdleTimedOff, compactCommands, mutePlaceholder, mutePlaceholder && model.attributes.is_volume_muted === true,
-        view.filledWhiteLightRail]);
+        view.filledWhiteLightRail, view.onlyPresetShortcut]);
 
       if (signature !== view.signature) {
         view.signature = signature;
@@ -2755,6 +2756,7 @@ export class BayitDashboard extends HTMLElement {
       } : undefined,
       request: (id, value, control) => this.requestAction(view.config, id, value, control) });
     for (const id of compactCommands || actionsInOrder) {
+      if (view.onlyPresetShortcut && id === 'set_preset_mode') continue;
       if (view.climatePower && (id === 'turn_on' || id === 'turn_off')) continue;
       if (view.vacuumCleaningControls && !roomVacuumCleaningActions.has(id)) continue;
       if (view.compactMedia && !roomCompactMediaActions.has(id)) continue;

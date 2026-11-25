@@ -303,7 +303,8 @@ export function normalizeClimatePresetShortcut(value) {
   const label = typeof value.label === 'string' ? value.label.trim().slice(0, 16) : '';
   const icon = typeof value.icon === 'string' ? value.icon.trim() : '';
   return { preset: value.preset, ...(label && { label }), ...(ROOM_ICON.test(icon) && { icon }),
-    ...(validPreset(value.highlight_when) && { highlight_when: value.highlight_when }) };
+    ...(validPreset(value.highlight_when) && { highlight_when: value.highlight_when }),
+    ...(value.shortcut_only === true && { shortcut_only: true }) };
 }
 
 export function usesAutomaticRoomDevices(override, sections, custom) {

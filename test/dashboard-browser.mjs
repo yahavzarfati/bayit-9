@@ -943,7 +943,8 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
       ...(query.has('room-climate-power') && {climate_power_entities:['climate.demo_air']}),
       ...(query.has('compact-climate-controls') && {compact_climate_controls_entities:['climate.demo_air']}),
       ...(!query.has('omit-climate-preset-shortcut') && { climate_preset_shortcuts: {
-        'climate.demo_air': { preset: 'none', label: 'SE', icon: 'mdi:leaf', highlight_when: 'eco' },
+        'climate.demo_air': { preset: 'none', label: 'SE', icon: 'mdi:leaf', highlight_when: 'eco',
+          ...(query.has('only-preset-shortcut') && { shortcut_only: true }) },
       } }),
     },
     bayit_room_other_preset: { name: 'Second room', entities: ['climate.demo_air'] },
@@ -6047,6 +6048,27 @@ async function assertStandaloneTimedClimate(browser) {
       await room.locator('.room-climate-power').waitFor();
       assert.equal(await room.getAttribute('data-standalone-climate'), null);
       assert.equal(await room.locator('.compact-device-heading-info').count(), 0);
+
+      const shortcutOnly = fixtureUrl + '&compact-climate-controls&only-preset-shortcut';
+      const presetPicker = pane => pane.locator('select[data-action=set_preset_mode]');
+      const hideDuplicatedPicker = async (pane, hash) => {
+        await page.goto(shortcutOnly + hash);
+        const shortcut = pane.locator('.climate-preset-shortcut:visible');
+        await shortcut.waitFor();
+        assert.equal(await presetPicker(pane).count(), 0);
+        assert.equal(await shortcut.locator('ha-icon').getAttribute('icon'), 'mdi:leaf');
+        await page.evaluate(() => window.bayitTest.setFixtureAttributes('climate.demo_air',
+          { preset_modes: ['eco', 'boost'], preset_mode: 'eco' }));
+        await shortcut.waitFor({state:'hidden'});
+        await presetPicker(pane).waitFor({state:'attached'});
+        await page.evaluate(() => window.bayitTest.setFixtureAttributes('climate.demo_air',
+          { preset_modes: ['none', 'eco', 'boost'], preset_mode: 'eco' }));
+        await shortcut.waitFor();
+        assert.equal(await presetPicker(pane).count(), 0);
+        assert.deepEqual(await calls(), []);
+      };
+      await hideDuplicatedPicker(room, '#room-studio');
+      await hideDuplicatedPicker(panel, route);
     } finally {
       await page.close();
     }
@@ -9869,6 +9891,13 @@ try {
       await presetPicker.selectOption('boost');
       assert.deepEqual(await presetPage.evaluate(() => window.latest.room_overrides.studio
         .climate_preset_shortcuts['climate.demo_air']), { preset: 'boost', label: 'SE', icon: 'mdi:leaf', highlight_when: 'eco' });
+      const shortcutOnly = presetPage.getByLabel('Show only the preset shortcut', { exact: true });
+      await shortcutOnly.check();
+      assert.equal(await presetPage.evaluate(() => window.latest.room_overrides.studio
+        .climate_preset_shortcuts['climate.demo_air'].shortcut_only), true);
+      await shortcutOnly.uncheck();
+      assert.equal(await presetPage.evaluate(() => window.latest.room_overrides.studio
+        .climate_preset_shortcuts['climate.demo_air'].shortcut_only), undefined);
       await presetPicker.selectOption('');
       assert.equal(await presetPage.evaluate(() => window.latest.room_overrides.studio.climate_preset_shortcuts), undefined);
       await presetPage.close();

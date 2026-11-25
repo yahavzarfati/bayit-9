@@ -55,6 +55,7 @@ const WORDS = {
     climatePresetShortcut: 'Preset shortcut', climatePresetNone: 'No shortcut', climatePresetLabel: 'Shortcut label',
     climatePresetIcon: 'Shortcut icon', climatePresetHighlight: 'Highlight when this preset is reported',
     climatePresetHighlightDefault: 'When the shortcut preset is active', climatePresetUnavailable: 'Unavailable preset',
+    climatePresetShortcutOnly: 'Show only the preset shortcut',
     roomPanelShow: 'Show device in room panel', roomPanelHint: 'For quick access from Home, add the device in Room shortcuts.',
     roomHomeActivity: 'Show device activity on the room card',
     lightCount: 'Lights in the room count', lightCountHint: 'With no lights selected, the count includes every room light.',
@@ -196,6 +197,7 @@ const WORDS = {
     climatePresetShortcut: 'קיצור לתוכנית מזגן', climatePresetNone: 'ללא קיצור', climatePresetLabel: 'שם הקיצור',
     climatePresetIcon: 'סמל הקיצור', climatePresetHighlight: 'הדגשה כשהמזגן מדווח על תוכנית זו',
     climatePresetHighlightDefault: 'כשתוכנית הקיצור פעילה', climatePresetUnavailable: 'תוכנית לא זמינה',
+    climatePresetShortcutOnly: 'הצגת קיצור התוכנית בלבד',
     roomPanelShow: 'הצגת המכשיר בחלונית החדר', roomPanelHint: 'לגישה מהירה ממסך הבית, הוסיפו את המכשיר בהגדרה קיצורים בחדרים.',
     roomHomeActivity: 'הצגת פעילות המכשיר בכרטיס החדר במסך הבית',
     lightCount: 'תאורה שנכללת במונה החדר', lightCountHint: 'כשלא מסומן אף פריט, המונה כולל את כל התאורה בחדר.',
@@ -885,6 +887,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
         fields.push(field(title, control));
       }
       fields.push(pick('highlight_when', words.climatePresetHighlight, words.climatePresetHighlightDefault));
+      const shortcutOnly = node('input', { type: 'checkbox', checked: saved.shortcut_only === true });
+      shortcutOnly.dataset.roomFocus = 'climate-preset-shortcut-only';
+      shortcutOnly.addEventListener('change', () => save({ shortcut_only: shortcutOnly.checked }, shortcutOnly.dataset.roomFocus));
+      fields.push(field(words.climatePresetShortcutOnly, shortcutOnly));
     }
     return fields;
   }
