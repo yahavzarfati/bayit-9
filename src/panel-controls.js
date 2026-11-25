@@ -126,7 +126,8 @@ export function buildPanelControls(model, {
     const horizontalSwing = 'set_swing_horizontal_mode';
     if (actions[horizontalSwing]) {
       used.add(horizontalSwing);
-      if (buildClimateDetail) content.push(buildClimateDetail(horizontalSwing));
+      const control = buildClimateDetail?.(horizontalSwing);
+      if (control) content.push(control);
     }
   }
 
@@ -310,6 +311,9 @@ export const panelControlStyles = `
     padding: 0 4px; background: transparent; font-size: 13px; font-weight: 730; }
   .shell[dir=rtl] .climate-selector select { direction: rtl; }
   .climate-selector option { background: #262626; color: white; }
+  .climate-extra-controls { min-width: 0; border-top: 1px solid var(--soft-line); }
+  .climate-extra-controls > summary { min-height: 44px; padding: 11px 4px; cursor: pointer; }
+  .climate-extra-controls > .field-row + .field-row { margin-block-start: 5px; }
   .device-timer, .heat-level { min-width: 0; text-align: center; border-top: 1px solid var(--soft-line); padding-top: 6px; }
   .timer-clock { margin: 1px 0 0; font-size: 18px; font-weight: 780; font-variant-numeric: tabular-nums; }
   .timer-today, .heat-level-title { margin: 0; font-size: 12px; font-weight: 740; color: var(--secondary); }

@@ -1797,6 +1797,8 @@ export class BayitDashboard extends HTMLElement {
     view.effectGallery = null;
     const basic = make('div', 'basic-actions');
     const complex = new Map();
+    const standaloneClimate = this.panel?.type === 'device' && model.kind === 'climate';
+    const advancedClimate = standaloneClimate ? make('details', 'climate-extra-controls') : undefined;
     const { actions } = model;
     view.compactLight = !!(view.lightPower && actions.set_brightness && actions.set_color_temp_kelvin &&
       actions.turn_on && actions.turn_off && !actions.set_light_color && !actions.set_effect);
@@ -1811,12 +1813,16 @@ export class BayitDashboard extends HTMLElement {
     const timerPreferenceKey = timing && 'bayit-9.timer-duration.v1:' +
       (timing.simple_timer_entity ?? timing.timer_entity ?? view.config.entity);
     view.special = buildPanelControls(model, { make, button, icon, label, t: key => this.t(key),
-      compactTimer: view.inlineClimate || (this.panel?.type === 'device' && model.kind === 'climate'), timerPreferenceKey,
+      compactTimer: view.inlineClimate || standaloneClimate, timerPreferenceKey,
       usageInfo: (entity, source) => { if (this.canShowTimerUsage(entity)) this.moreInfo({ entity }, source); },
       canShowUsage: entity => this.canShowTimerUsage(entity),
       canResetUsage: entity => this.canResetTimerUsage(entity),
       resetOptIn: timing?.allow_daily_usage_reset === true && !!timing.simple_timer_entity,
-      buildClimateDetail: this.panel?.type === 'device' ? id => this.buildField(view, model.actions[id], id, model) : undefined,
+      buildClimateDetail: this.panel?.type === 'device' ? id => {
+        const control = this.buildField(view, model.actions[id], id, model);
+        if (!advancedClimate) return control;
+        advancedClimate.append(control);
+      } : undefined,
       request: (id, value, control) => this.requestAction(view.config, id, value, control) });
     for (const id of actionsInOrder) {
       const action = actions[id];
@@ -1834,7 +1840,9 @@ export class BayitDashboard extends HTMLElement {
       }
       if (action.color || rangeActions.has(id) || action.options || typeof action.min === 'number' ||
           ['set_temperature_range','start_timed'].includes(id)) {
-        complex.set(id, this.buildField(view, action, id, model));
+        const field = this.buildField(view, action, id, model);
+        if (advancedClimate && id === 'set_preset_mode') advancedClimate.append(field);
+        else complex.set(id, field);
         continue;
       }
       const name = this.actionLabel(id);
@@ -1846,7 +1854,14 @@ export class BayitDashboard extends HTMLElement {
     }
     if (view.effectGallery) organizeLightModes(complex, view.lightMode, mode => { view.lightMode = mode; },
       { make, button, t: key => this.t(key) });
-    view.group.replaceChildren(...(basic.childElementCount ? [basic] : []), ...view.special.content, ...complex.values());
+    const hasAdvanced = !!advancedClimate?.childElementCount;
+    if (hasAdvanced) {
+      advancedClimate.open = view.climateExtraControls?.open ?? false;
+      advancedClimate.prepend(make('summary', '', this.t('climate_extra_controls')));
+    }
+    view.climateExtraControls = hasAdvanced ? advancedClimate : undefined;
+    view.group.replaceChildren(...(basic.childElementCount ? [basic] : []), ...view.special.content, ...complex.values(),
+      ...(hasAdvanced ? [advancedClimate] : []));
     if (focused?.action || focused?.lightMode) {
       const successor = [...view.group.querySelectorAll('[data-action], [data-light-mode]')].find(el =>
         !el.closest('[hidden]') && (focused.action && el.dataset.action === focused.action ||

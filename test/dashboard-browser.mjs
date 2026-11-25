@@ -2589,6 +2589,11 @@ try {
       ]));
       assert.equal(await fan.inputValue(), 'medium low');
       const horizontal = positioned.getByRole('combobox', { name: horizontalName, exact: true });
+      const extraControls = positioned.locator('.climate-extra-controls');
+      assert.equal(await extraControls.evaluate(details => details.open), false);
+      assert.equal(await horizontal.count(), 0);
+      await extraControls.locator('summary').tap();
+      assert.equal(await extraControls.evaluate(details => details.open), true);
       const applyDirection = positioned.getByRole('button', {
         name: (rightToLeft ? 'החל' : 'Apply') + ' · ' + horizontalName, exact: true,
       });
@@ -2618,6 +2623,7 @@ try {
       ]);
       assert.equal(await horizontal.inputValue(), 'left_center');
       assert.equal(await swing.inputValue(), 'fixed_upper_middle');
+      assert.equal(await extraControls.evaluate(details => details.open), true);
       await labelPage.keyboard.press('Escape');
       await positioned.waitFor({ state: 'hidden' });
       await labelPage.getByRole('button', { name: 'Studio', exact: true }).tap();
