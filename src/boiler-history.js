@@ -104,8 +104,18 @@ export function openBoilerHistory({host, config, locale, hass, t}) {
     catch { return new Intl.DateTimeFormat(locale, options); }
   }
 
+  function duration(minutes) {
+    if (minutes < 60) return minutes + ' ' + t('duration');
+    if (minutes === 60) return t('boiler_one_hour');
+    const hours = Math.floor(minutes / 60);
+    const remainder = minutes % 60;
+    const count = remainder ? hours + ':' + String(remainder).padStart(2, '0') : String(hours);
+    return t('boiler_hours').replace('{hours}', count);
+  }
+
   function draw(sessions) {
     if (!sessions.length) { host.replaceChildren(message('boiler_history_empty')); return; }
+    const scroll = host.scrollTop;
     const calendar = format({ weekday:'long', year:'numeric', month:'short', day:'numeric' });
     const clock = format({ hour:'2-digit', minute:'2-digit', hourCycle:'h23' });
     const groups = new Map();
@@ -118,7 +128,7 @@ export function openBoilerHistory({host, config, locale, hass, t}) {
       const block = node('section', 'boiler-history-day');
       const head = node('header', 'boiler-history-day-title');
       const sum = Math.round(items.reduce((total,item) => total + item.end - item.start, 0) / 60000);
-      head.append(node('h4', '', day), node('span', '', t('boiler_total') + ' ' + sum + ' ' + t('duration')));
+      head.append(node('h4', '', day), node('span', '', t('boiler_total') + ' ' + duration(sum)));
       block.append(head);
       for (const period of items) {
         const item = node('div', 'boiler-history-row');
@@ -127,11 +137,12 @@ export function openBoilerHistory({host, config, locale, hass, t}) {
         const until = period.running ? t('boiler_now') : clock.format(period.end);
         const length = Math.round((period.end - period.start) / 60000);
         item.append(node('span', 'boiler-history-hours', begin + ' – ' + until),
-          node('span', 'boiler-history-source', t(period.source)), node('span','boiler-history-length',length + ' ' + t('duration')));
+          node('span', 'boiler-history-source', t(period.source)), node('span','boiler-history-length',duration(length)));
         block.append(item);
       }
       return block;
     }));
+    if (scroll) host.scrollTop = scroll;
   }
 
   async function refresh() {
@@ -174,6 +185,12 @@ export function openBoilerHistory({host, config, locale, hass, t}) {
 
 export const boilerHistoryStyles = `
   .boiler-history-host { min-height: 75px; }
+  .boiler-history-host[data-compact-history] {
+    max-block-size: 154px;
+    overflow: hidden auto;
+    overscroll-behavior-y: contain;
+    scrollbar-width: thin;
+  }
   .boiler-history-message { color: var(--secondary); text-align: center; }
   .boiler-history-day { display: grid; gap: 6px; margin-bottom: 12px; }
   .boiler-history-day-title, .boiler-history-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }

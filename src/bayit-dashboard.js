@@ -2256,6 +2256,12 @@ export class BayitDashboard extends HTMLElement {
         (!popup?.routeHash || (location.pathname === this.popupHistoryPath && location.hash === popup.routeHash));
     };
     const stacked = config.boiler_timer_with_details === true;
+    if (stacked) {
+      host.dataset.compactHistory = '';
+      host.tabIndex = 0;
+      host.setAttribute('role', 'region');
+      label(host, this.t('boiler_history'));
+    }
     const choices = [
       {label:'timed', icon:'mdi:timer-outline', element:controls},
       {label:'boiler_history', icon:'mdi:history', element:host,

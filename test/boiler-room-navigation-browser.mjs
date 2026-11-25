@@ -136,6 +136,13 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
           states[schedule.entity_id].state = 'off';
           return Promise.resolve({});
         }
+        if (params.has('history-layout') && request.type === 'history/history_during_period') {
+          const events = [35, 60, 95, 120, 20].flatMap((minutes, index) => {
+            const end = Date.now() / 1000 - (index + 1) * 86400;
+            return [{s:'on', lu:end - minutes * 60}, {s:'off', lu:end}];
+          });
+          return Promise.resolve({[boiler.entity]:events});
+        }
         return Promise.resolve(request.type === 'history/history_during_period' ? {} : []);
       },
     };
@@ -519,6 +526,44 @@ async function assertIdleZeroBoilerDuration(browser, locale) {
   }
 }
 
+async function assertCompactBoilerHistory(browser, locale) {
+  const page = await browser.newPage({viewport:{width:391,height:845},hasTouch:true,reducedMotion:'reduce'});
+  const he = locale === 'he';
+  const title = he ? 'היסטוריית שימוש' : 'Usage history';
+  const base = 'http://127.0.0.1:' + server.address().port + '?compact&routed&history-layout&locale=' + locale;
+  const route = '#device/bath/switch.fixture_boiler';
+  const panel = page.getByRole('dialog',{name:'Fixture boiler',exact:true});
+  try {
+    await page.goto(base + '&stacked' + route);
+    await panel.getByRole('button',{name:title,exact:true}).tap();
+    const history = panel.getByRole('region',{name:title,exact:true});
+    await history.locator('.boiler-history-row').first().waitFor();
+    const durations = he ? ['35 דקות', 'שעה', '1:35 שעות', '2 שעות', '20 דקות']
+      : ['35 Minutes', '1 hour', '1:35 hours', '2 hours', '20 Minutes'];
+    assert.deepEqual(await history.locator('.boiler-history-length').allTextContents(), durations);
+    assert.ok((await history.locator('.boiler-history-day-title').allTextContents())[2].includes(durations[2]));
+    await history.focus();
+    const layout = await history.evaluate(element => {
+      const body = element.closest('.modal-body');
+      const outer = body.scrollTop;
+      element.scrollTop = element.scrollHeight;
+      return {height:element.clientHeight, scrolling:element.scrollTop>0, focused:element.getRootNode().activeElement===element,
+        outerUntouched:body.scrollTop===outer};
+    });
+    assert.deepEqual(layout,{height:154,scrolling:true,focused:true,outerUntouched:true});
+    assert.equal(await page.evaluate(()=>window.fixture.requests.includes('call_service')),false);
+
+    await page.goto(base + route);
+    await panel.getByRole('button',{name:title,exact:true}).tap();
+    const standardHistory = panel.locator('.boiler-history-host');
+    await standardHistory.locator('.boiler-history-row').first().waitFor();
+    assert.equal(await standardHistory.getAttribute('data-compact-history'),null);
+    assert.ok((await standardHistory.boundingBox()).height>154);
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertBoilerScheduleLinks(browser, locale) {
   const page = await browser.newPage({viewport:{width:320,height:680},hasTouch:true,reducedMotion:'reduce'});
   page.setDefaultTimeout(8000);
@@ -741,6 +786,7 @@ try {
       await reopenedBoiler.waitFor();
       await reopenedBoiler.locator('[data-role=back]').waitFor({ state: 'hidden' });
       await routed.close();
+      await assertCompactBoilerHistory(browser, locale);
       await assertBoilerScheduleLinks(browser, locale);
       await assertRoomBoilerScheduleEntry(browser, locale);
       await assertClosedBoilerSchedulePreflight(browser, locale);
