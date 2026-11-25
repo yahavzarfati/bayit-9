@@ -1928,6 +1928,20 @@ async function assertTimerHistory(browser) {
       await finish(status);
       await page.waitForFunction(() => document.querySelector('bayit-dashboard').shadowRoot.activeElement?.classList.contains('timer-history'));
 
+      await countdown.press('Enter');
+      await native.waitFor();
+      const idleCountdown = await countdown.elementHandle();
+      const setTimerPhase = phase => page.evaluate(({ id, phase }) => window.bayitTest.setFixtureAttributes(id, {
+        timer_state: phase, timer_finishes_at: phase === 'active' ? new Date(Date.now() + 120000).toISOString() : null,
+      }), { id: runtime, phase });
+      await setTimerPhase('active');
+      await panel.locator('.timer-command[data-action=extend_timed]').waitFor();
+      assert.equal(await idleCountdown.evaluate(control => control.isConnected), false);
+      await finish(status);
+      await page.waitForFunction(() => document.querySelector('bayit-dashboard').shadowRoot.activeElement?.matches('.timer-clock-history'));
+      await setTimerPhase('idle');
+      await panel.locator('.timer-command[data-action=start_timed]').waitFor();
+
       await setTarget('sensor.demo_other_timer_status');
       await history.tap();
       await finish(runtime);
@@ -1935,7 +1949,7 @@ async function assertTimerHistory(browser) {
       await setVisibility(status,true);
       await history.click({delay:620});
       await finish(runtime);
-      assert.deepEqual(await infoCalls(),[status,status,status,status,runtime,runtime]);
+      assert.deepEqual(await infoCalls(),[status,status,status,status,status,runtime,runtime]);
 
       const usage = panel.locator('.timer-usage');
       await usage.tap();
@@ -1944,7 +1958,7 @@ async function assertTimerHistory(browser) {
       await history.waitFor({state:'hidden'});
       await countdown.waitFor({state:'hidden'});
       await panel.locator('.timer-clock').filter({hasText:'00:00'}).tap();
-      assert.deepEqual(await infoCalls(),[status,status,status,status,runtime,runtime,runtime]);
+      assert.deepEqual(await infoCalls(),[status,status,status,status,status,runtime,runtime,runtime]);
       assert.deepEqual(await page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service')),[]);
     } finally {
       await page.close();

@@ -1282,7 +1282,7 @@ export class BayitDashboard extends HTMLElement {
       const active = () => this.isConnected && source.isConnected && this.roomViews.get(room.id)?.room === room;
       if (!active() || !visible(config.entity)) return;
       if (route === 'native') {
-        this.moreInfo(config, source, active);
+        this.moreInfo(config, source, { shortcutActive: active });
         return;
       }
       const panel = route && this.popupToolbar(route.slice('panel:'.length));
@@ -1992,7 +1992,7 @@ export class BayitDashboard extends HTMLElement {
           activationAction = undefined;
           if (!visible()) return;
           if (boilerQuick) this.openDeviceDetails(config, tile, room);
-          else this.moreInfo(config, tile, visible);
+          else this.moreInfo(config, tile, { shortcutActive: visible });
         }, { requireShortTap: true, activationStart: () => { activationAction = tile.dataset.action ?? ''; } });
         tile.onclick = () => {
           const armed = activationAction ?? tile.dataset.action;
@@ -2396,7 +2396,7 @@ export class BayitDashboard extends HTMLElement {
       isVisibleEntity(config.entity, hass?.states ?? {}, hass?.entities, this.config.hiddenEntities);
   }
 
-  moreInfo(config, source, shortcutActive) {
+  moreInfo(config, source, { shortcutActive, returnTo } = {}) {
     if (!this.model(config).actions.more_info) return;
     this.nativeMoreInfoReturn?.();
     const view = this.ownerDocument.defaultView;
@@ -2408,7 +2408,7 @@ export class BayitDashboard extends HTMLElement {
     const fromPanel = panel && modal.open && !modal.hasAttribute('data-closing') && source && modal.contains(source);
     if (fromPanel || shortcutActive) {
       this.nativeMoreInfoReturn = preserveMoreInfoReturn(view, {
-        event, source, body: fromPanel ? modalBody : undefined,
+        event, source, body: fromPanel ? modalBody : undefined, returnTo,
         active: fromPanel
           ? () => this.isConnected && this.panel === panel && modal.open && !modal.hasAttribute('data-closing')
           : () => !this.panel && shortcutActive(),
@@ -2882,7 +2882,10 @@ export class BayitDashboard extends HTMLElement {
       historyInfo: (entity, source) => {
         if (source.isConnected && this.nodes.modal.open && !this.nodes.modal.hasAttribute('data-closing') &&
             entity && entity === this.timerHistoryEntity(view.config, this.model(view.config))) {
-          this.moreInfo({ entity }, source);
+          const returnTo = source.matches('.timer-clock-history') ? () =>
+            view.group.querySelector('.timer-clock-history:not([hidden]):enabled') ??
+            view.group.querySelector('.timer-history:not([hidden]):enabled') : undefined;
+          this.moreInfo({ entity }, source, { returnTo });
         }
       },
       usageInfo: (entity, source) => { if (this.canShowTimerUsage(entity)) this.moreInfo({ entity }, source); },

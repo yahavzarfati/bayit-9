@@ -8,12 +8,16 @@ function dashboardPage(location) {
   return url.href;
 }
 
+function canRestoreFocus(control) {
+  return control?.isConnected && !control.disabled && !control.closest('[hidden]');
+}
+
 export function sameMoreInfoPage(left, right) {
   return left === right || dashboardPage(left) === dashboardPage(right);
 }
 
 // Home Assistant shows its own modal above the already open dashboard dialog.
-export function preserveMoreInfoReturn(view, { event, source, body, active, stopped }) {
+export function preserveMoreInfoReturn(view, { event, source, body, active, stopped, returnTo }) {
   const href = view.location.href;
   const scroll = body?.scrollTop;
   const underlyingDialog = body?.closest('dialog');
@@ -53,11 +57,12 @@ export function preserveMoreInfoReturn(view, { event, source, body, active, stop
     frame = view.requestAnimationFrame(() => {
       // Restore the source after the native backdrop clears, unless focus has moved to a new control.
       afterRender = view.setTimeout(() => {
-        const root = source.getRootNode();
+        const root = (underlyingDialog ?? source).getRootNode();
         const focused = root.activeElement;
         const focusNeedsReturn = !focused || focused === source || focused === root.body || focused === underlyingDialog;
         if (stillOnPage() && focusNeedsReturn) {
-          if (source.isConnected && !source.disabled && !source.closest('[hidden]')) source.focus({ preventScroll: true });
+          const target = canRestoreFocus(source) ? source : returnTo?.();
+          if (canRestoreFocus(target)) target.focus({ preventScroll: true });
           if (body) body.scrollTop = scroll;
         }
         stop();
