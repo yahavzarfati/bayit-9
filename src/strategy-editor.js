@@ -23,8 +23,9 @@ const WORDS = {
     roomToAdd: 'Available rooms', addRoom: 'Show room', createRoom: 'New dashboard-only room',
     newRoomName: 'New room name', newRoomHint: 'This room exists only on this dashboard.',
     roomName: 'Room display name', roomToEdit: 'Room to customize', roomIcon: 'Room icon', defaultRoomIcon: 'Default icon',
-    roomControlNames: 'Device names', roomControlDevice: 'Device to name', roomControlName: 'Name in this room',
+    roomControlDisplay: 'Device display', roomControlDevice: 'Device to customize', roomControlName: 'Name in this room',
     roomControlShow: 'Show name in this room',
+    roomPanelShow: 'Show device in room panel', roomPanelHint: 'For quick access from Home, add the device in Room shortcuts.',
     lightCount: 'Lights in the room count', lightCountHint: 'With no lights selected, the count includes every room light.',
     lightCountReset: 'Use automatic lighting count',
     newRoom: 'Create room', customRoom: 'Dashboard room', deleteRoom: 'Delete dashboard room',
@@ -54,7 +55,7 @@ const WORDS = {
     overview: 'Home overview', overviewDevices: 'Devices and sensors to show',
     overviewHint: 'Choose devices for the overview button, such as a lock, people, a calendar or an energy sensor.',
     shortcuts: 'Room shortcuts', shortcutRoom: 'Room', automaticShortcuts: 'Choose shortcuts automatically',
-    shortcut: 'Shortcut', shortcutHint: 'Pick up to six devices in display order. All devices remain available inside the room.',
+    shortcut: 'Shortcut', shortcutHint: 'Pick up to six devices in display order.',
     noShortcutRooms: 'Add a device to a visible room to set its shortcuts.',
     profiles: 'Boiler and heater controls', entity: 'Heating device', kind: 'Control profile',
     heater: 'Room heater', boiler: 'Water heater or boiler', displayName: 'Display name',
@@ -88,8 +89,9 @@ const WORDS = {
     roomToAdd: 'חדרים זמינים', addRoom: 'הצגת חדר', createRoom: 'חדר חדש לדשבורד',
     newRoomName: 'שם החדר החדש', newRoomHint: 'החדר יופיע בדשבורד הזה בלבד.',
     roomName: 'שם החדר לתצוגה', roomToEdit: 'חדר להתאמה אישית', roomIcon: 'סמל החדר', defaultRoomIcon: 'סמל ברירת המחדל',
-    roomControlNames: 'שמות מכשירים', roomControlDevice: 'מכשיר לשינוי שם', roomControlName: 'שם המכשיר בחדר הזה',
+    roomControlDisplay: 'תצוגת מכשירים', roomControlDevice: 'מכשיר להתאמה אישית', roomControlName: 'שם המכשיר בחדר הזה',
     roomControlShow: 'הצגת שם המכשיר בחדר הזה',
+    roomPanelShow: 'הצגת המכשיר בחלונית החדר', roomPanelHint: 'לגישה מהירה ממסך הבית, הוסיפו את המכשיר בהגדרה קיצורים בחדרים.',
     lightCount: 'תאורה שנכללת במונה החדר', lightCountHint: 'כשלא מסומן אף פריט, המונה כולל את כל התאורה בחדר.',
     lightCountReset: 'חזרה לספירת תאורה אוטומטית',
     newRoom: 'יצירת חדר', customRoom: 'חדר בדשבורד', deleteRoom: 'מחיקת חדר מהדשבורד',
@@ -119,7 +121,7 @@ const WORDS = {
     overview: 'מבט על הבית', overviewDevices: 'מכשירים וחיישנים לתצוגה',
     overviewHint: 'בחרו מה יוצג במבט על הבית, למשל מנעול, אנשים, יומן או חיישן צריכת חשמל.',
     shortcuts: 'קיצורים בחדרים', shortcutRoom: 'חדר', automaticShortcuts: 'בחירת קיצורים אוטומטית',
-    shortcut: 'קיצור', shortcutHint: 'אפשר לבחור עד שישה מכשירים לפי סדר התצוגה. כל המכשירים נשארים זמינים בתוך החדר.',
+    shortcut: 'קיצור', shortcutHint: 'אפשר לבחור עד שישה מכשירים לפי סדר התצוגה.',
     noShortcutRooms: 'הוסיפו מכשיר לחדר שמוצג בדשבורד כדי לבחור קיצורים.',
     profiles: 'שליטה בדוד ובתנורים', entity: 'מכשיר חימום', kind: 'סוג בקר',
     heater: 'תנור חימום', boiler: 'דוד או מחמם מים', displayName: 'שם לתצוגה',
@@ -555,7 +557,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     return node('div', { className:'stack' }, [field(words.lightCount, input), hint, reset]);
   }
 
-  #roomControlNames(room, chosen, words) {
+  #roomControlDisplay(room, chosen, words) {
     const body = node('div', { className: 'stack' });
     const paint = () => {
       if (body.childElementCount) return;
@@ -573,6 +575,21 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const draw = () => {
         const id = picker.value;
         const override = this.#roomOverride(room.id);
+        const shown = !configuredIds(override.panel_hidden_entities).includes(id);
+        const showDevice = checkbox(words.roomPanelShow, shown, checked => {
+          const next = { ...this.#roomOverride(room.id) };
+          const hidden = new Set(configuredIds(next.panel_hidden_entities));
+          if (checked) hidden.delete(id);
+          else hidden.add(id);
+          if (hidden.size) next.panel_hidden_entities = [...hidden];
+          else delete next.panel_hidden_entities;
+          this.#setRoomOverride(room.id, next, 'room-control-device-show');
+        });
+        showDevice.firstElementChild.dataset.roomFocus = 'room-control-device-show';
+        if (!shown) {
+          fields.replaceChildren(showDevice, node('small', { textContent: words.roomPanelHint }));
+          return;
+        }
         const name = normalizeRoomControlName(override.entity_names?.[id]);
         const save = (value, focus) => {
           const latest = this.#roomOverride(room.id);
@@ -599,7 +616,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
           event.preventDefault();
           saveText();
         });
-        fields.replaceChildren(show, field(words.roomControlName, input));
+        fields.replaceChildren(showDevice, show, field(words.roomControlName, input));
       };
       picker.addEventListener('change', () => {
         this.#roomControlEditing.set(room.id, picker.value);
@@ -608,9 +625,9 @@ export class Bayit9StrategyEditor extends HTMLElement {
       draw();
       body.append(field(words.roomControlDevice, picker), fields);
     };
-    if (this.#open.roomControlNames) paint();
-    return disclosure(words.roomControlNames, this.#open.roomControlNames, open => {
-      this.#open.roomControlNames = open;
+    if (this.#open.roomControlDisplay) paint();
+    return disclosure(words.roomControlDisplay, this.#open.roomControlDisplay, open => {
+      this.#open.roomControlDisplay = open;
       if (open) paint();
     }, [body]);
   }
@@ -640,7 +657,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const available = manual || editCount
       ? new Map(selectableRoomEntities(this.#config, this.#hass).map(entry => [entry.entity, entry])) : undefined;
     if (chosen.length) {
-      children.push(this.#roomControlNames(room, chosen, words));
+      children.push(this.#roomControlDisplay(room, chosen, words));
       const readOnly = new Set(configuredIds(override.read_only_entities));
       const selected = node('select', { multiple: true, size: Math.min(5, Math.max(2, chosen.length)) });
       for (const id of chosen) {
@@ -701,13 +718,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const change = (items, focusKey) => {
       const entities = items.map(item => item.id);
       const next = { ...override, entities };
-      if (Array.isArray(next.read_only_entities)) {
-        next.read_only_entities = next.read_only_entities.filter(id => entities.includes(id));
-        if (!next.read_only_entities.length) delete next.read_only_entities;
-      }
-      if (Array.isArray(next.lighting_count_entities)) {
-        next.lighting_count_entities = next.lighting_count_entities.filter(id => entities.includes(id));
-        if (!next.lighting_count_entities.length) delete next.lighting_count_entities;
+      for (const key of ['read_only_entities', 'lighting_count_entities', 'panel_hidden_entities']) {
+        if (!Array.isArray(next[key])) continue;
+        next[key] = next[key].filter(id => entities.includes(id));
+        if (!next[key].length) delete next[key];
       }
       for (const kind of ROOM_PANEL_KINDS.values()) {
         const key = kind + '_panel_links';

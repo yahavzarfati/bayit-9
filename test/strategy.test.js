@@ -454,6 +454,40 @@ test('projects explicit names and blank captions only onto visible members of th
   assert.deepEqual({ cfg, hass }, original);
 });
 
+test('scopes room panel exclusions to current members without changing dashboard access', () => {
+  const hass = home();
+  const lamp = 'light.demo_lamp';
+  const fan = 'fan.demo_fan';
+  const disabled = 'light.disabled';
+  const hidden = 'light.hidden';
+  hass.states[disabled] = hass.states[hidden] = { state: 'on', attributes: {} };
+  hass.entities[disabled] = { area_id: 'studio', disabled_by: 'user' };
+  hass.entities[hidden] = { area_id: 'studio', hidden_by: 'user' };
+  const den = CUSTOM_ROOM_PREFIX + 'den';
+  const config = {
+    area_ids: ['studio', den], show_unassigned: false,
+    overview_entities: [lamp], room_shortcuts: { studio: [lamp, fan] },
+    room_overrides: {
+      studio: {
+        entities: [lamp, fan, disabled, hidden],
+        sections: [{ kind: 'lights', entities: [lamp] }],
+      },
+      [den]: { name: 'Den', entities: [lamp] },
+    },
+  };
+  const withoutExclusions = generateDashboard(config, hass).views[0].cards[0];
+  config.room_overrides.studio.panel_hidden_entities = [lamp, fan, lamp, disabled, hidden, 'light.missing', 1];
+  const card = generateDashboard(config, hass).views[0].cards[0];
+  assert.deepEqual(card.rooms[0].panel_hidden_entities, [lamp, fan]);
+  delete card.rooms[0].panel_hidden_entities;
+  assert.deepEqual(card, withoutExclusions);
+
+  const automatic = discoverRooms({ room_overrides: { studio: { panel_hidden_entities: [fan, 'calendar.demo_schedule'] } } },
+    hass, 'en').find(room => room.id === 'studio');
+  assert.deepEqual(automatic.panel_hidden_entities, [fan]);
+  assert.ok(automatic.entities.some(item => item.entity === fan));
+});
+
 test('keeps existing discovery behavior and limits explicit controls mode to directly controllable devices', () => {
   const hass = home();
   for (const entity of ['camera.demo', 'vacuum.demo', 'sensor.demo_temperature', 'water_heater.demo']) {

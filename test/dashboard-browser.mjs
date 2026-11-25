@@ -44,6 +44,16 @@ const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection'
       bayit_room_den: { name: 'Den', entities: ['light.demo_lamp'] },
     },
   }),
+  ...(query.has('room-panel-visibility') && {
+    show_unassigned: false, area_ids: ['studio', 'bayit_room_den'],
+    room_shortcuts: { studio: ['light.demo_lamp'] },
+    room_overrides: {
+      studio: { entities: ['light.demo_lamp', 'switch.demo_heater'],
+        panel_hidden_entities: ['light.demo_lamp', 'switch.demo_heater'],
+        sections: [{ kind: 'lights', title: 'Table lamps', entities: ['light.demo_lamp'] }] },
+      bayit_room_den: { name: 'Den', entities: ['light.demo_lamp'] },
+    },
+  }),
 };
 const stored = () => JSON.parse(sessionStorage.getItem(storedKey) ||
   JSON.stringify({ strategy: initialStrategy }));
@@ -1915,8 +1925,8 @@ try {
 
       const nameSetup = await openRoomEditor(namesPage);
       await nameSetup.getByLabel('Room to customize', { exact: true }).selectOption('studio');
-      await nameSetup.getByText('Device names', { exact: true }).tap();
-      const which = nameSetup.getByLabel('Device to name', { exact: true });
+      await nameSetup.getByText('Device display', { exact: true }).tap();
+      const which = nameSetup.getByLabel('Device to customize', { exact: true });
       const caption = nameSetup.getByLabel('Name in this room', { exact: true });
       const showCaption = nameSetup.getByLabel('Show name in this room', { exact: true });
       await which.selectOption('climate.demo_air');
@@ -1939,6 +1949,60 @@ try {
       assert.equal(await namesPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain).length), 0);
       await namesPage.close();
       console.log(engine + ' 320: scoped room names, accessible blank captions and editor persistence');
+
+      const panelPage = await newRoomConfigPage();
+      const panelUrl = base + '/fixture-home/home?configuration&room-panel-visibility';
+      await panelPage.goto(panelUrl + '#device/studio/light.demo_lamp');
+      const directLamp = panelPage.getByRole('dialog', { name: 'Desk lamp', exact: true });
+      await directLamp.waitFor();
+      await panelPage.keyboard.press('Escape');
+      await directLamp.waitFor({ state: 'hidden' });
+
+      const studioButton = panelPage.getByRole('button', { name: 'Studio', exact: true });
+      const studioPanel = panelPage.getByRole('dialog', { name: 'Studio', exact: true });
+      await studioButton.tap();
+      await studioPanel.getByText('No devices in this room.', { exact: true }).waitFor();
+      assert.equal(await studioPanel.getByRole('heading', { name: 'Table lamps' }).count(), 0);
+      assert.equal(await studioPanel.locator('[data-entity]').count(), 0);
+      await panelPage.keyboard.press('Escape');
+      await studioPanel.waitFor({ state: 'hidden' });
+
+      await panelPage.getByRole('button', { name: 'Den', exact: true }).tap();
+      const other = panelPage.getByRole('dialog', { name: 'Den', exact: true });
+      await other.getByRole('button', { name: 'Desk lamp · Turn on', exact: true }).waitFor();
+      await panelPage.keyboard.press('Escape');
+      await other.waitFor({ state: 'hidden' });
+
+      const shortcut = panelPage.locator('.room[data-room="studio"] .quick-button[data-entity="light.demo_lamp"]');
+      await shortcut.press('Shift+Enter');
+      await directLamp.waitFor();
+      assert.equal(new URL(panelPage.url()).hash, '#device/studio/light.demo_lamp');
+      await panelPage.keyboard.press('Escape');
+      await directLamp.waitFor({ state: 'hidden' });
+      await shortcut.tap();
+      assert.deepEqual(await panelPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain)
+        .map(call => [call.domain, call.service, call.target.entity_id])), [['light', 'turn_on', 'light.demo_lamp']]);
+
+      const displaySetup = await openRoomEditor(panelPage);
+      await displaySetup.getByLabel('Room to customize', { exact: true }).selectOption('studio');
+      await displaySetup.getByText('Device display', { exact: true }).tap();
+      const displayDevice = displaySetup.getByLabel('Device to customize', { exact: true });
+      const showDevice = displaySetup.getByLabel('Show device in room panel', { exact: true });
+      await displayDevice.selectOption('light.demo_lamp');
+      assert.equal(await showDevice.isChecked(), false);
+      await showDevice.check();
+      assert.equal(await showDevice.evaluate(control => control.getRootNode().activeElement === control), true);
+      await saveRoomConfig(displaySetup);
+      await studioButton.tap();
+      await studioPanel.getByRole('heading', { name: 'Table lamps' }).waitFor();
+      await studioPanel.locator('[data-entity="light.demo_lamp"]').waitFor();
+      assert.equal(await studioPanel.locator('[data-entity="switch.demo_heater"]').count(), 0);
+      assert.deepEqual(await panelPage.evaluate(() => {
+        const { room_overrides, room_shortcuts } = JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy;
+        return { hidden: room_overrides.studio.panel_hidden_entities, shortcuts: room_shortcuts.studio };
+      }), { hidden: ['switch.demo_heater'], shortcuts: ['light.demo_lamp'] });
+      await panelPage.close();
+      console.log(engine + ' 320: room-only panel exclusions, retained shortcuts and direct links, and editor persistence');
 
       const lastRoomPage = await newRoomConfigPage();
       await lastRoomPage.goto(roomConfigUrl + '&sole-room');

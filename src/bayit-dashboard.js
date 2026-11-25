@@ -236,6 +236,10 @@ export function normalizeDashboardConfig(config = {}) {
     }
     const parsed = { id, name, icon: validIcon(room.icon, 'mdi:door-open'), entities: [...unique.values()],
       activities: normalizeRoomActivities(room.activities) };
+    if (Array.isArray(room.panel_hidden_entities)) {
+      const panelHidden = new Set(room.panel_hidden_entities.filter(entity => unique.has(entity)));
+      if (panelHidden.size) parsed.panelHidden = panelHidden;
+    }
     if (Array.isArray(room.lighting_count_entities)) {
       const lightingCount = new Set(room.lighting_count_entities.filter(entity =>
         typeof entity === 'string' && entity.startsWith('light.') && unique.has(entity)));
@@ -1035,9 +1039,13 @@ export class BayitDashboard extends HTMLElement {
     if (!room) {
       for (const config of entities) this.buildDevice(config, content, undefined, undefined, presentation);
     } else {
-      const explicit = room.sections?.map(section => ({ ...section, key: 'room_' + section.kind })) ?? [];
+      const shown = device => !room.panelHidden?.has(device.entity);
+      const explicit = room.sections?.map(section => ({
+        ...section, key: 'room_' + section.kind, entities: section.entities.filter(shown),
+      })) ?? [];
       const configured = new Set(explicit.flatMap(section => section.entities.map(device => device.entity)));
-      const groups = [...explicit, ...this.defaultRoomSections(entities.filter(device => !configured.has(device.entity)))];
+      const ungrouped = entities.filter(device => shown(device) && !configured.has(device.entity));
+      const groups = [...explicit, ...this.defaultRoomSections(ungrouped)];
       for (const { key, title, entities: members } of groups) {
         if (!members.length) continue;
         const group = make('section', 'device-group');
