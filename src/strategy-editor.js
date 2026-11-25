@@ -438,6 +438,31 @@ function entityArea(hass, id) {
   return entry?.area_id ?? entry?.ai ?? device?.area_id ?? device?.ai;
 }
 
+function roomEditorLabels(rooms, areaNames) {
+  const groups = new Map();
+  const labels = new Map();
+  for (const { id, name } of rooms) {
+    labels.set(id, name);
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push(id);
+  }
+  const used = new Set(groups.keys());
+  for (const name of [...groups.keys()].sort()) {
+    const ids = groups.get(name);
+    if (ids.length < 2) continue;
+    // Use immutable room IDs so the suffixes stay the same after reordering or reloading.
+    for (const id of ids.sort()) {
+      const area = areaNames.get(id);
+      const base = area && area !== name ? name + ' · ' + area : name;
+      let label = base;
+      for (let number = 1; used.has(label); number++) label = base + ' · ' + number;
+      labels.set(id, label);
+      used.add(label);
+    }
+  }
+  return labels;
+}
+
 function node(name, properties = {}, children = []) {
   const element = Object.assign(document.createElement(name), properties);
   element.append(...children);
@@ -1634,6 +1659,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #roomsPanel(words, language) {
     const rooms = dashboardRoomOptions(this.#config, this.#hass).sort((a, b) => a.name.localeCompare(b.name, language));
     const byId = new Map(rooms.map(room => [room.id, room]));
+    const areaNames = new Map(Object.entries(this.#hass.areas ?? {}).map(([id, area]) => [area.area_id ?? id, area.name ?? id]));
+    const names = roomEditorLabels(rooms, areaNames);
     const selection = selectedRoomIds(this.#config);
     const selected = selection ?? [];
     const customSelection = selection !== null;
@@ -1661,10 +1688,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const roomManagement = [];
 
     const ordered = selected.map(id => ({
-      id, name: byId.get(id)?.name ?? id,
+      id, name: names.get(id) ?? id,
       secondary: byId.get(id)?.custom ? words.customRoom : byId.has(id) ? '' : words.missing,
     }));
     let roomOrder;
+    let availablePicker;
     if (customSelection) {
       if (ordered.length) roomManagement.push(disclosure(words.shownRoomOrder + ' · ' + ordered.length,
         this.#open.roomOrder, open => { this.#open.roomOrder = open; }, () => {
@@ -1676,11 +1704,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const shown = new Set(selected);
       const available = rooms.filter(room => !shown.has(room.id));
       if (available.length) {
-        const picker = addPicker(words.roomToAdd, available.map(room => [room.id, room.name]), words.addRoom, words.none, id => {
+        const picker = addPicker(words.roomToAdd, available.map(room => [room.id, names.get(room.id)]), words.addRoom, words.none, id => {
           this.#roomEditing = id;
           this.#roomDeviceQuery = '';
           this.#commitRooms({ room_selection: 'manual', area_ids: [...selected, id] }, 'room-edit');
         });
+        availablePicker = picker.input;
         roomManagement.push(picker.wrapper);
       }
     }
@@ -1689,7 +1718,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const editable = customSelection ? selected.map(id => byId.get(id)).filter(Boolean) : rooms;
     const active = editable.find(room => room.id === this.#roomEditing) ?? editable[0];
     if (active) {
-      const picker = select(editable.map(room => [room.id, room.name]), active.id);
+      const picker = select(editable.map(room => [room.id, names.get(room.id)]), active.id);
       picker.dataset.roomFocus = 'room-edit';
       picker.addEventListener('change', () => {
         this.#roomEditing = picker.value;
@@ -1699,34 +1728,43 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const override = this.#roomOverride(active.id);
       const input = node('input', { value: override.name ?? '', maxLength: 80, placeholder: active.name, required: Boolean(active.custom) });
       input.dataset.roomFocus = 'room-name';
-      const registryArea = Object.entries(this.#hass.areas ?? {}).find(([id, area]) => (area.area_id ?? id) === active.id)?.[1];
-      const defaultName = registryArea?.name ?? (active.custom ? active.name : active.id);
+      const defaultName = areaNames.get(active.id) ?? (active.custom ? active.name : active.id);
       const activeOption = picker.selectedOptions[0];
-      const orderEntry = ordered.find(room => room.id === active.id);
       const titleBreak = select([], '');
       titleBreak.dataset.roomFocus = 'room-title-break';
       const titleBreakField = field(words.roomTitleBreak, titleBreak);
+      const refreshRoomLabels = () => {
+        const updated = roomEditorLabels(rooms, areaNames);
+        for (const input of [picker, availablePicker]) {
+          for (const item of input?.options ?? []) {
+            const label = updated.get(item.value);
+            if (label !== undefined && item.textContent !== label) item.textContent = label;
+          }
+        }
+        ordered.forEach((entry, index) => {
+          const label = updated.get(entry.id);
+          if (label === undefined || entry.name === label) return;
+          entry.name = label;
+          const row = roomOrder?.children[index];
+          if (!row) return;
+          row.querySelector('.room-entry-name').firstChild.textContent = label;
+          for (const action of row.querySelectorAll('button')) action.setAttribute('aria-label', action.title + ' · ' + label);
+        });
+        if (!customSelection) {
+          const later = [...picker.options].find(item =>
+            item !== activeOption && active.name.localeCompare(byId.get(item.value).name, language) < 0);
+          picker.insertBefore(activeOption, later ?? null);
+          picker.value = active.id;
+        }
+      };
       let previewName;
       const refreshName = name => {
         if (name === previewName) return;
         previewName = name;
-        active.name = name;
-        input.placeholder = name;
-        if (activeOption.textContent !== name) {
-          activeOption.textContent = name;
-          if (!customSelection) {
-            const later = [...picker.options].find(item => item !== activeOption && name.localeCompare(item.textContent, language) < 0);
-            picker.insertBefore(activeOption, later ?? null);
-            picker.value = active.id;
-          }
-        }
-        if (orderEntry && orderEntry.name !== name) {
-          orderEntry.name = name;
-          const row = roomOrder?.children[ordered.indexOf(orderEntry)];
-          if (row) {
-            row.querySelector('.room-entry-name').firstChild.textContent = name;
-            for (const action of row.querySelectorAll('button')) action.setAttribute('aria-label', action.title + ' · ' + name);
-          }
+        if (active.name !== name) {
+          active.name = name;
+          input.placeholder = name;
+          refreshRoomLabels();
         }
         const breaks = name.trim().split(/\s+/u).slice(1).map((_, index) =>
           option(String(index + 1), classicRoomTitle(name, index + 1).replace('\n', ' ↵ ')));

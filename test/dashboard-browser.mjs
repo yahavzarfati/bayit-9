@@ -2347,6 +2347,93 @@ async function assertRoomRenameKeepsNextGesture(browser) {
   }
 }
 
+async function assertDuplicateRoomEditorLabels(browser) {
+  const labels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', chooser:'Room to customize',
+      create:'New dashboard-only room', newRoom:'New room name', addRoom:'Create room', name:'Room display name',
+      order:'Displayed rooms and order', hide:'Hide room', up:'Move up', available:'Available rooms', show:'Show room',
+      device:'Available devices', addDevice:'Add device', save:'Save dashboard', common:'Downstairs', custom:'Reading room',
+      temporary:'Quiet room' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים', chooser:'חדר להתאמה אישית',
+      create:'חדר חדש לדשבורד', newRoom:'שם החדר החדש', addRoom:'יצירת חדר', name:'שם החדר לתצוגה',
+      order:'חדרים מוצגים וסדר', hide:'הסתרת חדר', up:'העברה למעלה', available:'חדרים זמינים', show:'הצגת חדר',
+      device:'מכשירים זמינים', addDevice:'הוספת מכשיר', save:'שמירת הדשבורד', common:'קומת כניסה', custom:'פינת קריאה',
+      temporary:'חדר שקט' },
+  ];
+  for (const words of labels) {
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      const url = base + '/fixture-home/home?configuration&room-selection&legacy-room-order&locale=' + words.locale;
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      const open = async () => {
+        await page.getByRole('button', { name:words.appearance, exact:true }).tap();
+        await page.getByRole('button', { name:words.setup, exact:true }).tap();
+        await setup.getByText(words.rooms, { exact:true }).tap();
+      };
+      await page.goto(url);
+      await open();
+      const chooser = setup.getByLabel(words.chooser, { exact:true });
+      const name = setup.getByLabel(words.name, { exact:true });
+      const caption = (id, select = chooser) => select.locator('option[value="' + id + '"]').textContent();
+      assert.equal(await caption('lounge'), 'Lounge');
+      await chooser.selectOption('studio');
+      await name.fill(words.common);
+      await name.press('Tab');
+      assert.equal(await caption('studio'), words.common);
+      await chooser.selectOption('lounge');
+      await name.fill(words.common);
+      const loungeLabel = words.common + ' · Lounge';
+      assert.equal(await caption('lounge'), loungeLabel);
+      assert.equal(await caption('studio'), words.common + ' · Studio');
+      await setup.getByText(words.order + ' · 2', { exact:true }).tap();
+      await setup.getByRole('button', { name:words.hide + ' · ' + loungeLabel, exact:true }).tap();
+      const available = setup.getByLabel(words.available, { exact:true });
+      assert.equal(await caption('lounge', available), loungeLabel);
+      await available.selectOption('lounge');
+      await setup.getByRole('button', { name:words.show, exact:true }).tap();
+
+      const create = async entity => {
+        await setup.getByText(words.create, { exact:true }).tap();
+        await setup.getByLabel(words.newRoom, { exact:true }).fill(words.custom);
+        await setup.getByRole('button', { name:words.addRoom, exact:true }).tap();
+        const id = await chooser.inputValue();
+        await setup.getByLabel(words.device, { exact:true }).selectOption(entity);
+        await setup.getByRole('button', { name:words.addDevice, exact:true }).tap();
+        return id;
+      };
+      const first = await create('light.demo_lamp');
+      const second = await create('light.demo_lounge');
+      const firstLabel = await caption(first);
+      const secondLabel = await caption(second);
+      assert.deepEqual([firstLabel, secondLabel].sort(), [words.custom + ' · 1', words.custom + ' · 2']);
+      await setup.getByRole('button', { name:words.up + ' · ' + secondLabel, exact:true }).tap();
+      assert.equal(await caption(first), firstLabel);
+      assert.equal(await caption(second), secondLabel);
+      await name.fill(words.temporary);
+      assert.equal(await caption(first), words.custom);
+      assert.equal(await caption(second), words.temporary);
+      await name.fill(words.custom);
+      await name.press('Tab');
+      assert.equal(await caption(second), secondLabel);
+      await setup.getByRole('button', { name:words.save, exact:true }).tap();
+      await setup.waitFor({ state:'hidden' });
+      const saved = await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      assert.deepEqual(saved.area_ids, ['studio', 'lounge', second, first]);
+      assert.deepEqual(saved.room_overrides[first], { name:words.custom, entities:['light.demo_lamp'] });
+      assert.deepEqual(saved.room_overrides[second], { name:words.custom, entities:['light.demo_lounge'] });
+      await page.reload();
+      assert.equal(await page.locator('.room[data-room="' + first + '"] .room-name').textContent(), words.custom);
+      assert.equal(await page.locator('.room[data-room="' + second + '"] .room-name').textContent(), words.custom);
+      await open();
+      assert.equal(await caption(first), firstLabel);
+      assert.equal(await caption(second), secondLabel);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertManualRoomOrderRestored(browser) {
   const labels = [
     { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', mode:'Rooms on the dashboard',
@@ -6965,6 +7052,7 @@ try {
       await assertSetupDrafts(browser);
       await assertSetupRegistryRefreshKeepsField(browser);
       await assertRoomRenameKeepsNextGesture(browser);
+      await assertDuplicateRoomEditorLabels(browser);
       await assertManualRoomOrderRestored(browser);
       await assertRoomEditorQuickPaths(browser);
       console.log(engine + ': setup drafts survive closing, preserve conflicts, and retry safely');
