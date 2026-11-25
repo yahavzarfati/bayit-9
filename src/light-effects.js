@@ -171,6 +171,7 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
   const chooseCategory = (index, control) => {
     const next = categories[index];
     categoryState = categorySource?.read();
+    if (!categoryState) sharedCategory = -1;
     if (!next || !canRequest || categoryState?.pending || !displayCategory(next) ||
         (!favoritesOnly && categoryIndex === index)) {
       refresh();

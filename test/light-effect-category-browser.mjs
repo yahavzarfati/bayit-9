@@ -188,10 +188,16 @@ try {
       assert.equal(requests.length,2);
       await first.reflect(holidays);
       await first.button('Glow').waitFor();
-      await first.page.evaluate(() => fixture.setVisible(false));
-      await first.select(nature);
-      await first.button('Wave').waitFor();
-      await first.page.evaluate(() => fixture.setVisible(true));
+      // The registry and the tap can change before the dashboard's next frame.
+      const localEffect = await first.picker.evaluate((select, title) => {
+        fixture.setVisible(false);
+        select.value = Array.from(select.options).find(option => option.textContent === title).value;
+        select.dispatchEvent(new Event('change', { bubbles:true }));
+        const shown = select.closest('.light-effect-gallery').querySelector('.light-effect-choices button').textContent;
+        fixture.setVisible(true);
+        return shown;
+      }, nature);
+      assert.equal(localEffect,'Wave');
       await first.button('Glow').waitFor();
       await first.page.evaluate(() => fixture.setService(false));
       await first.select(nature);
