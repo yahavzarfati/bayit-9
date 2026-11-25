@@ -55,7 +55,7 @@ export function climateOptionLabel(action, value, options, t) {
 
 export function buildPanelControls(model, {
   make, button, icon, label, t, request, compactTimer = false, compactClimateControls = false,
-  timerPreferenceKey, buildClimateDetail, targetTemperatureInfo,
+  timerPreferenceKey, countdownHistory, buildClimateDetail, targetTemperatureInfo,
   historyFor, historyInfo, usageInfo, canShowUsage, canResetUsage, resetOptIn, unreportedSwingMode,
 }) {
   const used = new Set();
@@ -194,9 +194,9 @@ export function buildPanelControls(model, {
     const time = make('p', 'timer-clock');
     time.dir = 'ltr';
     const climate = model.domain === 'climate';
-    const timeValue = climate ? make('span') : time;
+    const timeValue = countdownHistory ? make('span') : time;
     timeValue.setAttribute('aria-label', t('remaining_time'));
-    const timeHistory = climate ? button('timer-clock-history') : undefined;
+    const timeHistory = countdownHistory ? button('timer-clock-history') : undefined;
     const history = button('round-action timer-history', t('timer_history'), 'mdi:history', true);
     history.hidden = true;
     let currentHistory;

@@ -3985,9 +3985,22 @@ async function assertStandaloneTimedHeater(browser) {
       await page.waitForFunction(() => document.querySelector('bayit-dashboard').shadowRoot.activeElement?.classList.contains('compact-device-heading-info'));
       await history.tap();
       await finishInfo(runtime);
+      const countdown = heater.locator('.timer-clock-history');
+      await countdown.tap();
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), [entity, runtime]);
+      await countdown.evaluate(async button => {
+        const pointer = { bubbles:true, pointerType:'touch', pointerId:24, isPrimary:true, button:0 };
+        button.dispatchEvent(new PointerEvent('pointerdown', pointer));
+        await new Promise(resolve => setTimeout(resolve, 540));
+        button.dispatchEvent(new PointerEvent('pointerup', pointer));
+      });
+      await finishInfo(runtime);
+      await page.waitForFunction(() => document.querySelector('bayit-dashboard').shadowRoot.activeElement?.classList.contains('timer-clock-history'));
+      await countdown.press('Shift+Enter');
+      await finishInfo(runtime);
       await usage.tap();
       await finishInfo(runtime);
-      assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), [entity, runtime, runtime]);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), [entity, runtime, runtime, runtime, runtime]);
       assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service')), []);
 
       await page.evaluate(() => window.bayitTest.setHeaterPower('on'));

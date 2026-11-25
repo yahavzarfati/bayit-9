@@ -2879,6 +2879,7 @@ export class BayitDashboard extends HTMLElement {
     view.special = buildPanelControls(model, { make, button, icon, label, t: key => this.t(key),
       compactTimer: view.inlineClimate || view.compactHeater || standaloneClimate || view.standaloneBoiler,
       timerPreferenceKey,
+      countdownHistory: model.domain === 'climate' || view.compactHeater,
       compactClimateControls: view.compactClimateControls,
       unreportedSwingMode: view.config.unreported_swing_mode,
       targetTemperatureInfo: source => {
