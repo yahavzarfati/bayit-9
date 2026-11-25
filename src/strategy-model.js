@@ -654,6 +654,14 @@ export function isSecurityReadouts(kind, section) {
   return supportsSecurityReadouts(kind, section) && section.layout === 'readouts';
 }
 
+export function supportsWeatherReadingsList(kind, section) {
+  return kind === 'weather' && section?.kind === 'readings';
+}
+
+export function isWeatherReadingsList(kind, section) {
+  return supportsWeatherReadingsList(kind, section) && section.layout === 'readings-list';
+}
+
 const securityReadoutStates = { binary_sensor: ['on', 'off'], sensor: ['safe', 'ok'] };
 
 export function securityReadoutLabelStates(item) {
@@ -732,6 +740,7 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
     return [{ id, kind: section.kind, ...(title !== undefined && { title }),
       ...(isCompactToolbarStatus(kind, section) && { layout: 'compact' }),
       ...(isSecurityReadouts(kind, section) && { layout: 'readouts' }),
+      ...(isWeatherReadingsList(kind, section) && { layout: 'readings-list' }),
       ...(section.filter === 'active' && { filter:'active' }), ...overview, entities }];
   });
 }

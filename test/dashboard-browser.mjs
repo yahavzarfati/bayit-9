@@ -558,6 +558,10 @@ if (query.has('toolbar-panels')) {
     'sensor.demo_meter': {state:'51',attributes:{friendly_name:'Energy meter',unit_of_measurement:'kWh'}},
     'sensor.demo_water_meter': {state:'4',attributes:{friendly_name:'Water meter',unit_of_measurement:'m³'}},
     'sensor.demo_studio_temperature': {state:'22.5',attributes:{friendly_name:'Studio temperature',unit_of_measurement:'°C'}},
+    ...(query.has('weather-readings') && {
+      'sensor.demo_outdoor_temperature': {state:'24.5',attributes:{friendly_name:'Outdoor sensor',unit_of_measurement:'°C'}},
+      'binary_sensor.demo_rain': {state:'off',attributes:{friendly_name:'Rain status'}},
+    }),
     'sensor.demo_progress': {state:'40',attributes:{friendly_name:'Cleaning progress',unit_of_measurement:'%'}},
     'media_player.demo_speaker': {state:'playing',attributes:{friendly_name:'Speaker',supported_features:30781,volume_level:.24,
       is_volume_muted:false,source:'Radio',source_list:['Radio','Aux'],media_title:'Station',media_artist:'Fixture artist',
@@ -764,6 +768,15 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
         {kind:'status',entities:[{entity:'sensor.demo_home_text',role:'status'}]},
       ] : [])]},
     {kind:'weather',sections:[{kind:'forecast',entities:['weather.demo_home']},{kind:'sun',entities:['sun.sun']},
+      ...(query.has('weather-readings') ? [{
+        kind:'readings',id:'outside-readings',title:'Outside conditions',
+        ...(query.has('weather-readings-list') && {layout:'readings-list'}),
+        entities:[
+          {entity:'sensor.demo_outdoor_temperature',role:'status',name:'Outside temperature',icon:'mdi:thermometer'},
+          'binary_sensor.demo_rain',
+          {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24},
+        ],
+      }] : []),
       ...(query.has('utility-graph-details') ? [{kind:'readings',entities:[
         {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24},
       ]}] : [])]},
@@ -1710,6 +1723,75 @@ async function assertCompactRoomHeater(browser) {
       await off.waitFor();
       assert.equal(await start.count(), 0);
       assert.equal(await heater.locator('.heat-level-choice[aria-pressed="true"]').isDisabled(), true);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+async function assertCompactWeatherReadings(browser) {
+  for (const locale of ['en', 'he']) {
+    const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+    page.setDefaultTimeout(8000);
+    const url = base + '/fixture-home/home?toolbar-panels&weather-readings&locale=' + locale;
+    const weather = locale === 'he' ? 'מזג אוויר' : 'Weather';
+    const dialog = page.getByRole('dialog', { name: weather, exact: true });
+    try {
+      await page.goto(url + '&weather-readings-list');
+      await page.getByRole('button', { name: weather, exact: true }).tap();
+      await dialog.locator('[data-native-type=weather-forecast]').waitFor();
+      await dialog.locator('[data-section=sun]').waitFor({ state: 'attached' });
+      const section = dialog.locator('[data-layout=readings-list]');
+      const rows = section.locator('.weather-reading');
+      const temperature = rows.filter({ hasText: 'Outside temperature' });
+      const rain = rows.filter({ hasText: 'Rain status' });
+      const current = temperature.locator('.tile-state');
+      await current.getByText(/24.5 °C/).waitFor();
+      assert.equal(await rows.count(), 2);
+      assert.equal(await temperature.locator('ha-icon').getAttribute('icon'), 'mdi:thermometer');
+      assert.equal(await section.locator('[data-native-type=sensor][data-graph-hours="24"]').getAttribute('data-tap-action'), 'more-info');
+      assert.equal(await rows.locator('button, a, [role=button], [tabindex]').count(), 0);
+      assert.ok(await section.evaluate(node => {
+        const items = node.querySelector('.toolbar-section-items');
+        const [first, second] = [...items.querySelectorAll('.weather-reading')].map(row => row.getBoundingClientRect());
+        const firstRow = items.firstElementChild;
+        const [icon, label, value] = [...firstRow.children].map(el => el.getBoundingClientRect());
+        const rtl = getComputedStyle(firstRow).direction === 'rtl';
+        return items.scrollWidth <= items.clientWidth && first.width === second.width &&
+          first.height < 56 && Math.abs(first.bottom - second.top) < 1 &&
+          (rtl ? icon.left > label.left && label.left > value.left : icon.left < label.left && label.left < value.left);
+      }));
+      await temperature.tap();
+      await rain.tap();
+      assert.deepEqual(await page.evaluate(() => ({ details: window.bayitTest.moreInfoCalls, calls: window.bayitTest.calls })),
+        { details: [], calls: [] });
+      const updateTemperature = state => page.evaluate(value =>
+        window.bayitTest.setRoomState('sensor.demo_outdoor_temperature', value), state);
+      await updateTemperature('25.7');
+      await current.getByText(/25.7 °C/).waitFor();
+      await updateTemperature('unknown');
+      await current.getByText(locale === 'he' ? 'מצב לא ידוע' : 'Unknown state').waitFor();
+      await updateTemperature('unavailable');
+      await current.getByText(locale === 'he' ? 'לא זמין' : 'Unavailable').waitFor();
+      if (locale === 'he') continue;
+
+      await page.goto(url);
+      await page.getByRole('button', { name: weather, exact: true }).tap();
+      await dialog.getByRole('button', { name: /^Outside temperature/ }).waitFor();
+      assert.equal(await dialog.locator('.weather-reading').count(), 0);
+
+      await page.goto(url + '&weather-readings-list&editor');
+      await page.getByText('Toolbar and extra screens', { exact: true }).tap();
+      await page.getByRole('button', { name: weather, exact: true }).tap();
+      await page.getByRole('button', { name: 'Outside conditions', exact: true }).tap();
+      const toggle = page.getByRole('checkbox', { name: 'Show readings as a compact read-only list' });
+      const currentLayout = () => page.evaluate(() => window.latest.toolbar.find(item => item.kind === 'weather')
+        .sections.find(section => section.id === 'outside-readings').layout);
+      assert.equal(await toggle.isChecked(), true);
+      await toggle.uncheck();
+      assert.equal(await currentLayout(), undefined);
+      await toggle.check();
+      assert.equal(await currentLayout(), 'readings-list');
     } finally {
       await page.close();
     }
@@ -3980,6 +4062,8 @@ try {
       assert.deepEqual(await utilityPage.evaluate(() => window.bayitTest.calls),[]);
       await utilityPage.close();
       console.log(engine + ': Energy, Weather and room graph details leave the Bayit popup open underneath');
+      await assertCompactWeatherReadings(browser);
+      console.log(engine + ': optional passive Weather readings, RTL, updates, existing charts and editor');
 
       const sunPage = await browser.newPage({ viewport: { width: 320, height:844 }, hasTouch:true });
       sunPage.setDefaultTimeout(8000);

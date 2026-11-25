@@ -1,7 +1,8 @@
 import { createOrefMap } from './oref-alert-map.js';
 import { createVacuumMap } from './vacuum-map.js';
 import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
-import { discoverOverviewEntities, isActiveOverviewEntity, isCompactToolbarStatus, isSecurityReadouts, isToolbarLightTile, isVisibleEntity, securityReadoutLabelStates } from './strategy-model.js';
+import { discoverOverviewEntities, isActiveOverviewEntity, isCompactToolbarStatus, isSecurityReadouts, isToolbarLightTile,
+  isVisibleEntity, isWeatherReadingsList, securityReadoutLabelStates } from './strategy-model.js';
 import { mediaServiceRegistered } from './media-device-support.mjs';
 import { roomShutdownTargets } from './device-control.mjs';
 import { calendarAgendaStyles, createCalendarAgenda } from './calendar-agenda.js';
@@ -14,6 +15,11 @@ const sectionKeys = {
 };
 
 const domain = item => item.entity.split('.')[0];
+
+function isPassiveWeatherReading(item) {
+  return ['sensor', 'binary_sensor'].includes(domain(item)) &&
+    (!item.role || item.role === 'status') && !item.graph_hours;
+}
 
 function sectionsFor(kind, entities) {
   const groups = new Map();
@@ -175,6 +181,23 @@ export function createToolbarPanel(kind, configuration, context) {
       }
     });
     return tile;
+  }
+
+  function renderWeatherReading(item) {
+    const glyph = icon('mdi:information-outline');
+    glyph.setAttribute('aria-hidden', 'true');
+    const name = make('span', 'tile-label');
+    const state = make('span', 'tile-state');
+    state.dir = 'auto';
+    const row = make('div', 'weather-reading');
+    row.append(glyph, name, state);
+    handlers.push(() => {
+      const model = modelFor(item);
+      glyph.setAttribute('icon', model.icon || 'mdi:information-outline');
+      name.textContent = model.name;
+      state.textContent = model.state === 'unknown' ? t('unknown') : stateLabel(model);
+    });
+    return row;
   }
 
   function renderSecurityReadout(item) {
@@ -542,9 +565,9 @@ export function createToolbarPanel(kind, configuration, context) {
     const panel = make('section', 'toolbar-section');
     panel.dataset.section = section.kind;
     const compactStatus = isCompactToolbarStatus(kind, section);
-    if (compactStatus) panel.dataset.layout = 'compact';
     const readouts = isSecurityReadouts(kind, section);
-    if (readouts) panel.dataset.layout = 'readouts';
+    const weatherReadings = isWeatherReadingsList(kind, section);
+    if (compactStatus || readouts || weatherReadings) panel.dataset.layout = section.layout;
     if (kind === 'overview' && !compactStatus && section.filter === 'active' &&
         ['status', 'covers'].includes(section.kind)) panel.dataset.overviewActiveRows = '';
     const caption = section.title ?? t(sectionKeys[section.kind] ?? 'room_devices');
@@ -564,8 +587,11 @@ export function createToolbarPanel(kind, configuration, context) {
         entities:section.entities.map(item=>({entity:item.entity, name:item.name})), }, fallback));
     } else {
       const pairs = section.entities.filter(item=>!calendarItems.length || domain(item)!=='calendar')
-        .map(item => ({ item, node: readouts && securityReadoutLabelStates(item).length
-          ? renderSecurityReadout(item) : render(item, section.kind, compactStatus) }));
+        .map(item => {
+          if (weatherReadings && isPassiveWeatherReading(item)) return { item, node: renderWeatherReading(item) };
+          if (readouts && securityReadoutLabelStates(item).length) return { item, node: renderSecurityReadout(item) };
+          return { item, node: render(item, section.kind, compactStatus) };
+        });
       items.append(...pairs.map(pair=>pair.node));
       if (section.filter === 'active') handlers.push(() => {
         const visible = [];
@@ -711,6 +737,17 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
     grid-template-columns: repeat(auto-fit,minmax(min(100%,max(110px,calc((100% - 8px) / 2))),1fr));
   }
   .shell[dir=rtl] .toolbar-section[data-layout=compact] > .toolbar-section-items > * { direction: rtl; }
+  .toolbar-section[data-layout=readings-list] > .toolbar-section-items { row-gap: 0; }
+  .toolbar-section[data-layout=readings-list] > .toolbar-section-items > :not(.weather-reading) {
+    margin-block: 4px;
+  }
+  .weather-reading {
+    display: grid; grid-column: 1 / -1; grid-template-columns: 22px minmax(0,1fr) fit-content(45%);
+    align-items: center; gap: 8px; box-sizing: border-box; min-width: 0; min-height: 36px; padding: 4px 6px;
+  }
+  .weather-reading + .weather-reading { border-block-start: 1px solid var(--soft-line); }
+  .weather-reading > ha-icon { width: 20px; height: 20px; --mdc-icon-size: 20px; color: var(--secondary); }
+  .weather-reading > .tile-state { justify-self: end; }
   .toolbar-section[data-layout=readouts] > .toolbar-section-items {
     --readout-width: calc((100% - 18px) / 4);
     grid-template-columns: repeat(auto-fit,minmax(min(100%,max(60px,var(--readout-width))),1fr)); gap: 6px;

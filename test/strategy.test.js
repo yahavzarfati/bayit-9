@@ -1201,6 +1201,30 @@ test('only Devices and Overview status sections retain the compact layout withou
   assert.ok(toolbar.every(item => item.sections.every(section => section.entities[0].role === 'status')));
 });
 
+test('compact readings are opt-in for Weather readings and preserve graph configuration', () => {
+  const hass = home();
+  const sensor = 'sensor.fixture_outside';
+  hass.states[sensor] = { state: '21.2', attributes: { unit_of_measurement: '°C' } };
+  hass.entities[sensor] = {};
+  const readings = { kind: 'readings', layout: 'readings-list', entities: [
+    { entity: sensor, name: 'Outside', icon: 'mdi:thermometer', role: 'status' },
+  ] };
+  const graph = { entity: sensor, role: 'graph', graph_hours: 24 };
+  const { toolbar } = generateDashboard({ toolbar: [
+    { kind: 'weather', sections: [readings, { ...readings, kind: 'sun' },
+      { kind: 'readings', entities: [graph] }] },
+    { kind: 'energy', sections: [readings] },
+  ] }, hass).views[0].cards[0];
+  const [compact, sun, history, electricity] = toolbar.flatMap(entry => entry.sections);
+  assert.deepEqual([compact.layout, sun.layout, history.layout, electricity.layout],
+    ['readings-list', undefined, undefined, undefined]);
+  assert.equal(compact.entities[0].name, 'Outside');
+  assert.equal(compact.entities[0].icon, 'mdi:thermometer');
+  assert.equal(compact.entities[0].role, 'status');
+  assert.equal(history.entities[0].role, 'graph');
+  assert.equal(history.entities[0].graph_hours, 24);
+});
+
 test('Security readouts require the explicit status layout and supported source entity and state types', () => {
   const hass = home();
   const binary = 'binary_sensor.fixture_signal';

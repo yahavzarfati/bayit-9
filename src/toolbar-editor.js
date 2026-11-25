@@ -1,8 +1,9 @@
 import {
   discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactToolbarStatus, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
-  isSecurityReadouts, normalizeOverviewDiscovery, normalizeSecurityReadout, overviewSectionOptions, roomPanelOptions,
+  isSecurityReadouts, isWeatherReadingsList, normalizeOverviewDiscovery, normalizeSecurityReadout, overviewSectionOptions, roomPanelOptions,
   securityReadoutLabelStates, selectableRoomEntities,
-  supportsCompactToolbarStatus, supportsOverviewLightsOff, supportsSecurityReadouts, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
+  supportsCompactToolbarStatus, supportsOverviewLightsOff, supportsSecurityReadouts, supportsWeatherReadingsList,
+  TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
 } from './strategy-model.js';
@@ -58,6 +59,7 @@ const WORDS = {
     calendarWeather: 'Daily forecast beside dates', calendarNoWeather: 'No forecast',
     calendarAccent: 'Calendar accent', calendarInvalidAccent: 'Enter a six-digit color such as #80BFFF.',
     compactStatus: 'Show status items side by side',
+    weatherReadingsList: 'Show readings as a compact read-only list',
     securityReadouts: 'Show compact read-only status tiles', readoutOn: 'Label for on', readoutOff: 'Label for off',
     readoutSafe: 'Label for safe', readoutOk: 'Label for ok',
     readoutDanger: 'Highlight the on state in red', readoutUnit: 'Display unit for numeric readings',
@@ -115,6 +117,7 @@ const WORDS = {
     calendarWeather: 'תחזית יומית ליד התאריך', calendarNoWeather: 'ללא תחזית',
     calendarAccent: 'צבע היומן', calendarInvalidAccent: 'הזינו צבע בן שש ספרות, למשל ‎#80BFFF‎.',
     compactStatus: 'הצגת פריטי הסטטוס זה לצד זה',
+    weatherReadingsList: 'הצגת המדדים ברשימה קומפקטית לקריאה בלבד',
     securityReadouts: 'הצגת אריחי מצב קומפקטיים לקריאה בלבד', readoutOn: 'תווית למצב פעיל', readoutOff: 'תווית למצב כבוי',
     readoutSafe: 'תווית למצב בטוח', readoutOk: 'תווית למצב תקין',
     readoutDanger: 'הדגשת מצב פעיל באדום', readoutUnit: 'יחידת תצוגה לערך מספרי',
@@ -599,6 +602,13 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       readouts.addEventListener('change', () =>
         changeSection({ layout: readouts.checked ? 'readouts' : undefined }, true, 'security-readouts'));
       fields.push(node('label', { className: 'check' }, [readouts, words.securityReadouts]));
+    }
+    if (supportsWeatherReadingsList(kind, active)) {
+      const readings = node('input', { type: 'checkbox', checked: isWeatherReadingsList(kind, active) });
+      readings.dataset.toolbarFocus = 'weather-readings-list';
+      readings.addEventListener('change', () =>
+        changeSection({ layout: readings.checked ? 'readings-list' : undefined }, true, 'weather-readings-list'));
+      fields.push(node('label', { className: 'check' }, [readings, words.weatherReadingsList]));
     }
     const { discover } = overviewSectionOptions(kind, active);
     if (kind === 'overview' && ['status', 'covers'].includes(active.kind)) fields.push(...overviewFilters(active, discover));
