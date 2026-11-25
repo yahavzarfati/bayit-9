@@ -1142,8 +1142,12 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   }
   .toolbar-readout ha-icon { display: block; --mdc-icon-size: 18px; width: 18px; height: 18px; color: var(--secondary); }
   .toolbar-readout :is(.tile-label,.tile-state) { font-size: 11px; line-height: 1.15; }
-  .security-readout { padding-inline: 2px; }
+  .security-readout { padding-inline: 1px; }
   .security-readout .tile-label { font-weight: 700; }
+  @media (min-width: 351px) and (max-width: 420px) {
+    .toolbar-section[data-security-section][data-layout=readouts] > .toolbar-section-items { column-gap: 4px; }
+    .security-readout .tile-label { font-size: 10.5px; }
+  }
   .toolbar-readout[data-danger] { border-color: rgba(255,187,187,.42); background: rgba(255,146,151,.16); }
   .toolbar-readout[data-danger] :is(ha-icon,.tile-state) { color: var(--critical); }
   @media (max-width: 350px) {
