@@ -36,6 +36,7 @@ const WORDS = {
     roomInlineLight: 'Show brightness and temperature in this room',
     roomNativeCoverHeader: 'Open Home Assistant details from the cover header',
     roomDualLightDetail: 'Show both sliders in light details',
+    roomCompactLightReading: 'Show reported values in compact light controls',
     roomNativeLightHold: 'Open Home Assistant details with a long press on this light',
     roomApplianceTile: 'Show as an appliance tile',
     roomClimatePower: 'Show quick power for this climate device',
@@ -139,6 +140,7 @@ const WORDS = {
     roomInlineLight: 'הצגת בהירות וגוון אור בתוך החדר',
     roomNativeCoverHeader: 'פתיחת פרטי Home Assistant מכותרת התריס',
     roomDualLightDetail: 'הצגת שני המחוונים בפרטי התאורה',
+    roomCompactLightReading: 'הצגת ערכים מדווחים בפקדי תאורה קומפקטיים',
     roomNativeLightHold: 'פתיחת פרטי Home Assistant בלחיצה ארוכה על התאורה',
     roomApplianceTile: 'הצגה כאריח מכשיר חשמלי',
     roomClimatePower: 'הצגת כפתור הפעלה וכיבוי מהיר למזגן',
@@ -941,6 +943,21 @@ export class Bayit9StrategyEditor extends HTMLElement {
           dual.firstElementChild.dataset.roomFocus = 'room-dual-light-detail';
           fields.append(dual);
         }
+        const compactReading = configuredIds(override.compact_light_reading_entities).includes(id);
+        if (lightActions && !configuredIds(override.read_only_entities).includes(id) &&
+            (compactReading || lightActions.set_brightness && lightActions.set_color_temp_kelvin && !lightActions.set_light_color && !lightActions.set_effect)) {
+          const reported = checkbox(words.roomCompactLightReading, compactReading, checked => {
+            const next = { ...this.#roomOverride(room.id) };
+            const lights = new Set(configuredIds(next.compact_light_reading_entities));
+            if (checked) lights.add(id);
+            else lights.delete(id);
+            if (lights.size) next.compact_light_reading_entities = [...lights];
+            else delete next.compact_light_reading_entities;
+            this.#setRoomOverride(room.id, next, 'room-compact-light-reading');
+          });
+          reported.firstElementChild.dataset.roomFocus = 'room-compact-light-reading';
+          fields.append(reported);
+        }
       };
       picker.addEventListener('change', () => {
         this.#roomControlEditing.set(room.id, picker.value);
@@ -1165,7 +1182,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         delete next.room_temperature_fallback_entity;
       }
       for (const key of ['read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
-        'inline_light_entities', 'dual_light_detail_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details',
+        'inline_light_entities', 'dual_light_detail_entities', 'compact_light_reading_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details',
         'vacuum_panel_hold_entities', 'climate_power_entities', 'media_compact_entities', 'appliance_tile_entities']) {
         if (!Array.isArray(next[key])) continue;
         next[key] = next[key].filter(id => entities.includes(id));

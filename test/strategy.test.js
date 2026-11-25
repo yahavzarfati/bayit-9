@@ -264,6 +264,21 @@ test('appliance tile selection keeps read-only switches and excludes a specializ
     .map(item=>[item.entity,item.role]),[[oven,undefined],[cooktop,'status']]);
 });
 
+test('reported compact light readings are projected only for selected writable room lights', () => {
+  const hass = home();
+  const light = 'light.demo_lamp';
+  const readonly = 'light.fixture_readonly';
+  const relay = 'switch.demo_boiler';
+  hass.states[readonly] = {state:'off',attributes:{}};
+  hass.entities[readonly] = {};
+  const entities = [light,readonly,relay];
+  const {rooms} = generateDashboard({area_ids:['studio','lounge'],show_unassigned:false,room_overrides:{
+    studio:{entities,compact_light_reading_entities:entities,read_only_entities:[readonly]},
+    lounge:{entities:[light]},
+  }},hass).views[0].cards[0];
+  assert.deepEqual(rooms.map(room=>room.entities.filter(item=>item.room_compact_light_reading).map(item=>item.entity)),[[light],[]]);
+});
+
 test('dual light details are scoped per room and independent of inline lights', () => {
   const hass = home();
   const light = 'light.demo_lamp';

@@ -368,6 +368,7 @@ function dashboardAreas(config, hass) {
       shortcutDetailRoutes: override.shortcut_detail_routes,
       inlineLights: new Set(idList(override.inline_light_entities)),
       dualLightDetails: new Set(idList(override.dual_light_detail_entities)),
+      compactLightReadings: new Set(idList(override.compact_light_reading_entities)),
       nativeCoverHeaders: new Set(idList(override.native_cover_header_entities)),
       nativeLightHolds: new Set(idList(override.native_light_hold_entities)),
       lightingCount: idList(override.lighting_count_entities),
@@ -683,6 +684,7 @@ export function discoverRooms(config, hass, locale) {
       }
       if (area.inlineLights?.has(device.entity)) device.room_light_controls = true;
       if (area.dualLightDetails?.has(device.entity)) device.room_dual_light_detail = true;
+      if (area.compactLightReadings?.has(device.entity)) device.room_compact_light_reading = true;
       if (!Object.hasOwn(config.light_effect_groups ?? {}, device.entity)) continue;
       const groups = normalizeLightEffectGroups(config.light_effect_groups[device.entity]);
       if (groups.length) device.effect_groups = groups;

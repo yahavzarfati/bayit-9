@@ -218,6 +218,7 @@ function normalizeEntity(item) {
   if (roomName !== undefined) entry.room_name = roomName;
   if (item.room_light_controls === true && entity.startsWith('light.')) entry.room_light_controls = true;
   if (item.room_dual_light_detail === true && entity.startsWith('light.')) entry.room_dual_light_detail = true;
+  if (item.room_compact_light_reading === true && entity.startsWith('light.')) entry.room_compact_light_reading = true;
   if (iconPattern.test(text(item.icon))) entry.icon = item.icon;
   if (['heater', 'boiler'].includes(item.kind)) entry.kind = item.kind;
   if (entityPattern.test(text(item.level_entity)) && item.level_entity.startsWith('number.')) {
@@ -1672,7 +1673,8 @@ export class BayitDashboard extends HTMLElement {
     const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactHeater,
       standaloneBoiler, compactCover: cover, vacuumCleaningControls: vacuumDisplay === 'cleaning-controls',
       vacuumSummary, vacuumStatusLabels, applianceTile, compactMedia: !!room && config.room_media_compact === true,
-      dualLightDetail: titleInDialog && config.room_dual_light_detail === true };
+      dualLightDetail: titleInDialog && config.room_dual_light_detail === true,
+      compactLightReading: (titleInDialog || !!room) && config.room_compact_light_reading === true };
     const bindPanelLaunch = source => {
       const targetName = panelTarget.label || this.t(panelKind);
       const hint = panelOpensOnTap ? this.t('vacuum_room_hold') : this.t('room_panel_hold').replace('{name}', targetName);
@@ -1755,7 +1757,8 @@ export class BayitDashboard extends HTMLElement {
         const native = toolbarCoverRail || nativeRoomCover;
         view.panelLaunch = { action: this.t(native ? 'more_info' : 'device_controls'), native };
       } else {
-        if (titleInDialog && domain === 'light' && (config.room_light_controls === true || view.dualLightDetail) && config.role !== 'status') {
+        if (titleInDialog && domain === 'light' && config.role !== 'status' &&
+            (config.room_light_controls === true || view.dualLightDetail || view.compactLightReading)) {
           const power = button('round-action compact-light-power', this.t('turn_on'), 'mdi:power', true);
           power.hidden = true;
           power.onclick = () => this.requestAction(config, power.dataset.action, undefined, power);
@@ -2466,9 +2469,14 @@ export class BayitDashboard extends HTMLElement {
     const compactInline = view.inlineLight && view.compactLight;
     const caption = make('label', '', compactInline ? undefined : title);
     const isRange = rangeActions.has(id);
-    const dualLightRange = view.compactLight && view.dualLightDetail && inlineLightActions.has(id);
-    const directRange = view.inlineLight || (view.compactLight && !dualLightRange && inlineLightActions.has(id));
-    const field = { action, id, dualLightRange };
+    const compactRange = view.compactLight && inlineLightActions.has(id);
+    const dualLightRange = compactRange && view.dualLightDetail;
+    const compactLightReading = compactRange && !dualLightRange && view.compactLightReading;
+    const reportedLightRange = dualLightRange || compactLightReading;
+    const minimumBrightness = compactLightReading && id === 'set_brightness';
+    const range = minimumBrightness ? { ...action, min: 1 } : action;
+    const directRange = view.inlineLight || (compactRange && !dualLightRange);
+    const field = { action: range, id, reportedLightRange, compactLightReading };
     if (dualLightRange) field.valid = () => field.observed || field.dirty;
     if (action.options) {
       field.input = make('select');
@@ -2489,7 +2497,7 @@ export class BayitDashboard extends HTMLElement {
       field.input = make('input', 'light-color-choice');
       field.input.type = 'color';
       field.valid = parseLightColor;
-    } else field.input = this.numberInput(action, isRange ? 'range' : 'number');
+    } else field.input = this.numberInput(range, isRange ? 'range' : 'number');
     field.input.dataset.action = id;
     if (directRange || dualLightRange || id === 'set_color_temp_kelvin') field.input.setAttribute('aria-label', title);
     caption.append(field.input);
@@ -2523,6 +2531,7 @@ export class BayitDashboard extends HTMLElement {
       if (dualLightRange && !field.valid()) return;
       const single = action.color || field.input.localName === 'select' ? field.input.value : field.input.valueAsNumber;
       const value = field.second ? { low: field.input.valueAsNumber, high: field.second.valueAsNumber } : single;
+      if ((compactLightReading && !field.dirty) || (minimumBrightness && (!Number.isFinite(value) || value < 1))) return;
       this.requestAction(view.config, id, value, apply);
     };
     if (directRange) {
@@ -2540,9 +2549,9 @@ export class BayitDashboard extends HTMLElement {
   syncField(field, model, force = false) {
     const { id, input, second, action } = field;
     const active = this.shadowRoot.activeElement;
-    if (!force && (field.dirty || active === input || (second && active === second))) return;
+    if (!force && (field.dirty || !field.compactLightReading && (active === input || (second && active === second)))) return;
     const attrs = model.attributes;
-    if (field.dualLightRange) {
+    if (field.reportedLightRange) {
       const raw = id === 'set_brightness' ? attrs.brightness : attrs.color_temp_kelvin;
       const observed = typeof raw === 'number' && Number.isFinite(raw) &&
         (id === 'set_brightness' ? raw >= 0 && raw <= 255 : raw >= action.min && raw <= action.max);
@@ -2561,7 +2570,7 @@ export class BayitDashboard extends HTMLElement {
     else if (input.localName === 'select') input.value = attrs[stateKeys[id]] ?? input.options[0]?.value ?? '';
     else input.value = String(number(attrs[stateKeys[id]]) ?? action.min ?? 0);
     if (input.localName === 'select' && input.selectedIndex === -1) input.selectedIndex = 0;
-    if (field.output) setText(field.output, field.dualLightRange && !field.observed ? '—' : input.value + field.unit);
+    if (field.output) setText(field.output, field.reportedLightRange && !field.observed ? '—' : input.value + field.unit);
   }
 
   canRequest(entity, id) {

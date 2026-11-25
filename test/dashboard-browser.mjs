@@ -190,6 +190,7 @@ const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection'
       studio: { entities: ['light.demo_lamp', 'light.demo_room_read_only'],
         inline_light_entities: ['light.demo_lamp', 'light.demo_room_read_only', 'switch.demo_heater'],
         ...(query.has('dual-light-details') && {dual_light_detail_entities:['light.demo_lamp']}),
+        ...(query.has('compact-light-reading') && {compact_light_reading_entities:['light.demo_lamp']}),
         read_only_entities: ['light.demo_room_read_only'] },
       bayit_room_den: { name: 'Den', entities: ['light.demo_lamp'] },
     },
@@ -258,6 +259,10 @@ if (query.has('inline-room-lights')) {
     min_color_temp_kelvin: 2000, max_color_temp_kelvin: 6500, color_temp_kelvin: 3000 };
   Object.assign(states['light.demo_lamp'].attributes, attributes);
   states['light.demo_lamp'].state = 'on';
+  if (query.has('compact-light-reading')) {
+    states['light.demo_lamp'].state = 'off';
+    Object.assign(states['light.demo_lamp'].attributes, {brightness:null,color_temp_kelvin:null});
+  }
   states['light.demo_room_read_only'] = { state: 'on', attributes: { ...attributes, friendly_name: 'Read-only lamp' } };
 }
 if (query.has('shortcut-detail-target')) {
@@ -1006,7 +1011,8 @@ if (query.has('editor')) {
   editor.setConfig({ type: 'custom:bayit-9',
     ...((query.has('toolbar-panels') || query.has('automation-compact') || query.has('overview-opt-in') || query.has('lighting-count') ||
       query.has('preset-shortcut') || query.has('entrance-popup-position') || query.has('timer-usage') ||
-      query.has('swing-unreported') || query.has('temperature-source') || query.has('dual-light-details')) && selected) });
+      query.has('swing-unreported') || query.has('temperature-source') || query.has('dual-light-details') ||
+      query.has('compact-light-reading')) && selected) });
   editor.hass = hass;
   editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
   document.querySelector('#editor').append(editor);
@@ -3559,6 +3565,92 @@ async function assertDualLightDetails(browser) {
       assert.ok((await saved()).inline_light_entities.includes('light.demo_lamp'));
       await checkbox.check();
       assert.deepEqual((await saved()).dual_light_detail_entities,['light.demo_lamp']);
+      assert.deepEqual(await calls(),[]);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+async function assertCompactLightReadings(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const url = base + '/fixture-home/home?configuration&inline-room-lights&locale=' + locale;
+    const route = '#device/studio/light.demo_lamp';
+    const opt = '&compact-light-reading';
+    const room = page.getByRole('dialog',{name:'Studio',exact:true});
+    const details = page.getByRole('dialog',{name:'Desk lamp',exact:true});
+    const compact = panel => panel.locator('.compact-light-controls');
+    const bright = panel => compact(panel).locator('input[data-action=set_brightness]:visible');
+    const tone = panel => compact(panel).locator('input[data-action=set_color_temp_kelvin]:visible');
+    const mode = panel => compact(panel).locator('.round-action');
+    const reading = panel => compact(panel).locator('.field-row:visible output');
+    const calls = () => page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service'));
+    const attrs = attrs => page.evaluate(attrs=>window.bayitTest.setFixtureAttributes('light.demo_lamp',attrs),attrs);
+    try {
+      await page.goto(url + opt);
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+      await bright(room).waitFor();
+      assert.equal(await bright(room).getAttribute('min'),'1');
+      assert.equal(await reading(room).textContent(),'—');
+      await bright(room).focus();
+      await mode(room).tap();
+      await tone(room).waitFor();
+      assert.equal(await reading(room).textContent(),'—');
+      assert.ok(await compact(room).evaluate(node=>node.scrollWidth <= node.clientWidth));
+      assert.deepEqual(await calls(),[]);
+
+      await room.locator('[data-inline-light] .device-tile').press('Shift+Enter');
+      await bright(details).waitFor();
+      assert.equal(await bright(details).getAttribute('min'),'1');
+      assert.equal(await reading(details).textContent(),'—');
+      assert.equal(await details.locator('.compact-light-power').getAttribute('data-action'),'turn_on');
+      await attrs({brightness:102,color_temp_kelvin:3200});
+      await reading(details).getByText(/40%/).waitFor();
+      await mode(details).tap();
+      await reading(details).getByText(/3200 K/).waitFor();
+      assert.deepEqual(await calls(),[]);
+      await mode(details).tap();
+      await bright(details).press('Home');
+      await page.waitForFunction(()=>window.bayitTest.calls.filter(call=>call.type==='call_service').length===1);
+      await details.locator('.compact-light-power[data-action=turn_off]:enabled').waitFor();
+      assert.deepEqual((await calls())[0].service_data,{brightness_pct:1});
+      await mode(details).tap();
+      await tone(details).press('ArrowRight');
+      await page.waitForFunction(()=>window.bayitTest.calls.filter(call=>call.type==='call_service').length===2);
+      assert.deepEqual((await calls())[1].service_data,{color_temp_kelvin:3201});
+      await page.evaluate(()=>window.bayitTest.setRoomState('light.demo_lamp','unavailable'));
+      await compact(details).waitFor({state:'hidden'});
+      assert.equal((await calls()).length,2);
+
+      await page.goto(url + route);
+      await bright(details).waitFor();
+      assert.equal(await bright(details).getAttribute('min'),'0');
+      await page.goto(url + opt + '&dual-light-details' + route);
+      const dual = details.locator('.dual-light-detail-controls');
+      await dual.locator('input[data-action=set_brightness]').waitFor();
+      assert.equal(await dual.locator('input[data-action=set_brightness]').getAttribute('min'),'0');
+      assert.equal(await dual.locator('button[data-action=set_brightness]').count(),1);
+      await page.evaluate(()=>window.bayitTest.setLightModes('light.demo_lamp',['color_temp','rgb']));
+      await details.locator('input[type=color]').waitFor();
+      assert.equal(await dual.count(),0);
+      assert.deepEqual(await calls(),[]);
+
+      await page.goto(url + opt + '&editor');
+      await page.getByText(he ? 'חדרים' : 'Rooms',{exact:true}).tap();
+      await page.getByLabel(he ? 'חדר להתאמה אישית' : 'Room to customize',{exact:true}).selectOption('studio');
+      await page.getByText(he ? 'תצוגת מכשירים' : 'Device display',{exact:true}).tap();
+      await page.getByLabel(he ? 'מכשיר להתאמה אישית' : 'Device to customize',{exact:true}).selectOption('light.demo_lamp');
+      const option = page.getByRole('checkbox',{name:he ? 'הצגת ערכים מדווחים בפקדי תאורה קומפקטיים' : 'Show reported values in compact light controls',exact:true});
+      assert.equal(await option.isChecked(),true);
+      await option.uncheck();
+      const saved = () => page.evaluate(()=>window.latest.room_overrides.studio);
+      assert.equal((await saved()).compact_light_reading_entities,undefined);
+      assert.ok((await saved()).inline_light_entities.includes('light.demo_lamp'));
+      await option.check();
+      assert.deepEqual((await saved()).compact_light_reading_entities,['light.demo_lamp']);
       assert.deepEqual(await calls(),[]);
     } finally {
       await page.close();
@@ -7000,6 +7092,7 @@ try {
       console.log(engine + ' 320: room-only panel exclusions, retained shortcuts and direct links, and editor persistence');
 
       await assertDualLightDetails(browser);
+      await assertCompactLightReadings(browser);
       const inlinePage = await newRoomConfigPage();
       const inlineUrl = base + '/fixture-home/home?configuration&inline-room-lights';
       await inlinePage.goto(inlineUrl);
