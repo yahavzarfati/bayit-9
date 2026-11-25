@@ -1183,6 +1183,45 @@ test('only Devices and Overview status sections retain the compact layout withou
   assert.ok(toolbar.every(item => item.sections.every(section => section.entities[0].role === 'status')));
 });
 
+test('Security readouts require the explicit status layout and supported source entity and state types', () => {
+  const hass = home();
+  const binary = 'binary_sensor.fixture_signal';
+  const sensor = 'sensor.fixture_reading';
+  const activeLock = 'lock.fixture';
+  const hidden = 'sensor.fixture_hidden';
+  for (const [entity, state] of [[binary, 'unknown'], [sensor, 'unavailable'], [activeLock, 'locked'], [hidden, 'safe']]) {
+    hass.states[entity] = { state, attributes: {} };
+    hass.entities[entity] = {};
+  }
+  hass.entities[hidden].hidden_by = 'user';
+  const readouts = { kind: 'status', layout: 'readouts', entities: [
+    { entity: binary, role: 'status', readout: { state_labels: {
+      on: ' Active ', off: 'Quiet', unknown: 'Clear', unavailable: 'Clear', safe: 'Clear',
+    }, danger_on: true, unit: 's', extra: true } },
+    { entity: sensor, readout: { state_labels: {
+      safe: 'Cle\u202ear', ok: ' Ready ', on: 'Active', unknown: 'Ready',
+    }, danger_on: true, unit: ' seconds ' } },
+    { entity: activeLock, role: 'lock', readout: { danger_on: true } },
+    { entity: hidden, readout: { unit: 's' } },
+  ] };
+  const card = generateDashboard({ toolbar: [
+    { kind: 'security', sections: [readouts, { ...readouts, kind: 'readings' }] },
+    { kind: 'overview', sections: [readouts] },
+    { kind: 'security', sections: [{ ...readouts, layout: undefined }, { ...readouts, entities: [
+      { entity: binary, role: 'action', readout: { danger_on: true } },
+      { entity: sensor, readout: { unit: 'a'.repeat(13), state_labels: { ok: 'a'.repeat(49) } } },
+    ] }] },
+  ] }, hass).views[0].cards[0];
+  const allSections = card.toolbar.flatMap(entry => entry.sections);
+  assert.deepEqual(allSections.map(section => section.layout), ['readouts', undefined, undefined, undefined, 'readouts']);
+  assert.deepEqual(allSections[0].entities.map(item => ({ id: item.entity, role: item.role, readout: item.readout })), [
+    { id: binary, role: 'status', readout: { state_labels: { on: 'Active', off: 'Quiet' }, danger_on: true } },
+    { id: sensor, role: undefined, readout: { state_labels: { ok: 'Ready' }, unit: 'seconds' } },
+    { id: activeLock, role: 'lock', readout: undefined },
+  ]);
+  assert.ok(allSections.slice(1).flatMap(section => section.entities).every(item => !Object.hasOwn(item, 'readout')));
+});
+
 test('only selected vacuum action buttons can retain one-tap program behavior', () => {
   const hass = home();
   const item = { entity: 'button.fixture_clean', role: 'action', command: 'vacuum_program', confirmation: 'Start now?' };

@@ -1,9 +1,10 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
-import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isVacuumProgramAction,
+import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isSecurityReadouts, isVacuumProgramAction,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
-  normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions, ROOM_PANEL_KINDS, roomShortcutDevices,
-  shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails, supportsShortcutWithoutDetails,
+  normalizeSecurityReadout, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
+  ROOM_PANEL_KINDS, roomShortcutDevices, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
+  supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { allowsCoverRailAction, createDeviceController, getDeviceModel, roomShutdownTargets,
@@ -353,12 +354,15 @@ export function normalizeDashboardConfig(config = {}) {
           const entity = normalizeEntity(raw);
           if (isAutomationScriptToggle(item.kind, section.kind, raw)) entity.command = 'toggle_script';
           if (isVacuumProgramAction(item.kind, section.kind, raw)) entity.command = 'vacuum_program';
+          const readout = normalizeSecurityReadout(item.kind, section, raw);
+          if (readout) entity.readout = readout;
           if (item.kind === 'sensors' && section.kind !== 'series' && entity.role === 'graph' &&
               domainFor(entity) === 'sensor' && known.has(raw.graph_room_id)) entity.graph_room_id = raw.graph_room_id;
           return entity;
         });
         return [{ id: text(section.id), kind: text(section.kind), title: typeof section.title === 'string' ? section.title : undefined,
           ...(isCompactToolbarStatus(item.kind, section) && { layout: 'compact' }),
+          ...(isSecurityReadouts(item.kind, section) && { layout: 'readouts' }),
           ...(section.filter === 'active' && {filter:'active'}), ...overview, entities: members }];
       }) }) }];
   }) : null;

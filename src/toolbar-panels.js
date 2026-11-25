@@ -1,7 +1,7 @@
 import { createOrefMap } from './oref-alert-map.js';
 import { createVacuumMap } from './vacuum-map.js';
 import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
-import { discoverOverviewEntities, isActiveOverviewEntity, isCompactToolbarStatus, isToolbarLightTile, isVisibleEntity } from './strategy-model.js';
+import { discoverOverviewEntities, isActiveOverviewEntity, isCompactToolbarStatus, isSecurityReadouts, isToolbarLightTile, isVisibleEntity, securityReadoutLabelStates } from './strategy-model.js';
 import { mediaServiceRegistered } from './media-device-support.mjs';
 import { roomShutdownTargets } from './device-control.mjs';
 import { calendarAgendaStyles, createCalendarAgenda } from './calendar-agenda.js';
@@ -173,6 +173,30 @@ export function createToolbarPanel(kind, configuration, context) {
           portrait.src = link;
         }
       }
+    });
+    return tile;
+  }
+
+  function renderSecurityReadout(item) {
+    const glyph = icon('mdi:information-outline');
+    glyph.setAttribute('aria-hidden', 'true');
+    const name = make('span', 'tile-label');
+    const state = make('span', 'tile-state');
+    state.dir = 'auto';
+    const tile = make('div', 'security-readout');
+    tile.append(glyph, name, state);
+    handlers.push(() => {
+      const model = modelFor(item);
+      const raw = model.state;
+      const labels = item.readout?.state_labels;
+      const key = typeof raw === 'string' ? raw.toLowerCase() : '';
+      const custom = model.available && labels && Object.hasOwn(labels, key) ? labels[key] : undefined;
+      const unit = item.readout?.unit;
+      const numeric = model.available && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw) && Number.isFinite(Number(raw));
+      glyph.setAttribute('icon', model.icon || 'mdi:information-outline');
+      name.textContent = model.name;
+      state.textContent = raw === 'unknown' ? t('unknown') : custom ?? (unit && numeric ? raw + ' ' + unit : stateLabel(model));
+      tile.toggleAttribute('data-danger', model.available && raw === 'on' && item.readout?.danger_on === true);
     });
     return tile;
   }
@@ -519,6 +543,8 @@ export function createToolbarPanel(kind, configuration, context) {
     panel.dataset.section = section.kind;
     const compactStatus = isCompactToolbarStatus(kind, section);
     if (compactStatus) panel.dataset.layout = 'compact';
+    const readouts = isSecurityReadouts(kind, section);
+    if (readouts) panel.dataset.layout = 'readouts';
     if (kind === 'overview' && !compactStatus && section.filter === 'active' &&
         ['status', 'covers'].includes(section.kind)) panel.dataset.overviewActiveRows = '';
     const caption = section.title ?? t(sectionKeys[section.kind] ?? 'room_devices');
@@ -538,7 +564,8 @@ export function createToolbarPanel(kind, configuration, context) {
         entities:section.entities.map(item=>({entity:item.entity, name:item.name})), }, fallback));
     } else {
       const pairs = section.entities.filter(item=>!calendarItems.length || domain(item)!=='calendar')
-        .map(item => ({item, node:render(item, section.kind, compactStatus)}));
+        .map(item => ({ item, node: readouts && securityReadoutLabelStates(item).length
+          ? renderSecurityReadout(item) : render(item, section.kind, compactStatus) }));
       items.append(...pairs.map(pair=>pair.node));
       if (section.filter === 'active') handlers.push(() => {
         const visible = [];
@@ -684,6 +711,22 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
     grid-template-columns: repeat(auto-fit,minmax(min(100%,max(110px,calc((100% - 8px) / 2))),1fr));
   }
   .shell[dir=rtl] .toolbar-section[data-layout=compact] > .toolbar-section-items > * { direction: rtl; }
+  .toolbar-section[data-layout=readouts] > .toolbar-section-items {
+    --readout-width: calc((100% - 18px) / 4);
+    grid-template-columns: repeat(auto-fit,minmax(min(100%,max(60px,var(--readout-width))),1fr)); gap: 6px;
+  }
+  .toolbar-section[data-layout=readouts] > .toolbar-section-items > :not(.security-readout) { grid-column: 1 / -1; }
+  .security-readout {
+    display: grid; box-sizing: border-box; justify-items: center; align-content: center; gap: 3px; min-width: 0; min-height: 62px;
+    padding: 5px 4px; border: 1px solid var(--soft-line); border-radius: 8px; background: var(--control); text-align: center;
+  }
+  .security-readout ha-icon { display: block; --mdc-icon-size: 18px; width: 18px; height: 18px; color: var(--secondary); }
+  .security-readout :is(.tile-label,.tile-state) { font-size: 11px; line-height: 1.15; }
+  .security-readout[data-danger] { border-color: rgba(255,187,187,.42); background: rgba(255,146,151,.16); }
+  .security-readout[data-danger] :is(ha-icon,.tile-state) { color: var(--critical); }
+  @media (max-width: 350px) {
+    .toolbar-section[data-layout=readouts] > .toolbar-section-items { --readout-width: calc((100% - 6px) / 2); }
+  }
   .compact-status-lock {
     display: grid; grid-template-columns: minmax(0,1fr) 44px; gap: 2px; align-items: center; min-width: 0;
     padding-inline: 3px; border: 1px solid var(--soft-line); border-radius: 12px; background: var(--control);

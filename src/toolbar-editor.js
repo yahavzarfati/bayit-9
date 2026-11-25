@@ -1,7 +1,9 @@
 import {
   discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactToolbarStatus, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
-  normalizeOverviewDiscovery, overviewSectionOptions, roomPanelOptions, selectableRoomEntities,
-  supportsCompactToolbarStatus, supportsOverviewLightsOff, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
+  isSecurityReadouts, normalizeOverviewDiscovery, normalizeSecurityReadout, overviewSectionOptions, roomPanelOptions,
+  securityReadoutLabelStates, selectableRoomEntities,
+  supportsCompactToolbarStatus, supportsOverviewLightsOff, supportsSecurityReadouts, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
+  TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
 } from './strategy-model.js';
 import { normalizeOrefMap, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
@@ -56,6 +58,9 @@ const WORDS = {
     calendarWeather: 'Daily forecast beside dates', calendarNoWeather: 'No forecast',
     calendarAccent: 'Calendar accent', calendarInvalidAccent: 'Enter a six-digit color such as #80BFFF.',
     compactStatus: 'Show status items side by side',
+    securityReadouts: 'Show compact read-only status tiles', readoutOn: 'Label for on', readoutOff: 'Label for off',
+    readoutSafe: 'Label for safe', readoutOk: 'Label for ok',
+    readoutDanger: 'Highlight the on state in red', readoutUnit: 'Display unit for numeric readings',
     activity: 'Activity', automations: 'Automations', security: 'Security', presence: 'Presence',
     weather: 'Weather', energy: 'Energy', settings: 'Settings', overview: 'Overview',
     sensors: 'Sensors', media: 'Media', vacuum: 'Vacuum', calendar: 'Calendar', link: 'Local link',
@@ -110,6 +115,9 @@ const WORDS = {
     calendarWeather: 'תחזית יומית ליד התאריך', calendarNoWeather: 'ללא תחזית',
     calendarAccent: 'צבע היומן', calendarInvalidAccent: 'הזינו צבע בן שש ספרות, למשל ‎#80BFFF‎.',
     compactStatus: 'הצגת פריטי הסטטוס זה לצד זה',
+    securityReadouts: 'הצגת אריחי מצב קומפקטיים לקריאה בלבד', readoutOn: 'תווית למצב פעיל', readoutOff: 'תווית למצב כבוי',
+    readoutSafe: 'תווית למצב בטוח', readoutOk: 'תווית למצב תקין',
+    readoutDanger: 'הדגשת מצב פעיל באדום', readoutUnit: 'יחידת תצוגה לערך מספרי',
     activity: 'פעילות', automations: 'אוטומציות', security: 'אבטחה', presence: 'נוכחות',
     weather: 'מזג אוויר', energy: 'אנרגיה', settings: 'הגדרות', overview: 'סקירה',
     sensors: 'חיישנים', media: 'מדיה', vacuum: 'שואב רובוטי', calendar: 'יומן', link: 'קישור מקומי',
@@ -361,6 +369,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     role.dataset.toolbarFocus = 'device-role';
     role.addEventListener('change', () => save({
       role: role.value || undefined,
+      ...(role.value && role.value !== 'status' && { readout: undefined }),
       ...(role.value !== 'graph' && { graph_hours: undefined, graph_room_id: undefined, vacuum_panel_id: undefined }),
       ...(role.value !== 'action' && { command: undefined,
         ...(toolbar[entryIndex].sections[sectionIndex].entities[index]?.confirmation === false && { confirmation: undefined }) }),
@@ -374,6 +383,30 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       }, { placeholder: available.get(entity)?.name || entity }).field,
       iconField(record.icon, value => save({ icon: value || undefined })),
     ];
+    const kind = toolbar[entryIndex].kind;
+    const labelStates = isSecurityReadouts(kind, section) ? securityReadoutLabelStates(record) : [];
+    if (labelStates.length) {
+      let settings = normalizeSecurityReadout(kind, section, record) ?? {};
+      const updateReadout = edits => {
+        const readout = normalizeSecurityReadout(kind, section, { ...record, readout: patch(settings, edits) });
+        settings = readout ?? {};
+        save({ readout });
+      };
+      const captions = { on: words.readoutOn, off: words.readoutOff, safe: words.readoutSafe, ok: words.readoutOk };
+      for (const state of labelStates) {
+        fields.push(textField(captions[state], settings.state_labels?.[state], value => {
+          updateReadout({ state_labels: patch(settings.state_labels ?? {}, { [state]: value || undefined }) });
+        }, { maxLength: 48 }).field);
+      }
+      if (domain === 'binary_sensor') {
+        const danger = node('input', { type: 'checkbox', checked: settings.danger_on === true });
+        danger.addEventListener('change', () => updateReadout({ danger_on: danger.checked || undefined }));
+        fields.push(node('label', { className: 'check' }, [danger, words.readoutDanger]));
+      } else {
+        fields.push(textField(words.readoutUnit, settings.unit,
+          value => updateReadout({ unit: value || undefined }), { maxLength: 12 }).field);
+      }
+    }
     if (record.role === 'graph') {
       const hours = node('input', { type: 'number', min: '1', max: '336', step: '1',
         value: record.graph_hours === undefined ? '' : String(record.graph_hours), placeholder: '24' });
@@ -559,6 +592,13 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       const compact = node('input', { type: 'checkbox', checked: isCompactToolbarStatus(kind, active) });
       compact.addEventListener('change', () => changeSection({ layout: compact.checked ? 'compact' : undefined }));
       fields.push(node('label', { className: 'check' }, [compact, words.compactStatus]));
+    }
+    if (supportsSecurityReadouts(kind, active)) {
+      const readouts = node('input', { type: 'checkbox', checked: isSecurityReadouts(kind, active) });
+      readouts.dataset.toolbarFocus = 'security-readouts';
+      readouts.addEventListener('change', () =>
+        changeSection({ layout: readouts.checked ? 'readouts' : undefined }, true, 'security-readouts'));
+      fields.push(node('label', { className: 'check' }, [readouts, words.securityReadouts]));
     }
     const { discover } = overviewSectionOptions(kind, active);
     if (kind === 'overview' && ['status', 'covers'].includes(active.kind)) fields.push(...overviewFilters(active, discover));

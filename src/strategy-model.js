@@ -632,6 +632,46 @@ export function isCompactToolbarStatus(kind, section) {
   return supportsCompactToolbarStatus(kind, section) && section.layout === 'compact';
 }
 
+export function supportsSecurityReadouts(kind, section) {
+  return kind === 'security' && section?.kind === 'status';
+}
+
+export function isSecurityReadouts(kind, section) {
+  return supportsSecurityReadouts(kind, section) && section.layout === 'readouts';
+}
+
+const securityReadoutStates = { binary_sensor: ['on', 'off'], sensor: ['safe', 'ok'] };
+
+export function securityReadoutLabelStates(item) {
+  const entity = typeof item === 'string' ? item : item?.entity;
+  if (typeof entity !== 'string' || !ENTITY_ID.test(entity) || (item?.role !== undefined && item.role !== 'status')) return [];
+  return Object.hasOwn(securityReadoutStates, domainOf(entity)) ? securityReadoutStates[domainOf(entity)] : [];
+}
+
+function readoutText(value, limit) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return text && text.length <= limit && !/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(text) ? text : undefined;
+}
+
+export function normalizeSecurityReadout(kind, section, item) {
+  if (!isSecurityReadouts(kind, section) || !item?.readout || Array.isArray(item.readout) || typeof item.readout !== 'object') return;
+  const states = securityReadoutLabelStates(item);
+  if (!states.length) return;
+  const source = item.readout;
+  const stateLabels = Object.fromEntries(states.flatMap(state => {
+    const text = readoutText(source.state_labels && Object.hasOwn(source.state_labels, state) ? source.state_labels[state] : undefined, 48);
+    return text ? [[state, text]] : [];
+  }));
+  const binary = domainOf(item.entity) === 'binary_sensor';
+  const unit = !binary && readoutText(source.unit, 12);
+  const settings = {
+    ...(Object.keys(stateLabels).length && { state_labels: stateLabels }),
+    ...(binary && source.danger_on === true && { danger_on: true }),
+    ...(unit && { unit }),
+  };
+  return Object.keys(settings).length ? settings : undefined;
+}
+
 function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
   if (!Array.isArray(value)) return undefined;
   const seenSections = new Set();
@@ -668,14 +708,16 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
       const graphRoom = linkedGraph && roomIds?.has(item.graph_room_id) ? item.graph_room_id : undefined;
       const vacuumPanel = linkedGraph && !graphRoom && vacuumPanels.has(item.vacuum_panel_id) ? item.vacuum_panel_id : undefined;
       const accent = kind === 'calendar' && domain === 'calendar' ? calendarAccent(item.accent_color) : undefined;
+      const readout = normalizeSecurityReadout(kind, section, item);
       return [{ ...descriptor, ...(name && { name }), ...(ROOM_ICON.test(icon) && { icon }),
         ...(role && { role }), ...(command && { command }),
         ...(confirmation !== undefined && { confirmation }), ...(hasGraphHours && { graph_hours: graphHours }),
         ...(graphRoom && { graph_room_id: graphRoom }), ...(vacuumPanel && { vacuum_panel_id: vacuumPanel }),
-        ...(accent && { accent_color: accent }) }];
+        ...(accent && { accent_color: accent }), ...(readout && { readout }) }];
     });
     return [{ id, kind: section.kind, ...(title !== undefined && { title }),
       ...(isCompactToolbarStatus(kind, section) && { layout: 'compact' }),
+      ...(isSecurityReadouts(kind, section) && { layout: 'readouts' }),
       ...(section.filter === 'active' && { filter:'active' }), ...overview, entities }];
   });
 }
