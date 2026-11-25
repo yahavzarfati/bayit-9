@@ -3382,6 +3382,113 @@ async function assertHeaterHomeFeedback(browser) {
   }
 }
 
+async function assertHeatingProfileTargetsStayDistinct(browser) {
+  const labels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', profiles:'Boiler and heater controls',
+      add:'Add profile', edit:'Edit', cancel:'Cancel', device:'Heating device', name:'Display name', timer:'Timer',
+      saveProfile:'Save profile', saveDashboard:'Save dashboard', inUse:'Profile already exists',
+      conflict:'This device already has a control profile. Edit the existing profile to change its settings.' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', profiles:'שליטה בדוד ובתנורים',
+      add:'הוספת בקר', edit:'עריכה', cancel:'ביטול', device:'מכשיר חימום', name:'שם לתצוגה', timer:'טיימר',
+      saveProfile:'שמירת בקר', saveDashboard:'שמירת הדשבורד', inUse:'כבר מוגדר בקר',
+      conflict:'למכשיר הזה כבר מוגדר בקר. כדי לשנות את ההגדרות שלו, ערכו את הבקר הקיים.' },
+  ];
+  const native = 'switch.demo_heater';
+  const helper = 'fan.demo_step_heater';
+  const free = 'switch.demo_appliance_boiler';
+  const timing = { min_minutes:15, max_minutes:60, step_minutes:15, duration_field:'duration' };
+  const initial = [
+    { entity:native, kind:'heater', name:'North profile',
+      timed:{ start_script:'script.demo_start', timer_entity:'timer.demo_heater', ...timing } },
+    { entity:helper, kind:'heater', name:'South profile', level_steps:9, level_read_entity:'input_number.demo_heat_step',
+      timed:{ simple_timer_entity:'sensor.demo_step_runtime', simple_timer_target:'switch.demo_step_power', ...timing } },
+  ];
+  for (const words of labels) {
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      await page.addInitScript(profiles => {
+        const key = 'bayit9-browser-fixture';
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({
+          strategy:{ type:'custom:bayit-9', show_unassigned:false, profiles },
+        }));
+      }, initial);
+      const url = base + '/fixture-home/home?configuration&room-selection&heater-level&toolbar-panels&appliance-tile-test&locale=' + words.locale;
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      const button = name => setup.getByRole('button', { name, exact:true });
+      const device = setup.getByLabel(words.device, { exact:true });
+      const name = setup.getByLabel(words.name, { exact:true });
+      const choice = id => device.locator('option[value="' + id + '"]');
+      const disabled = id => choice(id).evaluate(item => item.disabled);
+      const readProfiles = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.profiles);
+      const open = async () => {
+        await page.getByRole('button', { name:words.appearance, exact:true }).tap();
+        await page.getByRole('button', { name:words.setup, exact:true }).tap();
+        await setup.getByText(words.profiles, { exact:true }).tap();
+      };
+      const edit = title => setup.locator('.record').filter({ hasText:title })
+        .getByRole('button', { name:words.edit, exact:true }).tap();
+      const save = async () => {
+        assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+        await Promise.all([page.waitForEvent('load'), button(words.saveDashboard).tap()]);
+        await page.locator('.room[data-room=studio]').waitFor({ state:'attached' });
+        return readProfiles();
+      };
+      await page.goto(url);
+      await open();
+      await button(words.add).tap();
+      assert.equal(await disabled(native), true);
+      assert.equal(await disabled(helper), true);
+      assert.equal(await button(words.saveProfile).isDisabled(), true);
+      await button(words.cancel).tap();
+      await edit(initial[0].name);
+      assert.equal(await disabled(native), false);
+      assert.equal(await disabled(helper), true);
+      assert.ok((await choice(helper).textContent()).includes(words.inUse));
+      assert.equal(await disabled(free), false);
+
+      // Exercise validation at the commit boundary even when the native picker is bypassed.
+      await device.evaluate((input, id) => { input.value = id; }, helper);
+      await button(words.saveProfile).tap();
+      await setup.getByRole('alert').filter({ hasText:words.conflict }).waitFor();
+      assert.equal(await button(words.saveDashboard).isDisabled(), true);
+      assert.deepEqual(await readProfiles(), initial);
+
+      await device.selectOption(free);
+      const staleWrites = await button(words.saveProfile).evaluate((staleSave, { initial, free }) => {
+        const editor = staleSave.getRootNode().host;
+        const baseline = { type:'custom:bayit-9', show_unassigned:false, profiles:initial };
+        editor.setConfig({ ...baseline, profiles:[...initial, { entity:free, kind:'heater' }] });
+        let changes = 0;
+        const observe = () => { changes++; };
+        editor.addEventListener('config-changed', observe);
+        staleSave.click();
+        editor.removeEventListener('config-changed', observe);
+        editor.setConfig(baseline);
+        return changes;
+      }, { initial, free });
+      assert.equal(staleWrites, 0);
+
+      await device.selectOption(native);
+      await name.fill('Updated North profile');
+      await button(words.saveProfile).tap();
+      const updated = await save();
+      assert.deepEqual(updated, [{ ...initial[0], name:'Updated North profile' }, initial[1]]);
+      await open();
+      await edit(updated[0].name);
+      await device.selectOption(free);
+      await setup.getByLabel(words.timer, { exact:true }).selectOption('timer.demo_appliance_boiler');
+      await button(words.saveProfile).tap();
+      assert.deepEqual(await save(), [
+        { ...updated[0], entity:free, timed:{ ...updated[0].timed, timer_entity:'timer.demo_appliance_boiler' } },
+        initial[1],
+      ]);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertStandaloneTimedHeater(browser) {
   for (const locale of ['en', 'he']) {
     const he = locale === 'he';
@@ -7682,6 +7789,7 @@ try {
       await assertHomeHeaterShortcut(browser);
       await assertCompactInlineLightLayout(browser);
       await assertTimerHistory(browser);
+      await assertHeatingProfileTargetsStayDistinct(browser);
       await assertStandaloneTimedHeater(browser);
       await assertCompactRoomHeater(browser);
       await assertSharedHeaterLevelInterop(browser);

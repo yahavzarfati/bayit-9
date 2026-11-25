@@ -151,6 +151,8 @@ const WORDS = {
     step: 'Step in minutes', add: 'Add profile', save: 'Save profile', edit: 'Edit',
     remove: 'Remove', clear: 'Cancel', choose: 'Select a device',
     invalid: 'Select a heating device to save the profile.',
+    profileInUse: 'Profile already exists',
+    profileConflict: 'This device already has a control profile. Edit the existing profile to change its settings.',
     hint: 'Select the Home Assistant entities that already control this device. Use a server-side start script for timed heating.',
     units: 'minutes', searchable: 'Filter entities',
   },
@@ -286,6 +288,8 @@ const WORDS = {
     step: 'מרווח בחירה בדקות', add: 'הוספת בקר', save: 'שמירת בקר', edit: 'עריכה',
     remove: 'הסרה', clear: 'ביטול', choose: 'בחירת מכשיר',
     invalid: 'בחרו מכשיר חימום לפני השמירה.',
+    profileInUse: 'כבר מוגדר בקר',
+    profileConflict: 'למכשיר הזה כבר מוגדר בקר. כדי לשנות את ההגדרות שלו, ערכו את הבקר הקיים.',
     hint: 'בחרו את הישויות שכבר שולטות במכשיר ב־Home Assistant. לחימום מתוזמן, השתמשו בסקריפט שפועל בשרת.',
     units: 'דקות', searchable: 'סינון ישויות',
   },
@@ -2075,7 +2079,14 @@ export class Bayit9StrategyEditor extends HTMLElement {
 
     const current = this.#profileEditing;
     const timed = current.timed ?? {};
+    const occupied = new Set(profiles.map(profile => profile?.entity));
+    occupied.delete(current.entity);
     const entity = select([['', words.choose], ...entityOptions(this.#hass, new Set(PROFILE_DOMAINS))], current.entity || '');
+    for (const item of entity.options) {
+      if (!occupied.has(item.value)) continue;
+      item.disabled = true;
+      item.textContent += ' · ' + words.profileInUse;
+    }
     if (current.entity && !entity.value) {
       entity.append(option(current.entity, current.entity));
       entity.value = current.entity;
@@ -2183,6 +2194,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     error.setAttribute('role', 'alert');
 
     const sync = () => {
+      save.disabled = !entity.value || entity.selectedOptions[0]?.disabled === true;
       const domain = entity.value.split('.')[0];
       kind.querySelector('[value="climate"]').disabled = domain !== 'climate';
       if (domain !== 'climate' && kind.value === 'climate') kind.value = 'heater';
@@ -2212,10 +2224,85 @@ export class Bayit9StrategyEditor extends HTMLElement {
       if (compatible) target.value = linked;
     };
     entity.addEventListener('change', () => {
+      error.hidden = true;
       if (entity.value.split('.')[0] === 'climate' && entity.value !== current.entity) kind.value = 'climate';
       sync();
     });
     for (const control of [kind, level, timerSource, simple, timer, usage]) control.addEventListener('change', sync);
+
+    const saveProfile = () => {
+      const latest = Array.isArray(this.#config.profiles) ? this.#config.profiles : [];
+      if (entity.value !== current.entity && latest.some(profile => profile?.entity === entity.value)) {
+        error.textContent = words.profileConflict;
+        error.hidden = false;
+        entity.focus();
+        return;
+      }
+      const usingSimple = timerSource.value === 'simple';
+      const linked = attributesFor(simple.value)?.switch_entity_id;
+      if (usingSimple && !simple.value || usingSimple && linked && linked !== (target.value || entity.value)) {
+        error.textContent = words.timerLinkError;
+        error.hidden = false;
+        simple.focus();
+        return;
+      }
+      const presetValues = presets.value.trim() ? presets.value.trim().split(/[,;\s]+/).map(Number)
+        : Array.isArray(timed.presets) ? [] : undefined;
+      const levelSelectId = !fanLevels.hidden && usingSimple ? levelSelect.value : '';
+      const levelActivityId = !fanLevels.hidden && usingSimple ? levelActivity.value : '';
+      const nextLevelId = !fanLevels.hidden && !levelPreselectField.hidden ? levelPreselect.value : '';
+      const profile = normalizeProfile({
+        entity: entity.value, kind: kind.value, name: title.value, level_entity: level.value,
+        level_steps: levelSteps.valueAsNumber, level_read_entity: levelRead.value, level_select_script: levelSelectId,
+        level_activity_script: levelActivityId, level_preselect_entity: nextLevelId, unreported_swing_mode: swingMode,
+        home_heater_cutoff_automation: cutoffField.hidden ? undefined : cutoff.value,
+        boiler_timer_with_details: !boilerDetails.hidden && boilerDetailsInput.checked,
+        schedule: {save_script:scheduleSave.value,delete_script:scheduleDelete.value},
+        timed: {
+          ...(usingSimple
+            ? { simple_timer_entity: simple.value, simple_timer_target: target.value }
+            : { start_script: start.value, stop_script: stop.value, timer_entity: timer.value }),
+          daily_usage_entity: usage.value, presets: presetValues,
+          allow_daily_usage_reset: usingSimple && !resetUsage.hidden && resetUsageInput.checked,
+          idle_zero_duration: !idleZero.hidden && idleZeroInput.checked,
+          duration_field: durationField.value, min_minutes: min.valueAsNumber,
+          max_minutes: max.valueAsNumber, step_minutes: step.valueAsNumber,
+        },
+      });
+      if (!profile) {
+        error.textContent = words.invalid;
+        error.hidden = false;
+        entity.focus();
+        return;
+      }
+      if ((levelSelectId && profile.level_select_script !== levelSelectId) ||
+          (levelActivityId && profile.level_activity_script !== levelActivityId)) {
+        error.textContent = words.levelSelectError;
+        error.hidden = false;
+        levelRead.focus();
+        return;
+      }
+      if (nextLevelId && profile.level_preselect_entity !== nextLevelId) {
+        error.textContent = words.levelPreselectError;
+        error.hidden = false;
+        levelSteps.focus();
+        return;
+      }
+      if (presetValues?.length && profile.timed?.presets?.length !== new Set(presetValues).size) {
+        error.textContent = words.presetError;
+        error.hidden = false;
+        presets.focus();
+        return;
+      }
+      const index = current.entity ? latest.findIndex(item => item?.entity === current.entity) : -1;
+      const updated = [...latest];
+      if (index === -1) updated.push(profile);
+      else updated[index] = profile;
+      this.#profileEditing = undefined;
+      this.#commit({ profiles: updated });
+      this.render();
+    };
+    const save = button(words.save, saveProfile);
     sync();
 
     children.push(
@@ -2226,67 +2313,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       node('div', { className: 'grid' }, [field(words.min, min), field(words.max, max), field(words.step, step)]),
       idleZero, error,
       node('div', { className: 'actions' }, [
-        button(words.save, () => {
-          const usingSimple = timerSource.value === 'simple';
-          const linked = attributesFor(simple.value)?.switch_entity_id;
-          if (usingSimple && !simple.value || usingSimple && linked && linked !== (target.value || entity.value)) {
-            error.textContent = words.timerLinkError;
-            error.hidden = false;
-            simple.focus();
-            return;
-          }
-          const presetValues = presets.value.trim() ? presets.value.trim().split(/[,;\s]+/).map(Number)
-            : Array.isArray(timed.presets) ? [] : undefined;
-          const levelSelectId = !fanLevels.hidden && usingSimple ? levelSelect.value : '';
-          const levelActivityId = !fanLevels.hidden && usingSimple ? levelActivity.value : '';
-          const nextLevelId = !fanLevels.hidden && !levelPreselectField.hidden ? levelPreselect.value : '';
-          const profile = normalizeProfile({
-            entity: entity.value, kind: kind.value, name: title.value, level_entity: level.value,
-            level_steps: levelSteps.valueAsNumber, level_read_entity: levelRead.value, level_select_script: levelSelectId,
-            level_activity_script: levelActivityId, level_preselect_entity: nextLevelId, unreported_swing_mode: swingMode,
-            home_heater_cutoff_automation: cutoffField.hidden ? undefined : cutoff.value,
-            boiler_timer_with_details: !boilerDetails.hidden && boilerDetailsInput.checked,
-            schedule: {save_script:scheduleSave.value,delete_script:scheduleDelete.value},
-            timed: {
-              ...(usingSimple
-                ? { simple_timer_entity: simple.value, simple_timer_target: target.value }
-                : { start_script: start.value, stop_script: stop.value, timer_entity: timer.value }),
-              daily_usage_entity: usage.value, presets: presetValues,
-              allow_daily_usage_reset: usingSimple && !resetUsage.hidden && resetUsageInput.checked,
-              idle_zero_duration: !idleZero.hidden && idleZeroInput.checked,
-              duration_field: durationField.value, min_minutes: min.valueAsNumber,
-              max_minutes: max.valueAsNumber, step_minutes: step.valueAsNumber,
-            },
-          });
-          if (!profile) {
-            error.textContent = words.invalid;
-            error.hidden = false;
-            entity.focus();
-            return;
-          }
-          if ((levelSelectId && profile.level_select_script !== levelSelectId) ||
-              (levelActivityId && profile.level_activity_script !== levelActivityId)) {
-            error.textContent = words.levelSelectError;
-            error.hidden = false;
-            levelRead.focus();
-            return;
-          }
-          if (nextLevelId && profile.level_preselect_entity !== nextLevelId) {
-            error.textContent = words.levelPreselectError;
-            error.hidden = false;
-            levelSteps.focus();
-            return;
-          }
-          if (presetValues?.length && profile.timed?.presets?.length !== new Set(presetValues).size) {
-            error.textContent = words.presetError;
-            error.hidden = false;
-            presets.focus();
-            return;
-          }
-          this.#profileEditing = undefined;
-          this.#commit({ profiles: [...profiles.filter(item => item.entity !== current.entity && item.entity !== profile.entity), profile] });
-          this.render();
-        }),
+        save,
         button(words.clear, () => { this.#profileEditing = undefined; this.render(); }),
       ]),
     );
