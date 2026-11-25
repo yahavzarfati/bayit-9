@@ -194,7 +194,7 @@ In an **Automations** actions section, set a script's **Script button behavior**
 
 In an **Overview** status section, choose **Discover active lights** to list currently on lights from across the dashboard's Home Assistant connection. Hidden and disabled entities stay excluded. Use **Exclude these lights** for exact entity IDs and **Exclude by text in entity ID** for literal ID fragments. An active status or covers section can also keep covers visible while they are closing.
 
-In YAML, use `discover: {domain: light, exclude_entities: [light.example], exclude_id_contains: [helper]}` on an Overview status section. Discovery always lists on lights. For a section with selected covers, set `filter: active` and `include_closing: true` to keep closing covers visible until they close.
+In YAML, use `discover: {domain: light, exclude_entities: [light.example], exclude_id_contains: [helper]}` on an Overview status section. Discovery always lists on lights. On active Overview status and covers sections, select **Show active devices in a full-width list** for a left-aligned heading and labelled rows with the reported value on the right. In YAML, set `layout: activity-list` on the section. For a section with selected covers, set `filter: active` and `include_closing: true` to keep closing covers visible until they close.
 
 For a light discovery section or an active status section with selected light actions, choose **Show a button to turn off these lights**. In YAML, set `turn_off_active_lights: true` on the Overview status section. The button appears when at least two visible lights in the section are on and can be turned off directly. It skips lights that require a separate confirmation.
 

@@ -1060,9 +1060,11 @@ const selected = query.has('configuration') ? rendererStrategy(stored().strategy
     ...(query.has('overview-device-identities') ? [{
       kind:'people', entities:['person.fixture_first','person.fixture_second'],
     }] : []),
-    {kind:'status',title:'Discovered lighting',turn_off_active_lights:query.has('overview-lights-off'),discover:{domain:'light',
+    {kind:'status',title:'Discovered lighting',turn_off_active_lights:query.has('overview-lights-off'),
+      ...(query.has('overview-activity-list') && {layout:'activity-list'}),discover:{domain:'light',
       exclude_entities:['light.demo_excluded'],exclude_id_contains:['helper']},entities:['light.demo_lamp']},
     ...(query.has('overview-lights-off-selected') ? [{kind:'status',title:'Selected lighting',filter:'active',
+      ...(query.has('overview-activity-list') && {layout:'activity-list'}),
       turn_off_active_lights:true,entities:[
         {entity:'light.demo_dining',role:'action'}, {entity:'light.demo_selected',role:'action'},
         {entity:'light.demo_read_only',role:'status'}, {entity:'light.demo_protected',role:'action',confirmation:true},
@@ -1073,7 +1075,7 @@ const selected = query.has('configuration') ? rendererStrategy(stored().strategy
     {kind:'covers',title:'Default covers',filter:'active',entities:[
       {entity:'cover.demo_overview_window',role:'status'}]},
     ...(query.has('overview-cover-discovery') ? [{kind:'status',title:'Discovered covers',include_closing:true,
-      discover:{domain:'cover'},entities:[{entity:'cover.demo_overview_window',role:'status'}]}] : []),
+      ...(query.has('overview-activity-list') && {layout:'activity-list'}),discover:{domain:'cover'},entities:[{entity:'cover.demo_overview_window',role:'status'}]}] : []),
     ...(query.has('overview-readings') ? [{kind:'status',title:'Overview AC status',filter:'active',
       entities:[{entity:'climate.demo_overview_air',role:'status'}]}] : []),
   ]}, ...(query.has('overview-readings') ? [{kind:'security',sections:[{kind:'status',entities:[
@@ -6962,6 +6964,102 @@ async function assertOverviewCompactHistoryChart(browser) {
       await option.check();
       assert.equal((await stored()).compact_history_graph,true);
       assert.equal((await stored()).graph_hours,36);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+async function assertOverviewActivityList(browser) {
+  for (const locale of ['en','he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({ viewport:{width:391,height:845},hasTouch:true,reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const url = base + '/fixture-home/home?overview-opt-in&overview-readings&overview-lights-off&locale=' + locale;
+    const name = he ? 'מבט על הבית' : 'Home overview';
+    const dialog = page.getByRole('dialog',{name,exact:true});
+    const heading = text => page.getByRole('heading',{name:text,exact:true});
+    const section = text => dialog.locator('.toolbar-section').filter({has:heading(text)});
+    const calls = () => page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type === 'call_service'));
+    const open = async flags => {
+      await page.goto(url + flags);
+      await page.getByRole('button',{name,exact:true}).tap();
+      await section('Discovered lighting').waitFor();
+    };
+    try {
+      await open('');
+      const lights = section('Discovered lighting');
+      assert.equal(await lights.getAttribute('data-layout'),null);
+      const original = (await lights.boundingBox()).height;
+
+      await open('&overview-activity-list&overview-cover-discovery');
+      for (const width of [320,391]) {
+        await page.setViewportSize({width,height:845});
+        for (const name of ['Discovered lighting','Discovered covers']) {
+          const geometry = await section(name).evaluate(el => {
+            const title = el.querySelector('h3');
+            const box = element => element.getBoundingClientRect();
+            const items = [...el.querySelectorAll('.tile-row')];
+            return {
+              sectionHeight:box(el).height, side:getComputedStyle(title).textAlign, fitted:el.scrollWidth<=el.clientWidth+1,
+              rows:items.map(row => {
+                const label = row.querySelector('.tile-label');
+                const icon = row.querySelector('.tile-mark');
+                const state = row.querySelector('.tile-state');
+                return { height:box(row).height, arranged:box(icon).right <= box(label).left &&
+                  box(label).right <= box(state).left, direction:getComputedStyle(row).direction,
+                  bidi:[label,state].map(text=>getComputedStyle(text).unicodeBidi) };
+              }),
+            };
+          });
+          const details = JSON.stringify({locale,width,name,geometry});
+          assert.equal(geometry.side,'left',details);
+          assert.ok(geometry.fitted && geometry.rows.length && geometry.rows.every(row=>row.height >= 44 &&
+            row.arranged && row.direction === 'ltr' && row.bidi.every(mode=>mode === 'plaintext')),details);
+          if (name === 'Discovered lighting') {
+            assert.ok(geometry.sectionHeight >= original+25 && geometry.sectionHeight <= 130,details);
+          }
+        }
+        assert.equal(await section('Overview AC status').getAttribute('data-layout'),null);
+      }
+      assert.match(await lights.locator('.tile-state').innerText(),/50%/);
+      assert.equal(await lights.locator('.overview-lights-off:visible').count(),0);
+      await page.evaluate(()=>window.bayitTest.setDiscoveredLight('light.demo_list_active','New active light',{}));
+      await lights.locator('.overview-lights-off:visible').waitFor();
+      await lights.locator('.overview-lights-off').tap();
+      assert.deepEqual(await calls(),[{
+        type:'call_service',domain:'homeassistant',service:'turn_off',service_data:{},
+        target:{entity_id:['light.demo_dining','light.demo_list_active']},
+      }]);
+      await page.evaluate(()=>window.bayitTest.finishRoomOff(false));
+      await lights.waitFor({state:'hidden'});
+
+      await open('&overview-activity-list&overview-lights-off-selected&overview-cover-discovery');
+      const manual = section('Selected lighting');
+      assert.equal(await manual.getAttribute('data-layout'),'activity-list');
+      await manual.getByRole('button',{name:/^read_only /}).tap();
+      await manual.getByRole('button',{name:/^protected /}).tap();
+      const confirmation = page.locator('dialog.confirm[open]');
+      await confirmation.waitFor();
+      await confirmation.locator('[data-role=abort]').tap();
+      assert.deepEqual(await calls(),[]);
+      await section('Discovered covers').locator('.tile-row').tap();
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.moreInfoCalls),
+        ['light.demo_read_only','cover.demo_overview_window']);
+
+      await page.goto(url + '&overview-activity-list&editor');
+      await page.getByText(he ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens',{exact:true}).tap();
+      await page.getByRole('button',{name:he ? 'סקירה' : 'Overview',exact:true}).tap();
+      await page.getByRole('button',{name:'Discovered lighting',exact:true}).tap();
+      const authored = page.getByRole('checkbox',{name:he ? 'הצגת מכשירים פעילים ברשימה ברוחב מלא' : 'Show active devices in a full-width list',exact:true});
+      const saved = () => page.evaluate(()=>window.latest.toolbar[0].sections[0]);
+      assert.equal(await authored.isChecked(),true);
+      await authored.uncheck();
+      assert.equal((await saved()).layout,undefined);
+      await authored.check();
+      assert.equal((await saved()).layout,'activity-list');
+      assert.equal((await saved()).discover.domain,'light');
+      assert.equal((await saved()).turn_off_active_lights,true);
     } finally {
       await page.close();
     }
@@ -13738,6 +13836,7 @@ try {
     });
 
     await run('Overview lights, covers and climate', async () => {
+      await assertOverviewActivityList(browser);
       await assertAuthoredOverviewLayout(browser);
       await assertOverviewDeviceIdentities(browser);
       const groupOffPage = await browser.newPage({ viewport:{width:320,height:845}, hasTouch:true, reducedMotion:'reduce' });

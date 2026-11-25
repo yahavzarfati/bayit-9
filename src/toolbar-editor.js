@@ -5,8 +5,8 @@ import {
   securityReadoutLabelStates, selectableRoomEntities, sensorComparisonMaxHours, sensorComparisonOptions,
   SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
   supportsCompactAutomationActions, supportsCompactToolbarStatus, supportsHorizonCard, supportsHourlyWeatherForecast, supportsReadingCards,
-  supportsOverviewCompactHistory, supportsOverviewLightsOff, supportsOverviewStackedLocks, supportsSecurityDangerAction,
-  supportsToolbarReadouts, supportsToolbarVacuumSummary,
+  supportsOverviewActivityList, supportsOverviewCompactHistory, supportsOverviewLightsOff, supportsOverviewStackedLocks,
+  supportsSecurityDangerAction, supportsToolbarReadouts, supportsToolbarVacuumSummary,
   supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
@@ -76,6 +76,7 @@ const WORDS = {
     calendarAccent: 'Calendar accent', calendarInvalidAccent: 'Enter a six-digit color such as #80BFFF.',
     compactStatus: 'Show status items side by side', compactSecurityLocks: 'Show compact lock controls',
     compactPeople: 'Show compact presence cards', stackedLocks: 'Place lock buttons below their status',
+    overviewActivityList: 'Show active devices in a full-width list',
     compactAutomationActions: 'Show compact action buttons',
     weatherReadingsList: 'Show readings as a compact read-only list',
     horizonCard: 'Show the Sun and Moon with Horizon Card',
@@ -160,6 +161,7 @@ const WORDS = {
     calendarAccent: 'צבע היומן', calendarInvalidAccent: 'הזינו צבע בן שש ספרות, למשל ‎#80BFFF‎.',
     compactStatus: 'הצגת פריטי הסטטוס זה לצד זה', compactSecurityLocks: 'הצגת פקדי נעילה קומפקטיים',
     compactPeople: 'הצגת כרטיסי נוכחות קומפקטיים', stackedLocks: 'הצגת כפתורי הנעילה מתחת למצב',
+    overviewActivityList: 'הצגת מכשירים פעילים ברשימה ברוחב מלא',
     compactAutomationActions: 'הצגת כפתורי פעולה קומפקטיים',
     weatherReadingsList: 'הצגת המדדים ברשימה קומפקטית לקריאה בלבד',
     horizonCard: 'הצגת השמש והירח באמצעות Horizon Card',
@@ -774,6 +776,13 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         changeSection({ layout: compact.checked ? 'compact' : undefined }, refresh, 'compact-status'));
       const title = active.kind === 'people' ? words.compactPeople : kind === 'security' ? words.compactSecurityLocks : words.compactStatus;
       fields.push(node('label', { className:'check' }, [compact, title]));
+    }
+    if (supportsOverviewActivityList(kind, active)) {
+      const list = node('input', { type:'checkbox', checked:active.layout === 'activity-list' });
+      list.dataset.toolbarFocus = 'overview-activity-list';
+      list.addEventListener('change', () =>
+        changeSection({ layout:list.checked ? 'activity-list' : undefined }, true, 'overview-activity-list'));
+      fields.push(node('label', { className:'check' }, [list, words.overviewActivityList]));
     }
     if (supportsOverviewStackedLocks(kind, active)) {
       const stacked = node('input', { type:'checkbox', checked:active.stacked_lock_actions === true });

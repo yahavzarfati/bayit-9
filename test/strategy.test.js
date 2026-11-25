@@ -203,6 +203,22 @@ test('normalizes only visible media remote targets on Media destinations', () =>
   ]);
 });
 
+test('an authored activity list only applies to active Overview status or covers', () => {
+  const status = {kind:'status',layout:'activity-list',entities:[]};
+  const lights = {...status,discover:{domain:'light'},turn_off_active_lights:true};
+  const cover = {...status,kind:'covers',filter:'active',include_closing:true};
+  const card = generateDashboard({toolbar:[
+    {kind:'overview',sections:[lights,cover,status,{...status,kind:'people',filter:'active'}]},
+    {kind:'security',sections:[cover]},
+  ]},home()).views[0].cards[0];
+  const sections = card.toolbar.flatMap(item=>item.sections);
+  assert.deepEqual(sections.map(section=>section.layout),['activity-list','activity-list',undefined,undefined,undefined]);
+  assert.equal(sections[0].discover.domain,'light');
+  assert.equal(sections[0].filter,'active');
+  assert.equal(sections[0].turn_off_active_lights,true);
+  assert.equal(sections[1].include_closing,true);
+});
+
 test('keeps closing covers opt-in and leaves legacy active and other toolbar sections alone', () => {
   const cover = { kind: 'covers', filter: 'active', entities: [] };
   const chosen = { ...cover, include_closing: true };

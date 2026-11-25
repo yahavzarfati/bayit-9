@@ -973,7 +973,8 @@ export function createToolbarPanel(kind, configuration, context) {
     const weatherReadings = isWeatherReadingsList(kind, section);
     const readingCards = isReadingCards(kind, section);
     const compactActions = isCompactAutomationActions(kind, section);
-    if (compactStatus || readouts || weatherReadings || readingCards || compactActions) {
+    const activityList = kind === 'overview' && section.layout === 'activity-list';
+    if (compactStatus || readouts || weatherReadings || readingCards || compactActions || activityList) {
       panel.dataset.layout = section.layout;
     }
     if (kind === 'overview' && !compactStatus && section.filter === 'active' &&
@@ -1354,6 +1355,27 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   }
   [data-overview-active-rows] .tile-mark { width: 26px; height: 26px; background: transparent; }
   [data-overview-active-rows] .tile-state { justify-self: end; text-align: end; }
+  .toolbar-section[data-layout=activity-list] {
+    direction: ltr;
+    margin-inline: 2px;
+    padding: 16px;
+    border-radius: 8px;
+  }
+  .toolbar-section[data-layout=activity-list] .toolbar-section-title {
+    display: flex;
+    align-items: center;
+    min-block-size: 44px;
+    margin: 0;
+    font-size: 20px;
+    line-height: 1.2;
+    text-align: left;
+    overflow-wrap: anywhere;
+    unicode-bidi: plaintext;
+  }
+  .toolbar-section[data-layout=activity-list] .overview-active-heading { margin-block-end: 0; }
+  .toolbar-section[data-layout=activity-list] .tile-label { text-align: left; }
+  .toolbar-section[data-layout=activity-list] .tile-state { text-align: right; }
+  .toolbar-section[data-layout=activity-list] :is(.tile-label,.tile-state) { unicode-bidi: plaintext; }
   @media (hover: hover) {
     [data-overview-active-rows] > .toolbar-section-items > .tile-row:hover { background: var(--glass); }
   }
