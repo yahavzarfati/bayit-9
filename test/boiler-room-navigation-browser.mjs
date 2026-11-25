@@ -11,8 +11,11 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     const params = new URL(location.href).searchParams;
     const locale = params.get('locale');
     const guardedSchedule = params.has('guarded-schedule');
-    const timing = params.has('compact') ? { min_minutes: 1, max_minutes: 300, step_minutes: 1, presets: [] }
-      : { min_minutes: 15, max_minutes: 60, step_minutes: 15 };
+    const idleZero = params.has('idle-zero');
+    const timing = params.has('compact') ? { max_minutes: 300, presets: [],
+      ...(idleZero ? { min_minutes: 15, step_minutes: 15, idle_zero_duration: true }
+        : { min_minutes: 1, step_minutes: 1 }),
+    } : { min_minutes: 15, max_minutes: 60, step_minutes: 15 };
     const boiler = { entity: 'switch.fixture_boiler', name: 'Fixture boiler', kind: 'boiler',
       ...(params.has('stacked') && { boiler_timer_with_details: true }),
       ...(guardedSchedule && { schedule: { save_script: 'script.fixture_schedule_save', delete_script: 'script.fixture_schedule_delete' } }),
@@ -38,6 +41,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
           entity_id: null, service_data: { entry_id: 'fixture-runtime', duration: 30 } }] }],
     }));
     const requests = [];
+    const timerCalls = [];
     const moreInfo = [];
     const scheduleActions = params.has('schedule-actions') || guardedSchedule;
     const scheduleCalls = [];
@@ -68,6 +72,10 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
       user: { is_admin: true }, states, services,
       callWS(request) {
         requests.push(request.type);
+        if (idleZero && request.type === 'call_service' && request.domain === 'simple_timer') {
+          timerCalls.push(request);
+          return Promise.resolve({});
+        }
         if ((params.has('stacked') || params.has('schedule-link')) && request.type === 'scheduler') {
           return readSchedule(request.type,schedules);
         }
@@ -119,7 +127,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
       document.body.append(editor);
     } else document.body.append(card);
     window.fixture = {
-      requests, moreInfo, scheduleCalls,
+      requests, moreInfo, scheduleCalls, timerCalls,
       pauseScheduleRead(type = 'scheduler') { pausedScheduleRead = type; },
       scheduleReadWaiting() { return Boolean(releaseScheduleRead); },
       releaseScheduleRead() {
@@ -152,6 +160,103 @@ const server = createServer((request, response) => {
 });
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
+
+async function assertIdleZeroBoilerDuration(browser, locale) {
+  const page = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true, reducedMotion: 'reduce' });
+  const he = locale === 'he';
+  const base = 'http://127.0.0.1:' + server.address().port + '?compact&idle-zero&stacked&locale=' + locale;
+  const dialog = page.getByRole('dialog', { name: 'Fixture boiler', exact: true });
+  const shortcut = page.locator('[data-room=bath] .quick-button');
+  const range = dialog.locator('.timer-range');
+  const start = dialog.locator('[data-action=start_timed]');
+  const extend = dialog.locator('[data-action=extend_timed]');
+  const savedKey = 'bayit-9.timer-duration.v1:sensor.fixture_runtime';
+  const input = async () => {
+    await page.goto(base);
+    await shortcut.tap();
+    await range.waitFor();
+  };
+  const save = value => page.evaluate(([key,value]) => localStorage.setItem(key,value), [savedKey,value]);
+  const modelState = (device,timer) => page.evaluate(([device,timer]) => window.fixture.setupState(device,timer), [device,timer]);
+  const calls = () => page.evaluate(() => window.fixture.timerCalls.map(({service, service_data}) => [service,service_data.duration]));
+  try {
+    await input();
+    assert.deepEqual(await range.evaluate(node => [node.min, node.max, node.step, node.value]), ['0', '300', '15', '300']);
+    assert.equal(await dialog.locator('.timer-presets').count(), 0);
+
+    await save('14');
+    await input();
+    assert.equal(await range.inputValue(), '15');
+    await save('7');
+    await input();
+    assert.equal(await range.inputValue(), '0');
+    assert.equal(await range.getAttribute('aria-valuetext'), he ? 'לא נבחר משך זמן' : 'No duration selected');
+    assert.ok(await start.isDisabled());
+    await start.evaluate(control => control.onclick());
+    assert.deepEqual(await calls(), []);
+
+    await range.press('ArrowUp');
+    assert.equal(await range.inputValue(), '15');
+    assert.ok(await start.isEnabled());
+    await range.press('Home');
+    assert.equal(await range.inputValue(), '0');
+    assert.ok(await start.isDisabled());
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), savedKey), '0');
+
+    await modelState('on','active');
+    await extend.waitFor();
+    assert.deepEqual(await range.evaluate(node => [node.min, node.max, node.step, node.value]), ['15','300','15','15']);
+    await modelState('off','idle');
+    await start.waitFor();
+    assert.equal(await range.inputValue(), '0');
+    assert.ok(await start.isDisabled());
+
+    await range.press('ArrowUp');
+    await start.tap();
+    await page.waitForFunction(() => window.fixture.timerCalls.length === 1);
+    assert.deepEqual(await calls(), [['start_timer',15]]);
+    await modelState('on','active');
+    await page.locator('[data-action=extend_timed]:enabled').waitFor();
+    await extend.tap();
+    await page.waitForFunction(() => window.fixture.timerCalls.length === 2);
+    assert.deepEqual(await calls(), [['start_timer',15],['add_timer',15]]);
+
+    const editor = he ? {
+      profiles: 'שליטה בדוד ובתנורים', edit: 'עריכה', save: 'שמירת בקר',
+      max: 'זמן מקסימלי בדקות', step: 'מרווח בחירה בדקות',
+      option: 'אפשרות להשאיר את משך הטיימר ללא בחירה (0 דקות)',
+    } : {
+      profiles: 'Boiler and heater controls', edit: 'Edit', save: 'Save profile',
+      max: 'Longest run in minutes', step: 'Step in minutes',
+      option: 'Allow an unselected timer duration (0 minutes)',
+    };
+    await page.goto(base + '&editor');
+    await page.getByText(editor.profiles, { exact: true }).click();
+    await page.getByRole('button', { name: editor.edit, exact: true }).click();
+    const option = page.getByRole('checkbox', { name: editor.option, exact: true });
+    assert.ok(await option.isChecked());
+    const step = page.getByLabel(editor.step, { exact: true });
+    await step.fill('1');
+    await option.waitFor({ state:'hidden' });
+    await step.fill('15');
+    const max = page.getByLabel(editor.max, { exact: true });
+    await max.fill('15');
+    await option.waitFor({ state:'hidden' });
+    await max.fill('300');
+    assert.ok(await option.isChecked());
+    await option.uncheck();
+    const saveProfile = page.getByRole('button', { name: editor.save, exact: true });
+    await saveProfile.click();
+    assert.equal(await page.evaluate(() => window.latest.profiles[0].timed.idle_zero_duration), undefined);
+    await page.getByRole('button', { name: editor.edit, exact: true }).click();
+    await option.check();
+    await saveProfile.click();
+    assert.equal(await page.evaluate(() => window.latest.profiles[0].timed.idle_zero_duration), true);
+    assert.deepEqual(await calls(), []);
+  } finally {
+    await page.close();
+  }
+}
 
 async function assertBoilerScheduleLinks(browser, locale) {
   const page = await browser.newPage({viewport:{width:320,height:680},hasTouch:true,reducedMotion:'reduce'});
@@ -283,6 +388,7 @@ try {
   for (const [launcher, locale] of [[chromium, 'en'], [webkit, 'he']]) {
     const browser = await launcher.launch();
     try {
+      for (const language of ['en', 'he']) await assertIdleZeroBoilerDuration(browser, language);
       const routed = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true });
       await routed.goto('http://127.0.0.1:' + server.address().port + '?routed&locale=' + locale);
       const routedRoom = routed.getByRole('dialog', { name: 'Kitchen', exact: true });

@@ -218,6 +218,7 @@ export function normalizeProfile(value) {
     ...(simpleTimer && (!dailyUsage || dailyUsage === simpleTimer) && timed.allow_daily_usage_reset === true &&
       { allow_daily_usage_reset: true }),
     ...(Array.isArray(timed.presets) && { presets }),
+    ...(simpleTimer && timed.idle_zero_duration === true && min === step && { idle_zero_duration: true }),
     duration_field: typeof timed.duration_field === 'string' && /^[a-z][a-z0-9_]{0,39}$/.test(timed.duration_field)
       ? timed.duration_field : 'duration',
     min_minutes: min,

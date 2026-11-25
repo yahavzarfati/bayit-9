@@ -228,7 +228,7 @@ export function buildPanelControls(model, {
       const id = duration.id;
       input = make('input', 'timer-range');
       input.type = 'range';
-      input.min = duration.min;
+      input.min = duration.idleZero ? 0 : duration.min;
       input.max = duration.max;
       input.step = duration.step;
       input.value = duration.max;
@@ -240,9 +240,15 @@ export function buildPanelControls(model, {
       }
       input.setAttribute('aria-label', t('duration'));
       const amount = make('output', 'timer-amount');
+      const go = button('control-button timer-command', t(id), running ? 'mdi:plus' : 'mdi:play', true);
+      const noDuration = () => duration.idleZero === true && input.valueAsNumber === 0;
       const showDuration = () => {
+        const unselected = noDuration();
         amount.textContent = visibleDuration(input.value);
-        if (compactTimer) input.setAttribute('aria-valuetext', spokenDuration(input.value));
+        if (compactTimer || duration.idleZero) {
+          input.setAttribute('aria-valuetext', unselected ? t('timer_no_duration') : spokenDuration(input.value));
+        }
+        if (duration.idleZero) go.disabled = input.disabled || unselected;
       };
       input.oninput = () => {
         showDuration();
@@ -251,12 +257,16 @@ export function buildPanelControls(model, {
         }
       };
       showDuration();
-      const go = button('control-button timer-command', t(id), running ? 'mdi:plus' : 'mdi:play', true);
-      go.onclick = () => request(id, input.valueAsNumber, go);
+      go.onclick = () => {
+        if (!noDuration()) request(id, input.valueAsNumber, go);
+      };
       go.dataset.action = id;
       buttons.push(go);
       tools.append(input, amount, go);
-      updates.push((_, pending) => { input.disabled = !!pending; });
+      updates.push((_, pending) => {
+        input.disabled = !!pending;
+        if (noDuration()) go.disabled = true;
+      });
     }
     if (showStop) {
       const stop = button('control-button timer-command', t('stop_timed'), 'mdi:stop', true);

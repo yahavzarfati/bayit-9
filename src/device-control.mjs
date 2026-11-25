@@ -78,7 +78,8 @@ function timedProfile(profile, domain, kind) {
     throw new DeviceControlError("invalid_config", "A timed profile requires a heating-capable entity.");
   }
   const { start_script, stop_script, timer_entity, simple_timer_entity, simple_timer_target, duration_field = "duration",
-    min_minutes = 1, max_minutes = 60, step_minutes = 1, presets, daily_usage_entity, allow_daily_usage_reset } = profile;
+    min_minutes = 1, max_minutes = 60, step_minutes = 1, presets, daily_usage_entity,
+    allow_daily_usage_reset, idle_zero_duration } = profile;
   if (
     (start_script !== undefined && !isEntity(start_script, "script")) ||
     (stop_script !== undefined && !isEntity(stop_script, "script")) ||
@@ -97,6 +98,7 @@ function timedProfile(profile, domain, kind) {
   }
   return { start_script, stop_script, timer_entity, simple_timer_entity, simple_timer_target, duration_field,
     min_minutes, max_minutes, step_minutes, presets, daily_usage_entity,
+    idle_zero_duration: idle_zero_duration === true && !!simple_timer_entity && min_minutes === step_minutes,
     allow_daily_usage_reset: allow_daily_usage_reset === true && !!simple_timer_entity &&
       (!daily_usage_entity || daily_usage_entity === simple_timer_entity) };
 }
@@ -352,7 +354,9 @@ function supportedActions(config, states, record, timer, nowMs, roomBoilerQuickP
   const duration = () => ({ min: timing.min_minutes, max: timing.max_minutes, step: timing.step_minutes,
     ...(timing.presets !== undefined && { presets: timing.presets }) });
   if (timing?.start_script && isAvailable(states?.[timing.start_script])) add("start_timed", duration());
-  if (timing?.simple_timer_entity && timer?.state === "idle") add("start_timed", duration());
+  if (timing?.simple_timer_entity && timer?.state === "idle") {
+    add("start_timed", { ...duration(), ...(timing.idle_zero_duration && { idleZero: true }) });
+  }
   if (timing?.simple_timer_entity && timer?.state === "active") {
     if (timer.deadlineMs > nowMs) add("extend_timed", duration());
     add("stop_timed");

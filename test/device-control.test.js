@@ -383,6 +383,38 @@ test("water heater exposes supported native power, operation and temperature", (
   assert.deepEqual(planDeviceAction(c, states, "set_operation_mode", "eco").data, { operation_mode: "eco" });
 });
 
+test("zero is a Simple Timer idle selection and never a start or extend command value", () => {
+  const boiler = config("switch.fixture_boiler", { kind:"boiler",
+    timed: { simple_timer_entity: "sensor.fixture_timer", min_minutes:15, max_minutes:300, step_minutes:15,
+      idle_zero_duration:true, presets:[] },
+  });
+  const sensor = boiler.timed.simple_timer_entity;
+  const now = Date.now();
+  const idle = { [boiler.entity]:entity("off"),
+    [sensor]:entity("0", {switch_entity_id:boiler.entity,timer_state:"idle"}) };
+  const idleAction = getDeviceModel(boiler, idle, now).actions.start_timed;
+  assert.deepEqual([idleAction.min,idleAction.max,idleAction.step,idleAction.idleZero,idleAction.presets], [15,300,15,true,[]]);
+  for (const timed of [{...boiler.timed,idle_zero_duration:false}, {...boiler.timed,min_minutes:1}]) {
+    assert.equal(getDeviceModel({ ...boiler, timed }, idle, now).actions.start_timed.idleZero, undefined);
+  }
+  const active = { [boiler.entity]:entity("on"), [sensor]:entity("0", {
+    switch_entity_id:boiler.entity,timer_state:"active",timer_finishes_at:new Date(now+120_000).toISOString(),
+  }) };
+  assert.equal(getDeviceModel(boiler, active, now).actions.extend_timed.idleZero, undefined);
+  for (const [action, states, service] of [["start_timed",idle,"start_timer"], ["extend_timed",active,"add_timer"]]) {
+    for (const value of [0,1,14,16,301]) {
+      assert.throws(() => planDeviceAction(boiler, states, action, value, now), code("invalid_value"));
+    }
+    for (const value of [15,30,300]) {
+      const plan = planDeviceAction(boiler, states, action, value, now);
+      assert.equal(plan.service, service);
+      assert.equal(plan.data.duration, value);
+    }
+  }
+  assert.deepEqual(planDeviceAction(boiler, active, "stop_timed", undefined, now).data,
+    {entity_id:sensor,turn_off_entity:true});
+});
+
 test("daily usage reset is explicitly opted in and targets the same linked Simple Timer entry", async () => {
   const c = config("climate.fixture", { timed: { simple_timer_entity: "sensor.fixture_timer",
     simple_timer_target: "input_boolean.fixture_power", allow_daily_usage_reset: true } });

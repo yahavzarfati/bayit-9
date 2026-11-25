@@ -1480,6 +1480,28 @@ test('projects heater activity as a dependency and leaves the script out of auto
   assert.ok(!entities.some(item => item.entity === profile.level_activity_script));
 });
 
+test('keeps an idle zero-duration selection only on a matching Simple Timer range', () => {
+  const boiler = { entity:'switch.demo_boiler', kind:'boiler', timed: {
+    simple_timer_entity:'sensor.demo_runtime', min_minutes:15, max_minutes:300, step_minutes:15,
+    idle_zero_duration:true, presets:[],
+  } };
+  const normalized = normalizeProfile(boiler);
+  assert.equal(normalized.timed.idle_zero_duration, true);
+  assert.deepEqual(normalized.timed.presets, []);
+  for (const timed of [
+    { ...boiler.timed, idle_zero_duration: false },
+    { ...boiler.timed, min_minutes: 1 },
+    { ...boiler.timed, simple_timer_entity: undefined, timer_entity:'timer.demo_boiler' },
+  ]) assert.equal(normalizeProfile({ ...boiler, timed }).timed.idle_zero_duration, undefined);
+
+  const hass = home();
+  hass.states[boiler.entity] = { state: 'off', attributes: {} };
+  hass.entities[boiler.entity] = { area_id: 'studio' };
+  const card = generateDashboard({ profiles: [boiler] }, hass).views[0].cards[0];
+  const projected = card.rooms.flatMap(room => room.entities).find(item => item.entity === boiler.entity);
+  assert.deepEqual(projected.timed, normalized.timed);
+});
+
 test('projects next-start level only for a heater fan with an explicitly linked Simple Timer switch', () => {
   const profile = { entity: 'fan.demo_step_heat', kind: 'heater', level_steps: 9,
     level_preselect_entity: 'input_number.demo_next_level',

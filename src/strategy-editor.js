@@ -132,6 +132,7 @@ const WORDS = {
     climate: 'Air conditioner or thermostat', swingFallback: 'Display when vertical swing is unreported', timerSource: 'Timer source', serverTimer: 'Home Assistant timer or script',
     simpleTimer: 'Simple Timer', simpleTimerDevice: 'Simple Timer sensor', simpleTimerTarget: 'Device linked to Simple Timer',
     timerLinkError: 'Choose a Simple Timer sensor linked to this heating device or its supported proxy.',
+    idleZeroDuration: 'Allow an unselected timer duration (0 minutes)',
     dailyUsage: 'Daily usage sensor', allowDailyUsageReset: 'Allow reset of this daily usage counter', presets: 'Preset minutes', presetError: 'Use preset minutes within the selected range and step.',
     levelSteps: 'Number of heating levels', levelRead: 'Heating level feedback', levelSelect: 'Level selection script',
     levelSelectError: 'Set 2–12 heating levels and choose the level feedback helper for this script.',
@@ -261,6 +262,7 @@ const WORDS = {
     climate: 'מזגן או תרמוסטט', swingFallback: 'תצוגה כשאין דיווח על נדנוד אנכי', timerSource: 'מקור הטיימר', serverTimer: 'טיימר או סקריפט של Home Assistant',
     simpleTimer: 'Simple Timer', simpleTimerDevice: 'חיישן Simple Timer', simpleTimerTarget: 'המכשיר שמקושר ל־Simple Timer',
     timerLinkError: 'בחרו חיישן Simple Timer שמקושר למכשיר החימום הזה או לפקד שמפעיל אותו.',
+    idleZeroDuration: 'אפשרות להשאיר את משך הטיימר ללא בחירה (0 דקות)',
     dailyUsage: 'חיישן שימוש יומי', allowDailyUsageReset: 'אפשרות לאפס את מונה השימוש היומי הזה', presets: 'הגדרות דקות מהירות', presetError: 'בחרו דקות בטווח ובמרווח שנקבעו.',
     levelSteps: 'מספר דרגות החימום', levelRead: 'משוב על דרגת החימום', levelSelect: 'סקריפט לבחירת עוצמה',
     levelSelectError: 'הגדירו 2–12 דרגות חימום ובחרו את העזר שמדווח על העוצמה עבור הסקריפט.',
@@ -2042,6 +2044,17 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const min = minutes(timed.min_minutes ?? 15);
     const max = minutes(timed.max_minutes ?? 60);
     const step = minutes(timed.step_minutes ?? 15);
+    const idleZeroInput = node('input', { type: 'checkbox', checked: timed.idle_zero_duration === true });
+    const idleZero = node('label', { className: 'check' }, [idleZeroInput, words.idleZeroDuration]);
+    const syncIdleZero = () => {
+      const minimum = min.valueAsNumber;
+      const maximum = max.valueAsNumber;
+      const span = Math.max(0, maximum - minimum) || 1;
+      idleZero.hidden = timerSource.value !== 'simple' || !simple.value ||
+        !Number.isSafeInteger(minimum) || !Number.isSafeInteger(maximum) || minimum < 1 ||
+        Math.min(span, step.valueAsNumber) !== minimum;
+    };
+    for (const control of [min, max, step]) control.addEventListener('input', syncIdleZero);
     const error = node('p', { className: 'error', hidden: true, textContent: words.invalid });
     error.setAttribute('role', 'alert');
 
@@ -2058,6 +2071,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       serverFields.hidden = usingSimple;
       simpleFields.hidden = !usingSimple;
       resetUsage.hidden = !simple.value || Boolean(usage.value && usage.value !== simple.value);
+      syncIdleZero();
       schedule.hidden = kind.value !== 'boiler' || !usingSimple;
       boilerDetails.hidden = kind.value !== 'boiler' || !(usingSimple ? simple.value : timer.value);
       const prefix = kind.value === 'climate' && domain === 'climate' ? 'input_boolean.' : fanHeater ? 'switch.' : '';
@@ -2086,7 +2100,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       field(words.timerSource, timerSource), serverFields, simpleFields, boilerDetails, schedule,
       field(words.dailyUsage, usage), field(words.presets, presets),
       node('div', { className: 'grid' }, [field(words.min, min), field(words.max, max), field(words.step, step)]),
-      error,
+      idleZero, error,
       node('div', { className: 'actions' }, [
         button(words.save, () => {
           const usingSimple = timerSource.value === 'simple';
@@ -2115,6 +2129,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
                 : { start_script: start.value, stop_script: stop.value, timer_entity: timer.value }),
               daily_usage_entity: usage.value, presets: presetValues,
               allow_daily_usage_reset: usingSimple && !resetUsage.hidden && resetUsageInput.checked,
+              idle_zero_duration: !idleZero.hidden && idleZeroInput.checked,
               duration_field: durationField.value, min_minutes: min.valueAsNumber,
               max_minutes: max.valueAsNumber, step_minutes: step.valueAsNumber,
             },
