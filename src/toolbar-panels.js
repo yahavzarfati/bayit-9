@@ -1,7 +1,7 @@
 import { createOrefMap } from './oref-alert-map.js';
 import { createVacuumMap } from './vacuum-map.js';
 import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
-import { discoverOverviewEntities, isActiveOverviewEntity, isCompactToolbarStatus,
+import { discoverOverviewEntities, isActiveOverviewEntity, isCompactToolbarStatus, isEnergyReadingCards,
   isToolbarLightTile, isToolbarReadoutEntity, isToolbarReadouts, isVisibleEntity, isWeatherReadingsList } from './strategy-model.js';
 import { mediaServiceRegistered } from './media-device-support.mjs';
 import { roomShutdownTargets } from './device-control.mjs';
@@ -519,7 +519,22 @@ export function createToolbarPanel(kind, configuration, context) {
     return row;
   }
 
-  function render(item, section, compactStatus) {
+  function renderEnergyReading(item) {
+    const slot = make('div', 'energy-reading');
+    const visible = hass => isVisibleEntity(item.entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities);
+    const fallback = renderTile(item, 'status', undefined, () => visible(context.getHass()));
+    handlers.push(() => {
+      slot.hidden = !visible(currentHass);
+      if (slot.hidden || slot.firstChild) return;
+      slot.append(nativeCard({
+        type: 'sensor', entity: item.entity, name: item.name, icon: item.icon,
+        tap_action: { action: 'more-info' }, hold_action: { action: 'none' }, double_tap_action: { action: 'none' },
+      }, fallback));
+    });
+    return slot;
+  }
+
+  function render(item, section, compactStatus, energyReadingCards) {
     const itemKind = item.role ?? ({ people: 'person', actions: 'action', forecast: 'forecast', sun: 'sun' }[section]);
     if (itemKind === 'person' && domain(item) === 'person') return renderTile(item, 'person');
     if (item.command === 'toggle_script') return renderScriptToggle(item);
@@ -555,6 +570,7 @@ export function createToolbarPanel(kind, configuration, context) {
       });
       return chart;
     }
+    if (energyReadingCards && domain(item) === 'sensor' && itemKind === 'status') return renderEnergyReading(item);
     const nowPlaying = itemKind === 'now_playing' && domain(item) === 'media_player';
     const toolbarLightTile = isToolbarLightTile(kind, section, item);
     const toolbarCoverRail = kind === 'security' && section === 'covers' && domain(item) === 'cover' && itemKind !== 'status';
@@ -613,7 +629,8 @@ export function createToolbarPanel(kind, configuration, context) {
     const compactStatus = isCompactToolbarStatus(kind, section);
     const readouts = isToolbarReadouts(kind, section);
     const weatherReadings = isWeatherReadingsList(kind, section);
-    if (compactStatus || readouts || weatherReadings) panel.dataset.layout = section.layout;
+    const energyReadingCards = isEnergyReadingCards(kind, section);
+    if (compactStatus || readouts || weatherReadings || energyReadingCards) panel.dataset.layout = section.layout;
     if (kind === 'overview' && !compactStatus && section.filter === 'active' &&
         ['status', 'covers'].includes(section.kind)) panel.dataset.overviewActiveRows = '';
     const caption = section.title ?? t(sectionKeys[section.kind] ?? 'room_devices');
@@ -645,7 +662,7 @@ export function createToolbarPanel(kind, configuration, context) {
         .map(item => {
           if (weatherReadings && isPassiveWeatherReading(item)) return { item, node: renderWeatherReading(item) };
           if (readouts && isToolbarReadoutEntity(kind, item)) return { item, node: renderReadout(item) };
-          return { item, node: render(item, section.kind, compactStatus) };
+          return { item, node: render(item, section.kind, compactStatus, energyReadingCards) };
         });
       items.append(...pairs.map(pair=>pair.node));
       if (section.filter === 'active') handlers.push(() => {
@@ -850,6 +867,7 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   @media (hover: hover) {
     [data-overview-active-rows] > .toolbar-section-items > .tile-row:hover { background: var(--glass); }
   }
+  .energy-reading { min-width: 0; }
   .native-panel-card { min-width: 0; --ha-card-background: transparent; --ha-card-box-shadow: none;
     --ha-card-border-color: var(--soft-line); --primary-text-color: var(--ink); --secondary-text-color: var(--secondary); }
   .toolbar-device, .toolbar-link { min-width: 0; }

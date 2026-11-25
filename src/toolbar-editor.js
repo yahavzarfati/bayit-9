@@ -1,9 +1,9 @@
 import {
-  discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactToolbarStatus, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
+  discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactToolbarStatus, isEnergyReadingCards, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
   isToolbarReadoutEntity, isToolbarReadouts, isWeatherReadingsList, normalizeOverviewDiscovery, normalizeToolbarReadout, overviewSectionOptions, roomPanelOptions,
   securityReadoutLabelStates, selectableRoomEntities, sensorComparisonMaxHours, sensorComparisonOptions,
   SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
-  supportsCompactToolbarStatus, supportsOverviewLightsOff, supportsToolbarReadouts, supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
+  supportsCompactToolbarStatus, supportsEnergyReadingCards, supportsOverviewLightsOff, supportsToolbarReadouts, supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
 } from './strategy-model.js';
@@ -63,6 +63,7 @@ const WORDS = {
     calendarAccent: 'Calendar accent', calendarInvalidAccent: 'Enter a six-digit color such as #80BFFF.',
     compactStatus: 'Show status items side by side',
     weatherReadingsList: 'Show readings as a compact read-only list',
+    energyReadingCards: 'Show readings with large values',
     sensorComparison: 'Compare trends in a single chart', comparisonHours: 'Time range in hours',
     comparisonInterval: 'Average interval in minutes', seriesColor: 'Line color for this sensor',
     compactReadouts: 'Show compact read-only status tiles', readoutOn: 'Label for on', readoutOff: 'Label for off',
@@ -129,6 +130,7 @@ const WORDS = {
     calendarAccent: 'צבע היומן', calendarInvalidAccent: 'הזינו צבע בן שש ספרות, למשל ‎#80BFFF‎.',
     compactStatus: 'הצגת פריטי הסטטוס זה לצד זה',
     weatherReadingsList: 'הצגת המדדים ברשימה קומפקטית לקריאה בלבד',
+    energyReadingCards: 'הצגת ערכי המדידה בגדול',
     sensorComparison: 'השוואת מגמות בגרף אחד', comparisonHours: 'טווח תצוגה בשעות',
     comparisonInterval: 'מרווח ממוצע בדקות', seriesColor: 'צבע הקו של החיישן',
     compactReadouts: 'הצגת אריחי מצב קומפקטיים לקריאה בלבד', readoutOn: 'תווית למצב פעיל', readoutOff: 'תווית למצב כבוי',
@@ -694,6 +696,13 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         });
         fields.push(field(words.comparisonHours, hours), field(words.comparisonInterval, interval));
       }
+    }
+    if (supportsEnergyReadingCards(kind, active)) {
+      const readings = node('input', { type: 'checkbox', checked: isEnergyReadingCards(kind, active) });
+      readings.dataset.toolbarFocus = 'energy-reading-cards';
+      readings.addEventListener('change', () =>
+        changeSection({ layout: readings.checked ? 'reading-cards' : undefined }, true, 'energy-reading-cards'));
+      fields.push(node('label', { className: 'check' }, [readings, words.energyReadingCards]));
     }
     const { discover } = overviewSectionOptions(kind, active);
     if (kind === 'overview' && ['status', 'covers'].includes(active.kind)) fields.push(...overviewFilters(active, discover));

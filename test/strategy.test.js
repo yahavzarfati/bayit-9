@@ -1206,6 +1206,30 @@ test('only Devices and Overview status sections retain the compact layout withou
   assert.ok(toolbar.every(item => item.sections.every(section => section.entities[0].role === 'status')));
 });
 
+test('native reading cards are opt-in only for Energy electricity and water', () => {
+  const hass = home();
+  const shown = 'sensor.fixture_cost';
+  const hidden = 'sensor.fixture_hidden_cost';
+  const graph = { entity: 'sensor.fixture_total', role: 'graph', graph_hours: 168 };
+  for (const entity of [shown, hidden, graph.entity]) {
+    hass.states[entity] = { state: '2.4', attributes: {} };
+    hass.entities[entity] = {};
+  }
+  hass.entities[hidden].hidden_by = 'user';
+  const items = [{ entity: shown, name: 'Cost', icon: 'mdi:cash', role: 'status' }, { entity: hidden, role: 'status' }, graph];
+  const electricity = { kind: 'electricity', layout: 'reading-cards', entities: items };
+  const water = { ...electricity, kind: 'water' };
+  const { toolbar } = generateDashboard({ toolbar: [
+    { kind: 'energy', sections: [electricity, water, { ...electricity, kind: 'status' }, { ...water, layout: undefined }] },
+    { kind: 'weather', sections: [electricity, { ...water, kind: 'readings' }] },
+  ] }, hass).views[0].cards[0];
+  const sections = toolbar.flatMap(entry => entry.sections);
+  assert.deepEqual(sections.map(section => section.layout), ['reading-cards', 'reading-cards', undefined, undefined, undefined, undefined]);
+  assert.deepEqual(sections[0].entities.map(({ entity, icon, role, graph_hours }) => [entity, icon, role, graph_hours]),
+    [[shown, 'mdi:cash', 'status', undefined], [graph.entity, undefined, 'graph', 168]]);
+  assert.equal(sections[0].entities[0].name, 'Cost');
+});
+
 test('compact readings are opt-in for Weather readings and preserve graph configuration', () => {
   const hass = home();
   const sensor = 'sensor.fixture_outside';

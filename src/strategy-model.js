@@ -669,6 +669,14 @@ export function isToolbarReadouts(kind, section) {
   return supportsToolbarReadouts(kind, section) && section.layout === 'readouts';
 }
 
+export function supportsEnergyReadingCards(kind, section) {
+  return kind === 'energy' && ['electricity', 'water'].includes(section?.kind);
+}
+
+export function isEnergyReadingCards(kind, section) {
+  return supportsEnergyReadingCards(kind, section) && section.layout === 'reading-cards';
+}
+
 export function supportsWeatherReadingsList(kind, section) {
   return kind === 'weather' && section?.kind === 'readings';
 }
@@ -797,6 +805,7 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
       ...(isCompactToolbarStatus(kind, section) && { layout: 'compact' }),
       ...(isToolbarReadouts(kind, section) && { layout: 'readouts' }),
       ...(isWeatherReadingsList(kind, section) && { layout: 'readings-list' }),
+      ...(isEnergyReadingCards(kind, section) && { layout: 'reading-cards' }),
       ...(comparison && { comparison }),
       ...(section.filter === 'active' && { filter:'active' }), ...overview, entities }];
   });

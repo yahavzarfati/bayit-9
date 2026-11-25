@@ -566,6 +566,11 @@ if (query.has('toolbar-panels')) {
     'person.demo_friend': {state:'home',attributes:{friendly_name:'Simona'}},
     'sensor.demo_meter': {state:'51',attributes:{friendly_name:'Energy meter',unit_of_measurement:'kWh'}},
     'sensor.demo_water_meter': {state:'4',attributes:{friendly_name:'Water meter',unit_of_measurement:'m³'}},
+    ...(query.has('energy-readings') && {
+      'sensor.demo_bill_forecast': {state:'145',attributes:{friendly_name:'Forecast reading',unit_of_measurement:'USD'}},
+      'sensor.demo_last_water': {state:'48',attributes:{friendly_name:'Yesterday water',unit_of_measurement:'L'}},
+      'binary_sensor.demo_water_alarm': {state:'off',attributes:{friendly_name:'Meter warning'}},
+    }),
     'sensor.demo_studio_temperature': {state:'22.5',attributes:{friendly_name:'Studio temperature',unit_of_measurement:'°C'}},
     ...(query.has('weather-readings') && {
       'sensor.demo_outdoor_temperature': {state:'24.5',attributes:{friendly_name:'Outdoor sensor',unit_of_measurement:'°C'}},
@@ -618,6 +623,15 @@ if (query.has('toolbar-panels')) {
     card.dataset.nativeType = configuration.type;
     card.dataset.tapAction = configuration.tap_action?.action;
     if (configuration.graph) card.dataset.graphHours = configuration.hours_to_show;
+    if (query.has('energy-readings') && configuration.type === 'sensor' && !configuration.graph) {
+      card.dataset.sensorIcon = configuration.icon ?? '';
+      card.dataset.holdAction = configuration.hold_action?.action;
+      card.dataset.doubleTapAction = configuration.double_tap_action?.action;
+      Object.defineProperty(card, 'hass', { set(next) {
+        const state = next?.states?.[configuration.entity];
+        card.dataset.readingState = state?.state ?? '';
+      } });
+    }
     card.textContent = configuration.type === 'calendar' ? configuration.entities.length + ' calendars' : configuration.name || configuration.entity;
     if (graphAction) {
       card.dataset.holdAction = configuration.hold_action?.action;
@@ -796,10 +810,24 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
       ...(query.has('utility-graph-details') ? [{kind:'readings',entities:[
         {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24},
       ]}] : [])]},
-    {kind:'energy',sections:[{kind:'electricity',entities:[{entity:'sensor.demo_meter',role:'graph',graph_hours:168}]},
-      ...(query.has('utility-graph-details') ? [{kind:'water',entities:[
-        {entity:'sensor.demo_water_meter',role:'graph',graph_hours:168},
-      ]}] : [])]},
+    {kind:'energy',sections:[{kind:'electricity',
+      ...(query.has('energy-readings') && {title:'Electricity'}),
+      ...(query.has('energy-reading-cards') && {layout:'reading-cards'}),
+      entities:[{entity:'sensor.demo_meter',role:'graph',graph_hours:168},
+        ...(query.has('energy-readings') ? [
+          {entity:'sensor.demo_bill_forecast',role:'status',name:'Bill estimate',icon:'mdi:cash'},
+        ] : []),
+      ]},
+      ...(query.has('utility-graph-details') || query.has('energy-readings') ? [{kind:'water',
+        ...(query.has('energy-readings') && {title:'Water'}),
+        ...(query.has('energy-reading-cards') && {layout:'reading-cards'}),
+        entities:[{entity:'sensor.demo_water_meter',role:'graph',graph_hours:168},
+          ...(query.has('energy-readings') ? [
+            {entity:'sensor.demo_last_water',role:'status'},
+            {entity:'binary_sensor.demo_water_alarm',role:'status'},
+          ] : []),
+        ],
+      }] : [])]},
     {kind:'settings'},
     {id:'media-panel',kind:'media',placement:linkedPanels ? 'linked' : 'settings',
       ...(linkedPanels && { label:hass.locale.language === 'he' ? 'מדיה מקושרת' : 'Linked Media' }),
@@ -898,6 +926,10 @@ window.bayitTest = {
     hass.entities[entity] = { hidden };
     if (registered) hass.services.media_player.turn_on = {};
     else delete hass.services.media_player.turn_on;
+  },
+  setFixtureEntityVisibility(entity, hidden) {
+    hass.entities = { ...hass.entities, [entity]: { ...hass.entities[entity], hidden } };
+    card.hass = { ...hass, states: { ...states } };
   },
   setFixtureAttributes(entity, attributes) {
     states[entity] = { ...states[entity], attributes: { ...states[entity].attributes, ...attributes } };
@@ -1992,6 +2024,85 @@ async function assertMediaRemotePower(browser) {
         transport_entity: 'media_player.demo_speaker', volume_entity: 'media_player.demo_tv',
         power_entity: 'media_player.demo_tv', allow_standby: true,
       });
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+async function assertEnergyReadingCards(browser) {
+  for (const locale of ['en', 'he']) {
+    const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+    page.setDefaultTimeout(8000);
+    const energy = locale === 'he' ? 'אנרגיה' : 'Energy';
+    const url = base + '/fixture-home/home?toolbar-panels&energy-readings&locale=' + locale;
+    const open = async flags => {
+      await page.goto(url + flags);
+      await page.getByRole('button', { name: energy, exact: true }).tap();
+      return page.getByRole('dialog', { name: energy, exact: true });
+    };
+    try {
+      const dialog = await open('&energy-reading-cards&native-more-info=modern');
+      const electricity = dialog.locator('[data-section=electricity]');
+      const water = dialog.locator('[data-section=water]');
+      const reading = electricity.getByRole('button', { name: 'Bill estimate', exact: true });
+      await reading.waitFor();
+      assert.equal(await reading.getAttribute('data-native-type'), 'sensor');
+      assert.equal(await reading.getAttribute('data-reading-state'), '145');
+      assert.equal(await reading.getAttribute('data-graph-hours'), null);
+      assert.equal(await reading.getAttribute('data-sensor-icon'), 'mdi:cash');
+      assert.equal(await reading.getAttribute('data-tap-action'), 'more-info');
+      assert.equal(await reading.getAttribute('data-hold-action'), 'none');
+      assert.equal(await reading.getAttribute('data-double-tap-action'), 'none');
+      await water.locator('[data-native-type=sensor]:not([data-graph-hours])').waitFor();
+      assert.equal(await water.getByRole('button', { name: /^Meter warning/ }).getAttribute('data-native-type'), null);
+      assert.equal(await dialog.locator('[data-native-type=sensor][data-graph-hours="168"]').count(), 2);
+      assert.ok(await electricity.evaluate(section => {
+        const items = section.querySelector('.toolbar-section-items');
+        const [history, reading] = [...items.children].map(child => child.getBoundingClientRect());
+        return items.scrollWidth <= items.clientWidth && history.y === reading.y && history.x !== reading.x &&
+          Math.abs(history.width - reading.width) < 1;
+      }));
+
+      await page.evaluate(() => window.bayitTest.setRoomState('sensor.demo_bill_forecast', '149'));
+      await electricity.locator('[data-reading-state="149"]').waitFor();
+      const panelHash = new URL(page.url()).hash;
+      await reading.tap();
+      const details = page.getByRole('dialog', { name: 'Native entity details', exact: true });
+      await details.waitFor();
+      assert.equal(new URL(page.url()).searchParams.get('more-info-entity-id'), 'sensor.demo_bill_forecast');
+      assert.equal(new URL(page.url()).hash, panelHash);
+      await details.getByRole('button', { name: 'Close native details', exact: true }).tap();
+      await dialog.waitFor();
+      await page.evaluate(() => window.bayitTest.setFixtureEntityVisibility('sensor.demo_bill_forecast', true));
+      await reading.waitFor({ state: 'hidden' });
+      await page.evaluate(() => window.bayitTest.setFixtureEntityVisibility('sensor.demo_bill_forecast', false));
+      await reading.waitFor();
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls), []);
+
+      const fallback = await open('&energy-reading-cards&no-native-charts');
+      const fallbackReading = fallback.locator('.energy-reading').getByRole('button', { name: /Bill estimate/ });
+      await fallbackReading.waitFor();
+      assert.match(await fallbackReading.locator('.tile-state').textContent(), /145 USD/);
+      await fallbackReading.tap();
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), ['sensor.demo_bill_forecast']);
+
+      const legacy = await open('');
+      await legacy.getByRole('button', { name: /Bill estimate/ }).waitFor();
+      assert.equal(await legacy.locator('.energy-reading').count(), 0);
+
+      await page.goto(url + '&energy-reading-cards&editor');
+      await page.getByText(locale === 'he' ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens', { exact: true }).tap();
+      await page.getByRole('button', { name: energy, exact: true }).tap();
+      await page.getByRole('button', { name: 'Electricity', exact: true }).tap();
+      const checkbox = locale === 'he' ? 'הצגת ערכי המדידה בגדול' : 'Show readings with large values';
+      const toggle = page.getByRole('checkbox', { name: checkbox, exact: true });
+      const layout = () => page.evaluate(() => window.latest.toolbar.find(item => item.kind === 'energy').sections[0].layout);
+      assert.equal(await toggle.isChecked(), true);
+      await toggle.uncheck();
+      assert.equal(await layout(), undefined);
+      await toggle.check();
+      assert.equal(await layout(), 'reading-cards');
     } finally {
       await page.close();
     }
@@ -4266,6 +4377,8 @@ try {
       assert.deepEqual(await utilityPage.evaluate(() => window.bayitTest.calls),[]);
       await utilityPage.close();
       console.log(engine + ': Energy, Weather and room graph details leave the Bayit popup open underneath');
+      await assertEnergyReadingCards(browser);
+      console.log(engine + ': optional Energy headline readings, native details, fallback and editor');
       await assertCompactWeatherReadings(browser);
       console.log(engine + ': optional passive Weather readings, RTL, updates, existing charts and editor');
 
