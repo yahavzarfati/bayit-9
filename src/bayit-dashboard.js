@@ -1187,8 +1187,9 @@ export class BayitDashboard extends HTMLElement {
       const hidden = domainFor(config) !== 'cover' && !this.entityVisible(config.entity);
       const model = getDeviceModel(hidden ? { ...config, role:'status' } : config,
         this._hass?.states ?? {}, Date.now(), options);
-      return { ...model, available: model.available && !hidden,
-        icon: validIcon(model.icon, DEVICE_ICONS[model.kind || model.domain]) };
+      const defaultIcon = model.domain === 'media_player' && model.attributes.device_class === 'tv'
+        ? 'mdi:television' : DEVICE_ICONS[model.kind || model.domain];
+      return { ...model, available: model.available && !hidden, icon: validIcon(model.icon, defaultIcon) };
     }
     catch {
       return { ...config, name: config.name || config.entity, icon: validIcon(config.icon),

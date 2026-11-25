@@ -803,7 +803,7 @@ if (query.has('toolbar-panels')) {
       entity_picture:'/api/media_player_proxy/media_player.demo_speaker?token=fixture'}},
     'media_player.demo_tv': {state:query.has('room-media-test') ? 'playing' : 'on',
       attributes:{friendly_name:'Television',supported_features:1416,is_volume_muted:false,
-        ...(query.has('room-media-test') && {supported_features:23997,volume_level:.42,media_title:'Evening news',
+        ...(query.has('room-media-test') && {device_class:'tv',supported_features:23997,volume_level:.42,media_title:'Evening news',
           source_list:['HDMI','Live TV'],source:'Live TV'}),
       }},
     ...(query.has('room-compact-pair-test') && {
@@ -1255,6 +1255,13 @@ if (query.has('wide-home-profile')) {
     ...Array.from({length:5}, (_,index) => ({ kind:'link', path:'/profile-' + (index + 1), label:'View ' + (index + 1) })),
     { kind:'settings' },
   ];
+}
+if (query.has('room-media-registry-icon')) {
+  const tv = 'media_player.demo_tv';
+  hass.entities[tv] = { ...hass.entities[tv], icon:'mdi:monitor' };
+}
+if (query.has('room-media-config-icon')) {
+  selected.room_overrides.studio.entity_icons = { 'media_player.demo_tv':'mdi:projector-screen' };
 }
 const config = Strategy.generate(selected, query.has('empty') ? { ...hass, states: {} } : hass);
 const cardConfig = { ...config.views[0].cards[0],
@@ -8142,6 +8149,14 @@ async function assertCompactRoomMedia(browser) {
     const compact = '&room-media-compact';
     try {
       await openRoom(compact + '&native-more-info=modern');
+      const glyph = name => tv.locator('.device-icon[icon="mdi:' + name + '"]').waitFor();
+      await glyph('television');
+      await attrs({device_class:'speaker'});
+      await glyph('speaker');
+      await attrs({device_class:'tv',icon:'mdi:cast'});
+      await glyph('cast');
+      await attrs({icon:undefined});
+      await glyph('television');
       await status.getByText(/Evening news/).waitFor();
       assert.match(await status.textContent(), he ? /עוצמת שמע.*42%/ : /Volume.*42%/);
       assert.match(await header.getAttribute('aria-description'),/42%/);
@@ -8180,6 +8195,11 @@ async function assertCompactRoomMedia(browser) {
       await openRoom('');
       assert.ok((await actions()).includes('volume_set'));
       assert.ok((await actions()).includes('select_source'));
+
+      await openRoom(compact + '&room-media-registry-icon');
+      await glyph('monitor');
+      await openRoom(compact + '&room-media-registry-icon&room-media-config-icon');
+      await glyph('projector-screen');
 
       await page.goto(url + compact + '&editor');
       await page.getByText(he ? 'חדרים' : 'Rooms',{exact:true}).tap();
