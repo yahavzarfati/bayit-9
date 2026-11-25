@@ -84,6 +84,8 @@ In an **Overview** status section, choose **Discover active lights** to list cur
 
 In YAML, use `discover: {domain: light, exclude_entities: [light.example], exclude_id_contains: [helper]}` on an Overview status section. Discovery always lists on lights. For a section with selected covers, set `filter: active` and `include_closing: true` to keep closing covers visible until they close.
 
+In an **Overview** status or covers section, choose **Discover active covers** to automatically show covers that are open, opening or stopped. Each row shows the reported position and opens the cover's Home Assistant details. Use **Include closing covers** to keep covers visible as they close, or exclude individual covers under **Exclude these covers**. In YAML, use `discover: {domain: cover}` and optionally set `include_closing: true` on the section.
+
 A single-sensor history graph in **Sensors** can open a room or a configured Vacuum panel when you tap its heading or reading. In the graph's display settings, select a destination under **Open on graph tap**. In YAML, add `graph_room_id: studio` or `vacuum_panel_id: robot` to the graph entity entry. Choose the ID of a room shown on this dashboard or a configured Vacuum panel.
 
 In **Rooms**, choose **Lights in the room count** to count only selected room lights. Clear the selection to count every light in that room. Devices remain available in the room and keep their existing controls.

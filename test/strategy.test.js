@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverOverviewLights, discoverRooms, generateDashboard,
+  CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverOverviewEntities, discoverRooms, generateDashboard,
   normalizeOverviewDiscovery, normalizeProfile, roomPanelOptions, selectableRoomEntities, suggestedDashboard,
 } from '../src/strategy-model.js';
 import { getDeviceModel } from '../src/device-control.mjs';
@@ -34,14 +34,56 @@ test('discovers only visible active lights from an opted-in Overview section', (
   assert.deepEqual(card.toolbar[1].sections, [{ id: 'section-1', kind: 'status', entities: [] }]);
   assert.deepEqual(card.hidden_entities, ['light.dashboard_hidden']);
   const hidden = new Set(card.hidden_entities);
-  const visible = () => discoverOverviewLights(discover, hass, hidden, 'en').map(({ entity, role }) => [entity, role]);
+  const visible = () => discoverOverviewEntities(discover, hass, hidden, 'en').map(({ entity, role }) => [entity, role]);
   assert.deepEqual(visible(), [['light.first', 'action'], ['light.second', 'action']]);
   add('light.new', 'on');
   assert.deepEqual(visible(), [['light.first', 'action'], ['light.new', 'action'], ['light.second', 'action']]);
-  assert.deepEqual(discoverOverviewLights(discover, { ...hass, entities: undefined }, hidden, 'en'), []);
+  assert.deepEqual(discoverOverviewEntities(discover, { ...hass, entities: undefined }, hidden, 'en'), []);
   assert.equal(normalizeOverviewDiscovery({ ...discover, exclude_id_contains: ['.*'] }), undefined);
   assert.equal(normalizeOverviewDiscovery({ ...discover, exclude_entities: ['switch.active'] }), undefined);
   assert.equal(normalizeOverviewDiscovery({ domain: 'script' }), undefined);
+});
+
+test('Overview discovers active covers as status rows, honoring exclusions, visibility and closing preference', () => {
+  const hass = home();
+  const add = (entity, state, metadata = {}) => {
+    hass.states[entity] = { state, attributes: { friendly_name: entity } };
+    hass.entities[entity] = metadata;
+  };
+  add('cover.open', 'open');
+  add('cover.opening', 'opening');
+  add('cover.closing', 'closing');
+  add('cover.stopped', 'stopped');
+  add('cover.closed', 'closed');
+  add('cover.unknown', 'unknown');
+  add('cover.unavailable', 'unavailable');
+  add('cover.omit', 'open');
+  add('cover.test_helper', 'open');
+  add('cover.hidden', 'open', { hidden_by: 'user' });
+  add('cover.disabled', 'open', { disabled_by: 'user' });
+  add('cover.dashboard_hidden', 'open');
+  add('lock.open', 'open');
+  const discover = { domain: 'cover', exclude_entities: ['cover.omit'], exclude_id_contains: ['helper'] };
+  const section = { kind:'status', entities: ['cover.closed'], discover, include_closing: true };
+  const hiddenEntities = ['cover.dashboard_hidden'];
+  const { toolbar } = generateDashboard({
+    hidden_entities: hiddenEntities,
+    toolbar: [
+      { kind: 'overview', sections: [section, { ...section, kind:'covers' }, { ...section, kind:'devices' }] },
+      { kind: 'security', sections: [section] },
+    ],
+  }, hass).views[0].cards[0];
+  assert.deepEqual(toolbar[0].sections.map(({ discover }) => discover), [discover, discover, undefined]);
+  assert.equal(toolbar[0].sections[0].include_closing, true);
+  assert.equal(toolbar[0].sections[0].filter, 'active');
+  assert.equal(toolbar[0].sections[0].entities[0].entity, 'cover.closed');
+  assert.equal(toolbar[1].sections[0].discover, undefined);
+  assert.equal(normalizeOverviewDiscovery({ ...discover, exclude_entities:['light.outside'] }), undefined);
+  const visible = closing => discoverOverviewEntities(discover, hass, new Set(hiddenEntities), 'en', closing)
+    .map(({ entity, role }) => [entity, role]);
+  assert.deepEqual(visible(false), ['open','opening','stopped'].map(name => ['cover.' + name, 'status']));
+  add('cover.added_later', 'open');
+  assert.deepEqual(visible(true), ['added_later','closing','open','opening','stopped'].map(name => ['cover.' + name, 'status']));
 });
 
 test('normalizes only visible media remote targets on Media destinations', () => {

@@ -282,36 +282,44 @@ export function isVisibleEntity(entity, states, registry, hidden) {
 const overviewIdFragment = /^[a-z0-9_]{1,64}$/;
 
 export function normalizeOverviewDiscovery(value) {
-  if (!value || value.domain !== 'light' || Array.isArray(value)) return undefined;
-  const { exclude_entities = [], exclude_id_contains = [] } = value;
-  if (!Array.isArray(exclude_entities) || exclude_entities.some(id => !idForDomain(id, 'light')) ||
+  if (!value || !['light', 'cover'].includes(value.domain) || Array.isArray(value)) return undefined;
+  const { domain, exclude_entities = [], exclude_id_contains = [] } = value;
+  if (!Array.isArray(exclude_entities) || exclude_entities.some(id => !idForDomain(id, domain)) ||
       !Array.isArray(exclude_id_contains) || exclude_id_contains.length > 16 ||
       exclude_id_contains.some(fragment => typeof fragment !== 'string' || !overviewIdFragment.test(fragment))) {
     return undefined;
   }
-  return { domain: 'light', exclude_entities: [...new Set(exclude_entities)], exclude_id_contains: [...new Set(exclude_id_contains)] };
+  return { domain, exclude_entities: [...new Set(exclude_entities)], exclude_id_contains: [...new Set(exclude_id_contains)] };
 }
 
 export function overviewSectionOptions(kind, section) {
   if (kind !== 'overview') return {};
-  const discover = section.kind === 'status' && normalizeOverviewDiscovery(section.discover);
-  if (discover) return { discover, filter: 'active' };
+  const discover = normalizeOverviewDiscovery(section.discover);
+  if (discover && (section.kind === 'status' || section.kind === 'covers' && discover.domain === 'cover')) {
+    return { discover, filter: 'active', ...(discover.domain === 'cover' && section.include_closing === true &&
+      { include_closing: true }) };
+  }
   return section.filter === 'active' && ['status', 'covers'].includes(section.kind) && section.include_closing === true
     ? { include_closing: true } : {};
 }
 
-export function isActiveOverviewLight(entity, source, hass, hidden) {
+export function isActiveOverviewEntity(entity, source, hass, hidden, includeClosing = false) {
   const states = hass?.states ?? {};
-  return hass?.entities != null && entity.startsWith('light.') && states[entity]?.state === 'on' &&
+  const state = states[entity]?.state;
+  const prefix = source.domain + '.';
+  const active = source.domain === 'light' ? state === 'on' :
+    Boolean(state) && !['closed', 'unknown', 'unavailable'].includes(state) && (state !== 'closing' || includeClosing);
+  return hass?.entities != null && entity.startsWith(prefix) && active &&
     isVisibleEntity(entity, states, hass?.entities, hidden) &&
     !source.exclude_entities.includes(entity) &&
-    !source.exclude_id_contains.some(fragment => entity.slice('light.'.length).includes(fragment));
+    !source.exclude_id_contains.some(fragment => entity.slice(prefix.length).includes(fragment));
 }
 
-export function discoverOverviewLights(source, hass, hidden, locale) {
+export function discoverOverviewEntities(source, hass, hidden, locale, includeClosing) {
   const states = hass?.states ?? {};
-  return Object.keys(states).filter(entity => isActiveOverviewLight(entity, source, hass, hidden))
-    .map(entity => ({ ...presentEntity(entity, states[entity], hass?.entities?.[entity]), role: 'action' }))
+  const role = source.domain === 'light' ? 'action' : 'status';
+  return Object.keys(states).filter(entity => isActiveOverviewEntity(entity, source, hass, hidden, includeClosing))
+    .map(entity => ({ ...presentEntity(entity, states[entity], hass?.entities?.[entity]), role }))
     .sort((a, b) => compareText(a.name ?? a.entity, b.name ?? b.entity, locale) || compareText(a.entity, b.entity, locale));
 }
 

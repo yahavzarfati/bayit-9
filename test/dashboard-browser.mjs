@@ -610,6 +610,8 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
       {entity:'cover.demo_overview_window',role:'status'}]},
     {kind:'covers',title:'Default covers',filter:'active',entities:[
       {entity:'cover.demo_overview_window',role:'status'}]},
+    ...(query.has('overview-cover-discovery') ? [{kind:'status',title:'Discovered covers',include_closing:true,
+      discover:{domain:'cover'},entities:[{entity:'cover.demo_overview_window',role:'status'}]}] : []),
     ...(query.has('overview-readings') ? [{kind:'status',title:'Overview AC status',
       entities:[{entity:'climate.demo_overview_air',role:'status'}]}] : []),
   ]}, ...(query.has('overview-readings') ? [{kind:'security',sections:[{kind:'status',entities:[
@@ -3447,6 +3449,52 @@ try {
       }
       console.log(engine + ': Security cover rails at 320–390 px, exact native details and independent controls');
 
+      const coverDiscovery = await browser.newPage({ viewport: { width: 391, height: 845 }, hasTouch: true, reducedMotion: 'reduce' });
+      coverDiscovery.setDefaultTimeout(8000);
+      const coverDiscoveryUrl = base + '?overview-opt-in&overview-cover-discovery';
+      await coverDiscovery.goto(coverDiscoveryUrl);
+      await coverDiscovery.getByRole('button', { name:'Home overview', exact:true }).tap();
+      const coverDrawer = coverDiscovery.getByRole('dialog', { name:'Home overview', exact:true });
+      const discoveredCovers = coverDrawer.locator('.toolbar-section').filter({
+        has: coverDiscovery.getByRole('heading', { name:'Discovered covers', exact:true }),
+      });
+      await discoveredCovers.getByRole('button', { name:'Overview cover · Closing', exact:true }).waitFor();
+      await coverDiscovery.evaluate(() => {
+        const entity = 'cover.demo_added_later';
+        window.bayitTest.setRoomState(entity, 'closed');
+        window.bayitTest.setFixtureAttributes(entity, {friendly_name:'New shade', supported_features:15, current_position:37});
+        window.bayitTest.setRoomState(entity, 'opening');
+      });
+      const newShade = discoveredCovers.getByRole('button', { name:/^New shade · Opening/ });
+      await newShade.waitFor();
+      assert.match(await newShade.innerText(), /37%/);
+      assert.equal(await discoveredCovers.locator('[data-action], input, select').count(),0);
+      await newShade.tap();
+      assert.deepEqual(await coverDiscovery.evaluate(() => window.bayitTest.moreInfoCalls), ['cover.demo_added_later']);
+      assert.deepEqual(await coverDiscovery.evaluate(() => window.bayitTest.calls),[]);
+      await coverDiscovery.evaluate(() => window.bayitTest.setRoomState('cover.demo_added_later', 'closed'));
+      await newShade.waitFor({ state:'hidden' });
+      await coverDiscovery.goto(coverDiscoveryUrl + '&editor');
+      const coverEditor = coverDiscovery.locator('#editor');
+      await coverEditor.getByText('Toolbar and extra screens', { exact:true }).tap();
+      await coverEditor.getByRole('button', { name:'Overview', exact:true }).tap();
+      await coverEditor.getByRole('button', { name:'Discovered covers', exact:true }).tap();
+      const coverSource = coverEditor.getByLabel('Device source', { exact:true });
+      assert.equal(await coverSource.inputValue(), 'cover');
+      await coverEditor.getByLabel('Exclude these covers', { exact:true }).selectOption('cover.demo_overview_window');
+      const includeClosing = coverEditor.getByLabel('Include closing covers', { exact:true });
+      assert.equal(await includeClosing.isChecked(), true);
+      await includeClosing.uncheck();
+      const coverSettings = () => coverDiscovery.evaluate(() => window.latest.toolbar[0].sections[3]);
+      assert.deepEqual((await coverSettings()).discover.exclude_entities, ['cover.demo_overview_window']);
+      assert.equal((await coverSettings()).include_closing, undefined);
+      await coverSource.selectOption('manual');
+      const manualCoverSettings = await coverSettings();
+      assert.equal(manualCoverSettings.discover, undefined);
+      assert.deepEqual(manualCoverSettings.entities, [{entity:'cover.demo_overview_window',role:'status'}]);
+      await coverDiscovery.close();
+      console.log(engine + ': discovered Overview covers show exact status and native details without controls');
+
       const overviewPage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
       overviewPage.setDefaultTimeout(8000);
       await overviewPage.goto(base + '?overview-opt-in');
@@ -3545,7 +3593,7 @@ try {
       await overviewEditor.getByRole('button', { name: 'Overview', exact: true }).tap();
       await overviewEditor.getByRole('button', { name: 'Discovered lighting', exact: true }).tap();
       const lightSource = overviewEditor.getByLabel('Device source', { exact: true });
-      assert.equal(await lightSource.inputValue(), 'discover');
+      assert.equal(await lightSource.inputValue(), 'light');
       await overviewEditor.getByLabel('Exclude these lights', { exact: true }).selectOption(['light.demo_excluded', 'light.demo_dining']);
       const fragments = overviewEditor.getByLabel('Exclude by text in entity ID', { exact: true });
       await fragments.fill('unsafe.*');
@@ -3560,7 +3608,7 @@ try {
       await lightSource.selectOption('manual');
       assert.deepEqual(await overviewEditor.evaluate(() => window.latest.toolbar[0].sections[0].entities), ['light.demo_lamp']);
       assert.equal(await overviewEditor.evaluate(() => window.latest.toolbar[0].sections[0].discover), undefined);
-      await lightSource.selectOption('discover');
+      await lightSource.selectOption('light');
       await overviewEditor.getByRole('button', { name: 'Default covers', exact: true }).tap();
       const closingOption = overviewEditor.getByLabel('Include closing covers', { exact: true });
       assert.equal(await closingOption.isChecked(), false);

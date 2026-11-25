@@ -26,6 +26,7 @@ const WORDS = {
     sectionType: 'Section type', sectionName: 'Section title', sectionList: 'Panel sections',
     showHeading: 'Show section title', addSection: 'Add section', editSection: 'Edit section', sectionDisplay: 'Section display',
     overviewSource: 'Device source', overviewDiscover: 'Discover active lights', overviewExcluded: 'Exclude these lights',
+    overviewDiscoverCovers: 'Discover active covers', overviewExcludedCovers: 'Exclude these covers',
     overviewExcludedIds: 'Exclude by text in entity ID', overviewInvalidIds: 'Enter up to 16 comma-separated ID fragments.',
     overviewActiveOnly: 'Show active devices only', overviewClosing: 'Include closing covers',
     deviceLabel: 'Device label', deviceRole: 'Display as', editDevice: 'Edit device display',
@@ -78,6 +79,7 @@ const WORDS = {
     sectionType: 'סוג הקבוצה', sectionName: 'כותרת הקבוצה', sectionList: 'קבוצות בחלונית',
     showHeading: 'הצגת כותרת הקבוצה', addSection: 'הוספת קבוצה', editSection: 'עריכת קבוצה', sectionDisplay: 'תצוגת הקבוצה',
     overviewSource: 'מקור המכשירים', overviewDiscover: 'גילוי אורות דולקים', overviewExcluded: 'אורות להחרגה',
+    overviewDiscoverCovers: 'גילוי תריסים ווילונות פעילים', overviewExcludedCovers: 'תריסים ווילונות להחרגה',
     overviewExcludedIds: 'החרגה לפי חלק ממזהה הישות', overviewInvalidIds: 'הזינו עד 16 קטעי מזהה מופרדים בפסיקים.',
     overviewActiveOnly: 'הצגת מכשירים פעילים בלבד', overviewClosing: 'הצגת תריסים בזמן סגירה',
     deviceLabel: 'תווית המכשיר', deviceRole: 'אופן התצוגה', editDevice: 'עריכת תצוגת המכשיר',
@@ -456,14 +458,15 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
 
   function overviewFilters(active, discovery) {
     const fields = [];
-    if (active.kind === 'status') {
-      const source = select([['manual', words.deviceList], ['discover', words.overviewDiscover]], discovery ? 'discover' : 'manual');
-      source.dataset.toolbarFocus = 'overview-source';
-      source.addEventListener('change', () => changeSection({
-        discover: source.value === 'discover' ? { domain: 'light' } : undefined,
-      }, true, 'overview-source'));
-      fields.push(field(words.overviewSource, source));
-    }
+    const sources = [['manual', words.deviceList]];
+    if (active.kind === 'status') sources.push(['light', words.overviewDiscover]);
+    sources.push(['cover', words.overviewDiscoverCovers]);
+    const source = select(sources, discovery?.domain ?? 'manual');
+    source.dataset.toolbarFocus = 'overview-source';
+    source.addEventListener('change', () => changeSection({
+      discover: source.value === 'manual' ? undefined : { domain: source.value },
+    }, true, 'overview-source'));
+    fields.push(field(words.overviewSource, source));
     if (discovery) {
       const save = edits => {
         const current = normalizeOverviewDiscovery(toolbar[entryIndex].sections[sectionIndex].discover);
@@ -471,7 +474,8 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         if (next) changeSection({ discover: next });
       };
       const chosen = new Set(discovery.exclude_entities);
-      const choices = new Set(candidates.filter(item => item.entity.startsWith('light.')).map(item => item.entity));
+      const prefix = discovery.domain + '.';
+      const choices = new Set(candidates.filter(item => item.entity.startsWith(prefix)).map(item => item.entity));
       for (const id of chosen) choices.add(id);
       const exclusionOptions = [...choices].map(id => {
         const name = available.get(id)?.name;
@@ -483,14 +487,15 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         save({ exclude_id_contains: value ? value.split(',').map(fragment => fragment.trim().toLowerCase()) : [] });
       }, { pattern: /^[a-z0-9_]{1,64}(?:\s*,\s*[a-z0-9_]{1,64}){0,15}$/i, maxLength: 1054,
         dir: 'ltr', error: words.overviewInvalidIds, placeholder: 'helper, test' });
-      fields.push(field(words.overviewExcluded, exclusions), fragments.field);
-      return fields;
+      fields.push(field(discovery.domain === 'cover' ? words.overviewExcludedCovers : words.overviewExcluded, exclusions), fragments.field);
+    } else {
+      const activeOnly = node('input', { type: 'checkbox', checked: active.filter === 'active' });
+      activeOnly.dataset.toolbarFocus = 'overview-active';
+      activeOnly.addEventListener('change', () => changeSection({ filter: activeOnly.checked ? 'active' : undefined }, true, 'overview-active'));
+      fields.push(node('label', { className: 'check' }, [activeOnly, words.overviewActiveOnly]));
     }
-    const activeOnly = node('input', { type: 'checkbox', checked: active.filter === 'active' });
-    activeOnly.dataset.toolbarFocus = 'overview-active';
-    activeOnly.addEventListener('change', () => changeSection({ filter: activeOnly.checked ? 'active' : undefined }, true, 'overview-active'));
-    fields.push(node('label', { className: 'check' }, [activeOnly, words.overviewActiveOnly]));
-    if (activeOnly.checked && (active.kind === 'covers' || active.entities.some(item => entityId(item)?.startsWith('cover.')))) {
+    if (discovery?.domain === 'cover' || !discovery && active.filter === 'active' &&
+        (active.kind === 'covers' || active.entities.some(item => entityId(item)?.startsWith('cover.')))) {
       const closing = node('input', { type: 'checkbox', checked: active.include_closing === true });
       closing.addEventListener('change', () => changeSection({ include_closing: closing.checked ? true : undefined }));
       fields.push(node('label', { className: 'check' }, [closing, words.overviewClosing]));

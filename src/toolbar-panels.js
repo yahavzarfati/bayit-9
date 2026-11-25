@@ -1,7 +1,7 @@
 import { createOrefMap } from './oref-alert-map.js';
 import { createVacuumMap } from './vacuum-map.js';
 import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
-import { discoverOverviewLights, isActiveOverviewLight, isCompactToolbarStatus, isToolbarLightTile, isVisibleEntity } from './strategy-model.js';
+import { discoverOverviewEntities, isActiveOverviewEntity, isCompactToolbarStatus, isToolbarLightTile, isVisibleEntity } from './strategy-model.js';
 import { mediaServiceRegistered } from './media-device-support.mjs';
 import { calendarAgendaStyles, createCalendarAgenda } from './calendar-agenda.js';
 import { bindDeviceDetails } from './popup-motion.js';
@@ -278,23 +278,23 @@ export function createToolbarPanel(kind, configuration, context) {
     return host;
   }
 
-  function discoveredLightSection(panel, items, source) {
+  function discoveredOverviewSection(panel, items, { discover: source, include_closing: includeClosing }) {
     const tiles = new Map();
-    const allowed = entity => isActiveOverviewLight(entity, source, context.getHass(), context.hiddenEntities);
+    const allowed = entity => isActiveOverviewEntity(entity, source, context.getHass(), context.hiddenEntities, includeClosing);
     handlers.push(() => {
-      const lights = discoverOverviewLights(source, currentHass, context.hiddenEntities, context.locale);
-      const active = new Set(lights.map(item => item.entity));
+      const devices = discoverOverviewEntities(source, currentHass, context.hiddenEntities, context.locale, includeClosing);
+      const active = new Set(devices.map(item => item.entity));
       for (const [id, view] of tiles) {
         if (active.has(id)) continue;
         view.tile.remove();
         tiles.delete(id);
       }
       let cursor = items.firstElementChild;
-      for (const item of lights) {
+      for (const item of devices) {
         let view = tiles.get(item.entity);
         if (!view) {
           view = { item };
-          view.tile = renderTile(item, 'action', update => { view.update = update; }, allowed);
+          view.tile = renderTile(item, item.role, update => { view.update = update; }, allowed);
           tiles.set(item.entity, view);
         } else {
           view.item.name = item.name;
@@ -304,7 +304,7 @@ export function createToolbarPanel(kind, configuration, context) {
         if (view.tile === cursor) cursor = cursor.nextElementSibling;
         else items.insertBefore(view.tile, cursor);
       }
-      panel.hidden = lights.length === 0;
+      panel.hidden = devices.length === 0;
     });
   }
 
@@ -476,7 +476,7 @@ export function createToolbarPanel(kind, configuration, context) {
     const caption = section.title ?? t(sectionKeys[section.kind] ?? 'room_devices');
     if (caption) panel.append(make('h3', 'toolbar-section-title', caption));
     const items = make('div', 'toolbar-section-items');
-    if (section.discover) discoveredLightSection(panel, items, section.discover);
+    if (section.discover) discoveredOverviewSection(panel, items, section);
     else if (section.kind === 'series') {
       const fallback = make('div','toolbar-section-items');
       for (const item of section.entities) fallback.append(renderTile(item, 'status'));
