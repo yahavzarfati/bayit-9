@@ -100,6 +100,10 @@ In an **Overview** status or covers section, choose **Discover active covers** t
 
 A single-sensor history graph in **Sensors** can open a room or a configured Vacuum panel when you tap its heading or reading. In the graph's display settings, select a destination under **Open on graph tap**. In YAML, add `graph_room_id: studio` or `vacuum_panel_id: robot` to the graph entity entry. Choose the ID of a room shown on this dashboard or a configured Vacuum panel.
 
+In a Sensors section shown as a combined graph, enable **Compare trends in a single chart**. Set a shared time range and averaging interval, then choose an optional six-digit line color for each sensor configured as a graph. Choose sensors that report the same unit. The graph shows gaps where Home Assistant reports that a reading is unavailable.
+
+In YAML, add `comparison: { enabled: true, hours: 24, bucket_minutes: 30 }` to a `kind: series` section on a `kind: sensors` screen. Add `series_color: "#397BD6"` to a graph entry to keep that sensor's line color fixed.
+
 In **Rooms**, choose **Lights in the room count** to count only selected room lights. Clear the selection to count every light in that room. Devices remain available in the room and keep their existing controls.
 
 To use the read-only **Compact agenda**, enable it on the Calendar panel and choose the calendars to include. Its short view shows up to six events across four listed dates. Tap the agenda or use **Show the full week** to see the next seven days. Under **Sections**, each calendar can have its own icon and accent color. Select a daily forecast to show the condition and high beside dates.
