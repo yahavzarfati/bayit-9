@@ -1197,6 +1197,15 @@ try {
         await statusPage.evaluate(() => window.bayitTest.setRoomLayout('classic'));
         for (const [width, columns, gridWidth] of [[860, 2, 430], [900, 4, 804], [1280, 4, 900]]) {
           await statusPage.setViewportSize({ width, height: 721 });
+          await statusPage.waitForFunction(({ width, height }) => {
+            const card = document.querySelector('bayit-dashboard');
+            const shell = card.shadowRoot.querySelector('.shell');
+            const viewport = window.visualViewport;
+            const bottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+            const fittedHeight = parseFloat(shell.style.getPropertyValue('--bayit-view-height'));
+            return window.innerWidth === width && Math.abs(bottom - height) < 1 &&
+              Math.abs(fittedHeight - (bottom - card.getBoundingClientRect().top)) < 1;
+          }, { width, height: 721 });
           const measured = await statusPage.locator('.rooms').evaluate(grid => {
             const box = grid.getBoundingClientRect();
             return [getComputedStyle(grid).gridTemplateColumns.split(' ').length, Math.round(box.width), Math.round(box.left)];
