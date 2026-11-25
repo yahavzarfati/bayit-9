@@ -5102,6 +5102,81 @@ async function assertReportedCoverMotion(browser) {
   }
 }
 
+async function assertCoverPopupVisibility(browser) {
+  for (const { query, title, entity, detail } of [
+    { query:'configuration&cover-grid&cover-feedback', title:'Studio', entity:'cover.demo_shade' },
+    { query:'toolbar-panels&security-cover-rail', title:'Security', entity:'cover.demo_security_first' },
+    { query:'configuration&cover-grid&cover-feedback', title:'Studio', entity:'cover.demo_shade', detail:true },
+  ]) {
+    const page = await browser.newPage({ viewport:{width:391,height:844}, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const registry = metadata => page.evaluate(([id, info]) => window.bayitTest.setFixtureRegistry(id, info), [entity, metadata]);
+    const commands = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.domain === 'cover'));
+    const action = detail ? 'set_position' : 'open';
+    const expected = {
+      type:'call_service',domain:'cover',service:detail ? 'set_cover_position' : 'open_cover',
+      target:{entity_id:entity},service_data:detail ? {position:45} : {},
+    };
+    try {
+      await page.goto(base + '/fixture-home/home?' + query + '&locale=en');
+      await page.getByRole('button',{name:title,exact:true}).tap();
+      let panel = page.getByRole('dialog',{name:title,exact:true});
+      if (detail) {
+        await panel.getByRole('button',{name:'Window shade · Device controls',exact:true}).tap();
+        panel = page.getByRole('dialog',{name:'Window shade',exact:true});
+      }
+      await page.evaluate(entity => {
+        window.bayitTest.setFixtureAttributes(entity,{current_position:0});
+        window.bayitTest.setRoomState(entity,'closed');
+      },entity);
+      const tile = panel.locator('.device[data-entity="' + entity + '"]');
+      const selector = 'button[data-action="' + action + '"]';
+      const command = tile.locator(selector);
+      const enabled = tile.locator(selector + ':enabled');
+      const range = tile.locator('input[data-action="set_position"]');
+      const setTarget = async () => {
+        if (detail) await range.fill('45');
+      };
+      await enabled.waitFor();
+      await setTarget();
+      assert.deepEqual(await commands(),[]);
+
+      await command.evaluate((item, id) => {
+        window.bayitTest.setFixtureRegistry(id,{hidden_by:'user'});
+        item.click();
+      }, entity);
+      await tile.getByText('Unavailable',{exact:true}).waitFor();
+      assert.equal(await command.isDisabled(),true);
+      assert.equal(await tile.locator('button[data-action="stop"]').isDisabled(),true);
+      if (detail) assert.equal(await range.isDisabled(),true);
+      assert.deepEqual(await commands(),[]);
+
+      await registry({});
+      await enabled.waitFor();
+      await setTarget();
+      await command.evaluate((item,id) => {
+        const card = document.querySelector('bayit-dashboard');
+        const update = card.update;
+        card.update = function (...args) {
+          this.update = update;
+          window.bayitTest.setFixtureRegistry(id,{disabled_by:'user'});
+          return update.apply(this,args);
+        };
+        item.click();
+      },entity);
+      await tile.getByText('Unavailable',{exact:true}).waitFor();
+      assert.equal(await command.isDisabled(),true);
+      assert.deepEqual(await commands(),[]);
+
+      await registry({});
+      await enabled.waitFor();
+      await setTarget();
+      await command.tap();
+      assert.deepEqual(await commands(),[expected]);
+    } finally { await page.close(); }
+  }
+}
+
 async function assertAdditionalAutomaticRoomDevices(browser) {
   for (const [locale, words] of [
     ['en', { appearance:'Appearance', setup:'Customize home', rooms:'Rooms', room:'Room to customize',
@@ -11917,6 +11992,7 @@ try {
       await guardedRail.close();
       console.log(engine + ': Security cover rails at 320–390 px, exact native details, endpoint and latest confirmation');
       await assertReportedCoverMotion(browser);
+      await assertCoverPopupVisibility(browser);
       await assertCompactSecurityLocks(browser);
     });
 

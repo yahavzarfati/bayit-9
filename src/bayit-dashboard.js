@@ -1232,6 +1232,11 @@ export class BayitDashboard extends HTMLElement {
     return isVisibleEntity(entity, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities);
   }
 
+  coverActionVisible(config, id) {
+    return domainFor(config) !== 'cover' || (!movement.has(id) && id !== 'stop') ||
+      this.shortcutEntityVisible(config.entity);
+  }
+
   quickAction(config, source, room, { details = true, shortcutCurrent } = {}) {
     const model = this.model(config);
     const { domain, state } = model;
@@ -2482,9 +2487,10 @@ export class BayitDashboard extends HTMLElement {
         typeof model.attributes.media_title === 'string'
         ? model.attributes.media_title.trim().slice(0, 160) : '';
       const pending = this.pending.get(view.config.entity);
-      const feedback = this.coverFeedback(model, pending);
+      const coverVisible = model.domain !== 'cover' || this.shortcutEntityVisible(view.config.entity);
+      const feedback = coverVisible && this.coverFeedback(model, pending);
       if (view.compactCover) {
-        view.item.toggleAttribute('data-cover-motion', model.available && coverMovingStates.has(model.state));
+        view.item.toggleAttribute('data-cover-motion', coverVisible && model.available && coverMovingStates.has(model.state));
       }
       if (view.climatePower) {
         const power = view.climatePower;
@@ -2520,7 +2526,9 @@ export class BayitDashboard extends HTMLElement {
         if (observed) action.setAttribute('aria-description', this.t('climate_current_preset').replace('{preset}', this.presetName(active)));
         else action.removeAttribute('aria-description');
       }
-      const deviceStatus = feedback?.requestLabel || this.stateLabel(model, view.inlineClimate ? 'inline-climate' : undefined);
+      const deviceStatus = coverVisible
+        ? feedback?.requestLabel || this.stateLabel(model, view.inlineClimate ? 'inline-climate' : undefined)
+        : this.t('unavailable');
       if (view.vacuumSummary) {
         const stateFor = id => id && isVisibleEntity(id, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities)
           ? this._hass.states[id] : undefined;
@@ -2549,7 +2557,7 @@ export class BayitDashboard extends HTMLElement {
         view.more.setAttribute('aria-description', deviceStatus);
         view.item.dataset.lockState = model.available ? model.state : '';
       }
-      view.state.dataset.tone = feedback ? 'moving' : this.tone(model);
+      view.state.dataset.tone = !coverVisible ? 'quiet' : feedback ? 'moving' : this.tone(model);
       if (view.standaloneBoiler) view.item.toggleAttribute('data-boiler-heating', model.available && model.state === 'on');
       const powerTileAction = view.roomPowerTile && !pending && this.roomPowerTileAction(view.config, model);
       if (view.tileHint !== undefined) {
@@ -2631,7 +2639,8 @@ export class BayitDashboard extends HTMLElement {
         if (control.dataset.lightMode || control.hasAttribute('data-room-mute-placeholder') ||
             control.classList.contains('target-reading')) continue;
         const id = control.dataset.action;
-        control.disabled = !this.canRequest(view.config.entity, id) || (view.compactCover && !allowsCoverRailAction(model, id));
+        control.disabled = !coverVisible || !this.canRequest(view.config.entity, id) ||
+          (view.compactCover && !allowsCoverRailAction(model, id));
       }
       view.special.update(model, pending);
       view.effectGallery?.update(model, this.canRequest(view.config.entity, 'set_effect'));
@@ -3240,7 +3249,8 @@ export class BayitDashboard extends HTMLElement {
 
   requestAction(config, id, value, source, { confirmShortcut = false, compactCover = false, compactDevice = false,
     roomPowerTile = false, shortcutCurrent } = {}) {
-    if ((shortcutCurrent && !shortcutCurrent()) || !this.canRequest(config.entity, id)) return;
+    if (!this.coverActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
+        !this.canRequest(config.entity, id)) return;
     const roomBoilerQuickPower = roomPowerTile && config.room_boiler_quick_power === true;
     const model = this.model(config, { roomBoilerQuickPower });
     const action = model.actions[id];
@@ -3277,7 +3287,8 @@ export class BayitDashboard extends HTMLElement {
   }
 
   async send(config, id, value, { confirmed = false, roomBoilerQuickPower = false, shortcutCurrent } = {}) {
-    if ((shortcutCurrent && !shortcutCurrent()) || !this.canRequest(config.entity, id)) return;
+    if (!this.coverActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
+        !this.canRequest(config.entity, id)) return;
     const model = this.model(config, { roomBoilerQuickPower });
     if (this.staleScriptAction(id, model.actions[id], value) || this.staleUsageReset(config, id, model.actions[id], value) || !model.actions[id]) return;
     const token = { id, value };
@@ -3297,7 +3308,7 @@ export class BayitDashboard extends HTMLElement {
     this.update();
     let confirmedByHomeAssistant = false;
     try {
-      if (shortcutCurrent && !shortcutCurrent()) {
+      if (!this.coverActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent())) {
         this.announce(this.t('unavailable'));
         return;
       }
