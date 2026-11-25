@@ -995,6 +995,16 @@ try {
         await page.getByRole('button', { name: 'Studio', exact: true }).tap();
         const dialog = page.getByRole('dialog');
         await dialog.getByRole('heading', { name: 'Studio' }).waitFor();
+        if (width <= 420) {
+          const roomHeader = await dialog.evaluate(async modal => {
+            await Promise.allSettled(modal.getAnimations().map(animation => animation.finished));
+            const panel = modal.getBoundingClientRect();
+            const close = modal.querySelector('[data-role=close]').getBoundingClientRect();
+            return [panel.left, panel.right, close.width, close.height,
+              panel.right - close.right, close.top - panel.top].map(Math.round);
+          });
+          assert.deepEqual(roomHeader, [16, width - 16, 50, 50, 18, 18]);
+        }
         await dialog.getByRole('button', { name: 'Desk lamp · ' + (locale === 'he' ? 'הדלקה' : 'Turn on'), exact: true }).tap();
         await page.waitForFunction(() => window.bayitTest.calls.length > 0);
         const call = await page.evaluate(() => window.bayitTest.calls[0]);

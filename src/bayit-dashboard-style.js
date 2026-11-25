@@ -468,6 +468,15 @@ export const styles = `
   .modal-header h2 > ha-icon { --mdc-icon-size: 20px; width: 28px; height: 28px; place-items: center; }
   .shell[dir=rtl] .modal-header h2 { direction: rtl; flex-direction: row-reverse; text-align: left; }
   .modal-header > .round-action { flex: 0 0 44px; border-radius: 999px; }
+  @media (max-width: 420px) {
+    .shell[data-page=true] .modal[data-kind=room] { width: calc(100% - 32px); }
+    .shell[data-page=true] .modal[data-kind=room] .modal-header { padding: 17px 17px 11px; }
+    .shell[data-page=true] .modal[data-kind=room] .modal-header h2 { min-height: 50px; }
+    .shell[data-page=true] .modal[data-kind=room] .modal-header > [data-role=close] {
+      flex-basis: 50px;
+      min-block-size: 50px;
+    }
+  }
   .confirm .modal-header h2 { min-height: 0; padding: 0; border: 0; }
   .modal-body { flex: 1 1 auto; min-height: 0; padding: 0 15px 15px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
   .modal[data-kind=room] .modal-body { direction: ltr; }
