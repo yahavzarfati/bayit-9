@@ -1038,6 +1038,17 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
     --state-icon-color: var(--secondary); --accent-color: var(--secondary);
     font-weight: var(--ha-font-weight-normal,400);
   }
+  .toolbar-section[data-section=readings][data-layout=reading-cards] .reading-native-card {
+    grid-template-columns: minmax(0,1fr);
+  }
+  .toolbar-section[data-section=readings][data-layout=reading-cards] .reading-native-card > hui-sensor-card {
+    min-inline-size: 0; max-inline-size: 100%;
+  }
+  @container (max-width: 420px) {
+    .toolbar-section[data-section=readings][data-layout=reading-cards] .reading-native-card > hui-sensor-card {
+      --ha-font-size-l: var(--ha-font-size-m,14px);
+    }
+  }
   .tile-row.weather-history-value {
     direction: ltr; grid-template-columns: minmax(0,1fr) auto; grid-template-areas: "label icon" "value value";
     justify-items: start; align-items: center; align-content: start; gap: 6px;

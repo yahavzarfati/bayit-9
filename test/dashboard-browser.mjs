@@ -799,13 +799,25 @@ if (query.has('toolbar-panels')) {
   if (!query.has('no-native-charts')) window.loadCardHelpers = async () => ({createCardElement(configuration) {
     const graphAction = configuration.tap_action?.action === 'fire-dom-event' && configuration.tap_action;
     const graphMoreInfo = configuration.tap_action?.action === 'more-info' && configuration.entity;
-    const card = document.createElement(graphAction || graphMoreInfo ? 'button' : 'div');
+    const weatherSensor = query.has('weather-native-width') && configuration.type === 'sensor' &&
+      configuration.entity?.startsWith('sensor.demo_weather_history_');
+    const card = document.createElement(weatherSensor ? 'hui-sensor-card' : graphAction || graphMoreInfo ? 'button' : 'div');
     const dialog = document.querySelector('bayit-dashboard')?.shadowRoot.querySelector('.modal[open]');
     card.dataset.duringOpening = String(!!dialog?.getAnimations().some(animation =>
       animation.playState === 'running' || animation.pending));
     card.dataset.nativeType = configuration.type;
     card.dataset.tapAction = configuration.tap_action?.action;
     if (configuration.graph) card.dataset.graphHours = configuration.hours_to_show;
+    if (weatherSensor) {
+      const shadow = card.attachShadow({mode:'open'});
+      shadow.innerHTML = '<style>:host{display:block}.frame{overflow:hidden}.header{display:flex;justify-content:space-between;padding:8px 16px 0;}' +
+        '.name{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font:500 var(--ha-font-size-l,16px)/40px Arial}' +
+        '.icon{flex:0 0 24px;}.plot{height:16px;max-inline-size:100%;}</style>' +
+        '<div class="frame"><div class="header"><span class="name"></span><span class="icon"></span></div><div class="plot"></div></div>';
+      const name = shadow.querySelector('.name');
+      name.textContent = name.title = configuration.name;
+      shadow.querySelector('.plot').style.inlineSize = configuration.entity.endsWith('_temp') ? '164px' : '72px';
+    }
     if (query.has('energy-borderless-theme') && configuration.type === 'sensor') {
       card.style.border = 'var(--ha-card-border-width, 1px) solid var(--ha-card-border-color)';
       card.style.borderRadius = 'var(--ha-card-border-radius, 12px)';
@@ -3463,6 +3475,53 @@ async function assertCompactWeatherReadings(browser) {
       assert.equal(await currentLayout(), undefined);
       await toggle.check();
       assert.equal(await currentLayout(), 'readings-list');
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+async function assertWeatherNativeCardWidth(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:391,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const url = base + '/fixture-home/home?toolbar-panels&weather-history&weather-native-width&locale=' + locale;
+    const weather = he ? 'מזג אוויר' : 'Weather';
+    const dialog = page.getByRole('dialog',{name:weather,exact:true});
+    const native = dialog.locator('[data-section=readings] hui-sensor-card');
+    const open = async flag => {
+      await page.goto(url + flag);
+      await page.getByRole('button',{name:weather,exact:true}).tap();
+      await native.nth(2).waitFor();
+    };
+    const geometry = () => native.evaluateAll(cards=>cards.map(card=>{
+      const outer = card.parentElement.getBoundingClientRect();
+      const inner = card.getBoundingClientRect();
+      const name = card.shadowRoot.querySelector('.name');
+      return {
+        title: name.textContent, accessibleTitle: name.title, fontSize: getComputedStyle(name).fontSize,
+        labelWidth: name.clientWidth, textWidth: name.scrollWidth,
+        outer: outer.width, inner: inner.width, left: inner.left - outer.left, right: outer.right - inner.right,
+      };
+    }));
+    try {
+      await open('');
+      assert.equal((await geometry())[0].fontSize,'16px');
+      await open('&weather-reading-cards');
+      for (const width of [320,391]) {
+        await page.setViewportSize({width,height:844});
+        const cards = await geometry();
+        assert.equal(cards[0].title,he ? 'טמפרטורה חוץ' : 'Outside temperature');
+        assert.ok(cards.every(card=>card.title === card.accessibleTitle &&
+          Math.abs(card.left) < 1 && Math.abs(card.right) < 1 && Math.abs(card.outer - card.inner) < 1),
+        JSON.stringify({locale,width,cards}));
+        assert.deepEqual(cards.map(card=>card.fontSize),['14px','14px','14px']);
+        if (he && width === 391) assert.ok(cards[0].textWidth <= cards[0].labelWidth, JSON.stringify(cards[0]));
+      }
+      await native.first().tap();
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.moreInfoCalls),['sensor.demo_weather_history_temp']);
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.calls),[]);
     } finally {
       await page.close();
     }
@@ -9368,6 +9427,8 @@ try {
       await assertEnergyReadingCards(browser);
       await assertEnergyPopupPlacement(browser);
       console.log(engine + ': optional Energy headline readings, native details, fallback and editor');
+      await assertWeatherNativeCardWidth(browser);
+      console.log(engine + ': native Weather sensor cards shrink to the authored columns');
       await assertWeatherReadingCards(browser);
       console.log(engine + ': authored Weather chart order, readable fallback and editor at phone widths');
       await assertCompactWeatherReadings(browser);
