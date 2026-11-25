@@ -6115,7 +6115,7 @@ async function assertCompactClimateRail(browser) {
         assert.equal(field.visible,showGlyphs, JSON.stringify({locale,width,surface,railWidth,...field}));
         assert.ok(field.matches && field.fits && field.hit && field.labelClear, JSON.stringify({locale,width,surface,railWidth,...field}));
       }
-      if (he && width >= 390) {
+      if (he && width >= 390 && (surface === room || railWidth >= 295)) {
         const swingField = fields[2];
         assert.equal(swingField.lines.length,2, JSON.stringify({locale,width,surface,railWidth,...swingField}));
       }
@@ -6132,19 +6132,34 @@ async function assertCompactClimateRail(browser) {
           assert.equal(await swing.count(),1);
           assert.equal(await visibleSwing.textContent(),he ? 'ללא נדנוד' : 'No swing');
           assert.equal(await visibleSwing.getAttribute('aria-hidden'),'true');
-          const showGlyphs = surface === detail ? four.inlineSize < 287 || four.inlineSize >= 317 : width !== 375;
+          const showGlyphs = surface === detail ? four.inlineSize < 295 || four.inlineSize >= 317 : width !== 375;
           await assertSelectorFields(width,surface,showGlyphs,four.inlineSize);
           if (width >= 390) {
-            // Home Assistant embeds the dashboard with narrower room and popup rails.
+            // The host adds gutters. A wider fallback font must leave room for both 44px stepper buttons.
             const railWidth = width === 390 ? 298.66 : 299.59;
-            await rail.evaluate((row, size) => {
+            await rail.evaluate((row, { size, dedicated }) => {
               row.parentElement.style.inlineSize = size + 'px';
-            },railWidth);
+              if (dedicated) row.querySelector('.target-reading').style.minInlineSize = '54px';
+            }, { size:railWidth, dedicated:surface === detail });
             await assertSelectorFields(width,surface,surface === room,railWidth);
             const app = await geometry();
             assert.deepEqual(app.rows,[4]);
             assert.ok(Math.abs(app.inlineSize - railWidth) < .5, JSON.stringify({width,surface,railWidth,...app}));
             assert.ok(app.allInside && app.timerAfter && app.targetFits, JSON.stringify({locale,width,surface,railWidth,...app}));
+            if (surface === detail) {
+              assert.ok(app.targetWidths[1] >= 54);
+              const targetButtonsFit = await rail.locator('.step-control').evaluateAll(buttons =>
+                buttons.length === 2 && buttons.every(button => {
+                  const { width, height } = button.getBoundingClientRect();
+                  return width >= 44 && height >= 44;
+                }));
+              assert.ok(targetButtonsFit);
+              await rail.evaluate(row => { row.parentElement.style.inlineSize = '291px'; });
+              await assertSelectorFields(width,surface,true,291);
+              const wrapped = await geometry();
+              assert.deepEqual(wrapped.rows,[2,2]);
+              assert.ok(wrapped.allInside && wrapped.timerAfter && wrapped.targetFits, JSON.stringify({locale,width,surface,...wrapped}));
+            }
           }
           const power = page.locator('dialog[open] .room-climate-power:enabled');
           assert.equal(await power.count(),1);

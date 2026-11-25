@@ -430,12 +430,22 @@ export const panelControlStyles = `
   .modal[data-standalone-climate] .compact-climate-rail .step-control { flex: 0 0 44px; min-width: 44px; }
   /* WebKit can let the invisible native select text overflow the bounded visual caption. */
   .modal[data-standalone-climate] .compact-climate-rail .climate-selector { overflow: clip; }
-  @container bayit-climate-rail (min-width: 287px) and (width < 317px) {
+  @container bayit-climate-rail (min-width: 287px) and (width < 295px) {
+    .modal[data-standalone-climate] .climate-controls[data-control-count="4"] { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .modal[data-standalone-climate] .climate-controls[data-control-count="4"] .climate-selector > ha-icon:not(.climate-selector-chevron) {
+      display: inline-grid;
+    }
+  }
+  @container bayit-climate-rail (min-width: 295px) and (width < 317px) {
+    .modal[data-standalone-climate] .climate-controls[data-control-count="4"] {
+      /* Keep both 44px temperature buttons and room for the widest normal setpoint. */
+      grid-template-columns: var(--climate-first-column) repeat(3,minmax(46px,1fr)); gap: 4px;
+    }
     .modal[data-standalone-climate] .climate-controls[data-control-count="4"] .climate-selector > ha-icon:not(.climate-selector-chevron) {
       display: none;
     }
   }
-  @container bayit-climate-rail (min-width: 317px) and (max-width: 336px) {
+  @container bayit-climate-rail (min-width: 295px) and (max-width: 336px) {
     .modal[data-standalone-climate] .climate-controls[data-control-count="4"] .climate-selector { gap: 0; padding-inline: 1px; }
     .modal[data-standalone-climate] .climate-controls[data-control-count="4"] .climate-selector-chevron {
       width: 9px; height: 9px; --mdc-icon-size: 9px;
