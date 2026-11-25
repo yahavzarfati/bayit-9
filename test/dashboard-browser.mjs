@@ -1095,6 +1095,44 @@ async function assertNativeRoomCoverHeader(browser) {
   }
 }
 
+async function assertSetupFooterLayout(browser) {
+  const page = await browser.newPage({ viewport: { width: 391, height: 845 }, reducedMotion: 'reduce' });
+  try {
+    await page.goto(base + '/fixture-home/home?configuration');
+    const editor = page.getByRole('dialog', { name: 'Customize home', exact: true });
+    const open = async () => {
+      await page.getByRole('button', { name: 'Appearance', exact: true }).click();
+      await page.getByRole('button', { name: 'Customize home', exact: true }).click();
+      await editor.getByText('Rooms', { exact: true }).click();
+    };
+    await open();
+    const name = editor.getByRole('textbox', { name: 'Room display name', exact: true });
+    const save = editor.getByRole('button', { name: 'Save dashboard', exact: true });
+    const body = editor.locator('.modal-body');
+    const footer = editor.locator('.setup-footer');
+    for (const [width, height] of [[391, 845], [320, 667]]) {
+      await page.setViewportSize({ width, height });
+      await name.evaluate(field => field.scrollIntoView({ block: 'center' }));
+      const [fieldRect, bodyRect, controlsRect] = await Promise.all(
+        [name.boundingBox(), body.boundingBox(), footer.boundingBox()]);
+      assert.ok(fieldRect.y >= bodyRect.y && fieldRect.y + fieldRect.height <= controlsRect.y,
+        'The footer must leave the room name reachable');
+      assert.ok(bodyRect.y + bodyRect.height <= controlsRect.y + 1, 'The footer must be outside the scroll viewport');
+      await page.mouse.click(fieldRect.x + fieldRect.width / 2, fieldRect.y + fieldRect.height / 2);
+      assert.equal(await name.evaluate(field => field.getRootNode().activeElement === field), true);
+    }
+    await page.keyboard.type('Draft studio');
+    await editor.getByRole('button', { name: 'Close', exact: true }).click();
+    await editor.waitFor({ state: 'hidden' });
+    await open();
+    assert.equal(await name.inputValue(), 'Draft studio');
+    assert.equal(await save.isEnabled(), true);
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'lovelace/config/save')), []);
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertSetupDrafts(browser) {
   const page = await browser.newPage({
     viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce',
@@ -1522,6 +1560,8 @@ try {
       console.log(engine + ': native room cover header, focus restoration, editor and device isolation');
       await assertHeaderRoomLayout(browser);
       console.log(engine + ': top-title room layout, shortcut lanes and keyboard focus');
+      await assertSetupFooterLayout(browser);
+      console.log(engine + ': setup footer stays clear of the scrollable editor');
       await assertSetupDrafts(browser);
       console.log(engine + ': setup drafts survive closing, preserve conflicts, and retry safely');
       const quietPage = await browser.newPage({

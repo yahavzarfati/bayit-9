@@ -534,16 +534,14 @@ export const styles = `
     --secondary-text-color: var(--secondary);
     --card-background-color: var(--surface);
   }
-  .setup-footer {
-    position: sticky;
-    inset-block-end: 0;
-    z-index: 1;
+  .modal > .setup-footer {
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 8px;
     min-width: 0;
-    margin-block-start: 10px;
+    margin: 0 15px 15px;
     padding: 8px;
     border: 1px solid var(--soft-line);
     border-radius: 12px;

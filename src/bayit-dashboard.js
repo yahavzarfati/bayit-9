@@ -410,6 +410,7 @@ const layout = `
       <div class="modal-body"><div data-role="content"></div>
         <div class="notice" data-role="modal-notice" role="status" aria-atomic="true"></div>
       </div>
+      <div class="setup-footer" data-role="setup-footer" hidden></div>
     </dialog>
     <dialog class="modal confirm">
       <header class="modal-header"><h2></h2></header>
@@ -435,7 +436,7 @@ export class BayitDashboard extends HTMLElement {
       roomScroll: get('.room-scroll'), rooms: get('.rooms'), empty: get('.empty'), title: get('h1'),
       back: role('back'), close: role('close'),
       modal: get('dialog:not(.confirm)'), modalTitle: get('dialog:not(.confirm) h2'),
-      modalBody: get('dialog:not(.confirm) .modal-body'), content: role('content'),
+      modalBody: get('dialog:not(.confirm) .modal-body'), content: role('content'), setupFooter: role('setup-footer'),
       confirm: get('.confirm'), confirmTitle: get('.confirm h2'), confirmText: get('.confirmation-text'),
       accept: role('accept'), abort: role('abort'), pageNotice: role('page-notice'), modalNotice: role('modal-notice'),
     };
@@ -1212,6 +1213,8 @@ export class BayitDashboard extends HTMLElement {
       routeHash: navigation.hash ?? this.panel?.routeHash };
     this.panel = panel;
     n.back.hidden = !returnTo;
+    n.setupFooter.hidden = true;
+    n.setupFooter.replaceChildren();
     this.setup = null;
     this.toolbarPanel?.dispose();
     this.wallpaperGallery?.dispose();
@@ -1299,6 +1302,8 @@ export class BayitDashboard extends HTMLElement {
     const routeHash = this.panel?.routeHash;
     if (this.panel?.type === 'room') this.roomScroll.set(this.panel.room.id, n.modalBody.scrollTop);
     n.back.hidden = true;
+    n.setupFooter.hidden = true;
+    n.setupFooter.replaceChildren();
     this.panel = null;
     this.setup = null;
     this.toolbarPanel?.dispose();
@@ -1812,7 +1817,9 @@ export class BayitDashboard extends HTMLElement {
 
   async paintSetup() {
     const page = this.panel;
-    const content = this.nodes.content;
+    const { content, setupFooter } = this.nodes;
+    setupFooter.hidden = true;
+    setupFooter.replaceChildren();
     const status = make('p', 'setup-status', this.t('setup_loading'));
     status.setAttribute('role', 'status');
     content.className = 'setup-page';
@@ -1901,11 +1908,11 @@ export class BayitDashboard extends HTMLElement {
           if (this.panel === page && !saved) updateActions();
         }
       };
-      const footer = make('div', 'setup-footer');
       status.textContent = conflict ? this.t('setup_draft_conflict') : restored ? this.t('setup_draft_restored') : '';
       updateActions();
-      footer.append(status, save, discard);
-      content.replaceChildren(editor, footer);
+      content.replaceChildren(editor);
+      setupFooter.replaceChildren(status, save, discard);
+      setupFooter.hidden = false;
     } catch (error) {
       if (this.panel === page) status.textContent = this.configurationErrorText(error);
     }
