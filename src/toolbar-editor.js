@@ -39,7 +39,7 @@ const WORDS = {
     graphDestination: 'Open on graph tap', noGraphLink: 'No shortcut', graphLinkUnavailable: 'Destination unavailable', graphRoom: 'Room',
     runScript: 'Run script from this button',
     scriptButton: 'Script button behavior', scriptStartOnly: 'Start script only', scriptToggle: 'Start or stop script',
-    mediaRemote: 'Media remote', mediaTransport: 'Playback device', mediaVolume: 'Volume device',
+    mediaRemote: 'Media remote', mediaTransport: 'Playback device', mediaVolume: 'Volume device', mediaPower: 'Power device',
     mediaStandby: 'Show remote controls in standby',
     mediaStage: 'Large Now Playing artwork', mediaStageSource: 'Artwork and playback source',
     mediaStageIcon: 'Fallback artwork icon',
@@ -103,6 +103,7 @@ const WORDS = {
     runScript: 'הפעלת התסריט מהכפתור',
     scriptButton: 'פעולת כפתור התרחיש', scriptStartOnly: 'הפעלת תרחיש בלבד', scriptToggle: 'הפעלה או עצירה של תרחיש',
     mediaRemote: 'שלט מדיה', mediaTransport: 'מכשיר לניגון', mediaVolume: 'מכשיר לעוצמת שמע',
+    mediaPower: 'מכשיר להפעלה וכיבוי',
     mediaStandby: 'הצגת פקדי השלט במצב המתנה',
     mediaStage: 'עטיפה גדולה לתוכן שמתנגן', mediaStageSource: 'מקור העטיפה ופרטי הניגון',
     mediaStageIcon: 'סמל כשאין עטיפה',
@@ -790,7 +791,9 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     const players = candidates.filter(item => item.entity.startsWith('media_player.'))
       .map(item => [item.entity, item.name || item.entity]);
     const save = (edits, focus) => changeEntry({ media_remote: normalizeMediaRemote({ ...settings, ...edits }) }, true, focus);
-    const fields = [['transport_entity', words.mediaTransport], ['volume_entity', words.mediaVolume]].map(([key, title]) => {
+    const fields = [
+      ['transport_entity', words.mediaTransport], ['volume_entity', words.mediaVolume], ['power_entity', words.mediaPower],
+    ].map(([key, title]) => {
       const choices = [['', words.choose], ...players];
       const current = settings[key];
       if (current && !players.some(([entity]) => entity === current)) choices.push([current, current + ' · ' + words.unavailable]);

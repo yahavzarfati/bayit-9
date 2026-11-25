@@ -237,48 +237,74 @@ export function createToolbarPanel(kind, configuration, context) {
     const panel = make('section', 'toolbar-section media-remote');
     panel.append(make('h3', 'toolbar-section-title', t('media_remote')));
     const empty = make('p', 'empty', t('media_remote_unavailable'));
+    const profiles = Object.fromEntries(['transport', 'volume', 'power'].flatMap(role => {
+      const entity = settings[role + '_entity'];
+      return entity ? [[role, { entity, media_remote_role: role, media_remote_standby: settings.allow_standby }]] : [];
+    }));
+    const volumeDown = ['volume', 'mdi:volume-minus', 'volume_down'];
+    const volumeUp = ['volume', 'mdi:volume-plus', 'volume_up'];
+    const mute = [
+      ['volume', 'mdi:volume-mute', 'mute'], ['volume', 'mdi:volume-high', 'unmute'],
+    ];
     const rows = [
-      ['transport', settings.transport_entity, [
-        ['media_previous_track', 'mdi:skip-previous'], ['media_play_pause', 'mdi:play-pause'], ['media_next_track', 'mdi:skip-next'],
+      ['transport', [
+        ['transport', 'mdi:skip-previous', 'media_previous_track'],
+        ['transport', 'mdi:play-pause', 'media_play_pause'],
+        ['transport', 'mdi:skip-next', 'media_next_track'],
       ]],
-      ['volume', settings.volume_entity, [
-        ['volume_down', 'mdi:volume-minus'], ['mute', 'mdi:volume-mute'], ['unmute', 'mdi:volume-high'], ['volume_up', 'mdi:volume-plus'],
-      ]],
-    ].flatMap(([role, entity, keys]) => {
-      if (!entity) return [];
-      const config = { entity, media_remote_role: role, media_remote_standby: settings.allow_standby };
+      [profiles.volume ? 'volume' : 'power', profiles.power ? [
+        ['power', 'mdi:power', 'turn_on', 'turn_off'], volumeDown, volumeUp, ...mute,
+      ] : [volumeDown, ...mute, volumeUp]],
+    ].flatMap(([groupRole, keys]) => {
+      if (!profiles[groupRole]) return [];
       const group = make('div', 'media-remote-group');
       group.setAttribute('role', 'group');
-      const visible = hass => isVisibleEntity(entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities);
-      const controls = keys.map(([action, glyph]) => {
-        const control = button('control-button media-remote-key', t(action), glyph, true);
+      const controls = keys.flatMap(([role, glyph, ...actions]) => {
+        const config = profiles[role];
+        if (!config) return [];
+        const { entity } = config;
+        const power = role === 'power';
+        const control = button('control-button media-remote-key', t(actions[0]), glyph, true);
+        const enabledAction = (hass, model) => {
+          if (!isVisibleEntity(entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities)) return;
+          return actions.find(action => {
+            const planned = model.actions[action];
+            return planned && mediaServiceRegistered(hass, planned.service ?? action);
+          });
+        };
+        let displayedAction;
         control.onclick = () => {
-          const hass = context.getHass();
-          const planned = visible(hass) && modelFor(config).actions[action];
-          if (planned && mediaServiceRegistered(hass, planned.service ?? action) && !pending(entity)) {
-            request(config, action, undefined, control);
+          if (displayedAction && !pending(entity) &&
+              displayedAction === enabledAction(context.getHass(), modelFor(config))) {
+            request(config, displayedAction, undefined, control);
           }
         };
-        return { action, control };
+        const update = model => {
+          displayedAction = enabledAction(currentHass, model);
+          const waiting = pending(entity);
+          control.hidden = !displayedAction;
+          control.disabled = control.hidden || waiting;
+          if (power) {
+            label(control, t('media_power') + ' · ' + model.name);
+            control.setAttribute('aria-pressed', String(displayedAction === 'turn_off'));
+            control.setAttribute('aria-busy', String(waiting));
+          }
+          return !control.hidden;
+        };
+        return [{ role, control, update }];
       });
       group.append(...controls.map(({ control }) => control));
       panel.append(group);
-      return [{ config, group, controls, visible }];
+      return [{ groupRole, group, controls }];
     });
     panel.append(empty);
     handlers.push(() => {
+      const models = Object.fromEntries(Object.entries(profiles).map(([role, config]) => [role, modelFor(config)]));
       let available = false;
-      for (const { config, group, controls, visible } of rows) {
-        const model = modelFor(config);
-        const allowed = visible(currentHass);
-        group.setAttribute('aria-label', model.name);
+      for (const { groupRole, group, controls } of rows) {
+        group.setAttribute('aria-label', models[groupRole].name);
         let shown = false;
-        for (const { action, control } of controls) {
-          const planned = allowed && model.actions[action];
-          control.hidden = !(planned && mediaServiceRegistered(currentHass, planned.service ?? action));
-          control.disabled = control.hidden || pending(config.entity);
-          shown ||= !control.hidden;
-        }
+        for (const { role, update } of controls) shown = update(models[role]) || shown;
         group.hidden = !shown;
         available ||= shown;
       }
@@ -747,6 +773,9 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
   .media-remote-group:not([hidden]) + .media-remote-group { margin-block-start: 8px; }
   .media-remote-group[hidden], .media-remote-key[hidden] { display: none; }
   .media-remote-key { min-height: 44px; justify-content: center; }
+  .media-remote-group > .media-remote-key[aria-pressed=true] {
+    color: var(--moving); border-color: var(--moving); box-shadow: none;
+  }
   .toolbar-section:is([data-section=actions],[data-section=people],[data-section=electricity],[data-section=water],[data-section=readings]) .toolbar-section-items {
     grid-template-columns: repeat(2,minmax(0,1fr));
   }

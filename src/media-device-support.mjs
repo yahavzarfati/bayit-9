@@ -1,12 +1,14 @@
 const MEDIA = { pause: 1, volume: 4, mute: 8, previous: 16, next: 32, on: 128, off: 256,
   volume_step: 1024, source: 2048, stop: 4096, play: 16384 };
+const MEDIA_ON_STATES = ['on', 'idle', 'playing', 'paused', 'buffering'];
+const MEDIA_STANDBY_STATES = ['off', 'standby'];
 const VACUUM = { pause: 4, stop: 8, dock: 16, speed: 32, locate: 512, start: 8192 };
 
 const MEDIA_ENTITY = /^media_player\.[a-z0-9_]+$/;
 
 export function normalizeMediaRemote(value, visible = () => true) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const remote = Object.fromEntries(['transport_entity', 'volume_entity'].flatMap(key => {
+  const remote = Object.fromEntries(['transport_entity', 'volume_entity', 'power_entity'].flatMap(key => {
     const entity = value[key];
     return typeof entity === 'string' && MEDIA_ENTITY.test(entity) && visible(entity) ? [[key, entity]] : [];
   }));
@@ -18,7 +20,7 @@ export function mediaServiceRegistered(hass, service) {
   return !!registered && Object.hasOwn(registered, service);
 }
 
-function addRemoteActions(role, attributes, supports, add) {
+function addRemoteActions(role, state, attributes, supports, add) {
   const remote = (id, fields) => add(id, { requiresMediaService: true, ...fields });
   if (role === 'transport') {
     if (supports(MEDIA.previous)) remote('media_previous_track');
@@ -33,6 +35,9 @@ function addRemoteActions(role, attributes, supports, add) {
       remote(attributes.is_volume_muted ? 'unmute' : 'mute', { service: 'volume_mute',
         fixedData: { is_volume_muted: !attributes.is_volume_muted } });
     }
+  } else if (role === 'power') {
+    if (MEDIA_STANDBY_STATES.includes(state) && supports(MEDIA.on)) remote('turn_on');
+    if (MEDIA_ON_STATES.includes(state) && supports(MEDIA.off)) remote('turn_off');
   }
 }
 
@@ -40,9 +45,12 @@ export function addSpecialDeviceActions(config, record, supports, add, options) 
   const attributes = record.attributes ?? {};
   const state = record.state;
   if (config.domain === 'media_player') {
-    const standby = state === 'off' || state === 'standby';
-    if (config.media_remote_role) {
-      if (!standby || config.media_remote_standby === true) addRemoteActions(config.media_remote_role, attributes, supports, add);
+    const standby = MEDIA_STANDBY_STATES.includes(state);
+    const role = config.media_remote_role;
+    if (role) {
+      if (role === 'power' || !standby || config.media_remote_standby === true) {
+        addRemoteActions(role, state, attributes, supports, add);
+      }
       return;
     }
     if (standby) {
@@ -87,8 +95,8 @@ export function specialDeviceRequest(config, action, value) {
   const anyState = (...values) => ({ entity, anyState: values });
   const attribute = (name, target, tolerance) => ({ entity, attributes: { [name]: target }, tolerance });
   switch (action.id) {
-    case 'turn_on': return config.domain === 'media_player' ? { expected: anyState('on','idle','playing','paused','buffering') } : null;
-    case 'turn_off': return config.domain === 'media_player' ? { expected: anyState('off','standby') } : null;
+    case 'turn_on': return config.domain === 'media_player' ? { expected: anyState(...MEDIA_ON_STATES) } : null;
+    case 'turn_off': return config.domain === 'media_player' ? { expected: anyState(...MEDIA_STANDBY_STATES) } : null;
     case 'media_play': return { expected: state('playing') };
     case 'media_pause': return { expected: state('paused') };
     case 'media_stop': return { expected: anyState('idle','off','standby') };

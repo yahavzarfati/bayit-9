@@ -590,6 +590,13 @@ if (query.has('toolbar-panels')) {
       media_previous_track: {}, media_next_track: {}, volume_up: {}, volume_down: {}, volume_mute: {},
       ...(query.has('missing-play-pause') ? {} : { media_play_pause: {} }),
     } };
+    if (query.has('media-power')) {
+      states['media_player.demo_screen'] = { state: 'standby',
+        attributes: { friendly_name: 'Display', supported_features: 384 } };
+      if (!query.has('missing-power-on')) hass.services.media_player.turn_on = {};
+      hass.services.media_player.turn_off = {};
+      tv.attributes.is_volume_muted = false;
+    }
   }
   hass.entities['sensor.demo_studio_temperature'] = { area_id: 'studio' };
   if (!query.has('no-native-charts')) window.loadCardHelpers = async () => ({createCardElement(configuration) {
@@ -788,7 +795,9 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     {id:'media-panel',kind:'media',placement:linkedPanels ? 'linked' : 'settings',
       ...(linkedPanels && { label:hass.locale.language === 'he' ? 'מדיה מקושרת' : 'Linked Media' }),
       ...(query.has('media-remote') && { media_remote: {
-        transport_entity: 'media_player.demo_speaker', volume_entity: 'media_player.demo_tv',
+        transport_entity: 'media_player.demo_speaker',
+        ...(!query.has('power-only') && { volume_entity: 'media_player.demo_tv' }),
+        ...(query.has('media-power') && { power_entity: 'media_player.demo_screen' }),
         allow_standby: !query.has('active-only'),
       } }),
       sections:[
@@ -872,6 +881,14 @@ window.bayitTest = {
   setRoomState(entity, state) {
     states[entity] = { ...states[entity], state };
     card.hass = { ...hass, states: { ...states } };
+  },
+  setMediaPowerSnapshot({ state = 'standby', features = 384, hidden = false, registered = true } = {}) {
+    const entity = 'media_player.demo_screen';
+    states[entity].state = state;
+    states[entity].attributes.supported_features = features;
+    hass.entities[entity] = { hidden };
+    if (registered) hass.services.media_player.turn_on = {};
+    else delete hass.services.media_player.turn_on;
   },
   setFixtureAttributes(entity, attributes) {
     states[entity] = { ...states[entity], attributes: { ...states[entity].attributes, ...attributes } };
@@ -1873,6 +1890,104 @@ async function assertCompactWeatherReadings(browser) {
   }
 }
 
+async function assertMediaRemotePower(browser) {
+  for (const locale of ['en', 'he']) {
+    const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+    page.setDefaultTimeout(8000);
+    const rtl = locale === 'he';
+    const url = base + '?toolbar-panels&media-remote&locale=' + locale;
+    const media = rtl ? 'מדיה' : 'Media';
+    const openRemote = async flags => {
+      await page.goto(url + flags);
+      await page.getByRole('button', { name: rtl ? 'מראה' : 'Appearance', exact: true }).tap();
+      await page.getByRole('button', { name: media, exact: true }).tap();
+      return page.getByRole('dialog', { name: media, exact: true }).locator('.media-remote');
+    };
+    const commandLog = () => page.evaluate(() => window.bayitTest.calls);
+    const updateState = state => page.evaluate(value => window.bayitTest.setRoomState('media_player.demo_screen', value), state);
+    const updateFeatures = features => page.evaluate(value => window.bayitTest.setFixtureAttributes(
+      'media_player.demo_screen', { supported_features: value }), features);
+    const rowIcons = group => group.locator('button:visible ha-icon').evaluateAll(nodes =>
+      nodes.map(node => node.getAttribute('icon')));
+    try {
+      const remote = await openRemote('&media-power');
+      const row = remote.getByRole('group', { name: 'Television', exact: true });
+      const label = (rtl ? 'הפעלה וכיבוי' : 'Power') + ' · Display';
+      const power = remote.getByRole('button', { name: label, exact: true });
+      const ready = pressed => remote.locator('.media-remote-key[aria-pressed="' + pressed + '"]:enabled');
+      await ready(false).waitFor();
+      assert.deepEqual(await rowIcons(row), ['mdi:power', 'mdi:volume-minus', 'mdi:volume-plus', 'mdi:volume-mute']);
+      const keys = await row.locator('button:visible').evaluateAll(nodes => nodes.map(node => {
+        const { x, y, width, height } = node.getBoundingClientRect();
+        return { x, y, width, height };
+      }));
+      assert.ok(keys.every((key, i) => key.width >= 44 && key.height >= 44 && key.y === keys[0].y &&
+        (i === 0 || key.x > keys[i - 1].x)));
+      await power.evaluate(button => {
+        for (const change of [{ state: 'on' }, { features: 256 }, { hidden: true }, { registered: false }]) {
+          window.bayitTest.setMediaPowerSnapshot(change);
+          button.click();
+        }
+        window.bayitTest.setMediaPowerSnapshot();
+      });
+      assert.deepEqual(await commandLog(), [], 'A stale, unsupported, hidden, or unregistered power control sends nothing');
+
+      await power.tap();
+      await page.waitForFunction(() => window.bayitTest.calls.length === 1);
+      assert.equal(await power.getAttribute('aria-pressed'), 'false');
+      assert.equal(await power.getAttribute('aria-busy'), 'true');
+      await updateState('playing');
+      await ready(true).waitFor();
+      await power.tap();
+      await page.waitForFunction(() => window.bayitTest.calls.length === 2);
+      assert.equal(await power.getAttribute('aria-pressed'), 'true');
+      await updateState('off');
+      await ready(false).waitFor();
+      assert.deepEqual(await commandLog(), ['turn_on', 'turn_off'].map(service => ({
+        type: 'call_service', domain: 'media_player', service,
+        target: { entity_id: 'media_player.demo_screen' }, service_data: {},
+      })));
+      await updateFeatures(256);
+      await power.waitFor({ state: 'hidden' });
+      await updateState('idle');
+      await ready(true).waitFor();
+      await updateState('unknown');
+      await power.waitFor({ state: 'hidden' });
+      await updateState('unavailable');
+      assert.equal(await power.count(), 0);
+      assert.equal((await commandLog()).length, 2);
+
+      const noService = await openRemote('&media-power&missing-power-on');
+      assert.equal(await noService.getByRole('button', { name: label, exact: true }).count(), 0);
+      const powerOnly = await openRemote('&media-power&active-only&power-only');
+      await powerOnly.getByRole('group', { name: 'Display', exact: true }).getByRole('button', { name: label, exact: true }).waitFor();
+
+      const legacy = await openRemote('');
+      const legacyRow = legacy.getByRole('group', { name: 'Television', exact: true });
+      await page.evaluate(() => window.bayitTest.setFixtureAttributes('media_player.demo_tv', { is_volume_muted: false }));
+      assert.deepEqual(await rowIcons(legacyRow), ['mdi:volume-minus', 'mdi:volume-mute', 'mdi:volume-plus']);
+      assert.equal(await power.count(), 0);
+      if (rtl) continue;
+
+      await page.goto(url + '&media-power&editor');
+      await page.getByText('Toolbar and extra screens', { exact: true }).tap();
+      await page.getByRole('button', { name: media, exact: true }).tap();
+      const picker = page.getByLabel('Power device', { exact: true });
+      const currentSettings = () => page.evaluate(() => window.latest.toolbar.find(item => item.kind === 'media').media_remote);
+      assert.equal(await picker.inputValue(), 'media_player.demo_screen');
+      await picker.selectOption('');
+      assert.equal((await currentSettings()).power_entity, undefined);
+      await picker.selectOption('media_player.demo_tv');
+      assert.deepEqual(await currentSettings(), {
+        transport_entity: 'media_player.demo_speaker', volume_entity: 'media_player.demo_tv',
+        power_entity: 'media_player.demo_tv', allow_standby: true,
+      });
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
@@ -2603,6 +2718,8 @@ try {
         { transport_entity: 'media_player.demo_tv', volume_entity: 'media_player.demo_tv', allow_standby: true });
       await remotePage.close();
       console.log(engine + ': explicit media remote targets, standby, combined play/pause, and observed mute');
+      await assertMediaRemotePower(browser);
+      console.log(engine + ': optional media power, exact source, status, services, row order and editor');
 
       const editorPage = await browser.newPage({ viewport: {width: 390, height: 844} });
       await editorPage.goto(base + '?editor&heater-level');

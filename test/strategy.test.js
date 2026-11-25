@@ -114,17 +114,22 @@ test('normalizes only visible media remote targets on Media destinations', () =>
   Object.assign(hass.states, {
     'media_player.demo_transport': { state: 'off', attributes: {} },
     'media_player.demo_hidden_volume': { state: 'on', attributes: {} },
+    'media_player.demo_screen': { state: 'standby', attributes: {} },
   });
   hass.entities ??= {};
   hass.entities['media_player.demo_hidden_volume'] = { hidden: true };
   const card = generateDashboard({ toolbar: [
     { kind: 'media', media_remote: { transport_entity: 'media_player.demo_transport',
       volume_entity: 'media_player.demo_hidden_volume', allow_standby: true, command: 'ignored' } },
-    { kind: 'vacuum', media_remote: { transport_entity: 'media_player.demo_transport' } },
-    { kind: 'media', media_remote: { transport_entity: 'light.living_room', volume_entity: 'media_player.missing' } },
+    { kind: 'vacuum', media_remote: { transport_entity: 'media_player.demo_transport', power_entity: 'media_player.demo_screen' } },
+    { kind: 'media', media_remote: { transport_entity: 'light.living_room', volume_entity: 'media_player.missing',
+      power_entity: 'media_player.demo_hidden_volume' } },
+    { kind: 'media', media_remote: { power_entity: 'media_player.demo_screen' } },
+    { kind: 'media', media_remote: { power_entity: 'switch.demo_screen' } },
   ] }, hass).views[0].cards[0];
   assert.deepEqual(card.toolbar.map(item => item.media_remote), [
     { transport_entity: 'media_player.demo_transport', allow_standby: true }, undefined, undefined,
+    { power_entity: 'media_player.demo_screen', allow_standby: false }, undefined,
   ]);
 });
 

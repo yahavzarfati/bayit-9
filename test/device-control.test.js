@@ -130,6 +130,47 @@ test("opt-in media remote isolates transport, volume, real services and standby"
   ]);
 });
 
+test("remote power issues an explicit supported command according to reported media state", async () => {
+  const display = config("media_player.fixture_screen", { media_remote_role: "power" });
+  const powerFlags = 128 | 256 | 1024;
+  const states = {};
+  for (const [operation, reportedStates] of [
+    ["turn_on", ["off", "standby"]],
+    ["turn_off", ["on", "idle", "playing", "paused", "buffering"]],
+  ]) {
+    for (const state of reportedStates) {
+      states[display.entity] = entity(state, { supported_features: powerFlags });
+      assert.deepEqual(actionIds(getDeviceModel(display, states)), ["more_info", operation]);
+      assert.equal(planDeviceAction(display, states, operation).requiresMediaService, true);
+    }
+  }
+  for (const [state, features] of [
+    ["unknown", powerFlags], ["unavailable", powerFlags], ["starting", powerFlags],
+    ["off", 256], ["on", 128],
+  ]) {
+    states[display.entity] = entity(state, { supported_features: features });
+    assert.deepEqual(actionIds(getDeviceModel(display, states)), ["more_info"]);
+  }
+  assert.throws(() => getDeviceModel(config("switch.fixture_screen", { media_remote_role: "power" }), states), code("invalid_config"));
+
+  const calls = [];
+  const services = { media_player: {} };
+  const controller = createDeviceController({ getHass: () => ({ states, services, callWS: request => {
+    calls.push(request);
+    states[display.entity].state = request.service === "turn_on" ? "idle" : "standby";
+  } }) });
+  states[display.entity] = entity("standby", { supported_features: powerFlags });
+  await assert.rejects(controller.execute(display, "turn_on"), code("service_unavailable"));
+  assert.deepEqual(calls, []);
+  services.media_player = { turn_on: {}, turn_off: {} };
+  assert.equal((await controller.execute(display, "turn_on")).status, "confirmed");
+  await assert.rejects(controller.execute(display, "turn_on"), code("action_unavailable"));
+  assert.equal((await controller.execute(display, "turn_off")).status, "confirmed");
+  assert.deepEqual(calls, ["turn_on", "turn_off"].map(service => ({
+    type: "call_service", domain: "media_player", service, target: { entity_id: display.entity }, service_data: {},
+  })));
+});
+
 test("light brightness appears only when the light supports it", () => {
   const dim = config("light.task");
   const simple = config("light.basic");

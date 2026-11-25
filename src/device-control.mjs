@@ -122,7 +122,7 @@ function normalizedConfig(config) {
     throw new DeviceControlError("invalid_config", "Fan heating level feedback requires a numeric helper.");
   }
   if (config.media_remote_role !== undefined &&
-      (domain !== "media_player" || !["transport", "volume"].includes(config.media_remote_role))) {
+      (domain !== "media_player" || !["transport", "volume", "power"].includes(config.media_remote_role))) {
     throw new DeviceControlError("invalid_config", "A media remote target requires a media player and a valid role.");
   }
   const timed = timedProfile(config.timed, domain, kind);
