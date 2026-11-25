@@ -43,6 +43,10 @@ function observeScript(state) {
   card.hass = { ...hass, states: { ...states } };
 }
 const query = new URL(location.href).searchParams;
+if (query.has('energy-borderless-theme')) {
+  document.documentElement.style.setProperty('--ha-card-border-width', '0px');
+  document.documentElement.style.setProperty('--ha-card-border-radius', '20px');
+}
 if (query.has('overview-climate-discovery')) {
   for (const [id, name, state] of [
     ['fixture_lounge', 'Alpha thermostat', 'cool'],
@@ -750,6 +754,10 @@ if (query.has('toolbar-panels')) {
     card.dataset.nativeType = configuration.type;
     card.dataset.tapAction = configuration.tap_action?.action;
     if (configuration.graph) card.dataset.graphHours = configuration.hours_to_show;
+    if (query.has('energy-borderless-theme') && configuration.type === 'sensor') {
+      card.style.border = 'var(--ha-card-border-width, 1px) solid var(--ha-card-border-color)';
+      card.style.borderRadius = 'var(--ha-card-border-radius, 12px)';
+    }
     if (query.has('energy-readings') && configuration.type === 'sensor' && !configuration.graph) {
       card.dataset.sensorIcon = configuration.icon ?? '';
       card.dataset.holdAction = configuration.hold_action?.action;
@@ -3418,7 +3426,7 @@ async function assertEnergyReadingCards(browser) {
     const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
     page.setDefaultTimeout(8000);
     const energy = locale === 'he' ? 'אנרגיה' : 'Energy';
-    const url = base + '/fixture-home/home?toolbar-panels&energy-readings&locale=' + locale;
+    const url = base + '/fixture-home/home?toolbar-panels&energy-readings&energy-borderless-theme&locale=' + locale;
     const open = async flags => {
       await page.goto(url + flags);
       await page.getByRole('button', { name: energy, exact: true }).tap();
@@ -3440,6 +3448,24 @@ async function assertEnergyReadingCards(browser) {
       await water.locator('[data-native-type=sensor]:not([data-graph-hours])').waitFor();
       assert.equal(await water.getByRole('button', { name: /^Meter warning/ }).getAttribute('data-native-type'), null);
       assert.equal(await dialog.locator('[data-native-type=sensor][data-graph-hours="168"]').count(), 2);
+      for (const section of [electricity, water]) {
+        const cards = section.locator('[data-native-type=sensor]');
+        await cards.nth(1).waitFor();
+        assert.deepEqual(await cards.evaluateAll(nodes => nodes.map(node => {
+          const style = getComputedStyle(node);
+          return [style.borderTopWidth, style.borderTopLeftRadius];
+        })), [['1px', '8px'], ['1px', '8px']]);
+        const order = await section.evaluate(panel => {
+          const [history, reading] = panel.querySelector('.toolbar-section-items').children;
+          return {
+            chartOnLeft: history.getBoundingClientRect().left < reading.getBoundingClientRect().left,
+            directions: [history, reading].map(card => getComputedStyle(card).direction),
+          };
+        });
+        assert.deepEqual(order, {
+          chartOnLeft: true, directions: Array(2).fill(locale === 'he' ? 'rtl' : 'ltr'),
+        });
+      }
       assert.ok(await electricity.evaluate(section => {
         const items = section.querySelector('.toolbar-section-items');
         const [history, reading] = [...items.children].map(child => child.getBoundingClientRect());
@@ -3473,6 +3499,12 @@ async function assertEnergyReadingCards(browser) {
       const legacy = await open('');
       await legacy.getByRole('button', { name: /Bill estimate/ }).waitFor();
       assert.equal(await legacy.locator('.energy-reading').count(), 0);
+      const legacyCharts = legacy.locator('[data-native-type=sensor][data-graph-hours="168"]');
+      await legacyCharts.nth(1).waitFor();
+      assert.deepEqual(await legacyCharts.evaluateAll(nodes => nodes.map(node => {
+        const style = getComputedStyle(node);
+        return [style.borderTopWidth, style.borderTopLeftRadius];
+      })), [['0px', '20px'], ['0px', '20px']]);
 
       await page.goto(url + '&energy-reading-cards&editor');
       await page.getByText(locale === 'he' ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens', { exact: true }).tap();

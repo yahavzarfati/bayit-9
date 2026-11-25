@@ -545,10 +545,12 @@ export function createToolbarPanel(kind, configuration, context) {
     handlers.push(() => {
       slot.hidden = !visible(currentHass);
       if (slot.hidden || slot.firstChild) return;
-      slot.append(nativeCard({
+      const card = nativeCard({
         type: 'sensor', entity: item.entity, name: item.name, icon: item.icon,
         tap_action: { action: 'more-info' }, hold_action: { action: 'none' }, double_tap_action: { action: 'none' },
-      }, fallback));
+      }, fallback);
+      card.classList.add('energy-native-card');
+      slot.append(card);
     });
     return slot;
   }
@@ -647,11 +649,14 @@ export function createToolbarPanel(kind, configuration, context) {
       const config = sensorGraphConfig(item, { moreInfo });
       const fallback = renderTile(item, 'status');
       const destination = itemKind === 'graph' && graphDestination?.(item);
-      if (!destination) return nativeCard(config, fallback);
-      config.tap_action = { action: 'fire-dom-event', bayit_graph_link: true };
-      config.hold_action = { action: 'none' };
-      config.double_tap_action = { action: 'none' };
+      if (destination) {
+        config.tap_action = { action: 'fire-dom-event', bayit_graph_link: true };
+        config.hold_action = { action: 'none' };
+        config.double_tap_action = { action: 'none' };
+      }
       const chart = nativeCard(config, fallback);
+      if (energyReadingCards) chart.classList.add('energy-native-card');
+      if (!destination) return chart;
       const open = () => openGraphDestination(destination, chart);
       fallback.onclick = open;
       chart.addEventListener('ll-custom', event => {
@@ -924,6 +929,8 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
     grid-template-columns: repeat(auto-fit,minmax(min(100%,max(110px,calc((100% - 8px) / 2))),1fr));
   }
   .shell[dir=rtl] .toolbar-section[data-layout=compact] > .toolbar-section-items > * { direction: rtl; }
+  .toolbar-section[data-layout=reading-cards] > .toolbar-section-items { direction: ltr; }
+  .shell[dir=rtl] .toolbar-section[data-layout=reading-cards] > .toolbar-section-items > * { direction: rtl; }
   .toolbar-section[data-layout=compact-actions] { border: 0; padding: 8px 4px 2px; }
   .toolbar-section[data-layout=compact-actions]:has(> .toolbar-section-title) { padding-block-start: 18px; }
   .toolbar-section[data-layout=compact-actions] > .toolbar-section-title { margin-block-end: 14px; }
@@ -1009,6 +1016,7 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .energy-reading { min-width: 0; }
   .native-panel-card { min-width: 0; --ha-card-background: transparent; --ha-card-box-shadow: none;
     --ha-card-border-color: var(--soft-line); --primary-text-color: var(--ink); --secondary-text-color: var(--secondary); }
+  .energy-native-card { --ha-card-border-width: 1px; --ha-card-border-radius: 8px; }
   .toolbar-device, .toolbar-link { min-width: 0; }
   .toolbar-section[data-section=covers] .toolbar-section-items:has(> [data-cover-rail] ~ [data-cover-rail]) {
     /* Three 44px commands, two 3px gaps, padding and a border. */
