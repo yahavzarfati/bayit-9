@@ -1396,7 +1396,7 @@ export class BayitDashboard extends HTMLElement {
     const name = make(tileMode || launchFromHeader ? 'span' : room ? 'h4' : 'h3', 'device-name');
     const state = make('span', 'current');
     const inlineLight = tileMode && domain === 'light' && config.role !== 'status' && config.room_light_controls === true;
-    const compactHeater = titleInDialog && config.kind === 'heater' && !!config.timed && config.role !== 'status';
+    const compactHeater = !!(titleInDialog || room) && config.kind === 'heater' && !!config.timed && config.role !== 'status';
     item.toggleAttribute('data-compact-heater', compactHeater);
     const standaloneBoiler = titleInDialog && config.kind === 'boiler' && config.role !== 'status';
     const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactHeater,

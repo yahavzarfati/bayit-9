@@ -400,13 +400,14 @@ export const panelControlStyles = `
     background: color-mix(in srgb,var(--ink) 10%,var(--control));
   }
   .modal[data-kind=device] .modal-body:has(.device-timer[data-compact]) { padding-block-end: 9px; }
-  .modal[data-kind=device] .device:has(.device-timer[data-compact]) { padding-block: 6px; }
-  .modal[data-kind=device] .device:has(.device-timer[data-compact]) .action-list {
-    margin-block-start: 4px;
-    gap: 5px;
+  :is(.modal[data-kind=device] .device, .devices[data-room=true] .device[data-compact-heater]):has(.device-timer[data-compact]) {
+    padding-block: 6px;
+    .action-list { margin-block-start: 4px; gap: 5px; }
+    .device-timer[data-compact] {
+      padding-top: 4px;
+      .timer-tools { margin-block: 0 2px; }
+    }
   }
-  .modal[data-kind=device] .device-timer[data-compact] { padding-top: 4px; }
-  .modal[data-kind=device] .device-timer[data-compact] .timer-tools { margin-block: 0 2px; }
   .heat-level-options {
     margin-top: 5px;
     grid-template-columns: repeat(auto-fit,minmax(25px,1fr));

@@ -328,7 +328,20 @@ const hass = {
       const attrs = states[id].attributes;
       states[id] = { ...states[id], attributes: { ...attrs, timer_state: 'active', device_active: true,
         timer_finishes_at: new Date(Date.now() + request.service_data.duration * 60000).toISOString() } };
-      states['climate.demo_air'] = { ...states['climate.demo_air'], state: 'cool' };
+      if (query.has('embedded-heater') && id === heaterTimer) {
+        states[heaterFan] = { ...states[heaterFan], state: 'on' };
+        states[heaterRelay] = { ...states[heaterRelay], state: 'on' };
+      } else {
+        states['climate.demo_air'] = { ...states['climate.demo_air'], state: 'cool' };
+      }
+      card.hass = { ...hass, states: { ...states } };
+    }
+    if (request.domain === 'simple_timer' && request.service === 'cancel_timer' &&
+        query.has('embedded-heater') && request.service_data.entity_id === heaterTimer) {
+      const attrs = states[heaterTimer].attributes;
+      states[heaterTimer] = { ...states[heaterTimer], attributes: { ...attrs, timer_state: 'idle', device_active: false } };
+      states[heaterFan] = { ...states[heaterFan], state: 'off' };
+      states[heaterRelay] = { ...states[heaterRelay], state: 'off' };
       card.hass = { ...hass, states: { ...states } };
     }
     if (request.domain === 'climate' && query.has('climate-labels')) {
@@ -688,6 +701,12 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
   } }],
 } : query.has('room-status') ? roomStatusSelected : query.has('heater-level') ? {
   ...(query.has('compact-heater-steps') && { shape: 'circle' }),
+  ...(query.has('embedded-heater') && { room_overrides: {
+    studio: { entities: ['light.demo_lamp', heaterFan], sections: [
+      { kind: 'lights', entities: ['light.demo_lamp'] },
+      { kind: 'heating', title: '', entities: [heaterFan] },
+    ] },
+  } }),
   room_shortcuts: { studio: [heaterFan] },
   profiles: [{ entity: heaterFan, kind: 'heater', level_steps: 9,
     level_read_entity: helper, level_select_script: heaterScript,
@@ -1545,6 +1564,88 @@ async function assertCompactInlineLightLayout(browser) {
   }
 }
 
+async function assertCompactRoomHeater(browser) {
+  for (const [locale, width] of [['en', 320], ['he', 391]]) {
+    const page = await browser.newPage({ viewport: { width, height: 845 }, hasTouch: true, reducedMotion: 'reduce' });
+    try {
+      await page.goto(base + '/?heater-level&preselect&embedded-heater&locale=' + locale);
+      await page.getByRole('button', { name: 'Studio', exact: true }).tap();
+      const room = page.getByRole('dialog', { name: 'Studio', exact: true });
+      const heater = room.locator('.device[data-entity="fan.demo_step_heater"]');
+      const range = heater.locator('.device-timer[data-compact] .timer-range');
+      const start = heater.locator('.timer-command[data-action="start_timed"]');
+      const stop = heater.locator('.timer-command[data-action="stop_timed"]');
+      const off = heater.locator('.basic-actions button[data-action="turn_off"]');
+      await heater.getByRole('heading', { name: 'Fixture step heater', exact: true, level: 4 }).waitFor();
+      await range.waitFor();
+      assert.equal(await off.count(), 0);
+      const layout = await heater.evaluate(card => {
+        const targets = [...card.querySelectorAll('.heat-level-choice')];
+        const rows = new Map();
+        for (const button of targets) {
+          const y = Math.round(button.getBoundingClientRect().y);
+          rows.set(y, (rows.get(y) ?? 0) + 1);
+        }
+        return {
+          rows: [...rows.values()],
+          accessible: [...targets, ...card.querySelectorAll('.timer-range,.timer-command,.timer-preset')].every(el =>
+            el.getBoundingClientRect().width >= 43.9 && el.getBoundingClientRect().height >= 43.9),
+          fits: card.scrollWidth <= card.clientWidth + 1,
+          height: card.offsetHeight,
+          groupHeight: card.parentElement.offsetHeight,
+        };
+      });
+      assert.deepEqual(layout.rows, [5, 4]);
+      assert.equal(layout.accessible, true);
+      assert.equal(layout.fits, true);
+      assert.ok(layout.height <= 345, JSON.stringify(layout));
+      assert.equal(layout.groupHeight, layout.height, 'An untitled single-heater group has one frame');
+
+      await range.press('ArrowLeft');
+      assert.equal(await range.inputValue(), '45');
+      await page.evaluate(() => window.bayitTest.setRoomState('sensor.demo_step_runtime', '120'));
+      await heater.getByText('02:00', { exact: false }).waitFor();
+      assert.equal(await range.inputValue(), '45');
+      assert.ok(await range.evaluate(input => input.getRootNode().activeElement === input));
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls), []);
+
+      const choice = heater.locator('button[data-action="preselect_heating_level"]').nth(6);
+      await choice.tap();
+      await page.waitForFunction(() => window.bayitTest.calls.length === 1);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.heatingState()), ['off', 'off', 'idle']);
+      await page.evaluate(() => window.bayitTest.finishPreselect());
+      await heater.locator('button[data-action="preselect_heating_level"][aria-pressed="true"]:not(:disabled)')
+        .getByText('7', { exact: true }).waitFor();
+
+      await page.evaluate(() => window.bayitTest.setHeaterPower('on'));
+      await off.waitFor();
+      await page.evaluate(() => window.bayitTest.setHeaterPower('off'));
+      await off.waitFor({ state: 'detached' });
+      await start.press('Enter');
+      await stop.waitFor();
+      assert.equal(await off.count(), 0);
+      assert.equal(await heater.locator('button[data-action="set_heating_level"][aria-pressed="true"]').textContent(), '3');
+      await stop.tap();
+      await start.waitFor();
+      assert.equal(await off.count(), 0);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls), [
+        { type: 'call_service', domain: 'input_number', service: 'set_value',
+          target: { entity_id: 'input_number.demo_next_step' }, service_data: { value: 7 } },
+        { type: 'call_service', domain: 'simple_timer', service: 'start_timer',
+          service_data: { entity_id: 'sensor.demo_step_runtime', duration: 45, unit: 'min', reverse_mode: false } },
+        { type: 'call_service', domain: 'simple_timer', service: 'cancel_timer',
+          service_data: { entity_id: 'sensor.demo_step_runtime', turn_off_entity: true } },
+      ]);
+      await page.evaluate(() => window.bayitTest.repointTimer());
+      await off.waitFor();
+      assert.equal(await start.count(), 0);
+      assert.equal(await heater.locator('.heat-level-choice[aria-pressed="true"]').isDisabled(), true);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
@@ -1554,6 +1655,8 @@ try {
       await assertCompactSettings(browser);
       await assertShortcutDetailRoutes(browser);
       await assertCompactInlineLightLayout(browser);
+      await assertCompactRoomHeater(browser);
+      console.log(engine + ': compact room heater, confirmed idle and safe active controls');
       console.log(engine + ': scoped panel and native shortcut destinations, safe taps, focus return and editor persistence');
       console.log(engine + ': independent browser appearance and admin household defaults');
       await assertNativeRoomCoverHeader(browser);

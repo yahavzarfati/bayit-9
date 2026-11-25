@@ -527,6 +527,15 @@ export const styles = `
     text-align: center;
   }
   .shell[dir=rtl] .devices[data-room=true] .device { direction: rtl; }
+  .devices[data-room=true] .device-group[data-group=room_heating]:has(> .device[data-compact-heater]:only-child) {
+    padding: 0;
+    border: 0;
+  }
+  .devices[data-room=true] .device[data-compact-heater] .device-head { direction: ltr; }
+  .shell[dir=rtl] .devices[data-room=true] .device[data-compact-heater] .device-detail {
+    direction: rtl;
+    text-align: left;
+  }
   .setup-page, .setup-editor { display: block; min-width: 0; }
   .setup-status { margin: 0; color: var(--secondary); }
   .setup-editor {
