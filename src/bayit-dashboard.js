@@ -2534,8 +2534,8 @@ export class BayitDashboard extends HTMLElement {
     const timerPreferenceKey = timing && 'bayit-9.timer-duration.v1:' +
       (timing.simple_timer_entity ?? timing.timer_entity ?? view.config.entity);
     view.special = buildPanelControls(model, { make, button, icon, label, t: key => this.t(key),
-      compactTimer: view.inlineClimate || view.compactHeater || standaloneClimate ||
-        (view.standaloneBoiler && hideIdleTimedOff), timerPreferenceKey,
+      compactTimer: view.inlineClimate || view.compactHeater || standaloneClimate || view.standaloneBoiler,
+      timerPreferenceKey,
       compactClimateControls: view.compactClimateControls,
       unreportedSwingMode: view.config.unreported_swing_mode,
       usageInfo: (entity, source) => { if (this.canShowTimerUsage(entity)) this.moreInfo({ entity }, source); },

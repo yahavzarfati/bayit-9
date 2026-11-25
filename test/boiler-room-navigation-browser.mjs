@@ -506,10 +506,18 @@ try {
       const history = compactDialog.getByRole('button', { name: words.history, exact: true });
       const timer = compactDialog.getByRole('button', { name: locale === 'he' ? 'טיימר' : 'Timer', exact: true });
       const timerArea = compactDialog.locator('.device-timer');
+      const railStyle = () => timerArea.locator('.timer-range').evaluate(input => {
+        const css = getComputedStyle(input);
+        return { appearance: css.appearance, thumb: css.getPropertyValue('--timer-thumb').trim(),
+          warm: css.getPropertyValue('--warm').trim() };
+      });
       await start.waitFor();
       await timer.waitFor({ state: 'hidden' });
       assert.equal(await off.count(), 0);
       assert.equal(await timerArea.getAttribute('data-compact'), '');
+      const idleRail = await railStyle();
+      assert.equal(idleRail.appearance, 'none');
+      assert.ok(idleRail.thumb && idleRail.thumb === idleRail.warm);
       assert.equal(await timerArea.locator('.timer-range').getAttribute('aria-valuetext'), locale === 'he' ? '300 דקות' : '300 Minutes');
       await compactDialog.evaluate(node => Promise.allSettled(node.getAnimations().map(animation => animation.finished)));
       const [scheduleBox, historyBox, timerBox, startBox] = await Promise.all(
@@ -528,13 +536,22 @@ try {
 
       await compact.evaluate(() => window.fixture.setupState('on', 'active'));
       await stop.waitFor();
-      assert.equal(await timerArea.getAttribute('data-compact'), null);
+      const extend = compactDialog.locator('[data-action="extend_timed"]');
+      await extend.waitFor();
+      assert.equal(await timerArea.getAttribute('data-compact'), '');
+      assert.deepEqual(await railStyle(), idleRail);
+      assert.equal(await timerArea.locator('.timer-range').getAttribute('aria-valuetext'), locale === 'he' ? '300 דקות' : '300 Minutes');
+      const [activeSlider, activeExtend, activeStop] = await Promise.all(
+        [timerArea.locator('.timer-range'), extend, stop].map(item => item.boundingBox()));
+      assert.ok([activeSlider, activeExtend, activeStop].every(bounds => bounds.width >= 44 && bounds.height >= 44));
+      assert.ok(activeSlider.x < activeExtend.x && activeExtend.x < activeStop.x);
       await compact.evaluate(() => window.fixture.setupState('off', 'unavailable'));
       await off.waitFor();
       assert.equal(await start.count(), 0);
       await compact.evaluate(() => window.fixture.setupState('off', 'idle'));
       await start.waitFor();
       assert.equal(await off.count(), 0);
+      assert.deepEqual(await railStyle(), idleRail);
       await compact.evaluate(() => window.fixture.setupState('unknown', 'idle'));
       await start.waitFor({ state: 'detached' });
       assert.equal(await off.count(), 0);
