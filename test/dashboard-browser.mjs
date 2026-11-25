@@ -2283,7 +2283,9 @@ try {
       const position = () => sunPlot.evaluate(plot => {
         const marker = plot.querySelector('ha-icon').getBoundingClientRect();
         const horizon = plot.querySelector('.sun-horizon').getBoundingClientRect();
-        return { x:marker.left + marker.width / 2, y:marker.top + marker.height / 2, baseline:horizon.top };
+        const bounds = plot.getBoundingClientRect();
+        const x = (marker.left + marker.width / 2 - bounds.left) / bounds.width;
+        return { x, y:marker.top + marker.height / 2, baseline:horizon.top };
       });
       const above = await position();
       assert.ok(above.y < above.baseline);
@@ -2293,7 +2295,7 @@ try {
       await sunPlot.locator('ha-icon[data-below-horizon]').waitFor();
       const below = await position();
       assert.ok(below.y > below.baseline);
-      assert.ok(Math.abs(above.x - below.x) < 0.5);
+      assert.ok(Math.abs(above.x - below.x) < 0.002);
       assert.equal(await altitude.innerText(), '-15°');
       await observeSun('above_horizon', { azimuth:270, elevation:0, next_noon:'2026-11-25T04:25:00Z' });
       await altitude.filter({ hasText:/^0°$/ }).waitFor();
