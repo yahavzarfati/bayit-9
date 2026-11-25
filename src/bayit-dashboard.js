@@ -2376,6 +2376,10 @@ export class BayitDashboard extends HTMLElement {
     const timer = model.timer?.entity;
     if (!this.canShowTimerUsage(timer)) return;
     if (config.timed?.simple_timer_entity === timer) {
+      const reportedTarget = this._hass?.states?.[timer]?.attributes?.switch_entity_id;
+      const configuredTarget = config.timed.simple_timer_target ?? config.entity;
+      if (typeof reportedTarget === 'string' && /^[a-z_]+\.[a-z0-9_]+$/.test(reportedTarget) &&
+          reportedTarget !== configuredTarget) return;
       const status = simpleTimerStatusEntity(this._hass, timer);
       if (this.canShowTimerUsage(status)) return status;
     }

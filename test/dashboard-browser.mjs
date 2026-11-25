@@ -1333,8 +1333,8 @@ window.bayitTest = {
     states[heaterFan].state = states[heaterRelay].state = state;
     card.hass = { ...hass, states: { ...states } };
   },
-  repointTimer: () => {
-    states[heaterTimer].attributes.switch_entity_id = 'switch.demo_foreign';
+  repointTimer: (target = 'switch.demo_foreign') => {
+    states[heaterTimer].attributes.switch_entity_id = target;
     card.hass = { ...hass, states: { ...states } };
   },
 };
@@ -3994,8 +3994,29 @@ async function assertStandaloneTimedHeater(browser) {
       await state.filter({ hasText: he ? /^פועל$/ : /^On$/ }).waitFor();
       await page.evaluate(() => window.bayitTest.setHeaterPower('off'));
       await start.waitFor();
-      await page.evaluate(() => window.bayitTest.repointTimer());
+      const setRuntime = value => page.evaluate(([entity, state]) => window.bayitTest.setRoomState(entity, state), [runtime, value]);
+      await setRuntime('unavailable');
       await start.waitFor({ state: 'detached' });
+      await history.tap();
+      await finishInfo(runtime);
+      await page.waitForFunction(() => document.querySelector('bayit-dashboard').shadowRoot.activeElement?.classList.contains('timer-history'));
+
+      await setRuntime('180');
+      await start.waitFor();
+      await history.evaluate(button => {
+        window.bayitTest.repointTimer();
+        button.click();
+      });
+      await start.waitFor({ state: 'detached' });
+      await history.waitFor({ state: 'hidden' });
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), [entity, runtime, runtime, runtime]);
+      assert.equal(await native.count(), 0);
+      await page.evaluate(() => window.bayitTest.repointTimer('switch.demo_step_power'));
+      await start.waitFor();
+      await history.press('Enter');
+      await finishInfo(runtime);
+      await page.waitForFunction(() => document.querySelector('bayit-dashboard').shadowRoot.activeElement?.classList.contains('timer-history'));
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service')), []);
       await close.tap();
       await page.getByRole('button', { name: 'Studio', exact: true }).tap();
       const room = page.getByRole('dialog', { name: 'Studio', exact: true });
