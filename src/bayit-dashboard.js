@@ -237,9 +237,10 @@ function normalizeEntity(item) {
     entry.home_heater_cutoff_automation = item.home_heater_cutoff_automation;
   }
   if (entry.kind === 'heater' && entity.startsWith('fan.') && entry.level_read_entity &&
-      /^sensor\.[a-z0-9_]+$/.test(entry.timed?.simple_timer_entity ?? '') &&
-      /^script\.[a-z0-9_]+$/.test(item.level_select_script ?? '')) {
-    entry.level_select_script = item.level_select_script;
+      /^sensor\.[a-z0-9_]+$/.test(entry.timed?.simple_timer_entity ?? '')) {
+    for (const key of ['level_select_script', 'level_activity_script']) {
+      if (/^script\.[a-z0-9_]+$/.test(item[key] ?? '')) entry[key] = item[key];
+    }
   }
   if (entry.kind === 'heater' && entity.startsWith('fan.') && entry.level_steps && !entry.level_entity &&
       /^sensor\.[a-z0-9_]+$/.test(entry.timed?.simple_timer_entity ?? '') &&
@@ -1444,6 +1445,9 @@ export class BayitDashboard extends HTMLElement {
         const { el: shortcut, powerConfig } = quickControl;
         const pending = this.pending.get(config.entity);
         const feedback = this.coverFeedback(model, pending);
+        const levelPending = model.kind === 'heater' &&
+          (pending?.id === 'set_heating_level' || pending?.id === 'preselect_heating_level');
+        const heatingLevel = model.available && (model.levelActivity || levelPending);
         const stop = model.domain === 'cover' && model.actions.stop && this.coverIsMoving(model) &&
           this.canRequest(config.entity, 'stop');
         setIcon(shortcut.firstElementChild, model.icon);
@@ -1451,12 +1455,14 @@ export class BayitDashboard extends HTMLElement {
         const powerAction = powerConfig && this.homeShortcutPowerAction(powerConfig);
         if (powerConfig) shortcut.dataset.action = powerAction || '';
         const actionLabel = stop ? this.t('stop') : powerAction ? this.actionLabel(powerAction) : '';
-        label(shortcut, model.name + ' · ' + status + (actionLabel ? ' · ' + actionLabel : ''));
+        const savingPreselection = levelPending && pending.id === 'preselect_heating_level' && !model.levelActivity;
+        const updateLabel = heatingLevel ? this.t(savingPreselection ? 'heating_preselect_saving' : 'heating_level_changing') : '';
+        label(shortcut, [model.name, status, updateLabel, actionLabel].filter(Boolean).join(' · '));
         shortcut.dataset.tone = feedback ? 'moving' : tone;
-        shortcut.dataset.transition = feedback?.direction || '';
+        shortcut.dataset.transition = feedback?.direction || (heatingLevel ? 'heating-level' : '');
         shortcut.toggleAttribute('data-unavailable',
           this.config.page && haveStates && model.domain === 'cover' && !model.available);
-        const busy = !!pending && (model.domain !== 'cover' || model.available);
+        const busy = heatingLevel || (!!pending && (model.available || (model.domain !== 'cover' && !levelPending)));
         shortcut.setAttribute('aria-busy', String(busy));
       }
       const reading = temperature || ambient;

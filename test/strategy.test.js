@@ -1459,6 +1459,27 @@ test('projects a level selection script only through a timed heater fan and its 
   assert.equal(heater.timed.simple_timer_target, profile.timed.simple_timer_target);
 });
 
+test('projects heater activity as a dependency and leaves the script out of automatic controls', () => {
+  const profile = { entity: 'fan.demo_step_heat', kind: 'heater', level_steps: 9,
+    level_read_entity: 'input_number.demo_feedback', level_activity_script: 'script.demo_apply_level',
+    timed: { simple_timer_entity: 'sensor.demo_heat_runtime' } };
+  assert.equal(normalizeProfile(profile).level_activity_script, profile.level_activity_script);
+  for (const invalid of [
+    { level_read_entity: undefined }, { level_steps: 13 }, { level_activity_script: 'switch.some_device' },
+    { kind: 'boiler' }, { entity: 'switch.demo_heat_relay' }, { timed: { timer_entity: 'timer.demo_heating' } },
+  ]) assert.equal(normalizeProfile({ ...profile, ...invalid }).level_activity_script, undefined);
+
+  const hass = home();
+  for (const id of [profile.entity, profile.level_activity_script]) {
+    hass.states[id] = { state: 'off', attributes: {} };
+    hass.entities[id] = { area_id: 'studio' };
+  }
+  const dashboard = generateDashboard({ discovery_mode: 'controls', profiles: [profile] }, hass).views[0].cards[0];
+  const entities = dashboard.rooms.flatMap(room => room.entities);
+  assert.equal(entities.find(item => item.entity === profile.entity).level_activity_script, profile.level_activity_script);
+  assert.ok(!entities.some(item => item.entity === profile.level_activity_script));
+});
+
 test('projects next-start level only for a heater fan with an explicitly linked Simple Timer switch', () => {
   const profile = { entity: 'fan.demo_step_heat', kind: 'heater', level_steps: 9,
     level_preselect_entity: 'input_number.demo_next_level',

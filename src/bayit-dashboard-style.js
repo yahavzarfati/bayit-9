@@ -401,9 +401,13 @@ export const styles = `
   .shell[data-page=true] .room {
     --home-cover-ink: #a4c8ff;
     --home-cover-ink-on-light: #001e4d;
+    --home-heating-update-ink: #ffb278;
   }
   .shell[data-page=true][data-wallpaper-ink=dark] .room:not([data-wallpaper-ink=light]),
-  .shell[data-page=true] .room[data-wallpaper-ink=dark] { --home-cover-ink: var(--home-cover-ink-on-light); }
+  .shell[data-page=true] .room[data-wallpaper-ink=dark] {
+    --home-cover-ink: var(--home-cover-ink-on-light);
+    --home-heating-update-ink: #7e3600;
+  }
   .shell[data-page=true] .quick-button[data-entity^="cover."][data-tone=moving] {
     color: var(--home-cover-ink);
     background: rgba(122,167,255,.18);
@@ -413,6 +417,15 @@ export const styles = `
     border-style: dashed;
     border-color: color-mix(in srgb,var(--ink) var(--home-cover-availability-outline,48%),transparent);
   }
+  .quick-button[data-transition=heating-level] {
+    box-shadow: inset 0 0 0 1.5px var(--home-heating-update-ink,#ffb278);
+  }
+  .quick-button[data-transition=heating-level]::after {
+    content: "•••"; position: absolute; inset-block-start: 5px; inset-inline-end: 6px;
+    color: var(--home-heating-update-ink,#ffb278); font: 700 8px/1 sans-serif;
+    pointer-events: none; animation: heating-level-progress 1s ease-in-out infinite alternate;
+  }
+  @keyframes heating-level-progress { from { opacity: .65; } to { opacity: 1; } }
   .quick-button[aria-busy=true][data-transition=""]::after {
     content: ""; position: absolute; inset: 4px; border-radius: inherit;
     border: 1px solid transparent; border-block-start-color: currentColor;

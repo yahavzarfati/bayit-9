@@ -135,6 +135,7 @@ const WORDS = {
     dailyUsage: 'Daily usage sensor', allowDailyUsageReset: 'Allow reset of this daily usage counter', presets: 'Preset minutes', presetError: 'Use preset minutes within the selected range and step.',
     levelSteps: 'Number of heating levels', levelRead: 'Heating level feedback', levelSelect: 'Level selection script',
     levelSelectError: 'Set 2–12 heating levels and choose the level feedback helper for this script.',
+    levelActivity: 'Additional heater activity script', levelActivityHint: 'Shows level changes started by another control or automation.',
     levelPreselect: 'Next-start level helper',
     levelPreselectHint: 'Choose a helper that the heater reads at startup and whose changes never issue device commands.',
     levelPreselectError: 'Set 2–12 heating levels and choose a Simple Timer linked to the heater switch.',
@@ -263,6 +264,7 @@ const WORDS = {
     dailyUsage: 'חיישן שימוש יומי', allowDailyUsageReset: 'אפשרות לאפס את מונה השימוש היומי הזה', presets: 'הגדרות דקות מהירות', presetError: 'בחרו דקות בטווח ובמרווח שנקבעו.',
     levelSteps: 'מספר דרגות החימום', levelRead: 'משוב על דרגת החימום', levelSelect: 'סקריפט לבחירת עוצמה',
     levelSelectError: 'הגדירו 2–12 דרגות חימום ובחרו את העזר שמדווח על העוצמה עבור הסקריפט.',
+    levelActivity: 'סקריפט נוסף לחיווי שינוי עוצמה', levelActivityHint: 'מציג שינויי עוצמה שהתחילו מבקר אחר או מאוטומציה.',
     levelPreselect: 'עזר לעוצמה בהפעלה הבאה',
     levelPreselectHint: 'בחרו עזר שהתנור קורא בהפעלה וששינוי הערך שלו אינו שולח פקודה למכשיר.',
     levelPreselectError: 'הגדירו 2–12 דרגות חימום ובחרו Simple Timer שמקושר למתג התנור.',
@@ -1983,6 +1985,13 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const levelSelect = entityInput('script', current.level_select_script);
     const levelPreselect = entityInput('input_number', current.level_preselect_entity);
     const levelSelectField = field(words.levelSelect, levelSelect);
+    const levelActivity = entityInput('script', current.level_activity_script);
+    const levelActivityField = field(words.levelActivity, levelActivity);
+    const levelActivityHint = node('small', {
+      id: levelActivity.getAttribute('aria-labelledby') + '-hint', textContent: words.levelActivityHint,
+    });
+    levelActivityField.append(levelActivityHint);
+    levelActivity.setAttribute('aria-describedby', levelActivityHint.id);
     const levelPreselectField = field(words.levelPreselect, levelPreselect);
     const levelPreselectHint = node('small', {
       id: levelPreselect.getAttribute('aria-labelledby') + '-hint', textContent: words.levelPreselectHint,
@@ -1990,7 +1999,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
     levelPreselectField.append(levelPreselectHint);
     levelPreselect.setAttribute('aria-describedby', levelPreselectHint.id);
     const fanLevels = node('div', { className: 'grid' }, [
-      field(words.levelSteps, levelSteps), field(words.levelRead, levelRead), levelSelectField, levelPreselectField,
+      field(words.levelSteps, levelSteps), field(words.levelRead, levelRead),
+      levelSelectField, levelActivityField, levelPreselectField,
     ]);
 
     const timerSource = select([['server', words.serverTimer], ['simple', words.simpleTimer]], timed.simple_timer_entity ? 'simple' : 'server');
@@ -2045,6 +2055,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       fanLevels.hidden = !fanHeater || Boolean(level.value);
       const usingSimple = timerSource.value === 'simple';
       levelSelectField.hidden = !usingSimple;
+      levelActivityField.hidden = !usingSimple;
       serverFields.hidden = usingSimple;
       simpleFields.hidden = !usingSimple;
       resetUsage.hidden = !simple.value || Boolean(usage.value && usage.value !== simple.value);
@@ -2090,11 +2101,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
           const presetValues = presets.value.trim() ? presets.value.trim().split(/[,;\s]+/).map(Number)
             : Array.isArray(timed.presets) ? [] : undefined;
           const levelSelectId = !fanLevels.hidden && usingSimple ? levelSelect.value : '';
+          const levelActivityId = !fanLevels.hidden && usingSimple ? levelActivity.value : '';
           const nextLevelId = !fanLevels.hidden && !levelPreselectField.hidden ? levelPreselect.value : '';
           const profile = normalizeProfile({
             entity: entity.value, kind: kind.value, name: title.value, level_entity: level.value,
             level_steps: levelSteps.valueAsNumber, level_read_entity: levelRead.value, level_select_script: levelSelectId,
-            level_preselect_entity: nextLevelId, unreported_swing_mode: swingMode,
+            level_activity_script: levelActivityId, level_preselect_entity: nextLevelId, unreported_swing_mode: swingMode,
             home_heater_cutoff_automation: cutoffField.hidden ? undefined : cutoff.value,
             boiler_timer_with_details: !boilerDetails.hidden && boilerDetailsInput.checked,
             schedule: {save_script:scheduleSave.value,delete_script:scheduleDelete.value},
@@ -2114,7 +2126,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
             entity.focus();
             return;
           }
-          if (levelSelectId && profile.level_select_script !== levelSelectId) {
+          if ((levelSelectId && profile.level_select_script !== levelSelectId) ||
+              (levelActivityId && profile.level_activity_script !== levelActivityId)) {
             error.textContent = words.levelSelectError;
             error.hidden = false;
             levelRead.focus();

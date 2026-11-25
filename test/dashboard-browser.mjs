@@ -388,8 +388,10 @@ const hass = {
         rejectLevel = false;
         return Promise.reject(new Error('Fixture rejected heater level'));
       }
-      states['script.demo_select_heat_step'] = { state: 'on', attributes: {} };
-      card.hass = { ...hass, states: { ...states } };
+      if (!query.has('heater-level-feedback')) {
+        states['script.demo_select_heat_step'] = { state: 'on', attributes: {} };
+        card.hass = { ...hass, states: { ...states } };
+      }
       return new Promise(resolve => {
         finishLevel = () => {
           states['input_number.demo_heat_step'].state = String(request.service_data.target_step);
@@ -639,6 +641,7 @@ const helper = 'input_number.demo_heat_step';
 const heaterTimer = 'sensor.demo_step_runtime';
 const heaterRelay = 'switch.demo_step_power';
 const heaterScript = 'script.demo_select_heat_step';
+const heaterActivityScript = 'script.demo_apply_heat_step';
 const nextLevel = query.has('shared-heater-level') ? helper : 'input_number.demo_next_step';
 if (query.has('heater-level')) {
   Object.assign(states, {
@@ -648,6 +651,7 @@ if (query.has('heater-level')) {
     [heaterRelay]: { state: 'off', attributes: {} },
     [heaterTimer]: { state: '0', attributes: { switch_entity_id: heaterRelay, timer_state: 'idle' } },
     [heaterScript]: { state: 'off', attributes: {} },
+    [heaterActivityScript]: { state: 'off', attributes: {} },
   });
   hass.entities[heaterFan] = { area_id: 'studio' };
 }
@@ -895,9 +899,10 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
       { kind: 'heating', title: '', entities: [heaterFan] },
     ] },
   } }),
-  room_shortcuts: { studio: [heaterFan] },
+  room_shortcuts: { studio: query.has('heater-level-feedback') ? [heaterFan, 'light.demo_lamp'] : [heaterFan] },
   profiles: [{ entity: heaterFan, kind: 'heater', level_steps: 9,
     level_read_entity: helper, level_select_script: heaterScript,
+    ...(query.has('heater-level-feedback') && { level_activity_script: heaterActivityScript }),
     ...(query.has('preselect') && { level_preselect_entity: nextLevel }),
     timed: { simple_timer_entity: heaterTimer, simple_timer_target: heaterRelay } }],
 } : query.has('overview-opt-in') ? {
@@ -2831,6 +2836,86 @@ async function assertSharedHeaterLevelInterop(browser) {
         {type:'call_service',domain:'input_number',service:'set_value',target:{entity_id:helper},service_data:{value:7}},
         ...[2,6].map(target_step=>({type:'call_service',domain:'script',service:'demo_select_heat_step',service_data:{target_step}})),
       ]);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+async function assertHeaterHomeFeedback(browser) {
+  for (const [locale, reducedMotion] of [['en', 'no-preference'], ['he', 'reduce']]) {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion });
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const changing = he ? 'משנה את עוצמת החימום…' : 'Changing heating level…';
+    const saving = he ? 'שומר את דרגת החימום להפעלה הבאה…' : 'Saving next-start level…';
+    const unavailable = he ? 'לא זמין' : 'Unavailable';
+    const heater = 'fan.demo_step_heater';
+    const selector = 'script.demo_select_heat_step';
+    const activity = 'script.demo_apply_heat_step';
+    const shortcutSelector = '.quick-button[data-entity="' + heater + '"]';
+    const shortcut = page.locator(shortcutSelector);
+    const waitForMarker = async active => {
+      const value = active ? 'heating-level' : '';
+      await page.locator(shortcutSelector + '[data-transition="' + value + '"][aria-busy="' + active + '"]')
+        .waitFor({ state: 'attached' });
+    };
+    const state = (id, value) => page.evaluate(([id,value]) => window.bayitTest.setRoomState(id,value), [id,value]);
+    const calls = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service'));
+    const panel = page.getByRole('dialog', { name: 'Fixture step heater', exact: true });
+    try {
+      await page.goto(base + '/?heater-level&heater-level-feedback&preselect&shared-heater-level&locale=' + locale);
+      await waitForMarker(false);
+      await state(activity, 'on');
+      await waitForMarker(true);
+      assert.ok((await shortcut.getAttribute('aria-label')).includes(changing));
+      assert.equal(await shortcut.evaluate(button => {
+        const marker = getComputedStyle(button, '::after');
+        return marker.content.includes('•••') && getComputedStyle(button).boxShadow.includes('inset');
+      }), true);
+      assert.equal(await shortcut.evaluate(button => getComputedStyle(button, '::after').animationName),
+        reducedMotion === 'reduce' ? 'none' : 'heating-level-progress');
+      assert.equal(await page.locator('.quick-button[data-entity="light.demo_lamp"]').getAttribute('aria-busy'), 'false');
+      await state(selector, 'on');
+      await state(activity, 'off');
+      await waitForMarker(true);
+      await state(heater, 'unknown');
+      await waitForMarker(false);
+      assert.ok((await shortcut.getAttribute('aria-label')).includes(unavailable));
+      await state(heater, 'off');
+      await waitForMarker(true);
+      await state(selector, 'off');
+      await waitForMarker(false);
+      await shortcut.tap();
+      await panel.waitFor();
+      await state(activity, 'on');
+      await panel.getByText(changing, { exact: true }).waitFor();
+      assert.deepEqual(await calls(), []);
+      await state(activity, 'off');
+      await panel.getByText(changing, { exact: true }).waitFor({ state: 'hidden' });
+
+      await panel.locator('button[data-action=preselect_heating_level]').getByText('7', { exact: true }).tap();
+      await waitForMarker(true);
+      assert.ok((await shortcut.getAttribute('aria-label')).includes(saving));
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.heatingState()), ['off', 'off', 'idle']);
+      await state(heater, 'unavailable');
+      await waitForMarker(false);
+      await state(heater, 'off');
+      await waitForMarker(true);
+      await page.evaluate(() => window.bayitTest.finishPreselect());
+      await waitForMarker(false);
+
+      await page.evaluate(() => window.bayitTest.setHeaterPower('on'));
+      await panel.locator('button[data-action=set_heating_level]').getByText('8', { exact: true }).tap();
+      await waitForMarker(true);
+      assert.ok((await shortcut.getAttribute('aria-label')).includes(changing));
+      assert.deepEqual(await calls(), [
+        { type: 'call_service', domain: 'input_number', service: 'set_value',
+          target: { entity_id: 'input_number.demo_heat_step' }, service_data: { value: 7 } },
+        { type: 'call_service', domain: 'script', service: 'demo_select_heat_step', service_data: { target_step: 8 } },
+      ]);
+      await page.evaluate(() => window.bayitTest.finishLevel());
+      await waitForMarker(false);
     } finally {
       await page.close();
     }
@@ -6105,6 +6190,7 @@ try {
       await assertCompactInlineLightLayout(browser);
       await assertCompactRoomHeater(browser);
       await assertSharedHeaterLevelInterop(browser);
+      await assertHeaterHomeFeedback(browser);
       console.log(engine + ': compact room heater, confirmed idle and safe active controls');
       console.log(engine + ': scoped panel and native shortcut destinations, safe taps, focus return and editor persistence');
       console.log(engine + ': independent browser appearance and admin household defaults');
@@ -6808,6 +6894,9 @@ try {
       await editorPage.getByRole('alert').getByText('Set 2–12 heating levels', { exact: false }).waitFor();
       await editorPage.getByLabel('Number of heating levels').fill('9');
       await editorPage.getByLabel('Heating level feedback').selectOption('input_number.demo_heat_step');
+      const activityScript = editorPage.getByLabel('Additional heater activity script');
+      assert.ok(await activityScript.getAttribute('aria-describedby'));
+      await activityScript.selectOption('script.demo_apply_heat_step');
       const nextHelper = editorPage.getByLabel('Next-start level helper');
       assert.ok(await nextHelper.getAttribute('aria-describedby'));
       await nextHelper.selectOption('input_number.demo_next_step');
@@ -6817,6 +6906,7 @@ try {
       await editorPage.getByRole('button', {name: 'Save profile'}).click();
       const heaterProfile = await editorPage.evaluate(() => window.latest.profiles.find(item => item.entity.startsWith('fan.')));
       assert.equal(heaterProfile?.level_select_script, 'script.demo_select_heat_step');
+      assert.equal(heaterProfile?.level_activity_script, 'script.demo_apply_heat_step');
       assert.equal(heaterProfile?.level_read_entity, 'input_number.demo_heat_step');
       assert.equal(heaterProfile?.level_preselect_entity, 'input_number.demo_next_step');
       assert.equal(heaterProfile?.timed.simple_timer_target, 'switch.demo_step_power');

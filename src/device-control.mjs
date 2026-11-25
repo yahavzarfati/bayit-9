@@ -130,6 +130,10 @@ function normalizedConfig(config) {
       !config.level_steps || !config.level_read_entity || !timed?.simple_timer_entity)) {
     throw new DeviceControlError("invalid_config", "Heater level selection requires a script, step feedback and Simple Timer.");
   }
+  if (config.level_activity_script !== undefined && (!isEntity(config.level_activity_script, "script") ||
+      !config.level_steps || !config.level_read_entity || !timed?.simple_timer_entity)) {
+    throw new DeviceControlError("invalid_config", "Heater level activity requires a script, step feedback and Simple Timer.");
+  }
   if (config.level_preselect_entity !== undefined && (!isEntity(config.level_preselect_entity, "input_number") ||
       !config.level_steps || !timed?.simple_timer_target)) {
     throw new DeviceControlError("invalid_config", "Next-start level requires a numeric helper and a heater with a linked Simple Timer switch.");
@@ -416,6 +420,9 @@ function deviceModel(config, states, nowMs, roomBoilerQuickPower) {
   }
   const level = states?.[config.level_entity ?? config.level_read_entity];
   const preselect = config.level_preselect_entity && record?.state === "off";
+  const available = isAvailable(record);
+  const selectingLevel = available && states?.[config.level_select_script]?.state === "on";
+  const applyingLevel = available && states?.[config.level_activity_script]?.state === "on";
   const explicitLevel = isAvailable(level) && level.state.trim() ? Number(level.state) : NaN;
   const percentageLevel = config.level_steps && Number.isFinite(attributes.percentage)
     ? Math.round(attributes.percentage * config.level_steps / 100) : null;
@@ -426,7 +433,7 @@ function deviceModel(config, states, nowMs, roomBoilerQuickPower) {
     name: config.name || attributes.friendly_name || config.entity,
     icon: config.icon || attributes.icon || null,
     state: record?.state ?? "missing",
-    available: isAvailable(record),
+    available,
     attributes,
     actions: supportedActions(config, states, record, timer, nowMs, roomBoilerQuickPower),
     level: preselect ? verifiedLevel(states?.[config.level_preselect_entity], config.level_steps)
@@ -435,8 +442,8 @@ function deviceModel(config, states, nowMs, roomBoilerQuickPower) {
     ...(config.level_steps && !isReadOnlyRole(config.role) && {
       levelRange: { min: 1, max: config.level_steps, step: 1 },
       levelAction: preselect ? "preselect_heating_level" : "set_heating_level",
-      levelChanging: !!config.level_select_script && (!preselect || !!sharedHeaterLevelSelector(config)) &&
-        states?.[config.level_select_script]?.state === "on",
+      levelActivity: selectingLevel || applyingLevel,
+      levelChanging: applyingLevel || (selectingLevel && (!preselect || !!sharedHeaterLevelSelector(config))),
     }),
     timer,
     ...(usageSource && { usageSource }),

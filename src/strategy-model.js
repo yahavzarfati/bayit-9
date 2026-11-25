@@ -188,8 +188,12 @@ export function normalizeProfile(value) {
   const simpleTimerTarget = simpleTimer && targetDomain ? idForDomain(timed.simple_timer_target, targetDomain) : undefined;
   const cutoff = simpleTimerTarget && fanHeater && idForDomain(value.home_heater_cutoff_automation, 'automation');
   if (cutoff) profile.home_heater_cutoff_automation = cutoff;
-  const levelSelect = simpleTimer && profile.level_read_entity ? idForDomain(value.level_select_script, 'script') : undefined;
-  if (levelSelect) profile.level_select_script = levelSelect;
+  if (simpleTimer && profile.level_read_entity) {
+    const levelSelect = idForDomain(value.level_select_script, 'script');
+    const levelActivity = idForDomain(value.level_activity_script, 'script');
+    if (levelSelect) profile.level_select_script = levelSelect;
+    if (levelActivity) profile.level_activity_script = levelActivity;
+  }
   const preselect = simpleTimerTarget && profile.level_steps ? idForDomain(value.level_preselect_entity, 'input_number') : undefined;
   if (preselect) profile.level_preselect_entity = preselect;
   const timer = simpleTimer ? undefined : idForDomain(timed.timer_entity, 'timer');
@@ -472,6 +476,7 @@ function presentEntity(entity, state, registry, profile) {
     ...(profile?.level_steps && { level_steps: profile.level_steps }),
     ...(profile?.level_read_entity && { level_read_entity: profile.level_read_entity }),
     ...(profile?.level_select_script && { level_select_script: profile.level_select_script }),
+    ...(profile?.level_activity_script && { level_activity_script: profile.level_activity_script }),
     ...(profile?.level_preselect_entity && { level_preselect_entity: profile.level_preselect_entity }),
     ...(profile?.timed && { timed: profile.timed }),
     ...(profile?.home_heater_cutoff_automation && { home_heater_cutoff_automation: profile.home_heater_cutoff_automation }),

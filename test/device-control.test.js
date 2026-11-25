@@ -542,6 +542,36 @@ test("explicit heater script changes bounded level with the heater off, manually
     "set_heating_level", 8), code("action_unavailable"));
 });
 
+test("heater activity follows both native scripts without changing the observed level or the command target", () => {
+  const c = { ...levelSelector, level_activity_script: "script.fixture_apply_step" };
+  const states = selectorStates();
+  assert.equal(getDeviceModel(c, states).levelActivity, false);
+  states[c.level_activity_script] = entity("on");
+  for (const power of ["off", "on"]) {
+    states[c.entity] = states[c.timed.simple_timer_target] = entity(power);
+    const model = getDeviceModel(c, states);
+    assert.equal(model.levelActivity, true);
+    assert.equal(model.levelChanging, true);
+    assert.equal(model.level, 3);
+    assert.equal(model.state, power);
+    assert.deepEqual(model.actions, getDeviceModel(levelSelector, states).actions);
+    const action = planDeviceAction(c, states, "set_heating_level", 7);
+    assert.equal(action.service, "fixture_select_step");
+    assert.deepEqual(action.data, { target_step: 7 });
+  }
+  states[c.level_select_script] = entity("on");
+  states[c.level_activity_script] = entity("off");
+  assert.equal(getDeviceModel(c, states).levelActivity, true);
+  states[c.entity] = entity("unavailable");
+  assert.equal(getDeviceModel(c, states).levelActivity, false);
+  states[c.entity] = entity("on");
+  states[c.level_select_script] = entity("off");
+  states[c.level_activity_script] = entity("unavailable");
+  assert.equal(getDeviceModel(c, states).levelActivity, false);
+  assert.equal(getDeviceModel({ ...c, role: "status" }, { ...states, [c.level_activity_script]: entity("on") }).levelActivity, undefined);
+  assert.throws(() => getDeviceModel({ ...c, level_activity_script: "switch.fixture" }, states), code("invalid_config"));
+});
+
 test("off-only heater preselection writes only its dedicated helper and keeps the running action separate", async () => {
   const c = { ...levelSelector, level_preselect_entity: "input_number.fixture_next_level" };
   const next = "preselect_heating_level";
