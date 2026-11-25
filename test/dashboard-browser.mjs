@@ -195,6 +195,9 @@ if (query.has('shortcut-detail-target')) {
     min_color_temp_kelvin: 2000, max_color_temp_kelvin: 6500, color_temp_kelvin: 3000 } };
   states['light.demo_other_room'] = { state: 'off', attributes: { friendly_name: 'Den light', supported_color_modes: ['onoff'] } };
 }
+let rejectSetupSave = false;
+let holdSetupSave = false;
+let finishSetupSave;
 const hass = {
   user: { is_admin: query.has('configuration') && !query.has('member') },
   locale: { language: new URL(location.href).searchParams.get('locale') || 'en' },
@@ -210,11 +213,22 @@ const hass = {
     }
     if (request.type === 'lovelace/config') return sharedURL ? readShared() : Promise.resolve(stored());
     if (request.type === 'lovelace/config/save') {
+      if (rejectSetupSave) {
+        rejectSetupSave = false;
+        return Promise.reject(new Error('Fixture rejected dashboard save'));
+      }
       if (sharedURL) return fetch(sharedURL, { method: 'POST', body: JSON.stringify(request.config) }).then(response => {
         if (!response.ok) throw new Error('Could not save shared fixture');
       });
-      sessionStorage.setItem(storedKey, JSON.stringify(request.config));
-      sessionStorage.setItem(storedKey + '-hash-at-save', location.hash);
+      const persist = () => {
+        sessionStorage.setItem(storedKey, JSON.stringify(request.config));
+        sessionStorage.setItem(storedKey + '-hash-at-save', location.hash);
+      };
+      if (holdSetupSave) {
+        holdSetupSave = false;
+        return new Promise(resolve => { finishSetupSave = () => { persist(); resolve(); }; });
+      }
+      persist();
       return Promise.resolve();
     }
     if (request.domain === 'homeassistant' && request.service === 'turn_off' &&
@@ -814,6 +828,9 @@ window.bayitTest = {
     hass.entities = { ...hass.entities, [entity]: metadata };
     card.hass = { ...hass, entities: hass.entities };
   },
+  rejectNextSetupSave() { rejectSetupSave = true; },
+  holdNextSetupSave() { holdSetupSave = true; },
+  finishHeldSetupSave() { finishSetupSave(); },
   setRoomState(entity, state) {
     states[entity] = { ...states[entity], state };
     card.hass = { ...hass, states: { ...states } };
@@ -1012,6 +1029,106 @@ async function assertSharedAppearance(browser, engine) {
   }
 }
 
+async function assertSetupDrafts(browser) {
+  const page = await browser.newPage({
+    viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce',
+  });
+  page.setDefaultTimeout(8000);
+  try {
+    await page.goto(base + '/fixture-home/home?configuration');
+    const setup = page.getByRole('dialog', { name: 'Customize home', exact: true });
+    const title = setup.getByLabel('Dashboard title', { exact: true });
+    const save = setup.getByRole('button', { name: 'Save dashboard', exact: true });
+    const discard = setup.getByRole('button', { name: 'Discard draft', exact: true });
+    const status = setup.getByRole('status');
+    const open = async ({ waitForEditor = true } = {}) => {
+      await page.getByRole('button', { name: 'Appearance', exact: true }).tap();
+      await page.getByRole('button', { name: 'Customize home', exact: true }).tap();
+      if (waitForEditor) await title.waitFor();
+    };
+    const savedTitle = () => page.evaluate(() =>
+      JSON.parse(sessionStorage.getItem('bayit9-browser-fixture'))?.strategy.title);
+    const writes = () => page.evaluate(() => window.bayitTest.calls.filter(call =>
+      call.type === 'lovelace/config/save' || call.domain).length);
+    const close = () => setup.getByRole('button', { name: 'Close', exact: true }).tap();
+
+    await open();
+    assert.equal(await discard.isVisible(), false);
+    await title.fill('Home draft');
+    await page.keyboard.press('Escape');
+    await setup.waitFor({ state: 'hidden' });
+    assert.equal(await writes(), 0);
+    assert.equal(await savedTitle(), undefined);
+    await open();
+    assert.equal(await title.inputValue(), 'Home draft');
+    assert.equal(await status.textContent(), 'Unsaved changes restored.');
+
+    await title.fill('Updated draft');
+    await page.goBack();
+    await setup.waitFor({ state: 'hidden' });
+    await open();
+    assert.equal(await title.inputValue(), 'Updated draft');
+    assert.equal(await writes(), 0);
+
+    await page.evaluate(() => window.bayitTest.rejectNextSetupSave());
+    await save.tap();
+    await setup.getByText('Could not load or save dashboard settings.', { exact: true }).waitFor();
+    assert.equal(new URL(page.url()).hash, '#panel/settings');
+    assert.equal(await title.inputValue(), 'Updated draft');
+    assert.equal(await savedTitle(), undefined);
+    assert.equal(await save.isEnabled(), true);
+    await save.tap();
+    await page.getByRole('heading', { name: 'Updated draft', exact: true }).waitFor();
+    assert.equal(await savedTitle(), 'Updated draft');
+    assert.equal(new URL(page.url()).hash, '');
+
+    await open();
+    await title.fill('Conflicting draft');
+    await title.blur();
+    await page.evaluate(() => sessionStorage.setItem('bayit9-browser-fixture',
+      JSON.stringify({ strategy: { type: 'custom:bayit-9', title: 'Another administrator' } })));
+    await save.tap();
+    await setup.getByText(/The dashboard changed elsewhere/).waitFor();
+    assert.equal(await writes(), 0, 'A detected conflict must not send a save request');
+    await title.fill('Preserved edits');
+    await title.blur();
+    assert.equal(await save.isEnabled(), false);
+    await close();
+    await setup.waitFor({ state: 'hidden' });
+    await open();
+    await setup.getByText(/The dashboard changed elsewhere/).waitFor();
+    assert.equal(await title.inputValue(), 'Preserved edits');
+    assert.equal(await save.isEnabled(), false);
+    await discard.tap();
+    await title.waitFor();
+    assert.equal(await title.inputValue(), 'Another administrator');
+    assert.equal(await discard.isVisible(), false);
+    assert.equal(await save.isEnabled(), false);
+    assert.equal(await savedTitle(), 'Another administrator');
+    assert.equal(await writes(), 0);
+
+    await title.fill('Saved after close');
+    await title.blur();
+    await page.evaluate(() => window.bayitTest.holdNextSetupSave());
+    await save.tap();
+    await setup.getByText('Saving dashboard…', { exact: true }).waitFor();
+    await page.waitForFunction(() => window.bayitTest.calls.some(call => call.type === 'lovelace/config/save'));
+    await close();
+    await setup.waitFor({ state: 'hidden' });
+    await open({ waitForEditor: false });
+    await setup.getByText('Loading dashboard settings…', { exact: true }).waitFor();
+    await page.evaluate(() => window.bayitTest.finishHeldSetupSave());
+    await title.waitFor();
+    assert.equal(await title.inputValue(), 'Saved after close');
+    assert.equal(await savedTitle(), 'Saved after close');
+    assert.equal(await discard.isVisible(), false);
+    assert.equal(await save.isEnabled(), false);
+    assert.equal(await writes(), 1);
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertCompactSettings(browser) {
   const page = await browser.newPage({ viewport: { width:391, height:845 }, isMobile:true, hasTouch:true, reducedMotion:'reduce' });
   page.setDefaultTimeout(8000);
@@ -1184,6 +1301,8 @@ try {
       await assertShortcutDetailRoutes(browser);
       console.log(engine + ': scoped panel and native shortcut destinations, safe taps, focus return and editor persistence');
       console.log(engine + ': independent browser appearance and admin household defaults');
+      await assertSetupDrafts(browser);
+      console.log(engine + ': setup drafts survive closing, preserve conflicts, and retry safely');
       const quietPage = await browser.newPage({
         viewport: { width: 391, height: 845 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce',
       });
@@ -4304,7 +4423,8 @@ try {
       await setup.getByRole('button', { name: 'Save dashboard', exact: true }).click();
       await setupPage.getByRole('button', { name: 'Reading nook', exact: true }).waitFor();
       const persisted = await setupPage.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')));
-      assert.equal(await setupPage.evaluate(() => sessionStorage.getItem('bayit9-browser-fixture-hash-at-save')), '');
+      assert.equal(await setupPage.evaluate(() => sessionStorage.getItem('bayit9-browser-fixture-hash-at-save')), '#panel/settings');
+      assert.equal(new URL(setupPage.url()).hash, '');
       assert.deepEqual(Object.values(persisted.strategy.room_overrides), [{ name: 'Reading nook',
         entities: ['light.demo_lamp'], read_only_entities: ['light.demo_lamp'] }]);
       assert.deepEqual(persisted.strategy.hidden_entities, ['sensor.scale_entity_6']);

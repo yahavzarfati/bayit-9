@@ -27,6 +27,7 @@ import { createBoilerSchedulePanel, isBoilerScheduleProfile } from './boiler-sch
 
 export const backgrounds = Object.freeze(Object.keys(wallpaperChoices));
 const options = { background: backgrounds, shape: ['soft', 'circle', 'square'], layout: ['classic', 'header'] };
+const setupDrafts = new Map();
 const iconPattern = /^mdi:[a-z0-9-]+$/;
 const entityPattern = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 const controlIcons = {
@@ -624,6 +625,7 @@ export class BayitDashboard extends HTMLElement {
 
   showPopupRoute({ route, hash, reason, source }) {
     if (reason === 'open' || reason === 'close') return;
+    this.setup?.editor.shadowRoot.activeElement?.blur();
     if (this.nodes.confirm.open) {
       this.confirming = null;
       this.nodes.confirm.close();
@@ -1277,6 +1279,7 @@ export class BayitDashboard extends HTMLElement {
   }
 
   dismissPanel(options) {
+    this.setup?.editor.shadowRoot.activeElement?.blur();
     const routeHash = this.panel?.routeHash;
     if (routeHash) this.popupHistory?.close(routeHash);
     this.popupMotion.dismiss(options);
@@ -1780,39 +1783,73 @@ export class BayitDashboard extends HTMLElement {
     status.setAttribute('role', 'status');
     content.className = 'setup-page';
     content.replaceChildren(status);
+    this.setup = null;
     try {
-      const current = await loadConfiguration(this._hass, location.pathname);
+      let current = await loadConfiguration(this._hass, location.pathname);
       if (this.panel !== page) return;
+      const key = JSON.stringify([this._hass.user.id, current.urlPath]);
+      let restored = setupDrafts.get(key);
+      if (restored?.pendingSave) {
+        // A dismissed editor can be reopened before its save request finishes.
+        await restored.pendingSave.catch(() => {});
+        if (this.panel !== page) return;
+        current = await loadConfiguration(this._hass, location.pathname);
+        if (this.panel !== page) return;
+        restored = setupDrafts.get(key);
+      }
+      const session = restored ?? { base: current, draft: current.strategy };
+      const baseline = JSON.stringify(session.base.strategy);
+      let conflict = JSON.stringify(current.strategy) !== baseline;
       const editor = customElements.get('ll-strategy-dashboard-' + STRATEGY_NAME).getConfigElement();
       editor.classList.add('setup-editor');
-      editor.setConfig(structuredClone(current.strategy));
+      editor.setConfig(structuredClone(session.draft));
       editor.hass = this._hass;
       this.setup = { editor };
-      let draft = current.strategy;
+
       const save = button('control-button', this.t('setup_save'), 'mdi:content-save-outline');
-      save.disabled = true;
+      const discard = button('control-button', this.t('setup_discard'));
+      const updateActions = () => {
+        const dirty = JSON.stringify(session.draft) !== baseline;
+        save.disabled = !dirty || conflict || Boolean(session.pendingSave);
+        discard.hidden = !dirty && !conflict;
+        discard.disabled = Boolean(session.pendingSave);
+        editor.inert = Boolean(session.pendingSave);
+      };
       editor.addEventListener('config-changed', event => {
-        draft = event.detail.config;
-        save.disabled = JSON.stringify(draft) === JSON.stringify(current.strategy);
+        session.draft = event.detail.config;
+        if (JSON.stringify(session.draft) !== baseline) setupDrafts.set(key, session);
+        else if (setupDrafts.get(key) === session) setupDrafts.delete(key);
+        updateActions();
       });
+      discard.onclick = () => {
+        if (setupDrafts.get(key) === session) setupDrafts.delete(key);
+        void this.paintSetup();
+      };
       save.onclick = async () => {
-        save.disabled = true;
-        editor.inert = true;
+        session.pendingSave = saveConfiguration(this._hass, session.base, session.draft);
+        updateActions();
         status.textContent = this.t('setup_saving');
+        let saved = false;
         try {
+          await session.pendingSave;
+          saved = true;
+          if (setupDrafts.get(key) === session) setupDrafts.delete(key);
+          if (this.panel !== page || !this.isConnected) return;
           if (page.routeHash) this.popupHistory?.close(page.routeHash);
-          await saveConfiguration(this._hass, current, draft);
           location.reload();
         } catch (error) {
           if (this.panel !== page) return;
-          status.textContent = this.configurationErrorText(error);
-          editor.inert = false;
-          save.disabled = error.code === 'setup_conflict';
+          conflict = error.code === 'setup_conflict';
+          status.textContent = conflict ? this.t('setup_draft_conflict') : this.configurationErrorText(error);
+        } finally {
+          session.pendingSave = undefined;
+          if (this.panel === page && !saved) updateActions();
         }
       };
       const footer = make('div', 'setup-footer');
-      status.textContent = '';
-      footer.append(status, save);
+      status.textContent = conflict ? this.t('setup_draft_conflict') : restored ? this.t('setup_draft_restored') : '';
+      updateActions();
+      footer.append(status, save, discard);
       content.replaceChildren(editor, footer);
     } catch (error) {
       if (this.panel === page) status.textContent = this.configurationErrorText(error);
