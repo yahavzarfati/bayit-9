@@ -1081,13 +1081,13 @@ if (query.has('editor')) {
 window.bayitTest = {
   registrations: window.customStrategies, calls, moreInfoCalls, moreInfoHashes, config,
   loadPopupHass() { card.hass = hass; },
-  reviseStrategy(change, { title } = {}) {
+  reviseStrategy(change, override) {
     const visible = document.querySelector('bayit-dashboard');
     const previous = visible._hass;
     const next = { ...previous, ...change };
-    const regenerate = title || Strategy.shouldRegenerate(selected, previous, next);
+    const regenerate = override || Strategy.shouldRegenerate(selected, previous, next);
     if (regenerate) {
-      const nextConfig = title ? { ...selected, title } : selected;
+      const nextConfig = override ? { ...selected, ...override } : selected;
       const nextCard = document.createElement('bayit-dashboard');
       nextCard.setConfig(Strategy.generate(nextConfig, next).views[0].cards[0]);
       nextCard.hass = next;
@@ -2805,6 +2805,109 @@ async function assertWeatherSurvivesRegistryReplay(browser) {
     });
     assert.deepEqual(changed, { hadDevice:true, hidden:true, retainsDevice:false, stateOnly:false,
       registryAfterState:true, legacy:true, saved:true, title:'Revised dashboard', serviceCalls:0 });
+  } finally {
+    await page.close();
+  }
+}
+
+async function assertToolbarPressAcrossReplacement(browser) {
+  const page = await browser.newPage({ viewport:{width:392,height:846}, reducedMotion:'reduce' });
+  const url = base + '/fixture-home/home?configuration&locale=en';
+  const toolbar = [{ id:'weather', kind:'weather', entities:['weather.demo_home'] }, { id:'settings', kind:'settings' },
+    { id:'fixture-guide', kind:'link', label:'Fixture guide', path:'/different-dashboard/home' }];
+  const weather = page.getByRole('button',{ name:'Weather', exact:true });
+  const dialog = page.getByRole('dialog',{ name:'Weather', exact:true });
+  try {
+    await page.addInitScript(toolbar => {
+      sessionStorage.setItem('bayit9-browser-fixture', JSON.stringify({ strategy:{ type:'custom:bayit-9', toolbar } }));
+      window.fixturePopupOpens = 0;
+      window.addEventListener('location-changed', event => {
+        if (event.detail?.source === 'bayit9-popup') ++window.fixturePopupOpens;
+      });
+      window.addEventListener('pointerdown', event => {
+        if (event.isTrusted) window.fixtureTrustedPointer = event.pointerId;
+      }, true);
+    }, toolbar);
+    const press = async (target = weather) => {
+      await page.goto(url);
+      const rect = await target.boundingBox();
+      const point = {x:rect.x + rect.width/2, y:rect.y + rect.height/2};
+      await page.mouse.move(point.x, point.y);
+      await page.mouse.down();
+      return point;
+    };
+    const replace = override => page.evaluate(override => {
+      const existing = document.querySelector('bayit-dashboard');
+      const { areas } = existing._hass;
+      const changed = { ...areas, studio:{ ...areas.studio, name:'Studio after registry update' } };
+      return window.bayitTest.reviseStrategy({ areas:changed },override) && !existing.isConnected;
+    }, override);
+    const assertOpen = async () => {
+      await dialog.waitFor();
+      assert.equal(new URL(page.url()).hash, '#panel/weather');
+      assert.equal(await page.evaluate(() => window.fixturePopupOpens), 1);
+    };
+    const assertClosed = async ({urlChanged = false} = {}) => {
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 60)));
+      const { pathname, hash } = new URL(page.url());
+      assert.equal(pathname, new URL(url).pathname);
+      assert.equal(hash, '');
+      if (!urlChanged) assert.equal(page.url(), url);
+      assert.deepEqual(await page.evaluate(() => ({
+        open:document.querySelector('bayit-dashboard').nodes.modal.open,
+        routed:window.fixturePopupOpens, calls:window.bayitTest.calls.filter(call => call.type === 'call_service'),
+      })), { open:false, routed:0, calls:[] });
+    };
+
+    await press();
+    assert.ok(await replace());
+    await page.mouse.up();
+    await assertOpen();
+
+    for (const method of ['click','keyboard']) {
+      await page.goto(url);
+      if (method === 'click') await weather.click();
+      else await weather.press('Enter');
+      await assertOpen();
+    }
+
+    let point = await press();
+    assert.ok(await replace());
+    await page.mouse.move(point.x+14, point.y);
+    await page.mouse.move(point.x, point.y);
+    await page.mouse.up();
+    await assertClosed();
+
+    point = await press();
+    assert.ok(await replace({ toolbar:[{...toolbar[0],kind:'settings',label:'Different popup'},...toolbar.slice(1)] }));
+    const other = await page.getByRole('button',{name:'Different popup',exact:true}).boundingBox();
+    assert.ok(point.x > other.x && point.x < other.x + other.width && point.y > other.y && point.y < other.y + other.height);
+    await page.mouse.up();
+    await assertClosed();
+
+    point = await press();
+    assert.ok(await replace());
+    await weather.evaluate((element,point) => element.dispatchEvent(new PointerEvent('pointerup', {
+      pointerId:window.fixtureTrustedPointer, pointerType:'mouse', isPrimary:true, button:0, bubbles:true, composed:true,
+      clientX:point.x, clientY:point.y,
+    })), point);
+    await page.mouse.move(point.x, point.y+150);
+    await page.mouse.up();
+    await assertClosed();
+
+    await press();
+    assert.ok(await replace());
+    await page.evaluate(() => history.replaceState(history.state,'',location.href + '&changed-view'));
+    await page.mouse.up();
+    await assertClosed({urlChanged:true});
+
+    for (const target of [page.getByRole('button',{name:'Fixture guide',exact:true}),
+      page.locator('.quick-button[data-entity="light.demo_lamp"]')]) {
+      await press(target);
+      assert.ok(await replace());
+      await page.mouse.up();
+      await assertClosed();
+    }
   } finally {
     await page.close();
   }
@@ -8209,6 +8312,7 @@ try {
       console.log(engine + ' 320: optional mirrored room placement, saved reload and native registry unchanged');
       await assertPopupAliasEditing(browser);
       await assertWeatherSurvivesRegistryReplay(browser);
+      await assertToolbarPressAcrossReplacement(browser);
       console.log(engine + ' 320: editable popup links, preserved legacy routes and same-dashboard URL reopen');
 
       const emptyPage = await browser.newPage();

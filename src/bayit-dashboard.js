@@ -13,6 +13,7 @@ import { allowsCoverRailAction, climatePowerServiceRegistered, compactRoomLockCo
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupScrollMemory } from './popup-scroll.js';
 import { createPopupHistory, normalizePopupAliases, popupRouteFragment, resolvePopupRoute } from './popup-routes.js';
+import { preserveToolbarPopupPress } from './popup-toolbar-press.js';
 import { preserveMoreInfoReturn } from './native-more-info.js';
 import { buildPanelControls, climateOptionLabel, panelControlStyles } from './panel-controls.js';
 import { lightColorHex, parseLightColor } from './light-color.mjs';
@@ -1034,7 +1035,11 @@ export class BayitDashboard extends HTMLElement {
       if (item.presence_dynamic_icon) panel.icon = presenceIcons[0];
       const element = button('chrome-button', name, panel.icon, true);
       element.dataset.role = kind;
-      if (kind !== 'link') element.setAttribute('aria-haspopup', 'dialog');
+      if (kind !== 'link') {
+        element.setAttribute('aria-haspopup', 'dialog');
+        if (settings.page) preserveToolbarPopupPress(element, kind, panel.id || kind,
+          () => this.isConnected && !this.nodes.modal.open);
+      }
       const badge = ['presence', 'activity'].includes(kind) ? make('span', 'badge') : null;
       if (badge) {
         badge.hidden = true;
