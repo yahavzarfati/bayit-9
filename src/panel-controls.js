@@ -442,6 +442,10 @@ export const panelControlStyles = `
     --timer-thumb-border: #20100a;
   }
   .device[data-treatment=boiler] .device-timer[data-compact] .timer-range { accent-color: var(--timer-thumb); }
+  .device[data-treatment=boiler] .device-timer[data-compact] .timer-command[data-action=stop_timed] {
+    background: color-mix(in srgb,var(--boiler-heat) 22%,transparent);
+    border-color: color-mix(in srgb,var(--boiler-heat) 48%,transparent);
+  }
   @media (prefers-contrast: more) {
     .device[data-treatment=boiler] .device-timer[data-compact] {
       --timer-rail: color-mix(in srgb,var(--ink) 42%,transparent);

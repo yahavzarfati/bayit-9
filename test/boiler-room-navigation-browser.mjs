@@ -633,9 +633,21 @@ try {
       assert.ok(scheduleBox.height >= 44 && historyBox.height >= 44 && startBox.height >= 44);
       assert.ok(Math.abs(scheduleBox.y - historyBox.y) < 1 && scheduleBox.y >= timerBox.y + timerBox.height);
 
+      const activeFill = control => control.evaluate(button => {
+        const style = getComputedStyle(button);
+        const canvas = document.createElement('canvas');
+        const pixels = canvas.getContext('2d');
+        pixels.fillStyle = style.backgroundColor;
+        pixels.fillRect(0, 0, 1, 1);
+        return { rgba: [...pixels.getImageData(0, 0, 1, 1).data], radius: style.borderTopLeftRadius };
+      });
       await schedule.tap();
       await timer.waitFor();
       await start.waitFor({ state: 'hidden' });
+      const selectedTab = await activeFill(schedule);
+      assert.equal(selectedTab.radius, '8px');
+      assert.ok(selectedTab.rgba[0] > 240 && selectedTab.rgba[1] < 170 && selectedTab.rgba[3] >= 34);
+      assert.ok((await activeFill(history)).rgba[3] < 16);
       await history.tap();
       await compact.waitForFunction(() => window.fixture.requests.includes('history/history_during_period'));
       await timer.tap();
@@ -644,6 +656,8 @@ try {
 
       await compact.evaluate(() => window.fixture.setupState('on', 'active'));
       await stop.waitFor();
+      const stopFill = (await activeFill(stop)).rgba;
+      assert.ok(stopFill[0] > 240 && stopFill[1] < 170 && stopFill[3] >= 54);
       const extend = compactDialog.locator('[data-action="extend_timed"]');
       await extend.waitFor();
       assert.equal(await timerArea.getAttribute('data-compact'), '');

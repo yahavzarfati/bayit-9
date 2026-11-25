@@ -185,6 +185,18 @@ export const boilerHistoryStyles = `
   .boiler-history-source { color: var(--secondary); }
   .boiler-history-length { font-weight: 750; color: var(--warm); }
   .boiler-tabs { display: grid; grid-template-columns: repeat(auto-fit,minmax(82px,1fr)); gap: 6px; margin-bottom: 8px; }
+  .boiler-tabs > .control-button {
+    border-radius: 8px;
+    background: color-mix(in srgb,var(--ink) 4%,transparent);
+  }
+  .boiler-tabs > .control-button[aria-pressed=true] {
+    background: color-mix(in srgb,var(--boiler-heat) 14%,transparent);
+    border-color: color-mix(in srgb,var(--boiler-heat) 45%,transparent);
+    box-shadow: none;
+  }
+  @media (forced-colors: active) {
+    .boiler-tabs > .control-button[aria-pressed=true] { border-color: Highlight; }
+  }
   .boiler-pane:not([hidden]) + .boiler-tabs { margin-block: 8px 0; }
   .boiler-pane { min-width: 0; }
 `;

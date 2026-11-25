@@ -23,6 +23,7 @@ export const styles = `
     --surface: #282828;
     --control: rgba(255,255,255,.05);
     --warm: #ffdf92;
+    --boiler-heat: #ff9b69;
     --moving: #9edcff;
     --critical: #ffc7c5;
     --control-radius: 16px;
@@ -629,7 +630,6 @@ export const styles = `
     width: 32px; height: 32px; --mdc-icon-size: 20px; place-items: center;
     background: var(--room-icon-fill); border: 1px solid var(--room-icon-line); border-radius: 50%;
   }
-  .device[data-treatment=boiler] { --boiler-heat: #ff9b69; }
   .device[data-boiler-heating] .boiler-state-head > .device-icon {
     color: var(--boiler-heat);
     background: color-mix(in srgb,var(--boiler-heat) 14%,transparent);
