@@ -1237,7 +1237,8 @@ export class BayitDashboard extends HTMLElement {
         if (view.more.title !== view.panelLaunch.hint) view.more.title = view.panelLaunch.hint;
       } else view.more.hidden = !model.actions.more_info;
       const timerLayout = model.timer ? [model.timer.state, Number.isFinite(model.timer.usedSeconds), model.state === 'on'] : null;
-      const signature = JSON.stringify([actionsInOrder.map(id => model.actions[id] || null), timerLayout, model.levelAction]);
+      const coverClass = model.domain === 'cover' ? model.attributes.device_class : null;
+      const signature = JSON.stringify([actionsInOrder.map(id => model.actions[id] || null), timerLayout, model.levelAction, coverClass]);
       if (signature !== view.signature) {
         view.signature = signature;
         this.buildActions(view, model);
