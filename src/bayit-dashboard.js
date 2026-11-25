@@ -1860,7 +1860,7 @@ export class BayitDashboard extends HTMLElement {
       basic.append(control);
     }
     if (view.effectGallery) organizeLightModes(complex, view.lightMode, mode => { view.lightMode = mode; },
-      { make, button, t: key => this.t(key) });
+      { make, button, t: key => this.t(key), model });
     const hasAdvanced = !!advancedClimate?.childElementCount;
     if (hasAdvanced) {
       advancedClimate.open = view.climateExtraControls?.open ?? false;

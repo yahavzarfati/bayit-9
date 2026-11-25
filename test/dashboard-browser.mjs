@@ -2403,15 +2403,14 @@ try {
         const whiteMode = mode.getByRole('button', { name: locale === 'he' ? 'לבן' : 'White', exact: true });
         const color = effectsDialog.getByLabel(locale === 'he' ? 'צבע התאורה' : 'Light color', { exact: true });
         const white = effectsDialog.getByRole('slider', { name: locale === 'he' ? 'גוון לבן' : 'White temperature', exact: true });
-        await gentle.waitFor();
-        assert.equal(await effectsMode.getAttribute('aria-pressed'), 'true');
+        await white.waitFor();
+        assert.equal(await whiteMode.getAttribute('aria-pressed'), 'true');
+        assert.equal(await effectsMode.getAttribute('aria-pressed'), 'false');
+        assert.equal(await white.inputValue(), '3200');
         assert.equal(await color.isVisible(), false);
-        assert.equal(await white.isVisible(), false);
+        assert.equal(await gallery.isVisible(), false);
         assert.equal(await mode.evaluate(el => el.scrollWidth > el.clientWidth), false);
         assert.ok(await fixedMode.evaluate(el => el.offsetHeight >= 44));
-        await whiteMode.press('Enter');
-        await gallery.waitFor({ state: 'hidden' });
-        assert.equal(await white.inputValue(), '3200');
         await fixedMode.press('Enter');
         await color.waitFor();
         assert.equal(await white.isVisible(), false);
@@ -2460,6 +2459,16 @@ try {
           type: 'call_service', domain: 'light', service: 'turn_on', target: { entity_id: 'light.demo_pendant' },
           service_data: { rgb_color: [128, 64, 32] },
         });
+        await whiteMode.press('Enter');
+        await white.waitFor();
+        await effectsPage.evaluate(() => window.bayitTest.setLightModes('light.demo_pendant', ['xy']));
+        await whiteMode.waitFor({ state: 'detached' });
+        assert.equal(await effectsMode.getAttribute('aria-pressed'), 'true', 'Use the reported active effect when the user mode is temporarily unsupported');
+        await effectsPage.evaluate(() => window.bayitTest.setLightModes('light.demo_pendant', ['color_temp', 'xy']));
+        await white.waitFor();
+        assert.equal(await whiteMode.getAttribute('aria-pressed'), 'true', 'Remember the user mode when the capability returns');
+        assert.equal(await effectsPage.evaluate(() => window.bayitTest.calls.length), 2);
+        await fixedMode.press('Enter');
         await fixedMode.focus();
         await effectsPage.evaluate(() => window.bayitTest.setLightModes('light.demo_pendant', ['xy']));
         await whiteMode.waitFor({ state: 'detached' });
@@ -3906,6 +3915,7 @@ try {
       });
       await effectEditorPage.getByRole('button', { name: 'Studio', exact: true }).click();
       await effectEditorPage.getByRole('dialog').locator('[data-entity="light.demo_pendant"] .device-tile').press('Shift+Enter');
+      await effectEditorPage.getByRole('button', { name: 'Effects', exact: true }).click();
       const savedGallery = effectEditorPage.getByRole('region', { name: 'Light effect', exact: true });
       await savedGallery.getByRole('button', { name: 'After dark', exact: true }).waitFor();
       await savedGallery.getByRole('button', { name: 'Morning', exact: true }).waitFor();

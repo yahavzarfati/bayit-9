@@ -1,3 +1,5 @@
+import { supportsLightColor } from './light-color.mjs';
+
 const iconPattern = /^mdi:[a-z0-9-]+$/;
 const effectAction = 'set_effect';
 const pageSize = 6;
@@ -166,7 +168,15 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
   };
 }
 
-export function organizeLightModes(fields, selected, changed, { make, button, t }) {
+function reportedLightMode({ actions, attributes, state }) {
+  const { effect, color_mode: colorMode } = attributes;
+  if (state === 'on' && typeof effect === 'string' && effect.trim().toLowerCase() !== 'off' &&
+      actions.set_effect?.options.includes(effect)) return effectAction;
+  if (colorMode === 'color_temp') return 'set_color_temp_kelvin';
+  if (supportsLightColor([colorMode])) return 'set_light_color';
+}
+
+export function organizeLightModes(fields, selected, changed, { make, button, t, model }) {
   const parts = lightModes.flatMap(([id, name]) => fields.has(id)
     ? [{ id, name, field: fields.get(id) }] : []);
   if (parts.length < 2) return;
@@ -190,7 +200,8 @@ export function organizeLightModes(fields, selected, changed, { make, button, t 
       field.hidden = id !== active;
     }
   }
-  setActive(parts.some(({ id }) => id === selected) ? selected : parts[0].id);
+  const initial = [selected, reportedLightMode(model)].find(mode => parts.some(({ id }) => id === mode));
+  setActive(initial ?? parts[0].id);
   const panel = make('div', 'light-mode-panel');
   panel.append(modeBar, ...parts.map(({ field }) => field));
   fields.set(effectAction, panel);
