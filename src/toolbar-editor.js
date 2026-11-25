@@ -1,9 +1,9 @@
 import {
-  discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactToolbarStatus, isEnergyReadingCards, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
+  discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactAutomationActions, isCompactToolbarStatus, isEnergyReadingCards, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
   isToolbarReadoutEntity, isToolbarReadouts, isWeatherReadingsList, normalizeOverviewDiscovery, normalizeToolbarReadout, overviewSectionOptions, roomPanelOptions,
   securityReadoutLabelStates, selectableRoomEntities, sensorComparisonMaxHours, sensorComparisonOptions,
   SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
-  supportsCompactToolbarStatus, supportsEnergyReadingCards, supportsOverviewLightsOff, supportsToolbarReadouts, supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
+  supportsCompactAutomationActions, supportsCompactToolbarStatus, supportsEnergyReadingCards, supportsOverviewLightsOff, supportsToolbarReadouts, supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
 } from './strategy-model.js';
@@ -64,6 +64,7 @@ const WORDS = {
     calendarWeather: 'Daily forecast beside dates', calendarNoWeather: 'No forecast',
     calendarAccent: 'Calendar accent', calendarInvalidAccent: 'Enter a six-digit color such as #80BFFF.',
     compactStatus: 'Show status items side by side',
+    compactAutomationActions: 'Show compact action buttons',
     weatherReadingsList: 'Show readings as a compact read-only list',
     energyReadingCards: 'Show readings with large values',
     sensorComparison: 'Compare trends in a single chart', comparisonHours: 'Time range in hours',
@@ -133,6 +134,7 @@ const WORDS = {
     calendarWeather: 'תחזית יומית ליד התאריך', calendarNoWeather: 'ללא תחזית',
     calendarAccent: 'צבע היומן', calendarInvalidAccent: 'הזינו צבע בן שש ספרות, למשל ‎#80BFFF‎.',
     compactStatus: 'הצגת פריטי הסטטוס זה לצד זה',
+    compactAutomationActions: 'הצגת כפתורי פעולה קומפקטיים',
     weatherReadingsList: 'הצגת המדדים ברשימה קומפקטית לקריאה בלבד',
     energyReadingCards: 'הצגת ערכי המדידה בגדול',
     sensorComparison: 'השוואת מגמות בגרף אחד', comparisonHours: 'טווח תצוגה בשעות',
@@ -659,6 +661,13 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     const fields = [node('h3', { textContent: words.editSection }), field(words.sectionDisplay, display),
       node('label', { className: 'check' }, [heading, words.showHeading]), title.field];
     const kind = toolbar[entryIndex].kind;
+    if (supportsCompactAutomationActions(kind, active)) {
+      const compact = node('input', { type:'checkbox', checked:isCompactAutomationActions(kind, active) });
+      compact.dataset.toolbarFocus = 'compact-actions';
+      compact.addEventListener('change', () =>
+        changeSection({ layout:compact.checked ? 'compact-actions' : undefined }, true, 'compact-actions'));
+      fields.push(node('label', { className:'check' }, [compact, words.compactAutomationActions]));
+    }
     if (supportsCompactToolbarStatus(kind, active)) {
       const compact = node('input', { type: 'checkbox', checked: isCompactToolbarStatus(kind, active) });
       compact.addEventListener('change', () => changeSection({ layout: compact.checked ? 'compact' : undefined }));

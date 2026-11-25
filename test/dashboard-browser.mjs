@@ -138,7 +138,10 @@ const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection'
     room_shortcuts: { studio: ['lock.fixture_entry'] },
     toolbar: [
       { kind: 'automations', label: 'Fixture actions', sections: [
-        { kind: 'actions', entities: [{ entity: 'lock.fixture_entry', role: 'lock', confirmation: true }] },
+        { kind: 'actions', title: 'Quick scenes',
+          ...(query.has('automation-compact') && { layout: 'compact-actions' }),
+          entities: [{ entity: 'lock.fixture_entry', role: 'lock', confirmation: true },
+            ...(query.has('automation-compact') ? [{ entity:'script.demo_start', role:'action', command:'toggle_script' }] : [])] },
       ] },
       { kind: 'security', label: 'Fixture security', sections: [
         { kind: 'locks', entities: [{ entity: 'lock.fixture_entry', role: 'lock', confirmation: true }] },
@@ -998,7 +1001,7 @@ if (query.has('editor')) {
   document.querySelector('#surface').hidden = true;
   const editor = Strategy.getConfigElement();
   editor.setConfig({ type: 'custom:bayit-9',
-    ...((query.has('toolbar-panels') || query.has('overview-opt-in') || query.has('lighting-count') ||
+    ...((query.has('toolbar-panels') || query.has('automation-compact') || query.has('overview-opt-in') || query.has('lighting-count') ||
       query.has('preset-shortcut') || query.has('entrance-popup-position') || query.has('timer-usage') ||
       query.has('swing-unreported') || query.has('temperature-source')) && selected) });
   editor.hass = hass;
@@ -2326,9 +2329,80 @@ async function assertToolbarLockPalette(browser) {
 
     await page.getByRole('button', { name: 'Fixture actions', exact: true }).tap();
     const actions = page.getByRole('dialog', { name: 'Fixture actions', exact: true });
+    const action = actions.locator('.tile-row');
+    for (const contrast of ['no-preference', 'more']) {
+      await page.emulateMedia({ contrast });
+      let neutral;
+      for (const state of ['locked', 'unlocking', 'unlocked', 'unavailable', 'locked']) {
+        await setState(state);
+        assert.equal(await action.getAttribute('data-lock-state'), null);
+        assert.equal(await action.getAttribute('data-automation-unlocked') !== null, state === 'unlocked');
+        const colors = await action.evaluate(tile => {
+          tile.closest('.modal').dataset.wallpaperInk = 'light';
+          const style = getComputedStyle(tile);
+          return [style.backgroundColor, style.borderTopColor, getComputedStyle(tile.querySelector('ha-icon')).color];
+        });
+        if (state === 'unlocked') {
+          assert.deepEqual(colors, ['rgba(255, 133, 133, 0.22)', 'rgba(255, 133, 133, 0.38)', 'rgb(255, 133, 133)']);
+        } else {
+          neutral ??= colors;
+          assert.deepEqual(colors, neutral);
+        }
+      }
+    }
     await setState('unlocked');
-    assert.equal(await actions.locator('.tile-row').getAttribute('data-lock-state'), null);
+    await action.tap();
+    const confirm = page.getByRole('dialog', { name:'Confirm action', exact:true });
+    await confirm.getByRole('button', { name:'Cancel', exact:true }).tap();
     assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+  } finally {
+    await page.close();
+  }
+}
+
+async function assertCompactAutomationActions(browser) {
+  const page = await browser.newPage({ viewport:{ width:320, height:700 }, hasTouch:true, reducedMotion:'reduce' });
+  page.setDefaultTimeout(8000);
+  try {
+    const url = base + '/fixture-home/home?configuration&lock-status-palette';
+    const panel = page.getByRole('dialog', { name:'Fixture actions', exact:true });
+    const openActions = () => page.getByRole('button', { name:'Fixture actions', exact:true }).tap();
+    await page.goto(url);
+    await openActions();
+    assert.ok((await panel.locator('.tile-row').boundingBox()).height >= 80);
+    await panel.getByRole('button', { name:'Close', exact:true }).tap();
+    await panel.waitFor({ state:'hidden' });
+
+    for (const locale of ['en', 'he']) {
+      await page.goto(url + '&automation-compact&locale=' + locale);
+      await openActions();
+      const section = panel.locator('[data-layout=compact-actions]');
+      const buttons = section.locator('.tile-row:not([hidden])');
+      assert.equal(await buttons.count(), 2);
+      assert.ok(await buttons.evaluateAll(tiles => tiles.every(tile => {
+        const bounds = tile.getBoundingClientRect();
+        const icon = tile.querySelector('.tile-mark').getBoundingClientRect();
+        const label = tile.querySelector('.tile-label').getBoundingClientRect();
+        const rtl = getComputedStyle(tile).direction === 'rtl';
+        return bounds.height === 56 && tile.scrollWidth === tile.clientWidth &&
+          (rtl ? icon.left > label.left : icon.left < label.left);
+      })));
+      await page.keyboard.press('Escape');
+      await panel.waitFor({ state:'hidden' });
+    }
+
+    await page.goto(url + '&automation-compact&editor');
+    await page.getByText('Toolbar and extra screens', { exact:true }).tap();
+    await page.getByRole('button', { name:'Fixture actions', exact:true }).tap();
+    await page.getByRole('button', { name:'Quick scenes', exact:true }).tap();
+    const check = page.getByRole('checkbox', { name:'Show compact action buttons', exact:true });
+    const layout = () => page.evaluate(() => window.latest.toolbar.find(panel => panel.kind === 'automations').sections[0].layout);
+    assert.equal(await check.isChecked(), true);
+    await check.uncheck();
+    assert.equal(await layout(), undefined);
+    await check.check();
+    assert.equal(await layout(), 'compact-actions');
+    assert.equal(await page.evaluate(() => window.bayitTest.calls.length), 0);
   } finally {
     await page.close();
   }
@@ -3301,6 +3375,8 @@ try {
       await assertCompactSettings(browser);
       await assertToolbarLockPalette(browser);
       console.log(engine + ': semantic toolbar lock colors, contrast and scope');
+      await assertCompactAutomationActions(browser);
+      console.log(engine + ': compact Automation actions and editor scope');
       await assertOverviewClimateDiscovery(browser);
       console.log(engine + ': editable active climate discovery, passive rows and live scope');
       await assertShortcutDetailRoutes(browser);

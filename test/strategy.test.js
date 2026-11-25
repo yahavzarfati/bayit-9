@@ -1422,6 +1422,22 @@ test('only Devices and Overview status sections retain the compact layout withou
   assert.ok(toolbar.every(item => item.sections.every(section => section.entities[0].role === 'status')));
 });
 
+test('compact action tiles are opt-in only for Automations actions and retain lock safety settings', () => {
+  const hass = home();
+  hass.states['lock.fixture'] = { state:'locked', attributes:{} };
+  const section = { kind:'actions', layout:'compact-actions', entities:[
+    { entity:'lock.fixture', role:'lock', confirmation:'Change the lock?' },
+  ] };
+  const { toolbar } = generateDashboard({ toolbar:[
+    { kind:'automations', sections:[section, { ...section, layout:undefined }, { ...section, kind:'status' }] },
+    { kind:'security', sections:[section] },
+  ] }, hass).views[0].cards[0];
+  assert.deepEqual(toolbar.map(item => item.sections.map(({ layout }) => layout)),
+    [['compact-actions', undefined, undefined], [undefined]]);
+  assert.equal(toolbar[0].sections[0].entities[0].role, 'lock');
+  assert.equal(toolbar[0].sections[0].entities[0].confirmation, 'Change the lock?');
+});
+
 test('native reading cards are opt-in only for Energy electricity and water', () => {
   const hass = home();
   const shown = 'sensor.fixture_cost';

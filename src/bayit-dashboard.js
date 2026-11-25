@@ -1,7 +1,7 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { classicRoomTitle, DEVICE_ICONS, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isToolbarReadouts, isVacuumProgramAction,
-  isEnergyReadingCards, isWeatherReadingsList,
+  isCompactAutomationActions, isEnergyReadingCards, isWeatherReadingsList,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
   normalizeRoomVacuumSummary, normalizeToolbarReadout, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
   ROOM_PANEL_KINDS, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
@@ -398,6 +398,7 @@ export function normalizeDashboardConfig(config = {}) {
           return entity;
         });
         return [{ id: text(section.id), kind: text(section.kind), title: typeof section.title === 'string' ? section.title : undefined,
+          ...(isCompactAutomationActions(item.kind, section) && { layout: 'compact-actions' }),
           ...(isCompactToolbarStatus(item.kind, section) && { layout: 'compact' }),
           ...(isToolbarReadouts(item.kind, section) && { layout: 'readouts' }),
           ...(isWeatherReadingsList(item.kind, section) && { layout: 'readings-list' }),

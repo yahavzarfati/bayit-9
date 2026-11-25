@@ -1,7 +1,7 @@
 import { createOrefMap } from './oref-alert-map.js';
 import { createVacuumMap } from './vacuum-map.js';
 import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
-import { discoverOverviewEntities, isActiveOverviewEntity, isCompactToolbarStatus, isEnergyReadingCards,
+import { discoverOverviewEntities, isActiveOverviewEntity, isCompactAutomationActions, isCompactToolbarStatus, isEnergyReadingCards,
   isToolbarLightTile, isToolbarReadoutEntity, isToolbarReadouts, isVisibleEntity, isWeatherReadingsList } from './strategy-model.js';
 import { mediaServiceRegistered } from './media-device-support.mjs';
 import { roomShutdownTargets } from './device-control.mjs';
@@ -177,6 +177,9 @@ export function createToolbarPanel(kind, configuration, context) {
       state.hidden = !showState;
       tile.dataset.tone = model.state === 'home' ? 'home' : model.state === 'on' ? 'active' : '';
       if (useLockPalette && model.domain === 'lock') paintLockStatus(tile, model);
+      if (kind === 'automations' && itemKind === 'action' && model.domain === 'lock') {
+        tile.toggleAttribute('data-automation-unlocked', model.available && model.state === 'unlocked');
+      }
       tile.disabled = (itemKind === 'action' && pending(item.entity)) || (!action && !model.actions.more_info);
       tile.setAttribute('aria-busy', String(pending(item.entity)));
       label(tile, model.name + (showState ? ' · ' + value.state : ''));
@@ -643,7 +646,9 @@ export function createToolbarPanel(kind, configuration, context) {
     const readouts = isToolbarReadouts(kind, section);
     const weatherReadings = isWeatherReadingsList(kind, section);
     const energyReadingCards = isEnergyReadingCards(kind, section);
-    if (compactStatus || readouts || weatherReadings || energyReadingCards) panel.dataset.layout = section.layout;
+    if (compactStatus || readouts || weatherReadings || energyReadingCards || isCompactAutomationActions(kind, section)) {
+      panel.dataset.layout = section.layout;
+    }
     if (kind === 'overview' && !compactStatus && section.filter === 'active' &&
         ['status', 'covers'].includes(section.kind)) panel.dataset.overviewActiveRows = '';
     const caption = section.title ?? t(sectionKeys[section.kind] ?? 'room_devices');
@@ -863,6 +868,21 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .compact-lock-action { padding: 4px; }
   .tile-row { display: grid; justify-items: center; align-content: center; gap: 5px; min-height: 80px; width: 100%;
     padding: 8px 6px; border: 1px solid var(--soft-line); border-radius: 12px; background: var(--control); text-align: center; }
+  .toolbar-section[data-layout=compact-actions] :is(.toolbar-section-items,.script-toggle) > .tile-row {
+    grid-template-columns: 22px minmax(0,1fr); grid-template-areas: "icon label" "icon state";
+    justify-items: start; align-items: center; gap: 2px 7px; min-height: 56px; padding: 6px 8px;
+    text-align: start;
+  }
+  .toolbar-section[data-layout=compact-actions] .tile-row:has(.tile-state[hidden]) { grid-template-areas: "icon label"; }
+  .toolbar-section[data-layout=compact-actions] .tile-mark {
+    grid-area: icon; width: 22px; height: 22px; background: transparent;
+  }
+  .toolbar-section[data-layout=compact-actions] .tile-label { grid-area: label; line-height: 1.15; }
+  .toolbar-section[data-layout=compact-actions] .tile-state { grid-area: state; line-height: 1.15; font-size: 11px; }
+  .tile-row[data-automation-unlocked] {
+    background: rgba(255,133,133,.22); border-color: rgba(255,133,133,.38);
+  }
+  .tile-row[data-automation-unlocked] .tile-mark > ha-icon { color: var(--lock-unlocked-ink,#ff8585); }
   .script-toggle > .tile-row[hidden] { display: none; }
   .tile-mark { display: grid; place-items: center; position: relative; border-radius: 50%; width: 34px; height: 34px; background: var(--glass); }
   .tile-portrait { position: absolute; inset: 0; object-fit: cover; width: 100%; height: 100%; border-radius: inherit; }

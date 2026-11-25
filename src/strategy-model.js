@@ -758,6 +758,14 @@ export function isToolbarLightTile(kind, section, item) {
   return kind === 'devices' && section === 'devices' && item?.role === 'light_tile' && Boolean(idForDomain(item.entity, 'light'));
 }
 
+export function supportsCompactAutomationActions(kind, section) {
+  return kind === 'automations' && section?.kind === 'actions';
+}
+
+export function isCompactAutomationActions(kind, section) {
+  return supportsCompactAutomationActions(kind, section) && section.layout === 'compact-actions';
+}
+
 export function supportsCompactToolbarStatus(kind, section) {
   return (kind === 'devices' || kind === 'overview') && section?.kind === 'status';
 }
@@ -908,6 +916,7 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
         ...(seriesColor && { series_color: seriesColor }) }];
     });
     return [{ id, kind: section.kind, ...(title !== undefined && { title }),
+      ...(isCompactAutomationActions(kind, section) && { layout: 'compact-actions' }),
       ...(isCompactToolbarStatus(kind, section) && { layout: 'compact' }),
       ...(isToolbarReadouts(kind, section) && { layout: 'readouts' }),
       ...(isWeatherReadingsList(kind, section) && { layout: 'readings-list' }),
