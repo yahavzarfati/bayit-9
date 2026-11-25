@@ -194,7 +194,8 @@ const roomStatusSelected = {
   area_ids: ['bayit_room_status', ...Array.from({ length: 9 }, (_, index) => 'bayit_room_fixture_' + index)],
   room_overrides: {
     bayit_room_status: {
-      name: hass.locale.language === 'he' ? 'חדר הפנאי' : 'Family room',
+      name: query.has('classic-quiet') ? (hass.locale.language === 'he' ? 'חדר\\nהפנאי' : 'Family\\nroom')
+        : hass.locale.language === 'he' ? 'חדר הפנאי' : 'Family room',
       entities: ['climate.demo_room', 'cover.demo_window', 'sensor.demo_temperature', 'light.demo_unavailable',
         'light.demo_side1', 'light.demo_side2', 'light.demo_side3'],
     },
@@ -458,6 +459,77 @@ try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
     try {
+      const quietPage = await browser.newPage({
+        viewport: { width: 391, height: 845 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce',
+      });
+      const quietLocale = engine === 'WebKit' ? 'he' : 'en';
+      await quietPage.goto(base + '?room-status&classic-quiet&locale=' + quietLocale);
+      const homeRoom = quietPage.locator('.room[data-room="bayit_room_status"]');
+      await homeRoom.waitFor();
+      const quietShortcut = homeRoom.locator('.quick-button[data-entity="light.demo_side1"]');
+      const movingShortcut = homeRoom.locator('.quick-button[data-tone="moving"]').first();
+      const appearance = () => quietShortcut.evaluate(control => {
+        const style = getComputedStyle(control);
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        const pixel = color => {
+          context.clearRect(0, 0, 1, 1);
+          context.fillStyle = color;
+          context.fillRect(0, 0, 1, 1);
+          return Array.from(context.getImageData(0, 0, 1, 1).data);
+        };
+        return {
+          reduced: matchMedia('(prefers-reduced-transparency: reduce)').matches,
+          stronger: matchMedia('(prefers-contrast: more)').matches,
+          background: pixel(style.backgroundColor),
+          rimAlpha: pixel(style.borderColor)[3],
+          strongRimAlpha: pixel(style.getPropertyValue('--soft-line'))[3],
+        };
+      });
+      assert.equal(await quietShortcut.locator('ha-icon').evaluate(glyph => glyph.offsetWidth), 24);
+      assert.equal(await movingShortcut.locator('ha-icon').evaluate(glyph => glyph.offsetWidth), 24);
+      const assertAppearance = async () => {
+        const current = await appearance();
+        if (current.reduced) {
+          assert.ok(current.background.slice(0, 3).every(value => Math.abs(value - 62) <= 1));
+          assert.equal(current.background[3], 255);
+        } else assert.equal(current.background[3], 0);
+        assert.ok(Math.abs(current.rimAlpha - (current.stronger ? current.strongRimAlpha : 41)) <= 1);
+      };
+      await assertAppearance();
+      if (engine === 'Chromium') {
+        const cdp = await quietPage.context().newCDPSession(quietPage);
+        for (const [value, contrast] of [['no-preference', 'no-preference'], ['reduce', 'no-preference'], ['reduce', 'more']]) {
+          await cdp.send('Emulation.setEmulatedMedia', { features: [
+            { name: 'prefers-reduced-transparency', value }, { name: 'prefers-contrast', value: contrast },
+          ] });
+          assert.equal((await appearance()).reduced, value === 'reduce');
+          await assertAppearance();
+        }
+        await homeRoom.evaluate(room => { room.dataset.wallpaperInk = 'dark'; });
+        assert.ok((await appearance()).background.slice(0, 3).every(value => value > 190));
+      }
+      const roomName = homeRoom.locator('.room-name');
+      const nameLines = () => roomName.evaluate(name => {
+        const range = document.createRange();
+        range.selectNodeContents(name);
+        return new Set([...range.getClientRects()].filter(box => box.width > 0).map(box => box.top)).size;
+      });
+      const rawName = quietLocale === 'he' ? 'חדר\nהפנאי' : 'Family\nroom';
+      assert.equal(await roomName.textContent(), rawName);
+      assert.equal(await nameLines(), 2);
+      const labelFits = await roomName.evaluate(name => {
+        const box = name.getBoundingClientRect();
+        const tile = name.closest('.room').getBoundingClientRect();
+        return box.top >= tile.top && box.bottom <= tile.bottom;
+      });
+      assert.equal(labelFits, true);
+      await quietPage.evaluate(() => window.bayitTest.setRoomLayout('header'));
+      assert.equal(await roomName.textContent(), rawName);
+      assert.equal(await nameLines(), 1);
+      assert.equal(await quietPage.evaluate(() => window.bayitTest.calls.length), 0);
+      await quietPage.close();
+
       const routesPage = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
       const rtlRoutes = engine === 'WebKit';
       const routeUrl = base + '/fixture-home/home?popup-routes&locale=' + (rtlRoutes ? 'he' : 'en');

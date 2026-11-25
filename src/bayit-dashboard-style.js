@@ -226,6 +226,7 @@ export const styles = `
   .shell[dir=rtl] .room-title > :is(.room-name,span:first-of-type:not(.room-count)), .shell[dir=rtl] .room-status span {
     direction: rtl;
   }
+  .shell[data-page=true][data-layout=classic] .room-title > .room-name { white-space: pre-line; }
   .room-title .chevron { display: none; }
   .room-count {
     grid-area: count;
@@ -309,6 +310,22 @@ export const styles = `
     box-shadow: none;
   }
   .quick-button ha-icon { width: 20px; height: 20px; --mdc-icon-size: 20px; }
+  .shell[data-page=true] .quick-button ha-icon {
+    --mdc-icon-size: min(24px,calc(var(--shortcut-height) - 4px));
+    width: var(--mdc-icon-size);
+    height: var(--mdc-icon-size);
+  }
+  .shell[data-page=true] .quick-button[data-tone=quiet]:not(:disabled) {
+    border-color: color-mix(in srgb,var(--ink) 16%,transparent);
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .shell[data-page=true] .quick-button[data-tone=quiet]:not(:disabled,:hover) {
+      background-color: color-mix(in srgb,var(--ink) 10%,var(--surface));
+    }
+  }
+  @media (prefers-contrast: more) {
+    .shell[data-page=true] .quick-button[data-tone=quiet]:not(:disabled) { border-color: var(--soft-line); }
+  }
   .shell[data-layout=header] .quick {
     grid-template-columns: repeat(3,var(--shortcut-width));
     justify-content: start;
@@ -706,6 +723,7 @@ export const styles = `
       grid-template-columns: 22px auto minmax(0,1fr);
       grid-template-rows: 1fr;
       font-size: 12px;
+      padding-block: 1px;
     }
     .shell[data-page=true][data-layout=classic] .room-title > ha-icon:first-child { width: 22px; height: 22px; --mdc-icon-size: 22px; }
     .shell[data-page=true][data-layout=classic] .room-title > .room-name { text-align: left; }
