@@ -276,8 +276,12 @@ async function assertCompactVacuumMap(browser) {
       const programs = [...panel.querySelectorAll('[data-vacuum-compact-program]')].map(button => {
         const box = button.getBoundingClientRect();
         const text = button.querySelector('.tile-label');
+        const label = document.createRange();
+        label.selectNodeContents(text);
+        const linesFit = [...label.getClientRects()].every(line => line.top >= box.top && line.bottom <= box.bottom &&
+          line.left >= box.left && line.right <= box.right);
         return { x: box.x, y: box.y, w: box.width, h: box.height,
-          fullLabel: text.scrollHeight <= text.clientHeight && text.scrollWidth <= text.clientWidth + 1 };
+          fullLabel: linesFit && text.scrollHeight <= text.clientHeight && text.scrollWidth <= text.clientWidth + 1 };
       });
       const touch = [...panel.querySelectorAll('[data-toolbar-vacuum-compact] .basic-actions button, .vacuum-extra-controls > summary, [data-section=vacuum-map] .weather-tabs button')].map(button => {
         const box = button.getBoundingClientRect();
@@ -305,7 +309,8 @@ async function assertCompactVacuumMap(browser) {
         assert.ok(compact.mapVisible >= 240, JSON.stringify({ width, compact }));
         assert.ok(compact.fits && compact.touch.every(([w, h]) => w >= 43.9 && h >= 43.9), JSON.stringify({ width, compact }));
         assert.equal(compact.programs.length, 4);
-        assert.ok(compact.programs.every(({ w, h, fullLabel }) => w >= 44 && h >= 44 && fullLabel));
+        assert.ok(compact.programs.every(({ w, h, fullLabel }) => w >= 44 && h >= 44 && fullLabel),
+          JSON.stringify({ width, locale, programs:compact.programs }));
         const [first, second, third, fourth] = compact.programs;
         assert.ok(first.x < second.x && third.x < fourth.x && first.y === second.y && third.y === fourth.y && third.y > first.y);
         assert.equal(await summary.getAttribute('aria-label'), he ? 'פקדי שואב נוספים' : 'More vacuum controls');
