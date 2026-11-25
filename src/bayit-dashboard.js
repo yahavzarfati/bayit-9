@@ -1389,6 +1389,13 @@ export class BayitDashboard extends HTMLElement {
         if (boilerPanel) head.append(icon('mdi:arrow-top-right'));
         view.panelLaunch = { action: this.t(toolbarCoverRail ? 'more_info' : 'device_controls'), native: toolbarCoverRail };
       } else {
+        if (titleInDialog && domain === 'light' && config.room_light_controls === true && config.role !== 'status') {
+          const power = button('round-action compact-light-power', this.t('turn_on'), 'mdi:power', true);
+          power.hidden = true;
+          power.onclick = () => this.requestAction(config, power.dataset.action, undefined, power);
+          head.append(power);
+          view.lightPower = power;
+        }
         head.append(glyph, details);
         const shortcut = (room || showRoomPreset) && config.room_climate_preset;
         if (shortcut) {
@@ -1596,6 +1603,14 @@ export class BayitDashboard extends HTMLElement {
         view.signature = signature;
         this.buildActions(view, model);
       }
+      if (view.lightPower && view.compactLight) {
+        const power = view.lightPower;
+        const actionId = model.state === 'on' ? 'turn_off' : 'turn_on';
+        power.dataset.action = actionId;
+        power.toggleAttribute('data-powered', model.state === 'on');
+        power.disabled = !this.canRequest(view.config.entity, actionId);
+        label(power, this.t(actionId));
+      }
       view.item.setAttribute('aria-busy', String(!!pending));
       for (const control of view.group.querySelectorAll('button,input,select')) {
         if (control.dataset.lightMode) continue;
@@ -1782,6 +1797,15 @@ export class BayitDashboard extends HTMLElement {
     view.effectGallery = null;
     const basic = make('div', 'basic-actions');
     const complex = new Map();
+    const { actions } = model;
+    view.compactLight = !!(view.lightPower && actions.set_brightness && actions.set_color_temp_kelvin &&
+      actions.turn_on && actions.turn_off && !actions.set_light_color && !actions.set_effect);
+    view.item.toggleAttribute('data-compact-light', view.compactLight);
+    if (view.lightPower) {
+      view.lightPower.hidden = !view.compactLight;
+      if (view.lightPower.hidden && active === view.lightPower) view.more.focus({ preventScroll: true });
+    }
+    if (view.compactLight) complex.set('compact_light', this.buildCompactLightAdjustments(view, model));
     const curtain = model.domain === 'cover' && model.attributes.device_class === 'curtain';
     const timing = view.config.timed;
     const timerPreferenceKey = timing && 'bayit-9.timer-duration.v1:' +
@@ -1795,9 +1819,10 @@ export class BayitDashboard extends HTMLElement {
       buildClimateDetail: this.panel?.type === 'device' ? id => this.buildField(view, model.actions[id], id, model) : undefined,
       request: (id, value, control) => this.requestAction(view.config, id, value, control) });
     for (const id of actionsInOrder) {
-      const action = model.actions[id];
+      const action = actions[id];
       if (!action || view.special.used.has(id) || (view.compactCover && id === 'set_position')) continue;
       if (view.inlineLight && !inlineLightActions.has(id)) continue;
+      if (view.compactLight && (inlineLightActions.has(id) || id === 'turn_on' || id === 'turn_off')) continue;
       if (action.color && this.panel?.type !== 'device') continue;
       if (id === 'set_effect' && this.panel?.type === 'device') {
         view.effectGallery = createLightEffectGallery(view.config.effect_groups, action.options, { make, button, icon,
@@ -1830,6 +1855,28 @@ export class BayitDashboard extends HTMLElement {
     }
   }
 
+  buildCompactLightAdjustments(view, model) {
+    const { actions } = model;
+    const brightness = this.buildField(view, actions.set_brightness, 'set_brightness', model);
+    const temperature = this.buildField(view, actions.set_color_temp_kelvin, 'set_color_temp_kelvin', model);
+    const mode = button('round-action', this.t('set_color_temp_kelvin'), 'mdi:thermometer', true);
+    mode.dataset.lightMode = 'compact-temperature';
+    const update = () => {
+      const showTemperature = view.compactTemperature === true;
+      brightness.hidden = showTemperature;
+      temperature.hidden = !showTemperature;
+      mode.setAttribute('aria-pressed', String(showTemperature));
+    };
+    mode.onclick = () => {
+      view.compactTemperature = !view.compactTemperature;
+      update();
+    };
+    update();
+    const controls = make('div', 'compact-light-controls');
+    controls.append(brightness, temperature, mode);
+    return controls;
+  }
+
   numberInput(action, type) {
     const input = make('input');
     input.type = type;
@@ -1843,6 +1890,7 @@ export class BayitDashboard extends HTMLElement {
     const title = id === 'start_timed' ? this.t('duration') : this.actionLabel(id);
     const caption = make('label', '', title);
     const isRange = rangeActions.has(id);
+    const directRange = view.inlineLight || (view.compactLight && inlineLightActions.has(id));
     const field = { action, id };
     if (action.options) {
       field.input = make('select');
@@ -1865,7 +1913,7 @@ export class BayitDashboard extends HTMLElement {
       field.valid = parseLightColor;
     } else field.input = this.numberInput(action, isRange ? 'range' : 'number');
     field.input.dataset.action = id;
-    if (view.inlineLight || id === 'set_color_temp_kelvin') field.input.setAttribute('aria-label', title);
+    if (directRange || id === 'set_color_temp_kelvin') field.input.setAttribute('aria-label', title);
     caption.append(field.input);
     if (id === 'set_temperature_range') {
       field.input.setAttribute('aria-label', title + ' · ' +this.t('min'));
@@ -1880,7 +1928,7 @@ export class BayitDashboard extends HTMLElement {
       caption.append(field.output);
     }
     if (isRange) field.unit = id === 'set_color_temp_kelvin' ? ' K' : '%';
-    const apply = view.inlineLight ? field.input
+    const apply = directRange ? field.input
       : button('control-button', id === 'start_timed' ? this.actionLabel(id) : this.t('apply'));
     field.apply = apply;
     const touched = () => {
@@ -1892,13 +1940,13 @@ export class BayitDashboard extends HTMLElement {
     if (action.color) field.input.addEventListener('change', touched);
     field.second?.addEventListener('input', touched);
     apply.dataset.action = id;
-    if (!view.inlineLight) label(apply, id === 'start_timed' ? this.actionLabel(id) : this.t('apply') + ' · ' + title);
+    if (!directRange) label(apply, id === 'start_timed' ? this.actionLabel(id) : this.t('apply') + ' · ' + title);
     const commit = () => {
       const single = action.color || field.input.localName === 'select' ? field.input.value : field.input.valueAsNumber;
       const value = field.second ? { low: field.input.valueAsNumber, high: field.second.valueAsNumber } : single;
       this.requestAction(view.config, id, value, apply);
     };
-    if (view.inlineLight) {
+    if (directRange) {
       field.input.addEventListener('change', commit);
       row.append(caption);
     } else {
@@ -1995,7 +2043,7 @@ export class BayitDashboard extends HTMLElement {
       if (this.pending.get(config.entity) === token) {
         this.pending.delete(config.entity);
         for (const view of this.deviceViews) {
-          const syncImmediately = view.inlineLight || id === 'set_swing_horizontal_mode';
+          const syncImmediately = view.inlineLight || (view.compactLight && inlineLightActions.has(id)) || id === 'set_swing_horizontal_mode';
           if (view.config.entity !== config.entity || (!confirmedByHomeAssistant && !syncImmediately)) continue;
           for (const field of view.fields) {
             if (field.id !== id) continue;

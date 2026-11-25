@@ -4138,13 +4138,47 @@ try {
       assert.equal(await brighter.inputValue(), '41', 'A rejected change returns to the reported brightness');
       await inlineCard.getByRole('button', { name: 'Desk lamp · Turn off', exact: true }).press('Shift+Enter');
       const inlineDetail = inlinePage.getByRole('dialog', { name: 'Desk lamp', exact: true });
+      const detailBrightness = inlineDetail.getByRole('slider', { name: 'Brightness', exact: true });
+      const detailTemperature = inlineDetail.getByRole('slider', { name: 'White temperature', exact: true });
+      const temperatureMode = inlineDetail.getByRole('button', { name: 'White temperature', exact: true });
+      await detailBrightness.waitFor();
+      assert.equal(await inlineDetail.getByRole('button', { name: /^Apply/ }).count(), 0);
+      assert.equal(await detailTemperature.count(), 0);
+      assert.equal(await detailBrightness.inputValue(), '41');
+      assert.ok((await detailBrightness.boundingBox()).height >= 44);
+      assert.ok((await temperatureMode.boundingBox()).height >= 44);
+      assert.ok(await inlineDetail.locator('.modal-body').evaluate(body => body.scrollHeight === body.clientHeight));
+      assert.equal(await inlineDetail.getByRole('button', { name: 'More info', exact: true }).count(), 1);
+      const beforeDetailCalls = await inlinePage.evaluate(() => window.bayitTest.calls.length);
+      await temperatureMode.press('Enter');
+      assert.equal(await temperatureMode.getAttribute('aria-pressed'), 'true');
+      assert.equal(await detailBrightness.count(), 0);
+      assert.equal(await detailTemperature.inputValue(), '3001');
+      assert.equal(await inlinePage.evaluate(() => window.bayitTest.calls.length), beforeDetailCalls);
+      await detailTemperature.press('ArrowRight');
+      await inlinePage.waitForFunction(count => window.bayitTest.calls.length === count + 1, beforeDetailCalls);
+      await inlineDetail.getByRole('button', { name: 'Turn off', exact: true }).press('Enter');
+      await inlineDetail.getByRole('button', { name: 'Turn on', exact: true }).press('Enter');
+      await inlineDetail.getByRole('button', { name: 'Turn off', exact: true }).waitFor();
+      assert.deepEqual(await inlinePage.evaluate(from => window.bayitTest.calls.slice(from).map(call =>
+        [call.domain, call.service, call.target.entity_id, call.service_data ?? {}]), beforeDetailCalls), [
+        ['light', 'turn_on', 'light.demo_lamp', { color_temp_kelvin: 3002 }],
+        ['light', 'turn_off', 'light.demo_lamp', {}],
+        ['light', 'turn_on', 'light.demo_lamp', {}],
+      ]);
+      await inlinePage.evaluate(() => window.bayitTest.setLightModes('light.demo_lamp', ['color_temp', 'rgb']));
       await inlineDetail.getByRole('button', { name: 'Apply · Brightness', exact: true }).waitFor();
+      assert.equal(await inlineDetail.locator('.compact-light-controls').count(), 0);
+      await inlinePage.evaluate(() => window.bayitTest.setLightModes('light.demo_lamp', ['color_temp']));
       await inlinePage.keyboard.press('Escape');
       await inlinePage.locator('dialog.modal[data-kind]').waitFor({ state: 'detached' });
       await inlinePage.getByRole('button', { name: 'Den', exact: true }).tap();
       const inlineOther = inlinePage.getByRole('dialog', { name: 'Den', exact: true });
       await inlineOther.getByRole('button', { name: 'Desk lamp · Turn off', exact: true }).waitFor();
       assert.equal(await inlineOther.getByRole('slider').count(), 0);
+      await inlineOther.getByRole('button', { name: 'Desk lamp · Turn off', exact: true }).press('Shift+Enter');
+      await inlineDetail.getByRole('button', { name: 'Apply · Brightness', exact: true }).waitFor();
+      assert.equal(await inlineDetail.locator('.compact-light-controls').count(), 0);
       await inlinePage.keyboard.press('Escape');
       await inlinePage.locator('dialog.modal[data-kind]').waitFor({ state: 'detached' });
       const inlineEditor = await openRoomEditor(inlinePage);

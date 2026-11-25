@@ -684,13 +684,25 @@ export const styles = `
   }
   .device[data-inline-light] .device-tile > ha-icon { width: 32px; height: 32px; }
   .device[data-inline-light] .action-list { margin: 0; padding: 0 8px 8px; gap: 2px; }
-  .device[data-inline-light] .field-row { grid-template-columns: minmax(0,1fr); }
-  .device[data-inline-light] .field-row label {
+  :is(.device[data-inline-light],.compact-light-controls) .field-row { grid-template-columns: minmax(0,1fr); }
+  :is(.device[data-inline-light],.compact-light-controls) .field-row label {
     display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 0 4px;
     align-items: center;
   }
-  .device[data-inline-light] .field-row input { grid-column: 1 / -1; grid-row: 2; }
-  .device[data-inline-light] .field-row output { grid-column: 2; grid-row: 1; white-space: nowrap; }
+  :is(.device[data-inline-light],.compact-light-controls) .field-row input { grid-column: 1 / -1; grid-row: 2; }
+  :is(.device[data-inline-light],.compact-light-controls) .field-row output { grid-column: 2; grid-row: 1; white-space: nowrap; }
+  .device[data-compact-light] .device-state-head {
+    direction: ltr; grid-template-columns: 44px minmax(0,1fr) 44px;
+  }
+  .device[data-compact-light] .device-detail { text-align: left; }
+  .compact-light-power[data-powered] { color: var(--warm); }
+  .compact-light-controls {
+    display: grid; grid-template-columns: minmax(0,1fr) 44px; align-items: end; gap: 8px; direction: ltr;
+  }
+  .compact-light-controls > .field-row { grid-column: 1; grid-row: 1; }
+  .compact-light-controls > .round-action { grid-column: 2; grid-row: 1; }
+  .compact-light-controls > .round-action[aria-pressed=true] { border-color: var(--warm); }
+  .shell[dir=rtl] .compact-light-controls label { direction: rtl; }
   .action-list, .basic-actions { display: grid; gap: 7px; }
   .action-list:empty { display: none; }
   .action-list { margin-block-start: 8px; }
