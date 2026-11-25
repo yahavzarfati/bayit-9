@@ -280,7 +280,7 @@ export const styles = `
     grid-template-rows: 1fr;
     align-self: stretch;
   }
-  .shell[data-layout=header] .room-turn-off { align-self: center; margin-block-end: 0; }
+  .shell[data-layout=header] .room-turn-off { align-self: center; min-inline-size: 24px; margin-block-end: 0; }
   .shell[data-layout=header] .room-title > :is(.room-name,span:first-of-type:not(.room-count)) {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -833,7 +833,9 @@ export const styles = `
     .shell[data-page=true][data-layout=classic] :is(.room-title > ha-icon:first-child,.room-turn-off > ha-icon) {
       width: 22px; height: 22px; --mdc-icon-size: 22px;
     }
-    .shell[data-page=true][data-layout=classic] .room-turn-off { min-block-size: 31px; margin-block-end: 0; }
+    .shell[data-page=true][data-layout=classic] .room-turn-off {
+      min-block-size: 31px; min-inline-size: 24px; margin-block-end: 0;
+    }
     .shell[data-page=true][data-layout=classic] :is(.room-title > :is(ha-icon,.room-count,.room-name),.room-turn-off > ha-icon) {
       translate: 0 3px;
     }

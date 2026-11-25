@@ -1243,6 +1243,9 @@ try {
       const roomIcon = shutdownPage.getByRole('button', { name:'Turn off selected devices in Studio', exact:true });
       const shutdownCalls = () => shutdownPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain === 'homeassistant'));
       const shutdownRoomTitle = shutdownPage.getByRole('button', { name:'Studio', exact:true });
+      const iconBounds = await roomIcon.boundingBox();
+      const badgeBounds = await shutdownRoomTitle.locator('.room-count').boundingBox();
+      assert.ok(iconBounds.x + iconBounds.width <= badgeBounds.x, 'The off button leaves the lighting badge clickable as room content');
       await roomIcon.tap();
       assert.equal(await roomIcon.getAttribute('aria-busy'), 'true');
       await roomIcon.press('Enter');
