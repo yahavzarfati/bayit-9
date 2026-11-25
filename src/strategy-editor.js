@@ -57,6 +57,7 @@ const WORDS = {
     roomDeviceSearch: 'Find a device to add',
     roomDeviceMove: 'After saving, the device will move from {room} to this room on the dashboard.',
     roomDeviceKeep: 'After saving, the device will also appear here and stay in {rooms}.',
+    keepInAutomaticRoom: 'Keep in the automatic room too',
     roomDeviceEmpty: 'The previous room will be hidden while empty.',
     readOnlyRoom: 'Show status only for selected room devices',
     applianceBadges: 'Appliance activity badges', applianceKind: 'Appliance', saveAppliance: 'Save badge', removeAppliance: 'Remove badge',
@@ -161,6 +162,7 @@ const WORDS = {
     roomDeviceSearch: 'חיפוש מכשיר להוספה',
     roomDeviceMove: 'לאחר השמירה המכשיר יעבור בדשבורד מחדר {room} לחדר הזה.',
     roomDeviceKeep: 'לאחר השמירה המכשיר יישאר ב־{rooms} ויופיע גם בחדר הזה.',
+    keepInAutomaticRoom: 'להשאיר גם בחדר האוטומטי',
     roomDeviceEmpty: 'החדר הקודם יוסתר כל עוד הוא ריק.',
     readOnlyRoom: 'הצגת מצב בלבד למכשירים שנבחרו',
     applianceBadges: 'חיווי פעילות מכשירים', applianceKind: 'מכשיר', saveAppliance: 'שמירת חיווי', removeAppliance: 'הסרת חיווי',
@@ -1005,6 +1007,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const next = { ...override };
       if (choice.value === 'auto') {
         delete next.entities;
+        delete next.keep_in_automatic_room_entities;
         if (sections) next.device_selection = 'auto';
         else delete next.device_selection;
       } else {
@@ -1203,7 +1206,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       if (!next.room_temperature_entity || !entities.includes(next.room_temperature_fallback_entity)) {
         delete next.room_temperature_fallback_entity;
       }
-      for (const key of ['read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
+      for (const key of ['keep_in_automatic_room_entities', 'read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
         'inline_light_entities', 'dual_light_detail_entities', 'compact_light_reading_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details',
         'vacuum_panel_hold_entities', 'climate_power_entities', 'media_compact_entities', 'appliance_tile_entities']) {
         if (!Array.isArray(next[key])) continue;
@@ -1245,31 +1248,51 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const nameCounts = new Map();
     for (const device of devices) nameCounts.set(device.name, (nameCounts.get(device.name) ?? 0) + 1);
 
-    const addition = id => ({ ...override, entities: [...chosen, id] });
+    const addition = (id, preserveAutomatic) => {
+      const next = { ...override, entities: [...chosen, id] };
+      const retained = new Set(configuredIds(override.keep_in_automatic_room_entities));
+      if (preserveAutomatic) retained.add(id);
+      else retained.delete(id);
+      if (retained.size) next.keep_in_automatic_room_entities = [...retained];
+      else delete next.keep_in_automatic_room_entities;
+      return next;
+    };
+    const keepAutomatic = checkbox(words.keepInAutomaticRoom, false, () => updatePlacement());
+    const keep = keepAutomatic.firstElementChild;
     const picker = addPicker(words.deviceToAdd, [], words.addDevice, words.choose,
-      id => this.#setRoomOverride(room.id, addition(id), 'room-device-search'));
+      id => this.#setRoomOverride(room.id, addition(id, !keepAutomatic.hidden && keep.checked), 'room-device-search'));
     const placement = node('p', { className: 'room-add-hint', id: picker.input.getAttribute('aria-labelledby') + '-placement' });
     placement.setAttribute('role', 'status');
     picker.action.setAttribute('aria-describedby', placement.id);
-    picker.input.addEventListener('change', () => {
+    const updatePlacement = () => {
       placement.textContent = '';
+      keepAutomatic.hidden = true;
       const id = picker.input.value;
       if (!id) return;
       const elsewhere = candidate => candidate.id !== room.id && candidate.entities.includes(id);
-      const before = dashboardRoomMemberships(this.#config, this.#hass, language).find(elsewhere);
-      if (!before) return;
-      // Preview the same draft edit the Add button will make.
-      const roomOverrides = { ...this.#config.room_overrides, [room.id]: addition(id) };
-      const after = dashboardRoomMemberships({ ...this.#config, room_overrides: roomOverrides }, this.#hass, language);
-      if (!after.some(candidate => candidate.id === room.id && candidate.entities.includes(id))) return;
+      const before = dashboardRoomMemberships(this.#config, this.#hass, language).filter(elsewhere);
+      if (!before.length) return;
+      const project = preserveAutomatic => dashboardRoomMemberships({ ...this.#config,
+        room_overrides: { ...this.#config.room_overrides, [room.id]: addition(id, preserveAutomatic) },
+      }, this.#hass, language);
+      const moved = project(false);
+      if (!moved.some(candidate => candidate.id === room.id && candidate.entities.includes(id))) return;
+      const movedOutOf = before.find(candidate => !moved.some(group => group.id === candidate.id && elsewhere(group)));
+      const copied = movedOutOf && project(true);
+      keepAutomatic.hidden = !copied || !copied.some(group => group.id === movedOutOf.id && elsewhere(group));
+      const after = !keepAutomatic.hidden && keep.checked ? copied : moved;
       const others = after.filter(elsewhere);
       if (others.length) {
         const names = new Intl.ListFormat(language).format(others.map(candidate => candidate.name));
         placement.textContent = words.roomDeviceKeep.replace('{rooms}', () => names);
       } else {
-        const move = words.roomDeviceMove.replace('{room}', () => before.name);
-        placement.textContent = after.some(candidate => candidate.id === before.id) ? move : move + ' ' + words.roomDeviceEmpty;
+        const move = words.roomDeviceMove.replace('{room}', () => before[0].name);
+        placement.textContent = after.some(candidate => candidate.id === before[0].id) ? move : move + ' ' + words.roomDeviceEmpty;
       }
+    };
+    picker.input.addEventListener('change', () => {
+      keep.checked = false;
+      updatePlacement();
     });
     const filter = node('input', { type: 'search', value: this.#roomDeviceQuery });
     filter.dataset.roomFocus = 'room-device-search';
@@ -1287,11 +1310,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
       }));
       picker.input.disabled = !results.length;
       picker.action.disabled = true;
-      placement.textContent = '';
+      keep.checked = false;
+      updatePlacement();
     };
     filter.addEventListener('input', () => { this.#roomDeviceQuery = filter.value; refresh(); });
     refresh();
-    return [...children, field(words.roomDeviceSearch, filter), node('div', {}, [picker.wrapper, placement]), membership, ...options];
+    return [...children, field(words.roomDeviceSearch, filter), node('div', {}, [picker.wrapper, keepAutomatic, placement]), membership, ...options];
   }
 
   #customRoomForm(rooms, selection, words) {

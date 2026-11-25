@@ -38,6 +38,8 @@ Each room section has a `kind`, optional `id` and `title`, and an ordered list o
 
 In **Rooms**, use **Room name line break in classic layout** to choose where a multiword room name breaks on its Home card. In YAML, set `classic_title_break: 1` in that room's `room_overrides` to break after the first word. The top-title layout and the room panel use the full room name.
 
+When adding a device from an automatic room, select **Keep in the automatic room too** to show it in both rooms. Its Home Assistant area stays the same. In YAML, list those devices under `keep_in_automatic_room_entities` in the destination room override.
+
 You can arrange sections manually while **Devices in this room** stays **Automatic**. Devices later added to the room's Home Assistant area follow the default grouping until you move them to a custom section. A room override with `device_selection: auto` uses this arrangement. Existing sections-only overrides continue to select their listed entities unless this option is set.
 
 In **Rooms**, open **Device display** and select a device. Clear **Name in this room** to display its default name, or turn off **Show name in this room** to keep the caption available to assistive technology while hiding it visually. The YAML `entity_names` maps IDs to room captions. An explicit empty string hides the visual caption.

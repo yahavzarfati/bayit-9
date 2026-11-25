@@ -881,6 +881,25 @@ test('keeps selected native rooms even without eligible devices and distinguishe
   assert.ok(moved[1].entities.some(entity => entity.entity === 'fan.demo_fan'));
 });
 
+test('keeps opted-in memberships in their automatic room without changing explicit moves or visibility', () => {
+  const hass = home();
+  const registry = structuredClone({ areas:hass.areas, entities:hass.entities, devices:hass.devices });
+  const light = 'light.demo_lamp';
+  const custom = CUSTOM_ROOM_PREFIX + 'study';
+  const other = CUSTOM_ROOM_PREFIX + 'other';
+  const destination = { name:'Reading room', entities:[light] };
+  const mirror = { ...destination, keep_in_automatic_room_entities:[light, 'fan.demo_fan', light] };
+  const config = { room_selection:'manual', area_ids:['lounge', custom, other], show_unassigned:false };
+  const placements = (overrides, extra) => discoverRooms({ ...config, ...extra, room_overrides:overrides }, hass, 'en')
+    .filter(room => room.entities.some(item => item.entity === light)).map(room => room.id);
+  assert.deepEqual(placements({ [custom]:destination }), [custom]);
+  assert.deepEqual(placements({ [custom]:mirror }), ['lounge', custom]);
+  assert.deepEqual(placements({ [custom]:mirror, [other]:{ ...destination, name:'Another room' } }), [custom, other]);
+  assert.deepEqual(placements({ [custom]:mirror }, { area_ids:[custom] }), [custom]);
+  assert.deepEqual(placements({ [custom]:mirror }, { hidden_entities:[light] }), []);
+  assert.deepEqual({ areas:hass.areas, entities:hass.entities, devices:hass.devices }, registry);
+});
+
 test('supports additional dashboard-only rooms in the room order and retains empty rooms', () => {
   const hass = home();
   const custom = CUSTOM_ROOM_PREFIX + 'washing-room';

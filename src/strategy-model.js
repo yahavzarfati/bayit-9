@@ -360,6 +360,7 @@ function dashboardAreas(config, hass) {
       classicTitleBreak: override.classic_title_break,
       icon: icon ?? area?.icon ?? 'mdi:home-outline',
       entityIds,
+      keepInAutomaticRoom: new Set(idList(override.keep_in_automatic_room_entities)),
       sections,
       readOnly: new Set(idList(override.read_only_entities)),
       panelHidden: idList(override.panel_hidden_entities),
@@ -544,18 +545,20 @@ function groupRoomDevices(config, hass, areas) {
   const discoverableDomains = config.discovery_mode === 'controls' ? CONTROL_DOMAINS : DEFAULT_RANK;
   const visible = entity => isVisibleEntity(entity, states, registry, hidden);
 
-  const manuallyPlaced = new Set();
+  const movedFromAutomaticRooms = new Set();
   for (const [id, room] of areas) {
     if (!isSelected(id) || (!room.entityIds && config.room_selection !== 'manual')) continue;
     const ids = (room.entityIds ?? []).filter(visible);
     grouped.set(id, ids);
-    for (const entity of ids) manuallyPlaced.add(entity);
+    for (const entity of ids) {
+      if (!room.keepInAutomaticRoom?.has(entity)) movedFromAutomaticRooms.add(entity);
+    }
   }
 
   const availableIds = new Set(registry ? Object.keys(registry) : Object.keys(states));
   for (const explicit of [...extra, ...profiles.keys()]) availableIds.add(explicit);
   for (const entity of availableIds) {
-    if (manuallyPlaced.has(entity) || !visible(entity)) continue;
+    if (movedFromAutomaticRooms.has(entity) || !visible(entity)) continue;
     const info = registry?.[entity];
     const isExplicit = extra.has(entity) || profiles.has(entity);
     const isDiagnostic = info?.entity_category != null || info?.ec != null;

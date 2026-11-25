@@ -2372,6 +2372,86 @@ async function assertToolbarLockPalette(browser) {
   }
 }
 
+async function assertRoomMirrorPlacement(browser) {
+  const rooms = [
+    { locale:'en', id:'bayit_room_1', name:'Reading nook', appearance:'Appearance', setup:'Customize home', rooms:'Rooms',
+      create:'New dashboard-only room', newName:'New room name', addRoom:'Create room',
+      picker:'Available devices', add:'Add device', keep:'Keep in the automatic room too', save:'Save dashboard',
+      moveHint:'After saving, the device will move from Lounge to this room on the dashboard.',
+      keepHint:'After saving, the device will also appear here and stay in Lounge.' },
+    { locale:'he', id:'bayit_room_shared_fixture', name:'פינת עבודה', appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים',
+      room:'חדר להתאמה אישית', picker:'מכשירים זמינים', add:'הוספת מכשיר', keep:'להשאיר גם בחדר האוטומטי', save:'שמירת הדשבורד',
+      moveHint:'לאחר השמירה המכשיר יעבור בדשבורד מחדר Lounge לחדר הזה.',
+      keepHint:'לאחר השמירה המכשיר יישאר ב־Lounge ויופיע גם בחדר הזה.' },
+  ];
+  for (const words of rooms) {
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(10000);
+    try {
+      if (!words.create) await page.addInitScript(({ id, name }) => {
+        const key = 'bayit9-browser-fixture';
+        if (sessionStorage.getItem(key)) return;
+        sessionStorage.setItem(key, JSON.stringify({ strategy:{ type:'custom:bayit-9', show_unassigned:false,
+          room_overrides:{ [id]:{ name, entities:['switch.demo_heater'] } },
+        } }));
+      }, words);
+      const entity = 'light.demo_lounge';
+      await page.goto(base + '/fixture-home/home?configuration&room-selection&locale=' + words.locale);
+      const shortcut = room => page.locator('.room[data-room="' + room + '"] .quick-button[data-entity="' + entity + '"]');
+      const original = shortcut('lounge');
+      const mirrored = shortcut(words.id);
+      await original.waitFor();
+      const readRegistry = () => page.locator('bayit-dashboard').evaluate(card => {
+        const { areas, devices, entities } = card._hass;
+        return { areas, devices, entities };
+      });
+      const registryBefore = await readRegistry();
+      assert.equal(registryBefore.entities[entity].area_id, 'lounge');
+      await page.getByRole('button', { name:words.appearance, exact:true }).tap();
+      await page.getByRole('button', { name:words.setup, exact:true }).tap();
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      await setup.getByText(words.rooms, { exact:true }).tap();
+      if (words.create) {
+        await setup.getByText(words.create, { exact:true }).tap();
+        await setup.getByLabel(words.newName, { exact:true }).fill(words.name);
+        await setup.getByRole('button', { name:words.addRoom, exact:true }).tap();
+      } else await setup.getByLabel(words.room, { exact:true }).selectOption(words.id);
+      const picker = setup.getByLabel(words.picker, { exact:true });
+      const keep = setup.getByRole('checkbox', { name:words.keep, exact:true });
+      assert.equal(await keep.isVisible(), false);
+      await picker.selectOption(entity);
+      await setup.getByText(words.moveHint).waitFor();
+      assert.equal(await keep.isChecked(), false);
+      await keep.check();
+      await setup.getByText(words.keepHint, { exact:true }).waitFor();
+      await picker.selectOption('');
+      assert.equal(await keep.isVisible(), false);
+      await picker.selectOption(entity);
+      assert.equal(await keep.isChecked(), false);
+      await keep.check();
+      await setup.getByRole('button', { name:words.add, exact:true }).tap();
+      assert.equal(await original.count(), 1);
+      assert.equal(await mirrored.count(), 0);
+      await setup.getByRole('button', { name:words.save, exact:true }).tap();
+      await setup.waitFor({ state:'hidden' });
+      await original.waitFor();
+      await mirrored.waitFor();
+      const saved = await page.evaluate(id => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.room_overrides[id], words.id);
+      assert.deepEqual(saved.entities, words.create ? [entity] : ['switch.demo_heater', entity]);
+      assert.deepEqual(saved.keep_in_automatic_room_entities, [entity]);
+      assert.deepEqual(await readRegistry(), registryBefore);
+      assert.equal(await page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service' ||
+        /^config\/(area|device|entity)_registry\//.test(call.type)).length), 0);
+      await page.reload();
+      await original.waitFor();
+      await mirrored.waitFor();
+      assert.deepEqual(await readRegistry(), registryBefore);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertCompactAutomationActions(browser) {
   const page = await browser.newPage({ viewport:{ width:320, height:700 }, hasTouch:true, reducedMotion:'reduce' });
   page.setDefaultTimeout(8000);
@@ -7353,6 +7433,8 @@ try {
         await placementPage.close();
       }
       console.log(engine + ' 320: device placement preview reflects automatic moves and stays local until saved');
+      await assertRoomMirrorPlacement(browser);
+      console.log(engine + ' 320: optional mirrored room placement, saved reload and native registry unchanged');
 
       const emptyPage = await browser.newPage();
       await emptyPage.goto(base + '?empty');
