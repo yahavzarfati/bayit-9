@@ -215,6 +215,19 @@ export function supportsShortcutWithoutDetails(device) {
   return domainOf(device.entity) === 'switch' && !device.kind && device.role !== 'status';
 }
 
+export function normalizeShortcutDetailEntities(room, value, excluded = []) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const members = new Set(room.entities.map(device => device.entity));
+  const suppressed = new Set(excluded);
+  const targets = [];
+  for (const { entity } of roomShortcutDevices(room)) {
+    if (suppressed.has(entity) || !Object.hasOwn(value, entity)) continue;
+    const target = value[entity];
+    if (target !== entity && members.has(target)) targets.push([entity, target]);
+  }
+  return Object.fromEntries(targets);
+}
+
 function dashboardAreas(config, hass) {
   const areas = new Map(Object.entries(hass.areas ?? {}).map(([id, area]) => [
     area.area_id ?? id,
@@ -241,6 +254,7 @@ function dashboardAreas(config, hass) {
       readOnly: new Set(idList(override.read_only_entities)),
       panelHidden: idList(override.panel_hidden_entities),
       shortcutNoDetails: new Set(idList(override.shortcut_no_details)),
+      shortcutDetailEntities: override.shortcut_detail_entities,
       inlineLights: new Set(idList(override.inline_light_entities)),
       lightingCount: idList(override.lighting_count_entities),
       shutdown: idList(override.turn_off_entities).filter(supportsRoomShutdown),
@@ -507,6 +521,8 @@ export function discoverRooms(config, hass, locale) {
         supportsShortcutWithoutDetails(device) && area.shortcutNoDetails.has(device.entity));
       if (excluded.length) room.shortcut_no_details = excluded.map(device => device.entity);
     }
+    const detailEntities = normalizeShortcutDetailEntities(room, area.shortcutDetailEntities, room.shortcut_no_details);
+    if (Object.keys(detailEntities).length) room.shortcut_detail_entities = detailEntities;
     return room;
   });
 }

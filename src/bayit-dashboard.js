@@ -1,7 +1,8 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isVacuumProgramAction,
-  isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeUnreportedSwingMode,
+  isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
+  normalizeUnreportedSwingMode,
   overviewSectionOptions, ROOM_PANEL_KINDS, roomShortcutDevices, STRATEGY_NAME, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
@@ -304,6 +305,7 @@ export function normalizeDashboardConfig(config = {}) {
       parsed.shortcutNoDetails = new Set(roomShortcutDevices(parsed).filter(device =>
         supportsShortcutWithoutDetails(device) && excluded.has(device.entity)).map(device => device.entity));
     }
+    parsed.shortcutDetailEntities = normalizeShortcutDetailEntities(parsed, room.shortcut_detail_entities, parsed.shortcutNoDetails);
     if (Array.isArray(room.sections)) {
       parsed.sections = room.sections.filter(section => roomSectionKinds.has(section?.kind)).map(section => ({
         id: text(section.id), kind: section.kind, title: typeof section.title === 'string' ? section.title : undefined,
@@ -828,6 +830,21 @@ export class BayitDashboard extends HTMLElement {
     else this.moreInfo(config, source);
   }
 
+  openShortcutDetails(config, source, room) {
+    const alternate = room.shortcutDetailEntities[config.entity];
+    if (alternate) {
+      const states = this._hass?.states ?? {};
+      const registry = this._hass?.entities;
+      const hidden = this.config.hiddenEntities;
+      if (!isVisibleEntity(config.entity, states, registry, hidden)) return;
+      if (isVisibleEntity(alternate, states, registry, hidden)) {
+        this.openPanel('device', source, room, alternate);
+        return;
+      }
+    }
+    this.openDeviceDetails(config, source, room);
+  }
+
   coverIsMoving(model) {
     return model.available && (coverMovingStates.has(model.state) || movement.has(this.pending.get(model.entity)?.id));
   }
@@ -879,7 +896,7 @@ export class BayitDashboard extends HTMLElement {
         el.dataset.entity = config.entity;
         const details = !room.shortcutNoDetails?.has(config.entity);
         el.onclick = () => this.quickAction(config, el, room, { details });
-        bindDeviceDetails(el, details ? () => this.openPanel('device', el, room, config.entity) : undefined);
+        bindDeviceDetails(el, details ? () => this.openShortcutDetails(config, el, room) : undefined);
         shortcut.set(config.entity, el);
         quick.append(el);
       }

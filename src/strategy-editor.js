@@ -1,6 +1,6 @@
 import {
   BACKGROUNDS, classicRoomTitle, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
-  normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeUnreportedSwingMode,
+  normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities, normalizeUnreportedSwingMode,
   PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomPanelOptions, roomSections, roomShortcutDevices, selectableRoomEntities, selectedRoomIds,
   STRATEGY_NAME, supportsShortcutWithoutDetails,
   usesAutomaticRoomDevices,
@@ -70,6 +70,7 @@ const WORDS = {
     shortcuts: 'Room shortcuts', shortcutRoom: 'Room', automaticShortcuts: 'Choose shortcuts automatically',
     shortcut: 'Shortcut', shortcutHint: 'Pick up to six devices in display order.',
     shortcutDetails: 'Long-press gesture', shortcutDetailsDevice: 'Open details with a long press · {name}',
+    shortcutDetailTarget: 'Long-press details · {name}', shortcutDefaultDetails: 'Shortcut device',
     noShortcutRooms: 'Add a device to a visible room to set its shortcuts.',
     profiles: 'Boiler and heater controls', entity: 'Heating device', kind: 'Control profile',
     heater: 'Room heater', boiler: 'Water heater or boiler', displayName: 'Display name',
@@ -147,6 +148,7 @@ const WORDS = {
     shortcuts: 'קיצורים בחדרים', shortcutRoom: 'חדר', automaticShortcuts: 'בחירת קיצורים אוטומטית',
     shortcut: 'קיצור', shortcutHint: 'אפשר לבחור עד שישה מכשירים לפי סדר התצוגה.',
     shortcutDetails: 'פעולה בלחיצה ארוכה', shortcutDetailsDevice: 'פתיחת פרטי מכשיר בלחיצה ארוכה · {name}',
+    shortcutDetailTarget: 'פרטים בלחיצה ארוכה · {name}', shortcutDefaultDetails: 'מכשיר הקיצור',
     noShortcutRooms: 'הוסיפו מכשיר לחדר שמוצג בדשבורד כדי לבחור קיצורים.',
     profiles: 'שליטה בדוד ובתנורים', entity: 'מכשיר חימום', kind: 'סוג בקר',
     heater: 'תנור חימום', boiler: 'דוד או מחמם מים', displayName: 'שם לתצוגה',
@@ -848,6 +850,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
         next[key] = Object.fromEntries(Object.entries(next[key]).filter(([id]) => entities.includes(id)));
         if (!Object.keys(next[key]).length) delete next[key];
       }
+      if (next.shortcut_detail_entities) {
+        const detailEntities = Object.fromEntries(Object.entries(next.shortcut_detail_entities).filter(([source, target]) =>
+          entities.includes(source) && entities.includes(target) && source !== target));
+        if (Object.keys(detailEntities).length) next.shortcut_detail_entities = detailEntities;
+        else delete next.shortcut_detail_entities;
+      }
       if (sections && entities.length < chosen.length) {
         const kept = new Set(entities);
         const removed = new Set(chosen.filter(entity => !kept.has(entity)));
@@ -1154,27 +1162,63 @@ export class Bayit9StrategyEditor extends HTMLElement {
     roomInput.dataset.shortcutRoom = '';
     const list = node('div', { className: 'grid', hidden: true });
     const details = node('fieldset', { className: 'stack' });
+    const nameCounts = new Map();
+    for (const device of room.entities) {
+      const name = device.name || device.entity;
+      nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
+    }
+    const deviceName = device => {
+      const name = device.name || device.entity;
+      return nameCounts.get(name) > 1 ? name + ' (' + device.entity + ')' : name;
+    };
     let inputs = [];
     let fields;
     const renderDetails = () => {
       const selected = list.hidden ? undefined : inputs.map(input => input.value).filter(Boolean);
-      const devices = roomShortcutDevices({ ...room, shortcuts: selected }).filter(supportsShortcutWithoutDetails);
-      details.hidden = !devices.length;
-      const excluded = new Set(configuredIds(this.#roomOverride(room.id).shortcut_no_details));
-      details.replaceChildren(node('legend', { textContent: words.shortcutDetails }),
-        ...devices.map(device => checkbox(
-          words.shortcutDetailsDevice.replace('{name}', device.name || device.entity),
-          !excluded.has(device.entity),
-          enabled => {
+      const scope = { ...room, shortcuts: selected };
+      const override = this.#roomOverride(room.id);
+      const excluded = new Set(configuredIds(override.shortcut_no_details));
+      const targets = normalizeShortcutDetailEntities(scope, override.shortcut_detail_entities);
+      const controls = [];
+      const commit = next => {
+        const overrides = { ...this.#config.room_overrides };
+        if (Object.keys(next).length) overrides[room.id] = next;
+        else delete overrides[room.id];
+        this.#commit({ room_overrides: overrides });
+      };
+      for (const device of roomShortcutDevices(scope)) {
+        const id = device.entity;
+        const suppressible = supportsShortcutWithoutDetails(device);
+        const others = room.entities.filter(item => item.entity !== id);
+        const input = others.length ? select([['', words.shortcutDefaultDetails],
+          ...others.map(item => [item.entity, deviceName(item)])], targets[id] ?? '') : undefined;
+        if (suppressible) {
+          controls.push(checkbox(words.shortcutDetailsDevice.replace('{name}', deviceName(device)), !excluded.has(id), enabled => {
             const next = { ...this.#roomOverride(room.id) };
             const ignored = new Set(configuredIds(next.shortcut_no_details));
-            if (enabled) ignored.delete(device.entity);
-            else ignored.add(device.entity);
+            if (enabled) ignored.delete(id);
+            else ignored.add(id);
             if (ignored.size) next.shortcut_no_details = [...ignored];
             else delete next.shortcut_no_details;
-            this.#commit({ room_overrides: { ...this.#config.room_overrides, [room.id]: next } });
-          },
-        )));
+            if (input) input.disabled = !enabled;
+            commit(next);
+          }));
+        }
+        if (!input) continue;
+        input.disabled = suppressible && excluded.has(id);
+        input.addEventListener('change', () => {
+          const next = { ...this.#roomOverride(room.id) };
+          const targetMap = { ...next.shortcut_detail_entities };
+          if (others.some(item => item.entity === input.value)) targetMap[id] = input.value;
+          else delete targetMap[id];
+          if (Object.keys(targetMap).length) next.shortcut_detail_entities = targetMap;
+          else delete next.shortcut_detail_entities;
+          commit(next);
+        });
+        controls.push(field(words.shortcutDetailTarget.replace('{name}', deviceName(device)), input));
+      }
+      details.hidden = !controls.length;
+      details.replaceChildren(node('legend', { textContent: words.shortcutDetails }), ...controls);
     };
     const refresh = () => {
       const selected = new Set(inputs.map(input => input.value).filter(Boolean));

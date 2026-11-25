@@ -126,6 +126,17 @@ const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection'
       bayit_room_den: { name: 'Den', entities: ['switch.demo_heater'] },
     },
   }),
+  ...(query.has('shortcut-detail-target') && {
+    show_unassigned: false, area_ids: ['studio', 'bayit_room_den'],
+    room_shortcuts: { studio: ['light.demo_lamp'], bayit_room_den: ['light.demo_lamp'] },
+    room_overrides: {
+      studio: { entities: ['light.demo_lamp', 'light.demo_dimmer', 'switch.demo_heater'],
+        inline_light_entities: ['light.demo_dimmer'],
+        shortcut_detail_entities: { 'light.demo_lamp': 'light.demo_dimmer' } },
+      bayit_room_den: { name: 'Den', entities: ['light.demo_lamp', 'light.demo_other_room'] },
+    },
+    popup_aliases: { '#fixture-linked-dimmer': '#device/studio/light.demo_dimmer' },
+  }),
   ...(query.has('room-panel-visibility') && {
     show_unassigned: false, area_ids: ['studio', 'bayit_room_den'],
     room_shortcuts: { studio: ['light.demo_lamp'] },
@@ -149,6 +160,12 @@ if (query.has('inline-room-lights')) {
   Object.assign(states['light.demo_lamp'].attributes, attributes);
   states['light.demo_lamp'].state = 'on';
   states['light.demo_room_read_only'] = { state: 'on', attributes: { ...attributes, friendly_name: 'Read-only lamp' } };
+}
+if (query.has('shortcut-detail-target')) {
+  states['light.demo_dimmer'] = { state: 'on', attributes: { friendly_name: 'Desk dimmer',
+    supported_color_modes: ['color_temp'], brightness: 125,
+    min_color_temp_kelvin: 2000, max_color_temp_kelvin: 6500, color_temp_kelvin: 3000 } };
+  states['light.demo_other_room'] = { state: 'off', attributes: { friendly_name: 'Den light', supported_color_modes: ['onoff'] } };
 }
 const hass = {
   user: { is_admin: query.has('configuration') && !query.has('member') },
@@ -4340,6 +4357,82 @@ try {
       assert.deepEqual(await powerCalls(), afterSave);
       await shortcutModePage.close();
       console.log(engine + ' 320: optional switch shortcut tap, suppressed hold and keyboard, preserved deep link and editor');
+
+      const detailTargetPage = await newRoomConfigPage();
+      const detailTargetUrl = base + '/fixture-home/home?configuration&shortcut-detail-target';
+      const detailTarget = detailTargetPage.getByRole('dialog', { name: 'Desk dimmer', exact: true });
+      const sourceDetails = detailTargetPage.getByRole('dialog', { name: 'Desk lamp', exact: true });
+      const studioShortcut = detailTargetPage.locator('.room[data-room="studio"] .quick-button[data-entity="light.demo_lamp"]');
+      const denShortcut = detailTargetPage.locator('.room[data-room="bayit_room_den"] .quick-button[data-entity="light.demo_lamp"]');
+      const detailWrites = () => detailTargetPage.evaluate(() => window.bayitTest.calls.filter(request => request.domain));
+      const closeDetails = async dialog => {
+        await detailTargetPage.keyboard.press('Escape');
+        await dialog.waitFor({ state: 'hidden' });
+      };
+      await detailTargetPage.goto(detailTargetUrl + '#fixture-linked-dimmer');
+      await detailTarget.waitFor();
+      assert.equal(await detailTarget.getByRole('slider', { name: 'Brightness', exact: true }).count(), 1);
+      await closeDetails(detailTarget);
+      await studioShortcut.press('Shift+Enter');
+      await detailTarget.waitFor();
+      assert.equal(new URL(detailTargetPage.url()).hash, '#device/studio/light.demo_dimmer');
+      assert.equal(await studioShortcut.getAttribute('data-popup-origin'), '');
+      await detailTarget.getByRole('button', { name: 'More info', exact: true }).tap();
+      assert.deepEqual(await detailTargetPage.evaluate(() => window.bayitTest.moreInfoCalls), ['light.demo_dimmer']);
+      await closeDetails(detailTarget);
+
+      await studioShortcut.evaluate(async button => {
+        const pointer = { button: 0, pointerId: 25, pointerType: 'touch', isPrimary: true, bubbles: true, composed: true };
+        button.dispatchEvent(new PointerEvent('pointerdown', pointer));
+        await new Promise(resolve => setTimeout(resolve, 540));
+        button.dispatchEvent(new PointerEvent('pointerup', pointer));
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+      });
+      await detailTarget.waitFor();
+      await closeDetails(detailTarget);
+      await denShortcut.press('Shift+Enter');
+      await sourceDetails.waitFor();
+      assert.equal(new URL(detailTargetPage.url()).hash, '#device/bayit_room_den/light.demo_lamp');
+      await closeDetails(sourceDetails);
+      assert.deepEqual(await detailWrites(), []);
+
+      await studioShortcut.tap();
+      await detailTargetPage.waitForFunction(() => window.bayitTest.calls.some(request => request.domain === 'light'));
+      assert.deepEqual(await detailWrites(), [{ type: 'call_service', domain: 'light', service: 'turn_on',
+        service_data: {}, target: { entity_id: 'light.demo_lamp' } }]);
+      assert.equal(await detailTarget.count(), 0);
+
+      const detailSetup = await openRoomEditor(detailTargetPage);
+      await detailSetup.getByText('Room shortcuts', { exact: true }).tap();
+      await detailSetup.locator('[data-shortcut-room]').selectOption('studio');
+      const picker = detailSetup.getByLabel('Long-press details · Desk lamp', { exact: true });
+      assert.equal(await picker.inputValue(), 'light.demo_dimmer');
+      assert.deepEqual(await picker.locator('option').evaluateAll(options => options.map(option => option.value)),
+        ['', 'light.demo_dimmer', 'switch.demo_heater']);
+      await picker.selectOption('switch.demo_heater');
+      await Promise.all([detailTargetPage.waitForEvent('load'), saveRoomConfig(detailSetup)]);
+      await detailTargetPage.waitForFunction(() => Boolean(window.bayitTest));
+      assert.deepEqual(await detailTargetPage.evaluate(() =>
+        JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.room_overrides.studio.shortcut_detail_entities),
+        { 'light.demo_lamp': 'switch.demo_heater' });
+      await studioShortcut.press('Shift+Enter');
+      const heaterDetails = detailTargetPage.getByRole('dialog', { name: 'Room heater', exact: true });
+      await heaterDetails.waitFor();
+      assert.equal(new URL(detailTargetPage.url()).hash, '#device/studio/switch.demo_heater');
+      await closeDetails(heaterDetails);
+      const membershipSetup = await openRoomEditor(detailTargetPage);
+      await membershipSetup.getByLabel('Room to customize', { exact: true }).selectOption('studio');
+      await membershipSetup.getByRole('button', { name: 'Remove · Room heater', exact: true }).tap();
+      await Promise.all([detailTargetPage.waitForEvent('load'), saveRoomConfig(membershipSetup)]);
+      await detailTargetPage.waitForFunction(() => Boolean(window.bayitTest));
+      assert.equal(await detailTargetPage.evaluate(() =>
+        JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.room_overrides.studio.shortcut_detail_entities),
+        undefined);
+      await studioShortcut.press('Shift+Enter');
+      await sourceDetails.waitFor();
+      assert.deepEqual(await detailWrites(), []);
+      await detailTargetPage.close();
+      console.log(engine + ' 320: room-scoped alternate shortcut details, unchanged tap, hold, native details and editor persistence');
 
       const panelPage = await newRoomConfigPage();
       const panelUrl = base + '/fixture-home/home?configuration&room-panel-visibility';

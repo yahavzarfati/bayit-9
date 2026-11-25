@@ -288,6 +288,58 @@ test('scopes the details opt-out to an active ordinary switch shortcut', () => {
   assert.deepEqual(discoverRooms(config, hass, 'en')[0].shortcut_no_details, [washer]);
 });
 
+test('routes only active shortcut details to another visible device in the same room', () => {
+  const hass = home();
+  const source = 'light.demo_lamp';
+  const dimmer = 'light.demo_dimmer';
+  const extra = 'bayit_room_den';
+  const heater = 'switch.demo_boiler';
+  const readOnly = 'sensor.test_template_without_registry';
+  hass.states[dimmer] = { state: 'off', attributes: { supported_color_modes: ['color_temp'] } };
+  hass.entities[dimmer] = { area_id: 'studio' };
+  const targetMap = {
+    [source]: dimmer,
+    [dimmer]: dimmer,
+    [heater]: dimmer,
+    'fan.demo_fan': dimmer,
+    [readOnly]: 'calendar.demo_schedule',
+  };
+  const config = {
+    area_ids: ['studio', extra], show_unassigned: false,
+    room_shortcuts: { studio: [source, heater, readOnly, dimmer], [extra]: [source] },
+    room_overrides: {
+      studio: {
+        entities: [source, dimmer, heater, readOnly, 'fan.demo_fan', 'climate.demo_air'],
+        read_only_entities: [readOnly], shortcut_no_details: [heater],
+        shortcut_detail_entities: targetMap,
+      },
+      [extra]: { name: 'Den', entities: [source], shortcut_detail_entities: { [source]: dimmer } },
+    },
+  };
+  const discover = () => discoverRooms(config, hass, 'en');
+  const [studio, den] = discover();
+  assert.deepEqual(studio.shortcut_detail_entities, { [source]: dimmer });
+  assert.deepEqual(studio.shortcut_no_details, [heater]);
+  assert.equal(den.shortcut_detail_entities, undefined);
+  assert.equal(targetMap[heater], dimmer);
+
+  const override = config.room_overrides.studio;
+  override.shortcut_detail_entities = { [source]: { entity: dimmer }, [readOnly]: 'climate.demo_air' };
+  assert.equal(discover()[0].shortcut_detail_entities, undefined);
+  override.shortcut_detail_entities[source] = readOnly;
+  assert.deepEqual(discover()[0].shortcut_detail_entities, { [source]: readOnly });
+  assert.equal(discover()[0].entities.find(item => item.entity === readOnly).role, 'status');
+  config.hidden_entities = [readOnly];
+  assert.equal(discover()[0].shortcut_detail_entities, undefined);
+  delete config.hidden_entities;
+
+  override.shortcut_detail_entities = { [source]: dimmer };
+  delete config.room_shortcuts.studio;
+  assert.deepEqual(discover()[0].shortcut_detail_entities, { [source]: dimmer });
+  config.room_shortcuts.studio = [];
+  assert.equal(discover()[0].shortcut_detail_entities, undefined);
+});
+
 test('discovers rooms via device and entity registries without exposing hidden or disabled entries', () => {
   const rooms = Object.fromEntries(discoverRooms({}, home(), 'en').map(room => [room.id, room]));
   assert.deepEqual(rooms.lounge.entities.map(entry => entry.entity), ['light.demo_lamp']);
