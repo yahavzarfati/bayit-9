@@ -166,10 +166,12 @@ const server = http.createServer((request, response) => {
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 
+const failures = [];
 try {
   for (const [name, engine] of [['Chromium', chromium], ['WebKit', webkit]]) {
-    const browser = await engine.launch();
+    let browser;
     try {
+      browser = await engine.launch();
       const page = await browser.newPage({viewport: { width: 390, height: 844 }, reducedMotion: 'reduce'});
       page.setDefaultTimeout(7000);
       const errors = [];
@@ -545,10 +547,17 @@ try {
       assert.equal(await preAlerts.isVisible(), false);
       assert.deepEqual(errors, []);
       console.log(name + ': optional alert map, capped transient recovery, ' + stripHeight + ' px read-only status tiles, isolated context, navigation and visual editor passed');
+    } catch (error) {
+      failures.push({ name, error });
     } finally {
-      await browser.close();
+      await browser?.close().catch(error => failures.push({ name, error }));
     }
   }
 } finally {
   await new Promise(resolve => server.close(resolve));
+}
+
+if (failures.length) {
+  for (const { name, error } of failures) console.error(name + ': ' + (error?.stack ?? String(error)));
+  process.exitCode = 1;
 }
