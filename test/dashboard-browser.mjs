@@ -932,6 +932,12 @@ if (query.has('section-discovery') && stored().strategy.room_overrides?.studio?.
   states['light.demo_after_sections'] = {state:'off', attributes:{friendly_name:'New lamp after layout', supported_color_modes:['onoff']}};
   hass.entities['light.demo_after_sections'] = {area_id:'studio'};
 }
+if (query.has('device-display-picker')) {
+  states['light.demo_lamp'].attributes.friendly_name = 'Fixture adapter';
+  states['switch.demo_heater'].attributes.friendly_name = 'Fixture adapter';
+  states['fan.demo_display'] = { state:'off', attributes:{ friendly_name:'Fixture fan' } };
+  hass.entities['fan.demo_display'] = { area_id:'studio' };
+}
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
 // Simulate Home Assistant's renderer input. The configuration WebSocket still returns the raw storage object.
 function rendererStrategy(strategy) {
@@ -2763,6 +2769,79 @@ async function assertDuplicateShortcutEditorLabels(browser) {
       await shortcut.press('Shift+Enter');
       await page.getByRole('dialog', { name:'Entertainment', exact:true }).waitFor();
       assert.equal(new URL(page.url()).hash, '#panel/' + upper);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+async function assertDeviceDisplayPickerAndFocus(browser) {
+  const labels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', display:'Device display',
+      device:'Device to customize', caption:'Name in this room', popup:'Device popup title', icon:'Room icon', save:'Save dashboard' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים', display:'תצוגת מכשירים',
+      device:'מכשיר להתאמה אישית', caption:'שם המכשיר בחדר הזה', popup:'כותרת חלונית המכשיר',
+      icon:'סמל החדר', save:'שמירת הדשבורד' },
+  ];
+  for (const words of labels) {
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      await page.goto(base + '/fixture-home/home?configuration&device-display-picker&locale=' + words.locale);
+      await page.getByRole('button', { name:words.appearance, exact:true }).tap();
+      await page.getByRole('button', { name:words.setup, exact:true }).tap();
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      await setup.getByText(words.rooms, { exact:true }).tap();
+      await setup.getByText(words.display, { exact:true }).tap();
+      const field = label => setup.getByLabel(label, { exact:true });
+      const device = field(words.device);
+      const caption = field(words.caption);
+      const popup = field(words.popup);
+      const center = control => control.evaluate(input => input.scrollIntoView({ block:'center' }));
+      const focused = control => control.evaluate(input => input.getRootNode().activeElement === input);
+      const heater = 'switch.demo_heater';
+      const lamp = 'light.demo_lamp';
+      assert.equal(await device.locator('option[value="fan.demo_display"]').textContent(), 'Fixture fan');
+      assert.equal(await device.locator('option[value="' + lamp + '"]').textContent(), 'Fixture adapter · ' + lamp);
+      assert.deepEqual(await device.selectOption({ label:'Fixture adapter · ' + heater }), [heater]);
+      await center(popup);
+      await caption.fill('Heating relay');
+      await center(popup);
+      const point = await popup.evaluate(input => {
+        const rect = input.getBoundingClientRect();
+        const x = rect.x + rect.width / 2;
+        const y = rect.y + rect.height / 2;
+        return { x, y, reachable: input.getRootNode().elementFromPoint(x, y) === input };
+      });
+      assert.equal(point.reachable, true);
+      await page.touchscreen.tap(point.x, point.y);
+      assert.equal(await focused(popup), true, 'The first tap must enter the adjacent field');
+      await popup.fill('Heating relay controls');
+
+      await caption.fill(' Revised relay ');
+      await caption.press('Tab');
+      assert.equal(await focused(popup), true, 'Tab must advance to the adjacent field');
+      assert.equal(await caption.inputValue(), 'Revised relay');
+
+      // The room icon field was drawn before the device caption change. Its result must retain both labels.
+      await caption.fill('Final relay');
+      const icon = field(words.icon);
+      await icon.focus();
+      await icon.selectOption('mdi:sofa-outline');
+      assert.equal(await caption.inputValue(), 'Final relay');
+      assert.equal(await popup.inputValue(), 'Heating relay controls');
+      assert.equal(await device.inputValue(), heater);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call =>
+        call.domain || call.type === 'lovelace/config/save')), []);
+
+      const save = setup.getByRole('button', { name:words.save, exact:true });
+      await Promise.all([page.waitForEvent('load'), save.tap()]);
+      const saved = await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      assert.deepEqual(saved.room_overrides.studio, {
+        icon:'mdi:sofa-outline', entity_names:{ [heater]:'Final relay' },
+        device_popup_names:{ [heater]:'Heating relay controls' },
+      });
       assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
     } finally {
       await page.close();
@@ -9789,6 +9868,7 @@ try {
     });
 
     await run('Shortcut editor distinguishes same-named rooms and popups', () => assertDuplicateShortcutEditorLabels(browser));
+    await run('Device appearance edits retain focus and distinguish same-named devices', () => assertDeviceDisplayPickerAndFocus(browser));
 
     await run('Home glass and accessibility', async () => {
       await assertHomeMaterial(browser);

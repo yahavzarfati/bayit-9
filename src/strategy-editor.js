@@ -700,7 +700,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     // These labels save in place so other controls retain focus. Keep the latest labels if a sibling is stale.
     const current = this.#roomOverride(room);
     const next = { ...override };
-    for (const key of ['name', 'device_popup_names']) {
+    for (const key of ['name', 'device_popup_names', 'entity_names']) {
       if (Object.hasOwn(current, key)) next[key] = current[key];
       else delete next[key];
     }
@@ -1052,8 +1052,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
       }
       const profiles = Array.isArray(this.#config.profiles) ? this.#config.profiles.map(normalizeProfile).filter(Boolean) : [];
       const nameOf = id => profiles.find(profile => profile.entity === id)?.name || available.get(id)?.name || id;
+      const captions = distinctEditorLabels(entities.map(id => ({ id, name:nameOf(id) })),
+        new Map(entities.map(id => [id, id])));
       const chosenEntity = this.#roomControlEditing.get(room.id);
-      const picker = select(entities.map(id => [id, nameOf(id)]), entities.includes(chosenEntity) ? chosenEntity : entities[0]);
+      const picker = select(entities.map(id => [id, captions.get(id)]),
+        entities.includes(chosenEntity) ? chosenEntity : entities[0]);
       const fields = node('div', { className: 'stack' });
       const draw = () => {
         const id = picker.value;
@@ -1116,30 +1119,35 @@ export class Bayit9StrategyEditor extends HTMLElement {
           return;
         }
         const name = normalizeRoomControlName(override.entity_names?.[id]);
-        const save = (value, focus) => {
+        const save = value => {
           const latest = this.#roomOverride(room.id);
+          if (value === normalizeRoomControlName(latest.entity_names?.[id])) return;
           const names = { ...latest.entity_names };
           if (value === undefined) delete names[id];
           else names[id] = value;
           const next = { ...latest };
           if (Object.keys(names).length) next.entity_names = names;
           else delete next.entity_names;
-          this.#setRoomOverride(room.id, next, focus);
+          this.#commitRoomOverride(room.id, next);
         };
-        const show = checkbox(words.roomControlShow, name !== '',
-          checked => save(checked ? undefined : '', 'room-control-show'));
+        const show = checkbox(words.roomControlShow, name !== '', checked => {
+          save(checked ? undefined : '');
+          this.#renderRoomChange('room-control-show');
+        });
         show.firstElementChild.dataset.roomFocus = 'room-control-show';
         const input = node('input', { value: name || '', maxLength: 80, placeholder: nameOf(id), disabled: name === '' });
         input.dataset.roomFocus = 'room-control-name';
         const saveText = () => {
-          const value = normalizeRoomControlName(input.value) || undefined;
-          if (value !== name) save(value, 'room-control-name');
+          const value = normalizeRoomControlName(input.value) || '';
+          input.value = value;
+          save(value || undefined);
         };
         input.addEventListener('change', saveText);
         input.addEventListener('keydown', event => {
           if (event.key !== 'Enter' || event.isComposing) return;
           event.preventDefault();
           saveText();
+          if (this.#registryRefreshPending) this.#renderRoomChange('room-control-name');
         });
         fields.replaceChildren(showDevice, ...homeOptions, show, field(words.roomControlName, input), popupNameField, deviceIcon,
           disclosure(words.roomPanelIconOptions, this.#open.roomPanelIcon, open => { this.#open.roomPanelIcon = open; },
