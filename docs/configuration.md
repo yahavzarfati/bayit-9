@@ -263,6 +263,8 @@ For a linked vacuum in **Rooms**, **Vacuum controls in the room** can use a **St
 
 Under **Vacuum status readings** in **Rooms**, a linked vacuum can show an external status, battery and cleaning progress in its room header. Progress appears during a reported cleaning job. Choose only the sources available in your home. The YAML room override `vacuum_panel_summary` maps the vacuum entity ID to optional `status_entity`, `battery_entity`, `progress_entity` and `cleaning_entity` bindings.
 
+To show those readings on the main Vacuum screen, edit the vacuum's **Device controls** entry in the **Vacuum** section and open **Status in the robot header**. Choose any of the same four sources. The robot header uses translations from the screen's readout for the chosen status sensor. The YAML entry uses `vacuum_summary` with the same four optional keys.
+
 Select **Readings** in the **Robot vacuum** editor and enable **Show compact read-only status tiles** to show vacuum status, battery, selected map, current room or maintenance sensors. Sensor and select labels can use the exact reported value. Sensor numbers can use a custom display unit or zero to three decimal places. The selected map readout displays the reported floor and the map buttons handle floor changes.
 
 For YAML, add `layout: readouts` to the vacuum's `kind: readings` section. A sensor can use `readout: { state_labels: { docked: At dock }, precision: 0, unit: h }`. Every setting is optional. State labels match case and leave unknown and unavailable states to the dashboard. Omit `unit` to keep the Home Assistant entity unit.

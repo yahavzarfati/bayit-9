@@ -45,10 +45,17 @@ const hass = {
     'sensor.fixture_reading': { state:'47', attributes:{ friendly_name:'Vacuum battery', unit_of_measurement:'%' } },
     'sensor.fixture_status': { state:'Docked', attributes:{ friendly_name:'Robot status' } },
     'sensor.fixture_maintenance': { state:'54.64', attributes:{ friendly_name:'Filter', unit_of_measurement:'h' } },
+    ...(options.has('hero') && {
+      'sensor.fixture_progress': { state:'28', attributes:{friendly_name:'Cleaning progress'} },
+      'binary_sensor.fixture_cleaning': { state:'off', attributes:{friendly_name:'Cleaning activity'} },
+      'sensor.fixture_room': { state:'Room 3', attributes:{friendly_name:'Current room'} },
+      'sensor.fixture_room_conflict': { state:'ROOM 3', attributes:{friendly_name:'Room code'} },
+      'sensor.fixture_hidden': { state:'50', attributes:{friendly_name:'Hidden sensor'} },
+    }),
   },
   areas: {}, devices: {},
   entities: { [vacuum]: { di:'robot' }, [selector]: { di:'robot' }, 'select.wrong': { di:'other' },
-    'image.hidden': { hidden: true } },
+    'image.hidden': { hidden: true }, 'sensor.fixture_hidden': { hidden: true } },
   callWS(message) {
     tracker.calls.push(message);
     if (message.domain === 'select') {
@@ -84,7 +91,10 @@ window.loadCardHelpers = async () => {
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
 const before = options.get('before');
 const config = { type: 'custom:bayit-9', toolbar: [
-  { kind: 'vacuum', sections: [{ id:'robot', kind: 'vacuum', entities: [{ entity: vacuum, role: 'device' }] },
+  { kind: 'vacuum', sections: [{ id:'robot', kind: 'vacuum', entities: [{ entity: vacuum, role: 'device',
+    ...(options.has('hero') && { vacuum_summary: { status_entity:'sensor.fixture_status', battery_entity:'sensor.fixture_reading',
+      progress_entity:'sensor.fixture_progress', cleaning_entity:'binary_sensor.fixture_cleaning' } }),
+  }] },
     ...(options.has('programs') ? [
       {id:'programs',kind:'actions',title:'Programs',entities:[
         {entity:'button.fixture_daily',role:'action',command:'vacuum_program'},
@@ -97,9 +107,16 @@ const config = { type: 'custom:bayit-9', toolbar: [
       {id:'status',kind:'readings',title:'Status and maintenance',...(options.has('readouts') && { layout:'readouts' }),entities:[
         {entity:'sensor.fixture_reading',role:'status'},
         ...(options.has('readouts') ? [
-          {entity:'sensor.fixture_status',role:'status',readout:{state_labels:{Docked:'At dock',unknown:'Misleading label',unavailable:'Also misleading'}}},
+          {entity:'sensor.fixture_status',role:'status',readout:{state_labels:{
+            Docked:he ? 'מחובר לעמדה' : 'At dock', segment_cleaning:he ? 'מנקה חדר' : 'Cleaning a room',
+            unknown:'Misleading label', unavailable:'Also misleading',
+          }}},
           {entity:selector,role:'status',readout:{state_labels:{Upper:'Second floor'}}},
           {entity:'sensor.fixture_maintenance',role:'status',readout:{precision:0}},
+        ] : []),
+        ...(options.has('hero') ? [
+          {entity:'sensor.fixture_room',role:'status',readout:{state_labels:{'room 3':he ? 'חדר 3' : 'Third room'}}},
+          {entity:'sensor.fixture_room_conflict',role:'status',readout:{state_labels:{'room 3':'Lower','Room 3':'Mixed'}}},
         ] : []),
       ]},
       {id:'resets',kind:'actions',title:'Maintenance resets',entities:[
@@ -124,7 +141,7 @@ tracker.setState = (entity, value) => {
   dashboard.hass = { ...hass, states: { ...hass.states } };
 };
 tracker.floor = value => tracker.setState(selector, value);
-tracker.hideImage = id => {
+tracker.hideEntity = id => {
   hass.entities[id] = { hidden: true };
   dashboard.hass = { ...hass, entities: { ...hass.entities } };
 };
@@ -334,6 +351,84 @@ async function assertCompactVacuumMap(browser) {
   }
 }
 
+async function assertVacuumHeroSummary(browser) {
+  for (const locale of ['en','he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({ viewport:{width:391,height:844},hasTouch:true,reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const home = 'http://127.0.0.1:' + server.address().port + '/fixture-home/home';
+    const query = '?programs&readouts&before=status&compact&locale=' + locale;
+    const name = he ? 'שואב' : 'Robot vacuum';
+    const dialog = page.getByRole('dialog',{name,exact:true});
+    const head = dialog.locator('[data-treatment=vacuum] .device-head');
+    const reading = head.locator('.current');
+    const readouts = dialog.locator('[data-section=readings]');
+    const map = dialog.locator('xiaomi-vacuum-map-card');
+    const open = async flags => {
+      await page.goto(home + query + flags);
+      await page.getByRole('button',{name,exact:true}).tap();
+      await map.waitFor();
+    };
+    const state = (entity,value) => page.evaluate(([id,state]) => tracker.setState(id,state), [entity,value]);
+    const hide = entity => page.evaluate(id => tracker.hideEntity(id), entity);
+    try {
+      await open('');
+      assert.doesNotMatch(await reading.textContent(),/47%/);
+      await open('&hero');
+      const atDock = he ? 'מחובר לעמדה' : 'At dock';
+      const cleaningRoom = he ? 'מנקה חדר' : 'Cleaning a room';
+      const mode = dialog.locator('[data-section=vacuum] [data-action=vacuum_start]');
+      await mode.waitFor();
+      await reading.filter({hasText:atDock}).waitFor();
+      assert.match(await reading.textContent(),/47%/);
+      assert.doesNotMatch(await reading.textContent(),/28%/);
+      const detail = head.getByRole('button',{name:he ? 'מידע נוסף' : 'More info',exact:true});
+      assert.match(await detail.getAttribute('aria-description'),/47%/);
+      await readouts.getByText(he ? 'חדר 3' : 'Third room',{exact:true}).waitFor();
+      await readouts.getByText('ROOM 3',{exact:true}).waitFor();
+      await state('sensor.fixture_room_conflict','Room 3');
+      await readouts.getByText('Mixed',{exact:true}).waitFor();
+      await state('sensor.fixture_status','segment_cleaning');
+      await reading.filter({hasText:cleaningRoom}).waitFor();
+      assert.match(await reading.textContent(),/28%/);
+      assert.ok(await reading.evaluate(text => text.scrollWidth <= text.clientWidth + 1));
+      await state('sensor.fixture_status','Docked');
+      await reading.filter({hasText:atDock}).waitFor();
+      assert.doesNotMatch(await reading.textContent(),/28%/);
+      await state('binary_sensor.fixture_cleaning','on');
+      await reading.filter({hasText:/28%/}).waitFor();
+      await hide('sensor.fixture_status');
+      await reading.filter({hasText:he ? 'בעמדה' : 'Docked'}).waitFor();
+      assert.match(await reading.textContent(),/47%/);
+      await hide('sensor.fixture_reading');
+      await reading.filter({hasNotText:/47%/}).waitFor();
+      assert.equal(await page.evaluate(() => tracker.factories),1);
+      assert.deepEqual(await page.evaluate(() => tracker.calls),[]);
+      await state('vacuum.fixture','unavailable');
+      await reading.filter({hasText:he ? 'לא זמין' : 'Unavailable'}).waitFor();
+      assert.doesNotMatch(await reading.textContent(),/28%/);
+      await map.waitFor({state:'detached'});
+      assert.deepEqual(await page.evaluate(() => tracker.calls),[]);
+
+      await page.goto(home + query + '&hero&editor');
+      await page.getByText(he ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens',{exact:true}).click();
+      const editor = page.locator('#editor');
+      await editor.locator('[data-toolbar-focus=section-edit-0]').click();
+      await editor.locator('[data-toolbar-focus=entity-edit-0]').click();
+      const battery = editor.getByLabel(he ? 'חיישן רמת הסוללה' : 'Battery level sensor',{exact:true});
+      const activity = editor.getByLabel(he ? 'חיישן פעילות הניקוי' : 'Cleaning activity sensor',{exact:true});
+      assert.equal(await battery.inputValue(),'sensor.fixture_reading');
+      assert.equal(await activity.inputValue(),'binary_sensor.fixture_cleaning');
+      assert.equal(await battery.locator('option[value="sensor.fixture_hidden"]').count(),0);
+      assert.equal(await activity.locator('option[value="sensor.fixture_reading"]').count(),0);
+      await battery.selectOption('');
+      const saved = await page.evaluate(() => tracker.draft.toolbar[0].sections[0].entities[0].vacuum_summary);
+      assert.deepEqual(saved,{ status_entity:'sensor.fixture_status', progress_entity:'sensor.fixture_progress',
+        cleaning_entity:'binary_sensor.fixture_cleaning' });
+    } finally { await page.close(); }
+  }
+}
+
 try {
   for (const [name, engine] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await engine.launch();
@@ -407,7 +502,7 @@ try {
         {type:'call_service',domain:'vacuum',service:'send_command',service_data:{command:'app_segment_clean',params:[{segments:[2],repeat:1}]},target:{entity_id:'vacuum.fixture'}},
         {type:'call_service',domain:'roborock',service:'set_vacuum_goto_position',service_data:{x:1,y:2},target:{entity_id:'vacuum.fixture'}},
       ]);
-      await page.evaluate(() => tracker.hideImage('image.lower'));
+      await page.evaluate(() => tracker.hideEntity('image.lower'));
       await map.waitFor({state:'detached'});
       await close();
 
@@ -494,7 +589,7 @@ try {
       await page.evaluate(() => tracker.setState('sensor.fixture_status', 'docked'));
       await page.evaluate(() => tracker.setState('sensor.fixture_maintenance', 'unavailable'));
       await tiles.getByText('Unavailable', { exact:true }).waitFor();
-      assert.deepEqual((await values()).slice(1), ['Docked', 'Second floor', 'Unavailable']);
+      assert.deepEqual((await values()).slice(1), ['At dock', 'Second floor', 'Unavailable']);
       await page.evaluate(() => tracker.setState('sensor.fixture_status', 'unknown'));
       await tiles.getByText('Unknown state', { exact:true }).waitFor();
       assert.deepEqual((await values()).slice(1), ['Unknown state', 'Second floor', 'Unavailable']);
@@ -552,6 +647,8 @@ try {
       console.log(name + ': rejected and timed-out floor changes stay read-only through reopening until HA confirms a calibrated floor');
       await assertCompactVacuumMap(browser);
       console.log(name + ': calibrated map placement, compact mobile layout, explicit selection, and scoped program commands');
+      await assertVacuumHeroSummary(browser);
+      console.log(name + ': robot summary, folded room labels, live source visibility and editor bindings');
     } finally {
       await browser.close();
     }

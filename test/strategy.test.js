@@ -2119,6 +2119,30 @@ test('security danger appearance is opt-in on a confirmed Security script action
   }
 });
 
+test('projects Vacuum header readings only for authored devices with visible providers', () => {
+  const hass = home();
+  for (const entity of ['vacuum.fixture', 'sensor.fixture_status', 'sensor.fixture_hidden', 'sensor.fixture_disabled',
+    'binary_sensor.fixture_cleaning']) {
+    hass.states[entity] = { state:'unknown', attributes:{} };
+    hass.entities[entity] = {};
+  }
+  hass.entities['sensor.fixture_hidden'] = { hidden_by:'user' };
+  hass.entities['sensor.fixture_disabled'] = { disabled_by:'integration' };
+  const entity = { entity:'vacuum.fixture', role:'device', vacuum_summary: {
+    status_entity:'sensor.fixture_status', battery_entity:'sensor.fixture_hidden',
+    progress_entity:'sensor.fixture_disabled', cleaning_entity:'sensor.fixture_status',
+  } };
+  const section = { kind:'vacuum', entities:[entity] };
+  const { toolbar } = generateDashboard({ toolbar: [
+    { kind:'vacuum', sections:[section, { ...section, kind:'devices' },
+      { ...section, entities:[{ ...entity, role:'status' }] }] },
+    { kind:'overview', sections:[section] },
+  ] }, hass).views[0].cards[0];
+  assert.deepEqual(toolbar[0].sections.map(section => section.entities[0].vacuum_summary),
+    [{ status_entity:'sensor.fixture_status' }, undefined, undefined]);
+  assert.equal(toolbar[1].sections[0].entities[0].vacuum_summary, undefined);
+});
+
 test('Vacuum readouts retain only validated settings on explicit readings sections', () => {
   const hass = home();
   for (const entity of ['sensor.fixture_state', 'sensor.fixture_invalid', 'select.fixture_floor', 'binary_sensor.fixture_dock',

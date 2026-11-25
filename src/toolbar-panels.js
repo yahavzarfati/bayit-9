@@ -2,7 +2,8 @@ import { createOrefMap } from './oref-alert-map.js';
 import { createVacuumMap } from './vacuum-map.js';
 import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
 import { discoverOverviewEntities, isActiveOverviewEntity, isCompactAutomationActions, isCompactToolbarStatus, isReadingCards,
-  isToolbarLightTile, isToolbarReadoutEntity, isToolbarReadouts, isVisibleEntity, isWeatherReadingsList } from './strategy-model.js';
+  isToolbarLightTile, isToolbarReadoutEntity, isToolbarReadouts, isVisibleEntity, isWeatherReadingsList,
+  vacuumReadoutStateLabel } from './strategy-model.js';
 import { mediaServiceRegistered } from './media-device-support.mjs';
 import { compactRoomLockCommand, roomShutdownTargets } from './device-control.mjs';
 import { calendarAgendaStyles, createCalendarAgenda } from './calendar-agenda.js';
@@ -287,8 +288,9 @@ export function createToolbarPanel(kind, configuration, context) {
     handlers.push(() => {
       const model = modelFor(item);
       const raw = model.state;
-      const key = vacuum ? raw : typeof raw === 'string' ? raw.toLowerCase() : '';
-      const custom = model.available && labels && Object.hasOwn(labels, key) ? labels[key] : undefined;
+      const key = typeof raw === 'string' ? raw.toLowerCase() : '';
+      const custom = model.available && (vacuum ? vacuumReadoutStateLabel(labels, raw)
+        : labels && Object.hasOwn(labels, key) ? labels[key] : undefined);
       glyph.setAttribute('icon', model.icon || 'mdi:information-outline');
       name.textContent = model.name;
       if (raw === 'unknown') state.textContent = t('unknown');
@@ -841,8 +843,11 @@ export function createToolbarPanel(kind, configuration, context) {
         handlers.push(() => player.update(modelFor(item)));
       }
       const toolbarVacuumCompact = compactVacuum && section === 'vacuum' && item.entity === configuration.vacuumMap.vacuum;
+      const statusSource = item.vacuum_summary?.status_entity;
+      const toolbarVacuumStatusLabels = statusSource && sections.flatMap(section => section.entities)
+        .find(entry => entry.entity === statusSource && entry.readout?.state_labels)?.readout.state_labels;
       row.toggleAttribute('data-vacuum-compact-device', toolbarVacuumCompact);
-      buildDevice(item, row, { toolbarLightTile, toolbarCoverRail, toolbarVacuumCompact });
+      buildDevice(item, row, { toolbarLightTile, toolbarCoverRail, toolbarVacuumCompact, toolbarVacuumStatusLabels });
       if (useLockPalette && domain(item) === 'lock') handlers.push(() => paintLockStatus(row, modelFor(item)));
       return row;
     }

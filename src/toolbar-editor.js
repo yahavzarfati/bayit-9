@@ -1,10 +1,12 @@
 import {
   availableAutomaticToolbarKinds, dashboardToolbarEntries, discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactAutomationActions, isCompactToolbarStatus, isReadingCards, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
-  isToolbarReadoutEntity, isToolbarReadouts, isWeatherReadingsList, normalizeOverviewDiscovery, normalizeToolbarReadout, overviewSectionOptions, roomPanelOptions,
+  isToolbarReadoutEntity, isToolbarReadouts, isWeatherReadingsList, normalizeOverviewDiscovery, normalizeRoomVacuumSummary,
+  normalizeToolbarReadout, overviewSectionOptions, roomPanelOptions, ROOM_VACUUM_SUMMARY_DOMAINS,
   securityReadoutLabelStates, selectableRoomEntities, sensorComparisonMaxHours, sensorComparisonOptions,
   SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
   supportsCompactAutomationActions, supportsCompactToolbarStatus, supportsHorizonCard, supportsHourlyWeatherForecast, supportsReadingCards,
-  supportsOverviewLightsOff, supportsSecurityDangerAction, supportsToolbarReadouts, supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
+  supportsOverviewLightsOff, supportsSecurityDangerAction, supportsToolbarReadouts, supportsToolbarVacuumSummary,
+  supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
 } from './strategy-model.js';
@@ -61,6 +63,9 @@ const WORDS = {
     vacuumMapPosition: 'Show map before section', vacuumMapEnd: 'End of the screen',
     vacuumMapCompact: 'Use compact robot and program controls',
     vacuumDevice: 'Roborock vacuum', vacuumSelector: 'Selected-map entity',
+    vacuumSummary: 'Status in the robot header', vacuumNoReading: 'Do not show a reading',
+    vacuumReadings: { status_entity: 'Robot status sensor', battery_entity: 'Battery level sensor',
+      progress_entity: 'Cleaning progress sensor', cleaning_entity: 'Cleaning activity sensor' },
     floorOption: 'Map option', floorImage: 'Calibrated map image', floorName: 'Display name',
     addFloor: 'Add floor', removeFloor: 'Remove floor',
     calendarAgenda: 'Compact agenda', calendarAgendaHint: 'Choose the calendars to show. Tap to expand to seven days.',
@@ -141,6 +146,9 @@ const WORDS = {
     vacuumMapPosition: 'הצגת המפה לפני הקבוצה', vacuumMapEnd: 'בסוף המסך',
     vacuumMapCompact: 'פקדים קומפקטיים לשואב ולתוכניות הניקוי',
     vacuumDevice: 'שואב Roborock', vacuumSelector: 'ישות לבחירת מפה',
+    vacuumSummary: 'מצב השואב בכותרת', vacuumNoReading: 'ללא מדד',
+    vacuumReadings: { status_entity: 'חיישן מצב השואב', battery_entity: 'חיישן רמת הסוללה',
+      progress_entity: 'חיישן התקדמות הניקוי', cleaning_entity: 'חיישן פעילות הניקוי' },
     floorOption: 'אפשרות מפה', floorImage: 'תמונת מפה מכוילת', floorName: 'שם לתצוגה',
     addFloor: 'הוספת קומה', removeFloor: 'הסרת קומה',
     calendarAgenda: 'יומן בתצוגה מקוצרת', calendarAgendaHint: 'בחרו אילו יומנים להציג. לחיצה מציגה שבעה ימים.',
@@ -426,6 +434,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       ...(role.value && role.value !== 'status' && { readout: undefined }),
       ...(role.value && role.value !== 'forecast' && { hourly_forecast: undefined, clock_weather_card: undefined }),
       ...(role.value && role.value !== 'sun' && { horizon_card: undefined }),
+      ...(role.value !== 'device' && { vacuum_summary: undefined }),
       ...(role.value !== 'graph' && { graph_hours: undefined, graph_room_id: undefined, vacuum_panel_id: undefined, series_color: undefined }),
       ...(role.value !== 'action' && { command: undefined, action_appearance: undefined,
         ...(toolbar[entryIndex].sections[sectionIndex].entities[index]?.confirmation === false && { confirmation: undefined }) }),
@@ -452,6 +461,26 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       const horizon = node('input', { type: 'checkbox', checked: record.horizon_card === true });
       horizon.addEventListener('change', () => save({ horizon_card: horizon.checked || undefined }));
       fields.push(node('label', { className: 'check' }, [horizon, words.horizonCard]));
+    }
+    if (supportsToolbarVacuumSummary(kind, section, record)) {
+      let sources = normalizeRoomVacuumSummary(record.vacuum_summary);
+      const readings = Object.entries(ROOM_VACUUM_SUMMARY_DOMAINS).map(([key, domain]) => {
+        const selected = sources?.[key];
+        const choices = candidates.filter(item => item.entity.startsWith(domain + '.'))
+          .map(item => [item.entity, item.name && item.name !== item.entity ? item.name + ' · ' + item.entity : item.entity]);
+        const missing = selected && !available.has(selected);
+        if (missing) choices.push([selected, selected + ' · ' + words.unavailable]);
+        const input = select([['', words.vacuumNoReading], ...choices], selected ?? '');
+        if (missing) input.selectedOptions[0].disabled = true;
+        input.addEventListener('change', () => {
+          sources = normalizeRoomVacuumSummary({ ...sources, [key]: input.value });
+          save({ vacuum_summary: sources });
+        });
+        return field(words.vacuumReadings[key], input);
+      });
+      fields.push(node('details', { open: !!sources }, [
+        node('summary', { textContent: words.vacuumSummary }), ...readings,
+      ]));
     }
     if (isToolbarReadouts(kind, section) && isToolbarReadoutEntity(kind, record)) {
       let settings = normalizeToolbarReadout(kind, section, record) ?? {};

@@ -7,7 +7,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   supportsRoomSectionColumns,
   ROOM_PANEL_KINDS, normalizeShortcutPowerEntities, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomBoilerScheduleEntry, supportsRoomCompactDevice, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
   sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, supportsHorizonCard, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
-  toolbarPlacement, toolbarPopupPosition, usesRoomPopupPosition } from './strategy-model.js';
+  supportsToolbarVacuumSummary, toolbarPlacement, toolbarPopupPosition, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { allowsCoverRailAction, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
   simpleTimerStatusEntity, simpleTimerUsageResetAvailable, supportsHomeHeaterPower, supportsRoomShutdown } from './device-control.mjs';
@@ -450,6 +450,10 @@ export function normalizeDashboardConfig(config = {}) {
           if (isSecurityDangerAction(item.kind, section.kind, raw)) entity.action_appearance = 'danger';
           const readout = normalizeToolbarReadout(item.kind, section, raw);
           if (readout) entity.readout = readout;
+          if (supportsToolbarVacuumSummary(item.kind, section, raw)) {
+            const summary = normalizeRoomVacuumSummary(raw.vacuum_summary);
+            if (summary) entity.vacuum_summary = summary;
+          }
           const seriesColor = comparison && sensorSeriesColor(raw);
           if (seriesColor) entity.series_color = seriesColor;
           if (supportsHourlyWeatherForecast(item.kind, section, raw)) {
@@ -1940,7 +1944,7 @@ export class BayitDashboard extends HTMLElement {
 
   buildDevice(config, parent, room, groupKey, {
     titleInDialog = false, inlineClimate = false, toolbarLightTile = false, toolbarCoverRail = false, showRoomPreset = false,
-    tileStatus, compactDeviceHeading = false, toolbarVacuumCompact = false,
+    tileStatus, compactDeviceHeading = false, toolbarVacuumCompact = false, toolbarVacuumStatusLabels,
   } = {}) {
     const item = make('section', 'device');
     const domain = domainFor(config);
@@ -1977,9 +1981,12 @@ export class BayitDashboard extends HTMLElement {
     const compactHeater = !!(titleInDialog || room) && config.kind === 'heater' && !!config.timed && config.role !== 'status';
     item.toggleAttribute('data-compact-heater', compactHeater);
     const standaloneBoiler = titleInDialog && config.kind === 'boiler' && config.role !== 'status';
-    const vacuumSummary = panelTarget && panelKind === 'vacuum' && vacuumDisplay !== 'tile' ? config.room_vacuum_summary : undefined;
-    const vacuumStatusLabels = vacuumSummary?.status_entity && panelTarget.sections?.flatMap(section => section.entities)
-      .find(entry => entry.entity === vacuumSummary.status_entity && entry.readout?.state_labels)?.readout.state_labels;
+    const roomVacuumSummarySources = panelTarget && panelKind === 'vacuum' && vacuumDisplay !== 'tile'
+      ? config.room_vacuum_summary : undefined;
+    const vacuumSummary = roomVacuumSummarySources ?? config.vacuum_summary;
+    const roomVacuumStatusLabels = roomVacuumSummarySources?.status_entity && panelTarget.sections?.flatMap(section => section.entities)
+      .find(entry => entry.entity === roomVacuumSummarySources.status_entity && entry.readout?.state_labels)?.readout.state_labels;
+    const vacuumStatusLabels = toolbarVacuumStatusLabels ?? roomVacuumStatusLabels;
     const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactInlineLight, compactHeater, toolbarVacuumCompact,
       compactClimateControls: Boolean(room || showRoomPreset) && config.room_climate_controls_compact === true,
       standaloneBoiler, compactCover: cover, vacuumCleaningControls: vacuumDisplay === 'cleaning-controls',
@@ -2552,13 +2559,14 @@ export class BayitDashboard extends HTMLElement {
       if (view.vacuumSummary) {
         const stateFor = id => id && isVisibleEntity(id, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities)
           ? this._hass.states[id] : undefined;
-        const summary = roomVacuumSummary(view.vacuumSummary, stateFor, model.state, view.vacuumStatusLabels);
-        const parts = [summary.status ?? deviceStatus];
-        if (summary.battery !== undefined) parts.push(this.t('vacuum_room_battery').replace('{value}', ltr(summary.battery + '%')));
-        if (summary.progress !== undefined) parts.push(this.t('vacuum_room_progress').replace('{value}', ltr(summary.progress + '%')));
+        const vacuumReady = !view.config.vacuum_summary || (model.available && this.shortcutEntityVisible(model.entity));
+        const summary = vacuumReady ? roomVacuumSummary(view.vacuumSummary, stateFor, model.state, view.vacuumStatusLabels) : undefined;
+        const parts = [summary?.status ?? (vacuumReady ? deviceStatus : this.t('unavailable'))];
+        if (summary?.battery !== undefined) parts.push(this.t('vacuum_room_battery').replace('{value}', ltr(summary.battery + '%')));
+        if (summary?.progress !== undefined) parts.push(this.t('vacuum_room_progress').replace('{value}', ltr(summary.progress + '%')));
         const reading = parts.join(' · ');
         setText(view.state, reading);
-        const description = view.panelLaunch.hint + ' · ' + reading;
+        const description = [view.panelLaunch?.hint, reading].filter(Boolean).join(' · ');
         if (view.more.getAttribute('aria-description') !== description) view.more.setAttribute('aria-description', description);
       } else if (view.compactMedia) {
         const volume = model.attributes.volume_level;

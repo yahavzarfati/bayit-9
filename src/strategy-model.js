@@ -48,6 +48,11 @@ export const ROOM_VACUUM_SUMMARY_DOMAINS = Object.freeze({
   status_entity: 'sensor', battery_entity: 'sensor', progress_entity: 'sensor', cleaning_entity: 'binary_sensor',
 });
 
+export function supportsToolbarVacuumSummary(kind, section, item) {
+  return kind === 'vacuum' && section?.kind === 'vacuum' && item?.role === 'device' &&
+    idForDomain(item.entity, 'vacuum');
+}
+
 export function normalizeRoomVacuumSummary(value, visible = () => true) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return;
   const sources = Object.fromEntries(Object.entries(ROOM_VACUUM_SUMMARY_DOMAINS).flatMap(([key, domain]) => {
@@ -55,6 +60,14 @@ export function normalizeRoomVacuumSummary(value, visible = () => true) {
     return idForDomain(id, domain) && visible(id) ? [[key, id]] : [];
   }));
   return Object.keys(sources).length ? sources : undefined;
+}
+
+export function vacuumReadoutStateLabel(labels, state) {
+  if (!labels || typeof state !== 'string') return;
+  if (Object.hasOwn(labels, state)) return labels[state];
+  const folded = state.toLowerCase();
+  const matches = Object.keys(labels).filter(key => key.toLowerCase() === folded);
+  if (matches.length === 1) return labels[matches[0]];
 }
 
 const vacuumActiveJob = new Set([
@@ -69,7 +82,7 @@ export function roomVacuumSummary(sources, stateFor, ownState, labels) {
   const status = reported && !['unknown', 'unavailable'].includes(reported.toLowerCase()) ? reported : undefined;
   const active = stateFor(sources.cleaning_entity)?.state === 'on' || vacuumActiveJob.has(status ?? ownState);
   return {
-    status: status && (labels && Object.hasOwn(labels, status) ? labels[status] : status.replaceAll('_', ' ')),
+    status: status && (vacuumReadoutStateLabel(labels, status) ?? status.replaceAll('_', ' ')),
     battery: sensorPercentage(stateFor(sources.battery_entity)),
     progress: active ? sensorPercentage(stateFor(sources.progress_entity)) : undefined,
   };
@@ -1053,7 +1066,7 @@ export function sensorSeriesColor(item) {
     ? item.series_color.toUpperCase() : undefined;
 }
 
-function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
+function toolbarSections(value, describe, kind, { vacuumPanels, roomIds, visible }) {
   if (!Array.isArray(value)) return undefined;
   const seenSections = new Set();
   return value.flatMap((section, index) => {
@@ -1089,6 +1102,8 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
       const linkedGraph = kind === 'sensors' && role === 'graph' && domain === 'sensor' && section.kind !== 'series';
       const graphRoom = linkedGraph && roomIds?.has(item.graph_room_id) ? item.graph_room_id : undefined;
       const vacuumPanel = linkedGraph && !graphRoom && vacuumPanels.has(item.vacuum_panel_id) ? item.vacuum_panel_id : undefined;
+      const vacuumSummary = supportsToolbarVacuumSummary(kind, section, item)
+        ? normalizeRoomVacuumSummary(item.vacuum_summary, visible) : undefined;
       const accent = kind === 'calendar' && domain === 'calendar' ? calendarAccent(item.accent_color) : undefined;
       const readout = normalizeToolbarReadout(kind, section, item);
       const dangerAction = isSecurityDangerAction(kind, section.kind, item);
@@ -1102,6 +1117,7 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
         ...(confirmation !== undefined && { confirmation }), ...(dangerAction && { action_appearance: 'danger' }),
         ...(hasGraphHours && { graph_hours: graphHours }),
         ...(graphRoom && { graph_room_id: graphRoom }), ...(vacuumPanel && { vacuum_panel_id: vacuumPanel }),
+        ...(vacuumSummary && { vacuum_summary: vacuumSummary }),
         ...(accent && { accent_color: accent }), ...(readout && { readout }),
         ...(seriesColor && { series_color: seriesColor }), ...(hourlyForecast && { hourly_forecast: true }),
         ...(clockWeatherCard && { clock_weather_card: true }), ...(horizonCard && { horizon_card: true }) }];
@@ -1155,7 +1171,8 @@ function dashboardToolbar(config, hass, roomIds) {
   const registry = hass.entities;
   const hidden = new Set(idList(config.hidden_entities));
   const profiles = profilesOf(config.profiles);
-  const describe = entity => isVisibleEntity(entity, states, registry, hidden)
+  const visible = entity => isVisibleEntity(entity, states, registry, hidden);
+  const describe = entity => visible(entity)
     ? presentEntity(entity, states[entity], registry?.[entity], profiles.get(entity)) : null;
   const vacuumPanels = new Set(entries.filter(({ entry }) => entry.kind === 'vacuum').map(({ id }) => id));
   return entries.map(({ entry, id, path }) => {
@@ -1166,7 +1183,7 @@ function dashboardToolbar(config, hass, roomIds) {
     const popupPosition = toolbarPopupPosition(entry);
     const entities = Array.isArray(entry.entities) ? idList(entry.entities).map(describe).filter(Boolean) : undefined;
     const sections = entry.kind !== 'link'
-      ? toolbarSections(entry.sections, describe, entry.kind, { vacuumPanels, roomIds }) : undefined;
+      ? toolbarSections(entry.sections, describe, entry.kind, { vacuumPanels, roomIds, visible }) : undefined;
     const orefMap = entry.kind === 'security' ? normalizeOrefMap(entry.oref_map) : undefined;
     const mediaStage = entry.kind === 'media' ? normalizeMediaStage(entry.media_stage, entity =>
       isVisibleEntity(entity, states, registry, hidden)) : undefined;
