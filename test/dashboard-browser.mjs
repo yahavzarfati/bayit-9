@@ -649,7 +649,11 @@ if (query.has('toolbar-panels')) {
       is_volume_muted:false,source:'Radio',source_list:['Radio','Aux'],media_title:'Station',media_artist:'Fixture artist',
       media_position:12,media_duration:180,media_position_updated_at:new Date().toISOString(),
       entity_picture:'/api/media_player_proxy/media_player.demo_speaker?token=fixture'}},
-    'media_player.demo_tv': {state:'on',attributes:{friendly_name:'Television',supported_features:1416,is_volume_muted:false}},
+    'media_player.demo_tv': {state:query.has('room-media-test') ? 'playing' : 'on',
+      attributes:{friendly_name:'Television',supported_features:1416,is_volume_muted:false,
+        ...(query.has('room-media-test') && {supported_features:23997,volume_level:.42,media_title:'Evening news',
+          source_list:['HDMI','Live TV'],source:'Live TV'}),
+      }},
     'vacuum.demo_robot': {state:'idle',attributes:{friendly_name:'Robot',
       supported_features:query.has('vacuum-room-display-test') ? 8244 | 8 | 512 : 8244,fan_speed_list:['silent','normal']}},
     'button.demo_filter': {state:'unknown',attributes:{friendly_name:'Reset filter'}},
@@ -850,6 +854,7 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
   ...(query.has('room-link') && { room_overrides: { studio: {
     entities:['light.demo_lamp','media_player.demo_tv','vacuum.demo_robot'],
     media_panel_links:{'media_player.demo_tv':'media-panel'},
+    ...(query.has('room-media-compact') && {media_compact_entities:['media_player.demo_tv']}),
     vacuum_panel_links:{'vacuum.demo_robot':'vacuum-panel'},
     ...(query.has('vacuum-panel-hold') && {vacuum_panel_hold_entities:['vacuum.demo_robot']}),
     ...(query.has('vacuum-room-display') && {vacuum_panel_presentation:{'vacuum.demo_robot':query.get('vacuum-room-display')}}),
@@ -3039,6 +3044,86 @@ async function assertRoomClimatePower(browser) {
   }
 }
 
+async function assertCompactRoomMedia(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const url = base + '/fixture-home/home?toolbar-panels&room-link&room-media-test&locale=' + locale;
+    const room = page.getByRole('dialog',{name:'Studio',exact:true});
+    const panel = page.getByRole('dialog',{name:he ? 'מדיה' : 'Media',exact:true});
+    const tv = room.locator('[data-entity="media_player.demo_tv"]');
+    const status = tv.locator('.current');
+    const header = tv.locator('.device-panel-launch');
+    const openRoom = async flags => {
+      await page.goto(url + flags);
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+      await tv.waitFor();
+    };
+    const attrs = attrs => page.evaluate(attrs => window.bayitTest.setFixtureAttributes('media_player.demo_tv',attrs),attrs);
+    const state = state => page.evaluate(state => window.bayitTest.setRoomState('media_player.demo_tv',state),state);
+    const actions = () => tv.locator('[data-action]').evaluateAll(nodes => [...new Set(nodes.map(node=>node.dataset.action))].sort());
+    const compact = '&room-media-compact';
+    try {
+      await openRoom(compact + '&native-more-info=modern');
+      await status.getByText(/Evening news/).waitFor();
+      assert.match(await status.textContent(), he ? /עוצמת שמע.*42%/ : /Volume.*42%/);
+      assert.match(await header.getAttribute('aria-description'),/42%/);
+      assert.deepEqual(await actions(),['media_next_track','media_pause','media_stop','mute','turn_off']);
+      assert.ok(await tv.evaluate(node => node.scrollWidth <= node.clientWidth));
+      await attrs({is_volume_muted:true,volume_level:0,media_title:''});
+      await tv.locator('[data-action=unmute]').waitFor();
+      await status.getByText(/0%/).waitFor();
+      assert.doesNotMatch(await status.textContent(),/Evening news|42%/);
+      await attrs({is_volume_muted:undefined,volume_level:'0.42'});
+      await tv.locator('[data-action=unmute]').waitFor({state:'hidden'});
+      await status.getByText(/0%/).waitFor({state:'hidden'});
+      assert.doesNotMatch(await status.textContent(),/42%/);
+      await state('paused');
+      await tv.locator('[data-action=media_play]').waitFor();
+      await state('off');
+      await tv.locator('[data-action=turn_on]').waitFor();
+      assert.deepEqual(await actions(),['turn_on']);
+
+      await state('playing');
+      await header.tap();
+      const native = page.getByRole('dialog',{name:'Native entity details',exact:true});
+      await native.waitFor();
+      await native.getByRole('button',{name:'Close native details',exact:true}).tap();
+      await native.waitFor({state:'hidden'});
+      await page.waitForFunction(() => !new URL(location.href).searchParams.has('more-info-entity-id'));
+      await tv.locator('.device-panel-launch:focus').waitFor();
+      await header.press('Shift+Enter');
+      await panel.waitFor();
+      await panel.locator('[data-entity="media_player.demo_tv"] input[data-action=volume_set]').waitFor();
+      await panel.getByRole('button',{name:he ? 'חזרה לחדר' : 'Back to room',exact:true}).tap();
+      await room.waitFor();
+      assert.ok(await header.evaluate(button => button.getRootNode().activeElement === button));
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls),[]);
+
+      await openRoom('');
+      assert.ok((await actions()).includes('volume_set'));
+      assert.ok((await actions()).includes('select_source'));
+
+      await page.goto(url + compact + '&editor');
+      await page.getByText(he ? 'חדרים' : 'Rooms',{exact:true}).tap();
+      await page.getByLabel(he ? 'חדר להתאמה אישית' : 'Room to customize',{exact:true}).selectOption('studio');
+      await page.getByText(he ? 'תצוגת מכשירים' : 'Device display',{exact:true}).tap();
+      await page.getByLabel(he ? 'מכשיר להתאמה אישית' : 'Device to customize',{exact:true}).selectOption('media_player.demo_tv');
+      const picker = page.getByRole('checkbox',{name:he ? 'הצגת פקדי מדיה קומפקטיים בחדר' : 'Show compact media controls in this room',exact:true});
+      assert.equal(await picker.isChecked(),true);
+      const setting = () => page.evaluate(() => window.latest.room_overrides.studio.media_compact_entities);
+      await picker.uncheck();
+      assert.equal(await setting(),undefined);
+      await picker.check();
+      assert.deepEqual(await setting(),['media_player.demo_tv']);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls),[]);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
@@ -3528,6 +3613,7 @@ try {
       assert.deepEqual(mediaErrors, []);
       await mediaPage.close();
       console.log(engine + ': curated media and vacuum controls, Now Playing, and the original room shortcuts');
+      await assertCompactRoomMedia(browser);
       await assertRoomVacuumGestures(browser);
       await assertRoomVacuumPresentation(browser);
       await assertRoomVacuumSummary(browser);

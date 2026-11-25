@@ -371,6 +371,7 @@ function dashboardAreas(config, hass) {
       shutdown: idList(override.turn_off_entities).filter(supportsRoomShutdown),
       activities: override.activities,
       climatePower: new Set(idList(override.climate_power_entities)),
+      compactMedia: new Set(idList(override.media_compact_entities)),
       vacuumPanelHolds: new Set(idList(override.vacuum_panel_hold_entities)),
       vacuumPanelPresentations: override.vacuum_panel_presentation,
       vacuumPanelSummaries: override.vacuum_panel_summary,
@@ -646,6 +647,8 @@ export function discoverRooms(config, hass, locale) {
           area.climatePower?.has(device.entity) && !room.panel_hidden_entities?.includes(device.entity)) {
         device.room_climate_power = true;
       }
+      if (domainOf(device.entity) === 'media_player' && device.role !== 'status' && area.compactMedia?.has(device.entity) &&
+          !room.panel_hidden_entities?.includes(device.entity)) device.room_media_compact = true;
       const panelKind = ROOM_PANEL_KINDS.get(domainOf(device.entity));
       const links = area.panelLinks?.[panelKind];
       if (links && Object.hasOwn(links, device.entity)) {

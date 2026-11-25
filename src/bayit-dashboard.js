@@ -71,6 +71,7 @@ const isTemperatureSensor = (domain, attributes) => domain === 'sensor' &&
 const movement = new Set(['open','close','set_position']);
 const scriptOperations = new Set(['start_script', 'stop_script']);
 const coverMovingStates = new Set(['opening', 'closing']);
+const roomCompactMediaActions = new Set(['turn_on','turn_off','media_play','media_pause','media_stop','media_next_track','mute','unmute']);
 const roomVacuumCleaningActions = new Set(['vacuum_start', 'vacuum_pause', 'vacuum_stop', 'return_to_base']);
 const inlineLightActions = new Set(['set_brightness', 'set_color_temp_kelvin']);
 const rangeActions = new Set(['set_position', 'set_brightness', 'set_color_temp_kelvin', 'set_percentage', 'volume_set']);
@@ -252,6 +253,7 @@ function normalizeEntity(item) {
     const unreported = item.kind === 'climate' && normalizeUnreportedSwingMode(item.unreported_swing_mode);
     if (unreported) entry.unreported_swing_mode = unreported;
   }
+  if (domain === 'media_player' && entry.role !== 'status' && item.room_media_compact === true) entry.room_media_compact = true;
   if (domain === 'calendar') {
     const accent = calendarAccent(item.accent_color);
     if (accent) entry.accent_color = accent;
@@ -1547,7 +1549,7 @@ export class BayitDashboard extends HTMLElement {
       .find(entry => entry.entity === vacuumSummary.status_entity && entry.readout?.state_labels)?.readout.state_labels;
     const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactHeater,
       standaloneBoiler, compactCover: cover, vacuumCleaningControls: vacuumDisplay === 'cleaning-controls',
-      vacuumSummary, vacuumStatusLabels };
+      vacuumSummary, vacuumStatusLabels, compactMedia: !!room && config.room_media_compact === true };
     const bindPanelLaunch = source => {
       const targetName = panelTarget.label || this.t(panelKind);
       const hint = panelOpensOnTap ? this.t('vacuum_room_hold') : this.t('room_panel_hold').replace('{name}', targetName);
@@ -1878,6 +1880,18 @@ export class BayitDashboard extends HTMLElement {
         setText(view.state, reading);
         const description = view.panelLaunch.hint + ' · ' + reading;
         if (view.more.getAttribute('aria-description') !== description) view.more.setAttribute('aria-description', description);
+      } else if (view.compactMedia) {
+        const volume = model.attributes.volume_level;
+        const parts = [deviceStatus, model.available && media];
+        if (model.available && Number.isFinite(volume) && volume >= 0 && volume <= 1) {
+          parts.push(this.t('room_media_volume').replace('{value}', ltr(Math.round(volume * 100) + '%')));
+        }
+        const reading = parts.filter(Boolean).join(' · ');
+        setText(view.state, reading);
+        if (view.panelLaunch) {
+          const description = view.panelLaunch.hint + ' · ' + reading;
+          if (view.more.getAttribute('aria-description') !== description) view.more.setAttribute('aria-description', description);
+        }
       } else setText(view.state, deviceStatus + (media ? ' · ' + media : ''));
       view.state.dataset.tone = feedback ? 'moving' : this.tone(model);
       if (view.tile && !view.panelLaunch) {
@@ -2205,6 +2219,7 @@ export class BayitDashboard extends HTMLElement {
     for (const id of actionsInOrder) {
       if (view.climatePower && (id === 'turn_on' || id === 'turn_off')) continue;
       if (view.vacuumCleaningControls && !roomVacuumCleaningActions.has(id)) continue;
+      if (view.compactMedia && !roomCompactMediaActions.has(id)) continue;
       const action = actions[id];
       if (!action || view.special.used.has(id) || (view.compactCover && id === 'set_position')) continue;
       if (hideIdleTimedOff && id === 'turn_off') continue;

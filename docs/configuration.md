@@ -131,6 +131,8 @@ In YAML use `media_stage: { source_entity: media_player.streamer, fallback_icon:
 
 To open a Media panel from a room, first configure a Media panel in the toolbar editor. Then choose that panel under **Open on media press and hold** for a media player in the room editor. A regular press opens Home Assistant details, a press and hold opens the selected Media panel, and **Back to room** returns to the source row. In YAML, set `media_panel_links` under the room override with the media entity ID as its key and a Media toolbar entry ID as its value.
 
+In **Rooms → Device display**, enable **Show compact media controls in this room** to keep supported power, playback, Next and mute commands on a media player's room row. The row shows the device's reported volume when available. The linked Media panel keeps its configured controls. In YAML, list the media players under `media_compact_entities` on the room override.
+
 For a Media or Vacuum panel, set **Show in** to **Linked only** to use it from room links and direct popup URLs. In YAML, set `placement: linked` on the Media or Vacuum toolbar entry.
 
 A Media screen can also include a remote. In the toolbar editor choose a playback, volume or power device under **Media remote**. Each role can use a different Home Assistant player. The power button uses the selected device’s reported state and appears when that device supports the corresponding on or off command. To keep supported playback and volume commands available while a configured player reports standby or off, turn on **Show remote controls in standby**. The mute button needs a known mute state.

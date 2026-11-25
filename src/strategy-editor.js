@@ -61,6 +61,7 @@ const WORDS = {
     applianceFields: { operation_entity: 'Operating state', finish_entity: 'Expected finish time',
       power_entity: 'Power state', done_entity: 'Completion sensor', progress_entity: 'Progress (%)',
       boiler_entity: 'Boiler in this room', started_at_entity: 'Boiler start date and time helper' },
+    roomCompactMedia: 'Show compact media controls in this room',
     roomMediaLink: 'Open on media press and hold', roomMediaNone: 'No panel', roomMediaDefault: 'Media',
     roomTemperatureSource: 'Temperature on home card', roomTemperatureAuto: 'Automatic',
     roomTemperatureFallback: 'Fallback room temperature', roomTemperatureNoFallback: 'None',
@@ -161,6 +162,7 @@ const WORDS = {
     applianceFields: { operation_entity: 'מצב פעולה', finish_entity: 'זמן סיום צפוי',
       power_entity: 'מצב הפעלה', done_entity: 'חיישן סיום', progress_entity: 'התקדמות (%)',
       boiler_entity: 'דוד בחדר הזה', started_at_entity: 'עזר תאריך ושעת הפעלת הדוד' },
+    roomCompactMedia: 'הצגת פקדי מדיה קומפקטיים בחדר',
     roomMediaLink: 'פתיחה בלחיצה ארוכה על מכשיר מדיה', roomMediaNone: 'ללא חלונית', roomMediaDefault: 'מדיה',
     roomTemperatureSource: 'טמפרטורה בכרטיס הבית', roomTemperatureAuto: 'אוטומטי',
     roomTemperatureFallback: 'מקור גיבוי לטמפרטורת החדר', roomTemperatureNoFallback: 'ללא גיבוי',
@@ -849,6 +851,19 @@ export class Bayit9StrategyEditor extends HTMLElement {
           power.firstElementChild.dataset.roomFocus = 'room-climate-power';
           fields.append(power, ...this.#climatePresetFields(room, profile ?? { entity: id }, words));
         }
+        if (id.startsWith('media_player.') && !configuredIds(override.read_only_entities).includes(id)) {
+          const compact = checkbox(words.roomCompactMedia, configuredIds(override.media_compact_entities).includes(id), checked => {
+            const next = { ...this.#roomOverride(room.id) };
+            const ids = new Set(configuredIds(next.media_compact_entities));
+            if (checked) ids.add(id);
+            else ids.delete(id);
+            if (ids.size) next.media_compact_entities = [...ids];
+            else delete next.media_compact_entities;
+            this.#setRoomOverride(room.id, next, 'room-compact-media');
+          });
+          compact.firstElementChild.dataset.roomFocus = 'room-compact-media';
+          fields.append(compact);
+        }
         if (id.startsWith('cover.') && !configuredIds(override.read_only_entities).includes(id)) {
           const native = checkbox(words.roomNativeCoverHeader,
             configuredIds(override.native_cover_header_entities).includes(id), checked => {
@@ -1119,7 +1134,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       }
       for (const key of ['read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
         'inline_light_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details',
-        'vacuum_panel_hold_entities', 'climate_power_entities']) {
+        'vacuum_panel_hold_entities', 'climate_power_entities', 'media_compact_entities']) {
         if (!Array.isArray(next[key])) continue;
         next[key] = next[key].filter(id => entities.includes(id));
         if (!next[key].length) delete next[key];

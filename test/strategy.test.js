@@ -245,6 +245,23 @@ test('a vacuum link opens on hold only for the selected vacuum and its valid roo
   assert.equal(get('porch').room_vacuum_presentation, undefined);
 });
 
+test('compact room media applies only to selected visible media devices in that room', () => {
+  const hass = home();
+  const tv = 'media_player.fixture_tv';
+  const sound = 'media_player.fixture_sound';
+  const hidden = 'media_player.fixture_hidden';
+  for (const entity of [tv,sound,hidden]) {
+    hass.states[entity] = {state:'playing',attributes:{}};
+    hass.entities[entity] = {};
+  }
+  const room = {entities:[tv,sound,hidden]};
+  const {rooms} = generateDashboard({area_ids:['studio','lounge'],show_unassigned:false,room_overrides:{
+    studio:{...room,media_compact_entities:[tv,sound,hidden],panel_hidden_entities:[hidden],read_only_entities:[sound]},
+    lounge:room,
+  }},hass).views[0].cards[0];
+  assert.deepEqual(rooms.map(room=>room.entities.filter(item=>item.room_media_compact).map(item=>item.entity)),[[tv],[]]);
+});
+
 test('only the selected visible ordinary climate in the room receives its quick power flag', () => {
   const hass = home();
   const ac = 'climate.fixture_room';
