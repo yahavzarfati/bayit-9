@@ -312,6 +312,7 @@ function dashboardAreas(config, hass) {
       lightingCount: idList(override.lighting_count_entities),
       shutdown: idList(override.turn_off_entities).filter(supportsRoomShutdown),
       activities: override.activities,
+      vacuumPanelHolds: new Set(idList(override.vacuum_panel_hold_entities)),
       panelLinks: Object.fromEntries([...ROOM_PANEL_KINDS.values()].flatMap(kind => {
         const links = override[kind + '_panel_links'];
         return links && typeof links === 'object' && !Array.isArray(links) ? [[kind, links]] : [];
@@ -574,7 +575,10 @@ export function discoverRooms(config, hass, locale) {
       const links = area.panelLinks?.[panelKind];
       if (links && Object.hasOwn(links, device.entity)) {
         const target = links[device.entity];
-        if (panelKinds.get(target) === panelKind) device[panelKind + '_panel_id'] = target;
+        if (panelKinds.get(target) === panelKind) {
+          device[panelKind + '_panel_id'] = target;
+          if (panelKind === 'vacuum' && area.vacuumPanelHolds?.has(device.entity)) device.room_vacuum_panel_on_hold = true;
+        }
       }
       if (domainOf(device.entity) === 'cover' && area.nativeCoverHeaders?.has(device.entity) &&
           supportsNativeShortcutDetails(device) && !room.panel_hidden_entities?.includes(device.entity)) {

@@ -795,6 +795,7 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     entities:['light.demo_lamp','media_player.demo_tv','vacuum.demo_robot'],
     media_panel_links:{'media_player.demo_tv':'media-panel'},
     vacuum_panel_links:{'vacuum.demo_robot':'vacuum-panel'},
+    ...(query.has('vacuum-panel-hold') && {vacuum_panel_hold_entities:['vacuum.demo_robot']}),
   } } }),
   toolbar:[
     ...(query.has('security-cover-rail') ? [
@@ -2231,6 +2232,78 @@ async function assertEnergyReadingCards(browser) {
   }
 }
 
+async function assertRoomVacuumGestures(browser) {
+  const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+  page.setDefaultTimeout(8000);
+  const url = base + '/fixture-home/home?toolbar-panels&room-link';
+  const room = page.getByRole('dialog', { name: 'Studio', exact: true });
+  const vacuum = page.getByRole('dialog', { name: 'Robot vacuum', exact: true });
+  const details = page.getByRole('dialog', { name: 'Native entity details', exact: true });
+  const robot = room.getByRole('button', { name: 'Robot · More info', exact: true });
+  const openRoom = async flags => {
+    await page.goto(url + flags);
+    await page.getByRole('button', { name: 'Studio', exact: true }).tap();
+    await room.waitFor();
+  };
+  const nativeCalls = () => page.evaluate(() => window.bayitTest.moreInfoCalls);
+  const active = locator => locator.evaluate(button => button.getRootNode().activeElement === button);
+  try {
+    await openRoom('&vacuum-panel-hold&native-more-info=modern');
+    assert.equal(await robot.getAttribute('aria-description'), 'Press and hold to open Robot vacuum');
+    const roomHash = new URL(page.url()).hash;
+    await robot.tap();
+    await details.waitFor();
+    assert.equal(new URL(page.url()).hash, roomHash);
+    assert.equal(new URL(page.url()).searchParams.get('more-info-entity-id'), 'vacuum.demo_robot');
+    await details.getByRole('button', { name: 'Close native details', exact: true }).tap();
+    await details.waitFor({ state: 'hidden' });
+    assert.equal(await active(robot), true);
+
+    const bounds = await robot.boundingBox();
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.down();
+    await vacuum.waitFor();
+    await page.mouse.up();
+    assert.equal(new URL(page.url()).hash, '#panel/vacuum-panel');
+    assert.deepEqual(await nativeCalls(), ['vacuum.demo_robot']);
+    await vacuum.getByRole('button', { name: 'Back to room', exact: true }).tap();
+    await room.waitFor();
+    assert.equal(await active(robot), true);
+    await robot.press('Shift+Enter');
+    await vacuum.waitFor();
+    await vacuum.getByRole('button', { name: 'Back to room', exact: true }).tap();
+    await robot.press('Enter');
+    await details.waitFor();
+    assert.deepEqual(await nativeCalls(), ['vacuum.demo_robot', 'vacuum.demo_robot']);
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.calls), []);
+
+    await openRoom('');
+    const defaultRobot = room.getByRole('button', { name: 'Robot · Open Robot vacuum', exact: true });
+    await defaultRobot.tap();
+    await vacuum.waitFor();
+    await vacuum.getByRole('button', { name: 'Back to room', exact: true }).tap();
+    await defaultRobot.press('Shift+Enter');
+    assert.deepEqual(await nativeCalls(), ['vacuum.demo_robot']);
+
+    await page.goto(url + '&vacuum-panel-hold&editor');
+    await page.getByText('Rooms', { exact: true }).tap();
+    await page.getByLabel('Room to customize', { exact: true }).selectOption('studio');
+    const target = page.getByLabel('Vacuum panel · Robot', { exact: true });
+    const gesture = page.getByLabel('Open the vacuum panel with · Robot', { exact: true });
+    const holdEntities = () => page.evaluate(() => window.latest.room_overrides.studio.vacuum_panel_hold_entities);
+    assert.equal(await gesture.inputValue(), 'hold');
+    await gesture.selectOption('tap');
+    assert.equal(await holdEntities(), undefined);
+    await gesture.selectOption('hold');
+    assert.deepEqual(await holdEntities(), ['vacuum.demo_robot']);
+    await target.selectOption('');
+    assert.equal(await holdEntities(), undefined);
+    assert.equal(await gesture.count(), 0);
+  } finally {
+    await page.close();
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
@@ -2773,7 +2846,7 @@ try {
       await mediaPage.getByText('Rooms', {exact:true}).click();
       await mediaPage.getByLabel('Room to customize', {exact:true}).selectOption('studio');
       const roomMediaLink = mediaPage.getByLabel('Open on media press and hold · Television', {exact:true});
-      const roomVacuumLink = mediaPage.getByLabel('Open on vacuum tap · Robot', {exact:true});
+      const roomVacuumLink = mediaPage.getByLabel('Vacuum panel · Robot', {exact:true});
       assert.equal(await roomMediaLink.inputValue(),'media-panel');
       assert.equal(await roomVacuumLink.inputValue(),'vacuum-panel');
       await roomVacuumLink.selectOption('');
@@ -2791,6 +2864,8 @@ try {
       assert.deepEqual(mediaErrors, []);
       await mediaPage.close();
       console.log(engine + ': curated media and vacuum controls, Now Playing, and the original room shortcuts');
+      await assertRoomVacuumGestures(browser);
+      console.log(engine + ': room-specific linked vacuum tap/hold, keyboard and native focus restoration');
 
       for (const locale of ['en','he']) {
         const metadataPage = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});

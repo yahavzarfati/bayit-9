@@ -60,7 +60,8 @@ const WORDS = {
       power_entity: 'Power state', done_entity: 'Completion sensor', progress_entity: 'Progress (%)',
       boiler_entity: 'Boiler in this room', started_at_entity: 'Boiler start date and time helper' },
     roomMediaLink: 'Open on media press and hold', roomMediaNone: 'No panel', roomMediaDefault: 'Media',
-    roomVacuumLink: 'Open on vacuum tap', roomVacuumDefault: 'Robot vacuum',
+    roomVacuumLink: 'Vacuum panel', roomVacuumDefault: 'Robot vacuum',
+    roomVacuumGesture: 'Open the vacuum panel with', roomVacuumTap: 'Tap', roomVacuumHold: 'Press and hold',
     sections: 'Room sections', sectionMode: 'Section arrangement', automaticSections: 'Automatic grouping',
     manualSections: 'Arrange sections manually',
     editSection: 'Section to customize', addSection: 'Add section', removeSection: 'Delete section',
@@ -145,7 +146,8 @@ const WORDS = {
       power_entity: 'מצב הפעלה', done_entity: 'חיישן סיום', progress_entity: 'התקדמות (%)',
       boiler_entity: 'דוד בחדר הזה', started_at_entity: 'עזר תאריך ושעת הפעלת הדוד' },
     roomMediaLink: 'פתיחה בלחיצה ארוכה על מכשיר מדיה', roomMediaNone: 'ללא חלונית', roomMediaDefault: 'מדיה',
-    roomVacuumLink: 'פתיחה בלחיצה על השואב', roomVacuumDefault: 'שואב',
+    roomVacuumLink: 'חלונית השואב', roomVacuumDefault: 'שואב',
+    roomVacuumGesture: 'פתיחת חלונית השואב באמצעות', roomVacuumTap: 'לחיצה', roomVacuumHold: 'לחיצה ארוכה',
     sections: 'קבוצות בחדר', sectionMode: 'סידור הקבוצות', automaticSections: 'קיבוץ אוטומטי',
     manualSections: 'סידור ידני של הקבוצות',
     editSection: 'קבוצה לעריכה', addSection: 'הוספת קבוצה', removeSection: 'מחיקת קבוצה',
@@ -937,6 +939,14 @@ export class Bayit9StrategyEditor extends HTMLElement {
         [id, label || (targets.length === 1 ? defaultName : id)])];
       const key = kind + '_panel_links';
       const chosenPanel = override[key]?.[id];
+      const holdEntities = Array.isArray(override.vacuum_panel_hold_entities) ? override.vacuum_panel_hold_entities : [];
+      const setHold = (next, hold) => {
+        const selected = new Set(holdEntities);
+        if (hold) selected.add(id);
+        else selected.delete(id);
+        if (selected.size) next.vacuum_panel_hold_entities = [...selected];
+        else delete next.vacuum_panel_hold_entities;
+      };
       const input = select(panelOptions, targets.some(target => target.id === chosenPanel) ? chosenPanel : '');
       const focusKey = 'room-panel-' + id;
       input.dataset.roomFocus = focusKey;
@@ -947,10 +957,22 @@ export class Bayit9StrategyEditor extends HTMLElement {
         else delete links[id];
         if (Object.keys(links).length) next[key] = links;
         else delete next[key];
+        if (vacuum && !input.value) setHold(next, false);
         this.#setRoomOverride(room.id, next, focusKey);
       });
       const name = this.#hass.states?.[id]?.attributes?.friendly_name ?? id;
       options.push(field((vacuum ? words.roomVacuumLink : words.roomMediaLink) + ' · ' + name, input));
+      if (vacuum && input.value) {
+        const gesture = select([['tap', words.roomVacuumTap], ['hold', words.roomVacuumHold]],
+          holdEntities.includes(id) ? 'hold' : 'tap');
+        gesture.dataset.roomFocus = 'room-vacuum-gesture-' + id;
+        gesture.addEventListener('change', () => {
+          const next = { ...override };
+          setHold(next, gesture.value === 'hold');
+          this.#setRoomOverride(room.id, next, gesture.dataset.roomFocus);
+        });
+        options.push(field(words.roomVacuumGesture + ' · ' + name, gesture));
+      }
     }
     if (!manual) return [...children, ...options];
 
@@ -964,7 +986,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const entities = items.map(item => item.id);
       const next = { ...override, entities };
       for (const key of ['read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
-        'inline_light_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details']) {
+        'inline_light_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details',
+        'vacuum_panel_hold_entities']) {
         if (!Array.isArray(next[key])) continue;
         next[key] = next[key].filter(id => entities.includes(id));
         if (!next[key].length) delete next[key];

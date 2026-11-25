@@ -256,6 +256,7 @@ function normalizeEntity(item) {
   const panelId = item[panelKind + '_panel_id'];
   if (panelKind && typeof panelId === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(panelId)) {
     entry[panelKind + '_panel_id'] = panelId;
+    if (domain === 'vacuum' && item.room_vacuum_panel_on_hold === true) entry.room_vacuum_panel_on_hold = true;
   }
   if (entity.startsWith('light.') && entry.role !== 'status') {
     const groups = normalizeLightEffectGroups(item.effect_groups);
@@ -1454,16 +1455,16 @@ export class BayitDashboard extends HTMLElement {
         name.hidden = true;
       }
       if (panelTarget) {
-        const vacuum = panelKind === 'vacuum';
+        const opensOnTap = panelKind === 'vacuum' && config.room_vacuum_panel_on_hold !== true;
         const targetName = panelTarget.label || this.t(panelKind);
-        const hint = vacuum ? this.t('vacuum_room_hold') : this.t('media_room_hold').replace('{name}', targetName);
+        const hint = opensOnTap ? this.t('vacuum_room_hold') : this.t('room_panel_hold').replace('{name}', targetName);
         const open = () => this.openPanel(panelKind, more, undefined, undefined,
           { ...panelTarget, name: targetName }, { room, entity: config.entity });
-        if (vacuum) more.onclick = open;
+        if (opensOnTap) more.onclick = open;
         more.setAttribute('aria-description', hint);
-        head.append(glyph, details, icon(vacuum ? 'mdi:arrow-top-right' : 'mdi:information-outline'));
-        bindDeviceDetails(more, vacuum ? () => this.moreInfo(config, more) : open);
-        view.panelLaunch = { action: vacuum ? this.t('vacuum_room_open').replace('{name}', targetName)
+        head.append(glyph, details, icon(opensOnTap ? 'mdi:arrow-top-right' : 'mdi:information-outline'));
+        bindDeviceDetails(more, opensOnTap ? () => this.moreInfo(config, more) : open);
+        view.panelLaunch = { action: opensOnTap ? this.t('vacuum_room_open').replace('{name}', targetName)
           : this.t('more_info'), hint };
       } else if (boilerPanel || coverPanel) {
         bindDeviceDetails(more, more.onclick);

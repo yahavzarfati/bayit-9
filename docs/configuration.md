@@ -130,7 +130,7 @@ Use **Device display → Preset shortcut** on a climate device to add a one-tap 
 
 In YAML, set `climate_preset_shortcuts` on a room override. For example `climate_preset_shortcuts: {climate.study: {preset: none, label: SE, icon: 'mdi:leaf', highlight_when: eco}}` adds a shortcut to the default preset and highlights it while Eco is reported. Other rooms keep their own settings.
 
-For a vacuum in a room, choose a configured Vacuum panel under **Open on vacuum tap**. A regular press opens that panel, a press and hold opens the vacuum's Home Assistant details, and **Back to room** returns to the source row. In YAML, `vacuum_panel_links` maps the vacuum entity ID to a Vacuum toolbar entry ID.
+For a vacuum in a room, choose a panel under **Vacuum panel**, then select **Tap** or **Press and hold** under **Open the vacuum panel with**. The other gesture opens the vacuum's Home Assistant details. **Back to room** returns to the source row. In YAML, `vacuum_panel_links` maps the vacuum entity ID to a Vacuum toolbar entry ID. To open a linked panel with a hold, list that entity in the room's `vacuum_panel_hold_entities`.
 
 The Presence toolbar button uses different icons for zero, one, or multiple home occupants. It counts the people and device trackers configured for that panel and uses their reported Home Assistant states. **Change icon with the number of people at home** controls this behavior in the toolbar editor. In YAML, use `presence_dynamic_icon: true` or `false` on the Presence entry. An explicit `icon` defaults to a fixed icon and is retained when switching modes.
 

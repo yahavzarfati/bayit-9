@@ -218,6 +218,29 @@ test('keeps closing covers opt-in and leaves legacy active and other toolbar sec
   assert.equal(card.hidden_entities, undefined);
 });
 
+test('a vacuum link opens on hold only for the selected vacuum and its valid room link', () => {
+  const hass = home();
+  const vacuum = 'vacuum.fixture_robot';
+  hass.states[vacuum] = { state: 'docked', attributes: {} };
+  const link = { entities: [vacuum], vacuum_panel_links: { [vacuum]: 'robot' } };
+  const { rooms } = generateDashboard({
+    area_ids: ['studio', 'lounge', 'porch'],
+    toolbar: [{ id: 'robot', kind: 'vacuum', placement: 'linked' }, { id: 'media', kind: 'media' }],
+    room_overrides: {
+      studio: { ...link, vacuum_panel_hold_entities: [vacuum] },
+      lounge: link,
+      porch: { ...link, vacuum_panel_links: { [vacuum]: 'media' }, vacuum_panel_hold_entities: [vacuum] },
+    },
+  }, hass).views[0].cards[0];
+  const get = id => rooms.find(room => room.id === id).entities.find(item => item.entity === vacuum);
+  assert.equal(get('studio').vacuum_panel_id, 'robot');
+  assert.equal(get('studio').room_vacuum_panel_on_hold, true);
+  assert.equal(get('lounge').vacuum_panel_id, 'robot');
+  assert.equal(get('lounge').room_vacuum_panel_on_hold, undefined);
+  assert.equal(get('porch').vacuum_panel_id, undefined);
+  assert.equal(get('porch').room_vacuum_panel_on_hold, undefined);
+});
+
 test('keeps explicit vacuum floor bindings and excludes card config and geometry', () => {
   const states = Object.fromEntries(['vacuum.robot', 'select.map', 'select.other', 'image.first', 'image.second']
     .map(entity => [entity, { state: 'on', attributes: {} }]));
