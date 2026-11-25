@@ -16,6 +16,7 @@ export function normalizeCalendarAgenda(value, visibleWeather = () => true) {
   if (value?.enabled !== true) return undefined;
   const weather = value.weather_entity;
   return { enabled: true, ...(value.show_month === true && { show_month: true }),
+    ...(value.event_details === true && { event_details: true }),
     ...(typeof weather === 'string' && weatherId.test(weather) &&
     visibleWeather(weather) && { weather_entity: weather }) };
 }
@@ -69,7 +70,15 @@ function normalizedEvent(event, now, range) {
     start, end, signature: JSON.stringify([event.summary, start, end, location]) };
 }
 
-export function buildCalendarAgenda(sources, now, range = agendaWindow(now)) {
+function eventDetails(event, key) {
+  const text = (value, limit) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
+  const location = text(event.location, 240);
+  const notes = text(event.description, 4000);
+  const recurring = Boolean(text(event.recurrence_id, 120) || text(event.rrule, 120));
+  return { key, location, notes, recurring };
+}
+
+export function buildCalendarAgenda(sources, now, range = agendaWindow(now), { withDetails = false } = {}) {
   const unique = new Map();
   for (const { source, events } of sources) {
     if (!Array.isArray(events)) continue;
@@ -78,8 +87,9 @@ export function buildCalendarAgenda(sources, now, range = agendaWindow(now)) {
       if (!normalized) continue;
       const { signature, ...row } = normalized;
       const existing = unique.get(signature);
-      if (!existing) unique.set(signature, { ...row, sources: [source] });
-      else if (!existing.sources.some(item => item.entity === source.entity)) existing.sources.push(source);
+      if (!existing) {
+        unique.set(signature, { ...row, sources: [source], ...(withDetails && { detail: eventDetails(event, signature) }) });
+      } else if (!existing.sources.some(item => item.entity === source.entity)) existing.sources.push(source);
     }
   }
   const rows = [...unique.values()].sort((a, b) => a.day.localeCompare(b.day) ||
@@ -111,7 +121,8 @@ const words = {
     partialDetail: 'Events from available calendars are shown below.',
     partialEmpty: 'No upcoming events in the available calendars.',
     choose: 'Choose calendars in the dashboard settings.', show: 'Show the full week', hide: 'Show less',
-    allDay: 'All day', until: 'Until',
+    allDay: 'All day', until: 'Until', back: 'Back to agenda', when: 'When',
+    calendars: 'Calendars', location: 'Location', notes: 'Notes', recurrence: 'Recurrence', recurring: 'Recurring event',
   },
   he: {
     loading: 'טוען יומנים…', empty: 'אין אירועים ב־7 הימים הקרובים.',
@@ -119,7 +130,8 @@ const words = {
     partialDetail: 'מוצגים כאן האירועים מהיומנים הזמינים.',
     partialEmpty: 'אין אירועים קרובים ביומנים הזמינים.',
     choose: 'אפשר לבחור יומנים בהגדרות הדשבורד.', show: 'הצגת השבוע המלא', hide: 'תצוגה מקוצרת',
-    allDay: 'כל היום', until: 'עד',
+    allDay: 'כל היום', until: 'עד', back: 'חזרה ליומן', when: 'מועד',
+    calendars: 'יומנים', location: 'מיקום', notes: 'הערות', recurrence: 'חזרה', recurring: 'אירוע חוזר',
   },
 };
 
@@ -181,6 +193,25 @@ export function createCalendarAgenda({ host, context, items, settings }) {
   expand.classList.add('calendar-agenda-expand');
   expand.setAttribute('aria-controls', content.id);
   panel.append(status, content, expand);
+  const detailView = settings.event_details ? make('section', 'calendar-agenda-detail') : undefined;
+  const detailTitle = detailView && make('h3');
+  const detailFields = detailView && make('dl');
+  const back = detailView && button('control-button calendar-agenda-back', labels.back);
+  let detailKey;
+  let agendaScroll = 0;
+  const scrollBody = context.dialog?.querySelector('.modal-body');
+  const eventButtons = new Map();
+  if (detailView) {
+    detailView.id = content.id + '-detail';
+    detailTitle.id = detailView.id + '-title';
+    detailTitle.dir = 'auto';
+    detailView.setAttribute('aria-labelledby', detailTitle.id);
+    back.setAttribute('aria-describedby', detailTitle.id);
+    detailView.hidden = true;
+    detailView.append(back, detailTitle, detailFields);
+    panel.append(detailView);
+  }
+  content.tabIndex = -1;
   host.append(panel);
   const dayFormat = new Intl.DateTimeFormat(locale, { weekday:'long', month:'long', day:'numeric' });
   const weekdayFormat = new Intl.DateTimeFormat(locale, { weekday:'short' });
@@ -205,6 +236,28 @@ export function createCalendarAgenda({ host, context, items, settings }) {
   };
   expand.onclick = handleToggle;
   content.onclick = handleToggle;
+
+  function restoreAgenda(key) {
+    const opener = eventButtons.get(key);
+    (opener ?? (expand.hidden ? content : expand)).focus({ preventScroll:true });
+    if (scrollBody) scrollBody.scrollTop = opener ? agendaScroll : 0;
+  }
+
+  if (back) {
+    const closeDetails = () => {
+      const key = detailKey;
+      detailKey = undefined;
+      draw();
+      restoreAgenda(key);
+    };
+    back.onclick = closeDetails;
+    detailView.addEventListener('keydown', event => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeDetails();
+    });
+  }
 
   function unsubscribe(stop) {
     try { void Promise.resolve(stop()).catch(() => {}); } catch { /* The connection may already have closed. */ }
@@ -340,6 +393,39 @@ export function createCalendarAgenda({ host, context, items, settings }) {
       });
   }
 
+  const sourceName = source => source.name || hass?.states?.[source.entity]?.attributes?.friendly_name;
+  function lastAllDayDate(row) {
+    const last = new Date(row.endDay + 'T12:00:00');
+    last.setDate(last.getDate() - 1);
+    return last;
+  }
+
+  function paintEventDetails(row, timeFormat) {
+    const detail = row.detail;
+    let when;
+    if (row.start === undefined) {
+      const start = new Date(row.startDay + 'T12:00:00');
+      const last = lastAllDayDate(row);
+      when = labels.allDay + ' · ' + fullDateFormat.format(start);
+      if (dayKey(last) !== row.startDay) when += ' – ' + fullDateFormat.format(last);
+    } else {
+      const start = new Date(row.start);
+      const end = new Date(row.end);
+      when = fullDateFormat.format(start) + ' · ' + timeFormat.format(start);
+      if (dayKey(end) !== dayKey(start)) when += ' – ' + fullDateFormat.format(end) + ' · ' + timeFormat.format(end);
+      else if (row.end !== row.start) when += ' – ' + timeFormat.format(end);
+    }
+    const names = [...new Set(row.sources.map(sourceName).filter(Boolean))].join(', ');
+    const fields = [[labels.when, when], [labels.calendars, names], [labels.location, detail.location],
+      [labels.notes, detail.notes], [labels.recurrence, detail.recurring ? labels.recurring : '']];
+    detailTitle.textContent = row.summary;
+    detailFields.replaceChildren(...fields.filter(([, value]) => value).flatMap(([title, value]) => {
+      const description = make('dd', '', value);
+      description.dir = 'auto';
+      return [make('dt', '', title), description];
+    }));
+  }
+
   function renderDay({ day, rows }, timeFormat, forecastByDay, unit, showYear) {
     const group = make('section', 'calendar-agenda-day');
     const title = make('div', 'calendar-agenda-day-head');
@@ -383,7 +469,7 @@ export function createCalendarAgenda({ host, context, items, settings }) {
         if (!source.icon || seenIcons.has(source.icon)) continue;
         seenIcons.add(source.icon);
         const mark = make('span', 'calendar-agenda-source');
-        const name = source.name || hass?.states?.[source.entity]?.attributes?.friendly_name;
+        const name = sourceName(source);
         if (name) { mark.setAttribute('role', 'img'); mark.setAttribute('aria-label', name); }
         mark.append(icon(source.icon));
         caption.append(mark);
@@ -397,11 +483,31 @@ export function createCalendarAgenda({ host, context, items, settings }) {
         if (dayKey(end) !== dayKey(start)) time += ' · ' + labels.until + ' ' + dayFormat.format(end) + ', ' + timeFormat.format(end);
         else if (row.end !== row.start) time += ' – ' + timeFormat.format(end);
       } else {
-        const last = new Date(row.endDay + 'T12:00:00');
-        last.setDate(last.getDate() - 1);
+        const last = lastAllDayDate(row);
         if (dayKey(last) !== row.startDay) time += ' · ' + labels.until + ' ' + dayFormat.format(last);
       }
-      item.append(caption, make('bdi', 'calendar-agenda-time', time));
+      const slot = make('bdi', 'calendar-agenda-time', time);
+      if (row.detail) {
+        const open = button('calendar-agenda-event-open', '');
+        const arrow = icon('mdi:chevron-right');
+        arrow.setAttribute('aria-hidden', 'true');
+        open.append(caption, slot, arrow);
+        slot.id = content.id + '-time-' + eventButtons.size;
+        open.setAttribute('aria-label', row.summary || time);
+        open.setAttribute('aria-describedby', slot.id);
+        open.setAttribute('aria-controls', detailView.id);
+        open.onclick = event => {
+          event.stopPropagation();
+          detailKey = row.detail.key;
+          agendaScroll = scrollBody?.scrollTop ?? 0;
+          draw();
+          if (scrollBody) scrollBody.scrollTop = 0;
+          back.focus({ preventScroll:true });
+        };
+        eventButtons.set(row.detail.key, open);
+        item.dataset.details = '';
+        item.append(open);
+      } else item.append(caption, slot);
       list.append(item);
     }
     group.append(title, list);
@@ -415,7 +521,11 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     const pending = entries.some(entry => entry.status === 'pending');
     const ready = entries.filter(entry => entry.status === 'ready').length;
     const partial = entries.some(entry => entry.status !== 'ready' && entry.status !== 'pending');
-    const model = buildCalendarAgenda(entries, now, range);
+    const model = buildCalendarAgenda(entries, now, range, { withDetails: !!detailView });
+    const selected = detailKey !== undefined && model.full.flatMap(group => group.rows)
+      .find(row => row.detail.key === detailKey);
+    const vanished = detailKey !== undefined && !selected;
+    if (vanished) detailKey = undefined;
     const text = !sources.length ? labels.choose : !ready ? (pending ? labels.loading : labels.unavailable)
       : partial ? labels.partial : !model.count ? (pending ? labels.loading : labels.empty) : '';
     const detail = text === labels.partial ? (model.count ? labels.partialDetail : pending ? labels.loading : labels.partialEmpty) : '';
@@ -430,7 +540,7 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     const unit = ['°C','°F','K'].includes(unitValue) ? unitValue : '°';
     const timePreference = hass?.locale?.time_format;
     const hourCycle = timePreference === '24' ? 'h23' : timePreference === '12' ? 'h12' : undefined;
-    const order = JSON.stringify([text, detail, shown, [...forecastByDay], expanded, model.canExpand, unit, hourCycle]);
+    const order = JSON.stringify([text, detail, shown, selected, [...forecastByDay], expanded, model.canExpand, unit, hourCycle]);
     if (alarmAt !== model.nextChange) {
       view.clearTimeout(alarm);
       alarmAt = model.nextChange;
@@ -439,7 +549,7 @@ export function createCalendarAgenda({ host, context, items, settings }) {
         update(hass);
       }, Math.max(1000, model.nextChange - +now));
     }
-    if (order === signature) return;
+    if (order === signature && !vanished) return;
     signature = order;
     const warning = text === labels.partial || text === labels.unavailable;
     status.toggleAttribute('data-warning', warning);
@@ -448,13 +558,24 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     statusDetail.hidden = !detail;
     statusDetail.textContent = detail;
     status.hidden = !text;
-    expand.hidden = !model.canExpand;
+    expand.hidden = !!selected || !model.canExpand;
+    content.hidden = !!selected;
     expand.textContent = expanded ? labels.hide : labels.show;
     expand.setAttribute('aria-expanded', String(expanded));
     content.dataset.expandable = String(model.canExpand);
     const timeFormat = new Intl.DateTimeFormat(locale, { hour:'numeric', minute:'2-digit', hourCycle });
     const showYear = shown[0]?.day.slice(0, 4) !== shown.at(-1)?.day.slice(0, 4);
+    eventButtons.clear();
     content.replaceChildren(...shown.map(group => renderDay(group, timeFormat, forecastByDay, unit, showYear)));
+    if (detailView) {
+      detailView.hidden = !selected;
+      if (selected) paintEventDetails(selected, timeFormat);
+      else {
+        detailTitle.textContent = '';
+        detailFields.replaceChildren();
+      }
+    }
+    if (vanished) restoreAgenda(undefined);
   }
 
   function update(next) {
@@ -536,4 +657,24 @@ export const calendarAgendaStyles = `
   .calendar-agenda-status-copy { display: grid; gap: 3px; min-width: 0; }
   .calendar-agenda-status-detail { color: var(--secondary); }
   .calendar-agenda-expand { justify-self: center; }
+  .calendar-agenda [hidden] { display: none !important; }
+  .calendar-agenda-event[data-details] { padding: 0; }
+  .calendar-agenda-event-open {
+    display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 4px 8px;
+    text-align: start; color: inherit; font: inherit; background: transparent; border: 0; border-radius: inherit;
+    min-inline-size: 0; min-block-size: 44px; padding: 8px 10px; cursor: pointer; width: 100%;
+  }
+  .calendar-agenda-event-open .calendar-agenda-time { grid-column: 1; }
+  .calendar-agenda-event-open > ha-icon { grid-column: 2; grid-row: 1 / span 2; color: var(--secondary); --mdc-icon-size: 16px; }
+  .shell[dir=rtl] .calendar-agenda-event-open > ha-icon { transform: scaleX(-1); }
+  .calendar-agenda-event-open:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+  .calendar-agenda-detail { display: grid; gap: 12px; min-inline-size: 0; padding: 2px 0; }
+  .calendar-agenda-back { justify-self: start; min-block-size: 44px; }
+  .calendar-agenda-detail h3 { margin: 0; color: var(--ink); font-size: 18px; overflow-wrap: anywhere; }
+  .calendar-agenda-detail dl {
+    display: grid; gap: 4px; margin: 0; padding: 12px 14px; border: 1px solid var(--soft-line); border-radius: 12px;
+  }
+  .calendar-agenda-detail dt { color: var(--secondary); font-size: 12px; }
+  .calendar-agenda-detail dt:not(:first-child) { margin-block-start: 6px; }
+  .calendar-agenda-detail dd { margin: 0; color: var(--ink); font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
 `;

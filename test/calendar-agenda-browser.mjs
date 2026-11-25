@@ -20,7 +20,8 @@ const fixture = function () {
   const selected = { locale: language, toolbar: [
     { kind:'settings' },
     { kind:'calendar', id:'demo-calendar', placement:'settings',
-      calendar_agenda:{ enabled:true, weather_entity: weather, ...(query.has('month') && { show_month:true }) },
+      calendar_agenda:{ enabled:true, weather_entity:weather, ...(query.has('month') && { show_month:true }),
+        ...(query.has('details') && { event_details:true }) },
       sections:[{ kind:'devices', entities: [
         { entity:primary, icon:'mdi:account', accent_color:'#AABBCC' },
         { entity:secondary, icon:'mdi:star', accent_color:'#ABCDEF' },
@@ -47,6 +48,12 @@ const fixture = function () {
   const shared = event('Shared appointment with a long but readable fixture title',0);
   const planned = [shared, event('<b>Literal text</b>',0), {...event('Multi-day appointment',0),end:{date:day(3)}},
     ...Array.from({length:6}, (_, i) => event('Future appointment ' + (i+1), i+1))];
+  if (query.has('details')) planned.push({
+    summary:'Recurring team appointment',
+    start:{ dateTime:date(0,18).toISOString() }, end:{ dateTime:date(1,7).toISOString() },
+    location:'Second floor', description:'<img src="/should-not-be-loaded.png">\nBring notes',
+    recurrence_id:'fixture-occurrence', rrule:'FREQ=WEEKLY',
+  });
   const hass = {
     states, locale:{language,time_format:'24'}, user:{is_admin:true,id:'synthetic'},
     callService(...args) { mutations.push(args); },
@@ -65,6 +72,7 @@ const fixture = function () {
           return Promise.resolve([event('Recovered appointment',0)]);
         }
       }
+      if (query.has('details') && path.startsWith('calendars/' + primary + '?')) return Promise.resolve(planned);
       return Promise.resolve([]);
     },
     connection: query.has('rest') ? undefined : {
@@ -254,6 +262,82 @@ try {
       assert.equal(await monthDialog.locator('.calendar-agenda').evaluate(el => el.scrollWidth <= el.clientWidth + 1),true);
       assert.equal(await page.evaluate(() => window.fixture.mutations.length),0);
 
+      await page.goto(base + '?details&month&locale=' + locale);
+      const eventDialog = await open();
+      const detail = eventDialog.locator('.calendar-agenda-detail');
+      const timedName = 'Recurring team appointment';
+      const timed = eventDialog.getByRole('button', { name:timedName, exact:true });
+      const back = detail.getByRole('button', { name:hebrew ? 'חזרה ליומן' : 'Back to agenda', exact:true });
+      const when = detail.locator('dt').filter({ hasText:hebrew ? /^מועד$/ : /^When$/ }).locator('+ dd');
+      const hasFocus = locator => locator.evaluate(node => node.getRootNode().activeElement === node);
+      const extraRequests = [];
+      page.on('request', request => {
+        if (request.url().includes('/should-not-be-loaded.png')) extraRequests.push(request.url());
+      });
+      await page.waitForFunction(() => window.fixture.requests().length === 4);
+      await page.evaluate(() => window.fixture.populate());
+      await timed.waitFor();
+      assert.equal(await detail.isVisible(), false);
+      assert.equal(await eventDialog.getByText('Second floor',{exact:true}).count(),0);
+      await eventDialog.locator('.calendar-agenda-day-head').first().click();
+      await eventDialog.getByRole('button', { name:names.hide, exact:true }).waitFor();
+      await timed.focus();
+      await timed.press('Enter');
+      await detail.waitFor();
+      assert.equal(await hasFocus(back),true);
+      assert.equal(await detail.getByRole('heading',{name:timedName,exact:true}).count(),1);
+      assert.match((await when.innerText()).replace(/[\u200e\u200f]/gu,''),/18:00[\s\S]*\b0?7:00/);
+      assert.equal(await detail.getByText('Second floor',{exact:true}).count(),1);
+      assert.equal(await detail.getByText('Primary',{exact:true}).count(),1);
+      assert.equal(await detail.getByText(hebrew ? 'אירוע חוזר' : 'Recurring event',{exact:true}).count(),1);
+      assert.equal(await detail.locator('dd').filter({hasText:'Bring notes'}).textContent(),
+        '<img src="/should-not-be-loaded.png">\nBring notes');
+      assert.equal(await detail.locator('img, a').count(),0);
+      assert.deepEqual(extraRequests,[]);
+      await back.press('Escape');
+      await detail.waitFor({state:'hidden'});
+      assert.equal(await eventDialog.isVisible(),true);
+      assert.equal(await hasFocus(timed),true);
+      assert.equal(await eventDialog.getByRole('button',{name:names.hide,exact:true}).getAttribute('aria-expanded'),'true');
+
+      const wholeDay = eventDialog.getByRole('button',{name:'Multi-day appointment',exact:true});
+      await wholeDay.tap();
+      await detail.waitFor();
+      const detailsDates = await when.textContent();
+      const format = new Intl.DateTimeFormat(locale, {weekday:'long',month:'long',day:'numeric',year:'numeric'});
+      assert.ok(detailsDates.includes(format.format(new Date(2026,11,30,12))));
+      assert.ok(detailsDates.includes(format.format(new Date(2027,0,1,12))));
+      assert.ok(!detailsDates.includes(format.format(new Date(2027,0,2,12))));
+      assert.equal(await detail.getByText(hebrew ? 'אירוע חוזר' : 'Recurring event',{exact:true}).count(),0);
+      await back.tap();
+      assert.equal(await hasFocus(wholeDay),true);
+      const sharedEvent = eventDialog.getByRole('button',{name:'Shared appointment with a long but readable fixture title',exact:true});
+      await sharedEvent.tap();
+      await detail.waitFor();
+      assert.equal(await detail.getByText('Primary, Secondary',{exact:true}).count(),1);
+      await back.click();
+      await eventDialog.getByRole('button',{name:names.hide,exact:true}).click();
+      await timed.tap();
+      await detail.waitFor();
+      await back.click();
+      assert.equal(await eventDialog.getByRole('button',{name:names.show,exact:true}).getAttribute('aria-expanded'),'false');
+      await timed.tap();
+      await page.evaluate(() => window.fixture.dropPrimary());
+      await detail.waitFor({state:'hidden'});
+      assert.equal(await eventDialog.isVisible(),true);
+      assert.equal(await eventDialog.evaluate(el => el.getRootNode().activeElement.classList.contains('calendar-agenda-days')),true);
+      assert.equal(await page.evaluate(() => window.fixture.requests().length),4);
+      assert.deepEqual(await page.evaluate(() => window.fixture.restRequests),[]);
+      assert.deepEqual(await page.evaluate(() => window.fixture.mutations),[]);
+
+      await page.goto(base + '?details&rest&locale=' + locale);
+      await open();
+      await timed.tap();
+      await detail.waitFor();
+      assert.equal(await detail.getByText('Second floor',{exact:true}).count(),1);
+      assert.equal(await page.evaluate(() => window.fixture.restRequests.length),3);
+      assert.deepEqual(await page.evaluate(() => window.fixture.requests()),[]);
+
       if (!hebrew) {
         await page.goto(base + '?editor');
         await page.getByText('Toolbar and extra screens',{exact:true}).click();
@@ -269,6 +353,12 @@ try {
         await forecast.selectOption('');
         assert.deepEqual(await page.evaluate(() => window.draft.toolbar[1].calendar_agenda),{enabled:true,show_month:true});
         await showMonth.uncheck();
+        assert.deepEqual(await page.evaluate(() => window.draft.toolbar[1].calendar_agenda),{enabled:true});
+        const eventDetails = page.getByLabel('Open event details when tapped',{exact:true});
+        assert.equal(await eventDetails.isChecked(),false);
+        await eventDetails.check();
+        assert.deepEqual(await page.evaluate(() => window.draft.toolbar[1].calendar_agenda),{enabled:true,event_details:true});
+        await eventDetails.uncheck();
         assert.deepEqual(await page.evaluate(() => window.draft.toolbar[1].calendar_agenda),{enabled:true});
         await page.getByRole('button',{name:'Devices',exact:true}).click();
         await page.getByRole('button',{name:'Primary',exact:true}).click();
@@ -370,7 +460,7 @@ try {
       assert.deepEqual(errors,[]);
       await retryPage.close();
 
-      console.log(label + ': scoped calendars with compact/expanded agenda, date columns, availability, retry and cleanup');
+      console.log(label + ': compact/expanded agenda, localized event details, availability, retry and cleanup');
     } finally { await browser.close(); }
   }
 } finally { await new Promise(resolve => server.close(resolve)); }

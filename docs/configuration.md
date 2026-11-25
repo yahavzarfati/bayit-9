@@ -117,6 +117,8 @@ To use the read-only **Compact agenda**, enable it on the Calendar panel and cho
 
 Enable **Show month in the date column** for a compact weekday, day and month beside each day's events. In YAML, set `show_month: true` under `calendar_agenda`.
 
+Enable **Open event details when tapped** to see an event's date and time, calendars, and any location, notes or recurrence information returned by Home Assistant. Use **Back to agenda** to return to the same view. In YAML, set `event_details: true` under `calendar_agenda`.
+
 For a media player with playback controls and track details, edit its row in a toolbar section and choose **Now Playing** under **Display as**. In YAML, set `role: now_playing` on that media player. The display uses the track or series title, episode, artist, and playback app or source reported by Home Assistant. When playback position and duration are available, the progress bar also shows the time remaining. Artwork can load through the selected player's Home Assistant proxy.
 
 In a Media panel, select an **Artwork and playback source** under **Large Now Playing artwork** to show the full artwork and track details above the media controls. The artwork is contained within the image area and uses the selected media player's Home Assistant proxy. A local MDI icon appears when the artwork is missing. Set **Fallback artwork icon** to choose that icon.

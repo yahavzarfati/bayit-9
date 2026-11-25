@@ -60,7 +60,7 @@ const WORDS = {
     floorOption: 'Map option', floorImage: 'Calibrated map image', floorName: 'Display name',
     addFloor: 'Add floor', removeFloor: 'Remove floor',
     calendarAgenda: 'Compact agenda', calendarAgendaHint: 'Choose the calendars to show. Tap to expand to seven days.',
-    calendarMonth: 'Show month in the date column',
+    calendarMonth: 'Show month in the date column', calendarEventDetails: 'Open event details when tapped',
     calendarWeather: 'Daily forecast beside dates', calendarNoWeather: 'No forecast',
     calendarAccent: 'Calendar accent', calendarInvalidAccent: 'Enter a six-digit color such as #80BFFF.',
     compactStatus: 'Show status items side by side',
@@ -129,7 +129,7 @@ const WORDS = {
     floorOption: 'אפשרות מפה', floorImage: 'תמונת מפה מכוילת', floorName: 'שם לתצוגה',
     addFloor: 'הוספת קומה', removeFloor: 'הסרת קומה',
     calendarAgenda: 'יומן בתצוגה מקוצרת', calendarAgendaHint: 'בחרו אילו יומנים להציג. לחיצה מציגה שבעה ימים.',
-    calendarMonth: 'הצגת החודש בטור התאריך',
+    calendarMonth: 'הצגת החודש בטור התאריך', calendarEventDetails: 'פתיחת פרטי אירוע בלחיצה',
     calendarWeather: 'תחזית יומית ליד התאריך', calendarNoWeather: 'ללא תחזית',
     calendarAccent: 'צבע היומן', calendarInvalidAccent: 'הזינו צבע בן שש ספרות, למשל ‎#80BFFF‎.',
     compactStatus: 'הצגת פריטי הסטטוס זה לצד זה',
@@ -889,6 +889,9 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       const showMonth = node('input', { type:'checkbox', checked: settings.show_month === true });
       showMonth.addEventListener('change', () => updateAgenda({ show_month: showMonth.checked || undefined }));
       controls.push(node('label', { className:'check' }, [showMonth, words.calendarMonth]));
+      const eventDetails = node('input', { type:'checkbox', checked: settings.event_details === true });
+      eventDetails.addEventListener('change', () => updateAgenda({ event_details: eventDetails.checked || undefined }));
+      controls.push(node('label', { className:'check' }, [eventDetails, words.calendarEventDetails]));
       const weather = candidates.filter(item => item.entity.startsWith('weather.') && supportsDailyForecast(hass.states?.[item.entity]))
         .map(item => [item.entity, item.name || item.entity]);
       if (settings.weather_entity && !weather.some(([id]) => id === settings.weather_entity)) {
