@@ -10,6 +10,8 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
     const options = new URL(location.href).searchParams;
     const locale = options.get('locale') || 'en';
     const solar = options.get('solar');
+    const horizonMode = options.get('horizon');
+    const horizon = { configurations:[], contexts:[], connected:0, requests:[] };
     const entity = 'weather.fixture';
     const connected = new Set();
     const forecastCalls = [];
@@ -44,8 +46,21 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
       connectedCallback() { activate(this); }
       disconnectedCallback() { connected.delete(this); }
     });
+    if (['installed', 'reject', 'no-location'].includes(horizonMode)) {
+      customElements.define('horizon-card', class extends HTMLElement {
+        setConfig(config) {
+          if (horizonMode === 'reject') throw new Error('Unavailable Horizon Card');
+          horizon.configurations.push(config);
+        }
+        set hass(value) { horizon.contexts.push(value); }
+        connectedCallback() { horizon.connected++; this.textContent = 'Sun and Moon fixture'; }
+        disconnectedCallback() { horizon.connected--; }
+      });
+    }
     const hass = {
-      config: { time_zone:'Asia/Jerusalem' }, locale: { language:locale }, areas: {}, devices: {}, themes: {},
+      config: { time_zone:'Asia/Jerusalem',
+        ...(horizonMode !== 'no-location' && { latitude:45, longitude:5, elevation:20 }),
+      }, locale: { language:locale }, areas: {}, devices: {}, themes: {},
       entities: { [entity]:{}, 'sun.sun':{} },
       states: {
         [entity]: { state:'cloudy', attributes:{ friendly_name:'Fixture Outlook', supported_features:3,
@@ -79,7 +94,10 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
         }
         return Promise.resolve(stop);
       } },
-      callWS(request) { throw new Error('Unexpected Home Assistant request: ' + request.type); },
+      callWS(request) {
+        horizon.requests.push(request);
+        throw new Error('Unexpected Home Assistant request: ' + request.type);
+      },
     };
     if (options.has('no-subscriptions')) delete hass.connection;
     if (!options.has('no-native')) window.loadCardHelpers = async () => {
@@ -98,7 +116,9 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
     const config = { type:'custom:bayit-9', locale, toolbar: [{ id:'weather-fixture', kind:'weather', label:'Fixture Weather',
       sections: [{ id:'forecast', title:'Forecast settings', kind:'forecast', entities:[{
         entity, role:'forecast', ...(!options.has('legacy') && { hourly_forecast:true }),
-      }] }, { id:'sun', kind:'sun', entities:['sun.sun'] }],
+      }] }, { id:'sun', kind:'sun', title:'Sun settings', entities:[{ entity:'sun.sun', role:'sun',
+        ...(horizonMode && { horizon_card:true }),
+      }] }],
     }] };
     const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
     const dashboard = document.createElement('bayit-dashboard');
@@ -106,7 +126,15 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
     dashboard.hass = hass;
     dashboard.addEventListener('hass-more-info', event => details.push(event.detail.entityId));
     const tracker = {
-      created, forecastCalls, details,
+      created, forecastCalls, details, horizon,
+      hideSun(hidden) {
+        hass.entities['sun.sun'] = hidden ? { hidden_by:'user' } : {};
+        dashboard.hass = { ...hass, entities:{ ...hass.entities } };
+      },
+      setSun(state) {
+        hass.states['sun.sun'] = { ...hass.states['sun.sun'], state };
+        dashboard.hass = { ...hass, states:{ ...hass.states } };
+      },
       active: () => [...connected].map(card => card.dataset.mode + ':' + card.dataset.slots),
       maximum: () => maximumConnected,
       maximumHourly: () => maximumHourly,
@@ -142,6 +170,76 @@ const server = createServer((request, response) => {
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 const base = 'http://127.0.0.1:' + server.address().port + '/fixture/home';
+
+async function assertHorizonPresentation(browser) {
+  for (const locale of ['en', 'he']) {
+    const page = await browser.newPage({ viewport:{ width:391, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const hebrew = locale === 'he';
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    const panel = page.getByRole('dialog',{ name:'Fixture Weather', exact:true });
+    const sun = panel.locator('[data-section=sun]');
+    const card = sun.locator('horizon-card');
+    const fallback = sun.locator('.sun-panel');
+    async function open(mode) {
+      await page.goto(base + '?locale=' + locale + '&horizon=' + mode + '#panel/weather-fixture');
+      await panel.getByRole('button',{ name:hebrew ? 'שמש' : 'Sun', exact:true }).tap();
+    }
+    try {
+      for (const mode of ['missing','no-location','reject']) {
+        await open(mode);
+        await fallback.getByText('140°',{ exact:true }).waitFor();
+        assert.equal(await card.count(),0);
+        assert.deepEqual(await page.evaluate(() => tracker.horizon.requests),[]);
+      }
+      await open('installed&no-native');
+      await card.waitFor();
+      assert.equal(await fallback.count(),0);
+      assert.deepEqual(await page.evaluate(() => tracker.horizon.configurations),[{
+        type:'custom:horizon-card',entity:'sun.sun',language:locale,time_format:24,sun:true,moon:true,graph:true,
+        fields:{sunrise:true,sunset:true,dawn:true,dusk:true,azimuth:true,elevation:true},
+      }]);
+      const context = await page.evaluate(() => tracker.horizon.contexts.at(-1));
+      assert.deepEqual(Object.keys(context).sort(),['config','locale','states','themes']);
+      assert.deepEqual(context.config,{ latitude:45,longitude:5,elevation:20,time_zone:'Asia/Jerusalem' });
+      assert.deepEqual(Object.keys(context.states),['sun.sun']);
+      await page.evaluate(() => tracker.setSun('unavailable'));
+      await card.waitFor({ state:'detached' });
+      await fallback.getByText(hebrew ? 'לא זמין' : 'Unavailable',{ exact:true }).waitFor();
+      await page.evaluate(() => tracker.setSun('above_horizon'));
+      await card.waitFor();
+      await page.evaluate(() => tracker.hideSun(true));
+      await card.waitFor({ state:'detached' });
+      await fallback.getByText(hebrew ? 'לא זמין' : 'Unavailable',{ exact:true }).waitFor();
+      await page.evaluate(() => tracker.hideSun(false));
+      await card.waitFor();
+      await panel.getByRole('button',{ name:hebrew ? 'סגירה' : 'Close', exact:true }).tap();
+      await panel.waitFor({ state:'hidden' });
+      await page.waitForFunction(() => tracker.horizon.connected === 0);
+      assert.deepEqual(await page.evaluate(() => tracker.horizon.requests),[]);
+      assert.deepEqual(errors,[]);
+
+      await page.goto(base + '?editor&locale=' + locale);
+      await page.getByText(hebrew ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens',{exact:true}).tap();
+      await page.getByRole('button',{name:'Fixture Weather',exact:true}).tap();
+      await page.getByRole('button',{name:'Sun settings',exact:true}).tap();
+      await page.getByRole('button',{name:'sun.sun',exact:true}).tap();
+      const setting = page.getByRole('checkbox',{name:hebrew ? 'הצגת השמש והירח באמצעות Horizon Card'
+        : 'Show the Sun and Moon with Horizon Card',exact:true});
+      const saved = () => page.evaluate(() => tracker.draft.toolbar[0].sections[1].entities[0].horizon_card);
+      assert.equal(await setting.isChecked(),false);
+      await setting.check();
+      assert.equal(await saved(),true);
+      await setting.uncheck();
+      assert.equal(await saved(),undefined);
+      await setting.check();
+      await page.getByLabel(hebrew ? 'אופן התצוגה' : 'Display as',{exact:true}).selectOption('status');
+      await setting.waitFor({state:'hidden'});
+      assert.equal(await saved(),undefined);
+    } finally { await page.close(); }
+  }
+}
 
 async function assertSolarForecast(browser) {
   for (const locale of ['en', 'he']) {
@@ -418,6 +516,8 @@ try {
       }
       assert.deepEqual(errors, []);
       console.log(engine.name() + ' at 320 px (' + locale + '): forecast/Sun swipe, hourly scrolling, daily ranges, subscriptions, and editor');
+      await assertHorizonPresentation(browser);
+      console.log(engine.name() + ' at 391 px (EN/HE): optional read-only Sun/Moon presentation and native fallback');
       await assertSolarForecast(browser);
       console.log(engine.name() + ' at 391 px (EN/HE): sunny icons follow the reported sun window');
     } finally {

@@ -53,7 +53,7 @@ function localPortrait(path, origin) {
 }
 
 export function createNativeCards(host, hass, make) {
-  const cards = new Set();
+  const cards = new Map();
   const view = host.ownerDocument.defaultView;
   let live = true;
   let helpersReady;
@@ -76,18 +76,38 @@ export function createNativeCards(host, hass, make) {
   }
 
   return {
-    mount(config, fallback) {
+    mount(config, fallback, projectHass) {
       const slot = make('div', 'native-panel-card');
       if (fallback) slot.append(fallback);
       void (async () => {
         try {
           const helpers = await loadHelpers();
-          if (!live) return;
-          const card = await helpers?.createCardElement(config);
-          if (!live || !card || card.localName === 'hui-error-card') return;
-          card.hass = hass;
-          cards.add(card);
-          slot.replaceChildren(card);
+          const dialog = host.closest('dialog');
+          const active = () => live && (!dialog || dialog.open && !dialog.hasAttribute('data-closing'));
+          if (!active()) return;
+          let card;
+          if (projectHass) {
+            const tag = config.type.slice('custom:'.length);
+            if (!view.customElements.get(tag)) return;
+            card = host.ownerDocument.createElement(tag);
+            card.setConfig(config);
+          } else {
+            card = await helpers?.createCardElement(config);
+          }
+          if (!active() || !card || card.localName === 'hui-error-card') return;
+          const update = next => {
+            try {
+              const context = projectHass ? projectHass(next) : next;
+              if (context) {
+                if (card.hass !== context) card.hass = context;
+                if (slot.firstElementChild !== card) slot.replaceChildren(card);
+                return;
+              }
+            } catch { /* Keep the fallback if the custom card cannot use the available data. */ }
+            if (fallback && slot.firstElementChild !== fallback) slot.replaceChildren(fallback);
+          };
+          update(hass);
+          cards.set(card, update);
         } catch { /* Keep the fallback if the native card cannot load. */ }
       })();
       return slot;
@@ -95,11 +115,11 @@ export function createNativeCards(host, hass, make) {
     update(next) {
       if (!live || !next) return;
       hass = next;
-      for (const card of cards) if (card.hass !== hass) card.hass = hass;
+      for (const update of cards.values()) update(hass);
     },
     dispose() {
       live = false;
-      for (const card of cards) card.remove();
+      for (const card of cards.keys()) card.remove();
       cards.clear();
     },
   };
@@ -496,6 +516,8 @@ export function createToolbarPanel(kind, configuration, context) {
     const scale = make('div', 'sun-scale');
     const legend = make('div', 'sun-legend', t('sun_horizon'));
     const readings = make('dl', 'sun-times');
+    const empty = make('p', 'empty');
+    empty.setAttribute('role', 'status');
     chart.setAttribute('aria-hidden', 'true');
     plot.dir = scale.dir = 'ltr';
     marker.hidden = true;
@@ -511,7 +533,14 @@ export function createToolbarPanel(kind, configuration, context) {
       return { field, value };
     });
     handlers.push(() => {
-      const { attributes, available } = modelFor(item);
+      const { attributes, available, state } = modelFor(item);
+      const visible = isVisibleEntity(item.entity, currentHass?.states ?? {}, currentHass?.entities, context.hiddenEntities);
+      chart.hidden = readings.hidden = !visible || !available;
+      empty.hidden = !chart.hidden;
+      if (!empty.hidden) {
+        empty.textContent = t(visible && state === 'unknown' ? 'unknown' : 'unavailable');
+        return;
+      }
       const formatter = format({ hour: '2-digit', minute: '2-digit', hourCycle:'h23' });
       const coordinate = (field, min, max) => {
         const value = attributes[field];
@@ -536,8 +565,29 @@ export function createToolbarPanel(kind, configuration, context) {
         value.textContent = date && Number.isFinite(date.getTime()) ? formatter.format(date) : '—';
       }
     });
-    card.append(chart, readings);
-    return card;
+    card.append(chart, readings, empty);
+    if (!item.horizon_card) return card;
+
+    return nativeCard({
+      type: 'custom:horizon-card', entity: item.entity, language: context.locale, time_format: 24,
+      sun: true, moon: true, graph: true,
+      fields: { sunrise:true, sunset:true, dawn:true, dusk:true, azimuth:true, elevation:true },
+    }, card, hass => {
+      const { config = {}, locale = {}, states = {}, themes = {}, entities } = hass ?? {};
+      const state = states[item.entity];
+      if (!isVisibleEntity(item.entity, states, entities, context.hiddenEntities) ||
+          !['above_horizon', 'below_horizon'].includes(state.state)) return;
+      const { latitude, longitude, elevation, time_zone } = config;
+      if (!Number.isFinite(latitude) || Math.abs(latitude) > 90 ||
+          !Number.isFinite(longitude) || Math.abs(longitude) > 180 || !time_zone) return;
+      return {
+        config: { latitude, longitude, elevation: Number.isFinite(elevation) ? elevation : 0, time_zone },
+        locale: { language:context.locale, time_format:locale.time_format, number_format:locale.number_format,
+          time_zone:locale.time_zone },
+        themes: { darkMode:themes.darkMode },
+        states: { [item.entity]:state },
+      };
+    });
   }
 
   function renderCompactLock(item) {

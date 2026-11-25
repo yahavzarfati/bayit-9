@@ -3,7 +3,7 @@ import {
   isToolbarReadoutEntity, isToolbarReadouts, isWeatherReadingsList, normalizeOverviewDiscovery, normalizeToolbarReadout, overviewSectionOptions, roomPanelOptions,
   securityReadoutLabelStates, selectableRoomEntities, sensorComparisonMaxHours, sensorComparisonOptions,
   SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
-  supportsCompactAutomationActions, supportsCompactToolbarStatus, supportsHourlyWeatherForecast, supportsReadingCards,
+  supportsCompactAutomationActions, supportsCompactToolbarStatus, supportsHorizonCard, supportsHourlyWeatherForecast, supportsReadingCards,
   supportsOverviewLightsOff, supportsToolbarReadouts, supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
@@ -70,6 +70,7 @@ const WORDS = {
     compactPeople: 'Show compact presence cards',
     compactAutomationActions: 'Show compact action buttons',
     weatherReadingsList: 'Show readings as a compact read-only list',
+    horizonCard: 'Show the Sun and Moon with Horizon Card',
     readingChartCards: 'Show readings as chart cards',
     hourlyForecast: 'Show the 24-hour forecast above the daily forecast',
     energyReadingCards: 'Show readings with large values',
@@ -147,6 +148,7 @@ const WORDS = {
     compactPeople: 'הצגת כרטיסי נוכחות קומפקטיים',
     compactAutomationActions: 'הצגת כפתורי פעולה קומפקטיים',
     weatherReadingsList: 'הצגת המדדים ברשימה קומפקטית לקריאה בלבד',
+    horizonCard: 'הצגת השמש והירח באמצעות Horizon Card',
     readingChartCards: 'הצגת המדדים ככרטיסי גרף',
     hourlyForecast: 'הצגת תחזית ל־24 שעות מעל התחזית היומית',
     energyReadingCards: 'הצגת ערכי המדידה בגדול',
@@ -427,6 +429,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       role: role.value || undefined,
       ...(role.value && role.value !== 'status' && { readout: undefined }),
       ...(role.value && role.value !== 'forecast' && { hourly_forecast: undefined }),
+      ...(role.value && role.value !== 'sun' && { horizon_card: undefined }),
       ...(role.value !== 'graph' && { graph_hours: undefined, graph_room_id: undefined, vacuum_panel_id: undefined, series_color: undefined }),
       ...(role.value !== 'action' && { command: undefined,
         ...(toolbar[entryIndex].sections[sectionIndex].entities[index]?.confirmation === false && { confirmation: undefined }) }),
@@ -445,6 +448,11 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       const hourly = node('input', { type: 'checkbox', checked: record.hourly_forecast === true });
       hourly.addEventListener('change', () => save({ hourly_forecast: hourly.checked || undefined }));
       fields.push(node('label', { className: 'check' }, [hourly, words.hourlyForecast]));
+    }
+    if (supportsHorizonCard(kind, section, record)) {
+      const horizon = node('input', { type: 'checkbox', checked: record.horizon_card === true });
+      horizon.addEventListener('change', () => save({ horizon_card: horizon.checked || undefined }));
+      fields.push(node('label', { className: 'check' }, [horizon, words.horizonCard]));
     }
     if (isToolbarReadouts(kind, section) && isToolbarReadoutEntity(kind, record)) {
       let settings = normalizeToolbarReadout(kind, section, record) ?? {};

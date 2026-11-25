@@ -941,6 +941,11 @@ export function supportsHourlyWeatherForecast(kind, section, item) {
     domainOf(item.entity) === 'weather' && (!item.role || item.role === 'forecast');
 }
 
+export function supportsHorizonCard(kind, section, item) {
+  return kind === 'weather' && section?.kind === 'sun' && typeof item?.entity === 'string' &&
+    domainOf(item.entity) === 'sun' && (!item.role || item.role === 'sun');
+}
+
 const securityReadoutStates = { binary_sensor: ['on', 'off'], sensor: ['safe', 'ok'] };
 
 export function securityReadoutLabelStates(item) {
@@ -1051,12 +1056,14 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
       const readout = normalizeToolbarReadout(kind, section, item);
       const seriesColor = comparison && sensorSeriesColor(item);
       const hourlyForecast = item?.hourly_forecast === true && supportsHourlyWeatherForecast(kind, section, item);
+      const horizonCard = item?.horizon_card === true && supportsHorizonCard(kind, section, item);
       return [{ ...descriptor, ...(name && { name }), ...(ROOM_ICON.test(icon) && { icon }),
         ...(role && { role }), ...(command && { command }),
         ...(confirmation !== undefined && { confirmation }), ...(hasGraphHours && { graph_hours: graphHours }),
         ...(graphRoom && { graph_room_id: graphRoom }), ...(vacuumPanel && { vacuum_panel_id: vacuumPanel }),
         ...(accent && { accent_color: accent }), ...(readout && { readout }),
-        ...(seriesColor && { series_color: seriesColor }), ...(hourlyForecast && { hourly_forecast: true }) }];
+        ...(seriesColor && { series_color: seriesColor }), ...(hourlyForecast && { hourly_forecast: true }),
+        ...(horizonCard && { horizon_card: true }) }];
     });
     return [{ id, kind: section.kind, ...(title !== undefined && { title }),
       ...(isCompactAutomationActions(kind, section) && { layout: 'compact-actions' }),
