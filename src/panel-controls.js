@@ -192,14 +192,27 @@ export function buildPanelControls(model, {
     card.setAttribute('aria-label', t('timed'));
     const clockRow = make('div', 'timer-clock-row');
     const time = make('p', 'timer-clock');
-    time.setAttribute('aria-label', t('remaining_time'));
     time.dir = 'ltr';
+    const climate = model.domain === 'climate';
+    const timeValue = climate ? make('span') : time;
+    timeValue.setAttribute('aria-label', t('remaining_time'));
+    const timeHistory = climate ? button('timer-clock-history') : undefined;
     const history = button('round-action timer-history', t('timer_history'), 'mdi:history', true);
     history.hidden = true;
     let currentHistory;
-    const openHistory = () => { if (currentHistory) historyInfo(currentHistory, history); };
-    history.onclick = openHistory;
-    bindDeviceDetails(history, openHistory);
+    const openHistory = source => { if (currentHistory && !source.disabled) historyInfo(currentHistory, source); };
+    history.onclick = () => openHistory(history);
+    bindDeviceDetails(history, history.onclick);
+    if (timeHistory) {
+      timeHistory.hidden = true;
+      timeHistory.title = t('timer_history_hold');
+      timeHistory.setAttribute('aria-description', t('timer_history_hold'));
+      bindDeviceDetails(timeHistory, () => openHistory(timeHistory));
+      timeHistory.onclick = event => {
+        if (!event.pointerType && event.detail === 0) openHistory(timeHistory);
+      };
+      time.append(timeValue, timeHistory);
+    }
     const readings = make('div', 'timer-clock-readings');
     const today = make('p', 'timer-today');
     const usage = button('timer-today timer-usage');
@@ -224,9 +237,18 @@ export function buildPanelControls(model, {
       const nativePrecision = showSeconds !== undefined;
       const remaining = currentTimer ? currentTimer.remainingMs : 0;
       const countdown = clock(remaining === null ? null : remaining / 1000, showSeconds, nativePrecision ? Math.round : Math.ceil);
-      if (time.textContent !== countdown) time.textContent = countdown;
+      if (timeValue.textContent !== countdown) timeValue.textContent = countdown;
       currentHistory = historyFor(current);
       history.hidden = !currentHistory;
+      if (timeHistory) {
+        timeValue.hidden = !!currentHistory;
+        timeHistory.hidden = !currentHistory;
+        timeHistory.disabled = !!pending;
+        if (currentHistory && timeHistory.textContent !== countdown) {
+          timeHistory.textContent = countdown;
+          timeHistory.setAttribute('aria-label', t('remaining_time') + ' · ' + countdown + ' · ' + t('timer_history'));
+        }
+      }
       currentUsage = current.usageSource;
       const hasReading = Number.isFinite(currentTimer?.usedSeconds);
       const tappable = hasReading && canShowUsage(currentUsage);
@@ -310,8 +332,9 @@ export function buildPanelControls(model, {
     if (tools.childElementCount) card.append(tools);
     if (duration) {
       const list = make('div', 'timer-presets');
+      const prefix = climate && duration.id === 'extend_timed' ? '+' : '';
       for (const minutes of timerPresets(duration)) {
-        const choice = button('control-button timer-preset', visibleDuration(minutes));
+        const choice = button('control-button timer-preset', prefix + visibleDuration(minutes));
         label(choice, t(duration.id) + ' · ' + spokenDuration(minutes));
         choice.dataset.action = duration.id;
         choice.onclick = () => request(duration.id, minutes, choice);
@@ -474,6 +497,12 @@ export const panelControlStyles = `
   .climate-extra-controls > .field-row + .field-row { margin-block-start: 5px; }
   .device-timer, .heat-level { min-width: 0; text-align: center; border-top: 1px solid var(--soft-line); padding-top: 6px; }
   .timer-clock { margin: 1px 0 0; font-size: 18px; font-weight: 780; font-variant-numeric: tabular-nums; }
+  .timer-clock-history {
+    min-inline-size: 44px; min-block-size: 24px; padding: 0 4px;
+    border: 0; border-radius: 6px; background: transparent; line-height: inherit;
+    -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+  }
+  .timer-clock-history:disabled { opacity: 1; }
   .timer-clock-row:has(.timer-history:not([hidden])) {
     display: grid; grid-template-columns: 44px minmax(0,1fr) 44px; align-items: center;
   }

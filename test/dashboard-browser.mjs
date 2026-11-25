@@ -1891,6 +1891,7 @@ async function assertTimerHistory(browser) {
     const native = page.getByRole('dialog', { name:'Native entity details', exact:true });
     const panel = page.getByRole('dialog', { name:'Studio air conditioner', exact:true });
     const history = panel.getByRole('button', { name:he ? 'היסטוריית הטיימר' : 'Timer history', exact:true });
+    const countdown = panel.locator('.timer-clock-history');
     const infoCalls = () => page.evaluate(() => window.bayitTest.moreInfoCalls);
     const setTarget = id => page.evaluate(id=>window.bayitTest.setFixtureAttributes('sensor.demo_air_usage',{status_entity_id:id}),id);
     const setVisibility = (id, hidden) => page.evaluate(([id,hidden])=>window.bayitTest.setFixtureEntityVisibility(id,hidden),[id,hidden]);
@@ -1907,8 +1908,22 @@ async function assertTimerHistory(browser) {
       await history.waitFor();
       assert.ok((await history.boundingBox()).height >= 44);
       assert.ok((await panel.locator('.timer-clock-row').boundingBox()).height <= 60);
-      await panel.locator('.timer-clock').tap();
+      assert.equal(await countdown.getAttribute('aria-haspopup'), 'dialog');
+      assert.match(await countdown.getAttribute('aria-label'), he ? /זמן שנותר.*00:00.*היסטוריית הטיימר/ : /Time remaining.*00:00.*Timer history/);
+      await countdown.tap();
       assert.deepEqual(await infoCalls(),[]);
+      const holdCountdown = () => countdown.evaluate(async control => {
+        const pointer = { button:0, pointerId:18, pointerType:'touch', isPrimary:true, bubbles:true, composed:true };
+        control.dispatchEvent(new PointerEvent('pointerdown', pointer));
+        await new Promise(resolve => setTimeout(resolve, 535));
+        control.dispatchEvent(new PointerEvent('pointerup', pointer));
+        control.dispatchEvent(new MouseEvent('click', { bubbles:true, cancelable:true, detail:1 }));
+      });
+      for (const trigger of [holdCountdown, () => countdown.press('Enter'), () => countdown.press('Shift+Space')]) {
+        await trigger();
+        await finish(status);
+        await page.waitForFunction(() => document.querySelector('bayit-dashboard').shadowRoot.activeElement?.matches('.timer-clock-history'));
+      }
       await history.press('Shift+Enter');
       await finish(status);
       await page.waitForFunction(() => document.querySelector('bayit-dashboard').shadowRoot.activeElement?.classList.contains('timer-history'));
@@ -1920,14 +1935,16 @@ async function assertTimerHistory(browser) {
       await setVisibility(status,true);
       await history.click({delay:620});
       await finish(runtime);
-      assert.deepEqual(await infoCalls(),[status,runtime,runtime]);
+      assert.deepEqual(await infoCalls(),[status,status,status,status,runtime,runtime]);
 
       const usage = panel.locator('.timer-usage');
       await usage.tap();
       await finish(runtime);
       await setVisibility(runtime,true);
       await history.waitFor({state:'hidden'});
-      assert.deepEqual(await infoCalls(),[status,runtime,runtime,runtime]);
+      await countdown.waitFor({state:'hidden'});
+      await panel.locator('.timer-clock').filter({hasText:'00:00'}).tap();
+      assert.deepEqual(await infoCalls(),[status,status,status,status,runtime,runtime,runtime]);
       assert.deepEqual(await page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service')),[]);
     } finally {
       await page.close();
@@ -6641,6 +6658,10 @@ async function assertStandaloneTimedClimate(browser) {
 
       await power.tap();
       await page.waitForFunction(() => window.bayitTest.calls.some(call => call.service === 'turn_on'));
+      const countdown = panel.locator('.timer-clock-history');
+      assert.ok(await countdown.isDisabled());
+      await countdown.dispatchEvent('keydown', { key:'Enter', code:'Enter', shiftKey:true });
+      assert.equal(await native.count(), 0);
       assert.equal(await power.getAttribute('aria-pressed'), 'false');
       assert.equal(await currentStatus(), (he ? 'כבוי' : 'Off') + ' · 22.5 °C');
       await page.evaluate(() => window.bayitTest.setRoomState('climate.demo_air', 'cool'));
@@ -6648,8 +6669,12 @@ async function assertStandaloneTimedClimate(browser) {
       assert.equal(await currentStatus(), (he ? 'קירור' : 'Cooling') + ' · 22.5 °C');
       assert.deepEqual(await calls(), [{ type: 'call_service', domain: 'climate', service: 'turn_on',
         service_data: {}, target: { entity_id: entity } }]);
-      await panel.getByRole('button', { name: he ? 'הפעלת טיימר · 60 דקות' : 'Start timer · 60 Minutes', exact: true }).tap();
+      const start = panel.getByRole('button', { name: he ? 'הפעלת טיימר · 60 דקות' : 'Start timer · 60 Minutes', exact: true });
+      assert.equal(await start.innerText(), he ? '60 דק׳' : '60 min');
+      await start.tap();
       await panel.locator('.timer-command[data-action=extend_timed]').waitFor();
+      const extend = panel.getByRole('button', { name: he ? 'הארכת טיימר · 60 דקות' : 'Extend timer · 60 Minutes', exact: true });
+      assert.equal(await extend.innerText(), he ? '+60 דק׳' : '+60 min');
       assert.deepEqual((await calls())[1], { type: 'call_service', domain: 'simple_timer', service: 'start_timer',
         service_data: { entity_id: 'sensor.demo_air_usage', duration: 60, unit: 'min', reverse_mode: false } });
 
