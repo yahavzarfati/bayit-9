@@ -55,6 +55,8 @@ Use Node.js 22 or later.
 
 The build produces `dist/bayit-9.js`, the browser module installed by HACS.
 
+Run `npm run test:browser` after building. The runner completes the independent browser suites and summarizes their results at the end. Use that summary and the full package checks to group fixes for the next release.
+
 ## License
 
 Bayit 9 is available for installation and use with Home Assistant. See [License](LICENSE.md).
