@@ -383,15 +383,19 @@ export const panelControlStyles = `
   @container bayit-climate-rail (min-width: 224px) and (max-width: 270px) {
     .compact-climate-rail .climate-controls[data-control-count="3"] .climate-selector > ha-icon:not(.climate-selector-chevron) { display: none; }
   }
-  @container bayit-climate-rail (min-width: 287px) and (width < 304px) {
+  @container bayit-climate-rail (min-width: 287px) and (width < 298px) {
     .compact-climate-rail .climate-controls[data-control-count="4"] .climate-selector > ha-icon:not(.climate-selector-chevron) { display: none; }
   }
-  @container bayit-climate-rail (min-width: 304px) and (max-width: 336px) {
+  @container bayit-climate-rail (min-width: 298px) and (max-width: 336px) {
     .compact-climate-rail .climate-controls[data-control-count="4"] .climate-selector { gap: 1px; padding-inline: 2px; }
     .compact-climate-rail .climate-controls[data-control-count="4"] .climate-selection { font-size: 11px; }
     .compact-climate-rail .climate-controls[data-control-count="4"] .climate-selector > ha-icon:not(.climate-selector-chevron) {
       width: 11px; height: 11px; --mdc-icon-size: 11px; color: var(--secondary);
     }
+  }
+  @container bayit-climate-rail (min-width: 298px) and (width < 304px) {
+    .compact-climate-rail .climate-controls[data-control-count="4"] { gap: 4px; }
+    .compact-climate-rail .climate-controls[data-control-count="4"] .climate-selector { gap: 0; padding-inline: 1px; }
   }
   .climate-extra-controls { min-width: 0; border-top: 1px solid var(--soft-line); }
   .climate-extra-controls > summary { min-height: 44px; padding: 11px 4px; cursor: pointer; }

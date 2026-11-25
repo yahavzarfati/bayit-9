@@ -4857,10 +4857,47 @@ async function assertCompactClimateRail(browser) {
         result.set(row,(result.get(row) ?? 0)+1);
         allInside &&= rect.left >= bounds.left - .5 && rect.right <= bounds.right + .5 && rect.width >= 44 && rect.height >= 44;
       }
-      return {rows:[...result.values()],allInside,timerAfter:timer.top >= bounds.bottom,
+      return {rows:[...result.values()],inlineSize:bounds.width,allInside,timerAfter:timer.top >= bounds.bottom,
         targetFits:accurateTarget.scrollWidth <= accurateTarget.clientWidth + 1,
         targetWidths:[accurateTarget.scrollWidth,accurateTarget.clientWidth]};
     });
+    const assertSelectorFields = async (width,surface,showGlyphs,railWidth) => {
+      const fields = await rail.locator('.climate-selector').evaluateAll(selectors => selectors.map(field => {
+        const label = field.querySelector('.climate-selection');
+        const glyph = field.querySelector('ha-icon:not(.climate-selector-chevron)');
+        const chevron = field.querySelector('.climate-selector-chevron');
+        const control = field.querySelector('select');
+        const bounds = field.getBoundingClientRect();
+        const hit = control.getBoundingClientRect();
+        const caption = label.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(label);
+        const lines = [...range.getClientRects()];
+        const visible = getComputedStyle(glyph).display !== 'none';
+        return {
+          text: label.textContent,
+          glyph: glyph.getAttribute('icon'),
+          visible,
+          matches: label.textContent === control.selectedOptions[0].textContent,
+          fits: lines.every(line => line.left >= caption.left - 1 && line.right <= caption.right + 1 &&
+            line.top >= bounds.top && line.bottom <= bounds.bottom),
+          lines: [...new Set(lines.map(line => Math.round(line.bottom)))],
+          captionWidth: caption.width,
+          hit: hit.width >= 44 && hit.height >= 44,
+          labelClear: chevron.getBoundingClientRect().left >= caption.right &&
+            (!visible || glyph.getBoundingClientRect().right <= caption.left),
+        };
+      }));
+      assert.deepEqual(fields.map(field => field.glyph), ['mdi:air-conditioner','mdi:fan','mdi:swap-vertical']);
+      for (const field of fields) {
+        assert.equal(field.visible,showGlyphs, JSON.stringify({locale,width,surface,railWidth,...field}));
+        assert.ok(field.matches && field.fits && field.hit && field.labelClear, JSON.stringify({locale,width,surface,railWidth,...field}));
+      }
+      if (he && width >= 390) {
+        const swingField = fields[2];
+        assert.equal(swingField.lines.length,2, JSON.stringify({locale,width,surface,railWidth,...swingField}));
+      }
+    };
     try {
       for (const width of [320,375,390,391]) {
         await page.setViewportSize({width,height:844});
@@ -4873,40 +4910,18 @@ async function assertCompactClimateRail(browser) {
           assert.equal(await swing.count(),1);
           assert.equal(await visibleSwing.textContent(),he ? 'ללא נדנוד' : 'No swing');
           assert.equal(await visibleSwing.getAttribute('aria-hidden'),'true');
-          const fields = await rail.locator('.climate-selector').evaluateAll(selectors => selectors.map(field => {
-            const label = field.querySelector('.climate-selection');
-            const glyph = field.querySelector('ha-icon:not(.climate-selector-chevron)');
-            const chevron = field.querySelector('.climate-selector-chevron');
-            const control = field.querySelector('select');
-            const bounds = field.getBoundingClientRect();
-            const hit = control.getBoundingClientRect();
-            const caption = label.getBoundingClientRect();
-            const range = document.createRange();
-            range.selectNodeContents(label);
-            const lines = [...range.getClientRects()];
-            const visible = getComputedStyle(glyph).display !== 'none';
-            return {
-              text: label.textContent,
-              glyph: glyph.getAttribute('icon'),
-              visible,
-              matches: label.textContent === control.selectedOptions[0].textContent,
-              fits: lines.every(line => line.left >= caption.left - 1 && line.right <= caption.right + 1 &&
-                line.top >= bounds.top && line.bottom <= bounds.bottom),
-              lines: [...new Set(lines.map(line => Math.round(line.bottom)))],
-              captionWidth: caption.width,
-              hit: hit.width >= 44 && hit.height >= 44,
-              labelClear: chevron.getBoundingClientRect().left >= caption.right &&
-                (!visible || glyph.getBoundingClientRect().right <= caption.left),
-            };
-          }));
-          assert.deepEqual(fields.map(field => field.glyph), ['mdi:air-conditioner','mdi:fan','mdi:swap-vertical']);
-          for (const field of fields) {
-            assert.equal(field.visible,width !== 375, JSON.stringify({locale,width,surface,...field}));
-            assert.ok(field.matches && field.fits && field.hit && field.labelClear, JSON.stringify({locale,width,surface,...field}));
-          }
-          if (he && width >= 390) {
-            const swingField = fields[2];
-            assert.equal(swingField.lines.length,2, JSON.stringify({locale,width,surface,...swingField}));
+          await assertSelectorFields(width,surface,width !== 375);
+          if (width >= 390) {
+            // Home Assistant embeds the dashboard with narrower room and popup rails.
+            const railWidth = width === 390 ? 298.66 : 299.59;
+            await rail.evaluate((row, size) => {
+              row.parentElement.style.inlineSize = size + 'px';
+            },railWidth);
+            await assertSelectorFields(width,surface,true,railWidth);
+            const app = await geometry();
+            assert.deepEqual(app.rows,[4]);
+            assert.ok(Math.abs(app.inlineSize - railWidth) < .5, JSON.stringify({width,surface,railWidth,...app}));
+            assert.ok(app.allInside && app.timerAfter && app.targetFits, JSON.stringify({locale,width,surface,railWidth,...app}));
           }
           const power = page.locator('dialog[open] .room-climate-power:enabled');
           assert.equal(await power.count(),1);
