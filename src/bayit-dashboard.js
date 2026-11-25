@@ -17,7 +17,7 @@ import { createPopupHistory, normalizePopupAliases, popupRouteFragment, resolveP
 import { preserveToolbarPopupPress } from './popup-toolbar-press.js';
 import { preserveMoreInfoReturn } from './native-more-info.js';
 import { buildPanelControls, climateOptionLabel, panelControlStyles } from './panel-controls.js';
-import { lightColorHex, parseLightColor } from './light-color.mjs';
+import { lightColorHex, lightWhiteRailColor, parseLightColor } from './light-color.mjs';
 import { activityKinds, applianceActivity, normalizeRoomActivities } from './room-appliance.mjs';
 import { createLightEffectGallery, lightEffectStyles, normalizeLightEffectGroups, normalizeLightModeSource, organizeLightModes } from './light-effects.js';
 import { createLightColorPalette, lightColorPaletteStyles } from './light-color-palette.js';
@@ -86,6 +86,7 @@ const coverMovingStates = new Set(['opening', 'closing']);
 const roomCompactMediaActions = new Set(['turn_on','turn_off','media_play','media_pause','media_stop','media_next_track','mute','unmute']);
 const roomVacuumCleaningActions = new Set(['vacuum_start', 'vacuum_pause', 'vacuum_stop', 'return_to_base']);
 const inlineLightActions = new Set(['set_brightness', 'set_color_temp_kelvin']);
+const whiteLightModes = new Set(['onoff', 'brightness', 'white', 'color_temp']);
 const rangeActions = new Set(['set_position', 'set_brightness', 'set_color_temp_kelvin', 'set_percentage', 'volume_set']);
 const stateKeys = {
   set_position: 'current_position', set_percentage: 'percentage', set_brightness: 'brightness',
@@ -2307,8 +2308,12 @@ export class BayitDashboard extends HTMLElement {
         (view.compactHeater || (view.standaloneBoiler && !!model.actions.start_timed));
       const compactCommands = view.compactDevice && this.roomCompactCommands(model);
       const mutePlaceholder = view.compactDevice && view.compactMedia && compactMediaMutePlaceholder(model);
+      const lightModes = model.attributes.supported_color_modes;
+      view.filledWhiteLightRail = Boolean(view.lightPower && view.compactLightReading && !view.dualLightDetail &&
+        model.actions.set_color_temp_kelvin && Array.isArray(lightModes) && lightModes.every(mode => whiteLightModes.has(mode)));
       const signature = JSON.stringify([actionsInOrder.map(id => model.actions[id] || null), timerLayout,
-        model.levelAction, coverClass, hideIdleTimedOff, compactCommands, mutePlaceholder, mutePlaceholder && model.attributes.is_volume_muted === true]);
+        model.levelAction, coverClass, hideIdleTimedOff, compactCommands, mutePlaceholder, mutePlaceholder && model.attributes.is_volume_muted === true,
+        view.filledWhiteLightRail]);
 
       if (signature !== view.signature) {
         view.signature = signature;
@@ -2721,6 +2726,7 @@ export class BayitDashboard extends HTMLElement {
     const controls = make('div', view.dualLightDetail ? 'dual-light-detail-controls' : 'compact-light-controls');
     controls.append(brightness, temperature);
     if (view.dualLightDetail) return controls;
+    controls.toggleAttribute('data-filled-white-rail', view.filledWhiteLightRail);
     const mode = button('round-action', this.t('set_color_temp_kelvin'), 'mdi:thermometer', true);
     mode.dataset.lightMode = 'compact-temperature';
     const update = () => {
@@ -2784,6 +2790,20 @@ export class BayitDashboard extends HTMLElement {
       field.valid = parseLightColor;
     } else field.input = this.numberInput(range, isRange ? 'range' : 'number');
     field.input.dataset.action = id;
+    if (compactRange && view.filledWhiteLightRail) {
+      field.paintProgress = value => {
+        const percent = value === null ? 0 : id === 'set_brightness' ? value
+          : 100 * (value - range.min) / (range.max - range.min);
+        field.input.style.setProperty('--white-rail-progress', percent + '%');
+      };
+      const cancel = () => {
+        if (!field.dirty || this.pending.get(view.config.entity)?.id === id) return;
+        field.dirty = false;
+        this.syncField(field, this.model(view.config), true);
+      };
+      field.input.addEventListener('pointercancel', cancel);
+      field.input.addEventListener('blur', cancel);
+    }
     if (directRange || dualLightRange || id === 'set_color_temp_kelvin') field.input.setAttribute('aria-label', title);
     caption.append(field.input);
     if (id === 'set_temperature_range') {
@@ -2805,6 +2825,7 @@ export class BayitDashboard extends HTMLElement {
     const touched = () => {
       field.dirty = true;
       if (field.output) setText(field.output, field.input.value + field.unit);
+      field.paintProgress?.(field.input.valueAsNumber);
       if (reportedLightRange) field.input.setAttribute('aria-valuetext', field.input.value + field.unit);
       if (field.valid) apply.disabled = !field.valid(field.input.value) || !this.canRequest(view.config.entity, id);
     };
@@ -2847,6 +2868,12 @@ export class BayitDashboard extends HTMLElement {
       input.value = String(reading ?? action.min);
       setText(field.output, shown);
       input.setAttribute('aria-valuetext', observed ? shown : this.t('light_reading_unreported'));
+      if (field.paintProgress) {
+        const color = model.state === 'on' ? lightWhiteRailColor(attrs) : null;
+        if (color) input.style.setProperty('--white-rail-color', color);
+        else input.style.removeProperty('--white-rail-color');
+        field.paintProgress(reading);
+      }
       return;
     }
     if (second) {

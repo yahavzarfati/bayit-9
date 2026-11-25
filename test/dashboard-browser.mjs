@@ -7054,6 +7054,136 @@ async function assertDualLightDetails(browser) {
   }
 }
 
+async function assertFilledWhiteLightRail(browser) {
+  for (const locale of ['en', 'he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+    page.setDefaultTimeout(8000);
+    const entity = 'light.demo_lamp';
+    const url = base + '/fixture-home/home?configuration&inline-room-lights&locale=' + locale;
+    const route = '#device/studio/' + entity;
+    const attrs = attributes => page.evaluate(({ entity, attributes }) => window.bayitTest.setFixtureAttributes(entity, attributes),
+      { entity, attributes });
+    const power = state => page.evaluate(({ entity, state }) => window.bayitTest.setRoomState(entity, state), { entity, state });
+    const modes = modes => attrs({ supported_color_modes: modes });
+    const serviceCalls = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service'));
+    const details = page.getByRole('dialog', { name: 'Desk lamp', exact: true });
+    const control = details.locator('.compact-light-controls[data-filled-white-rail]');
+    const brightness = control.getByRole('slider', { name: he ? 'בהירות' : 'Brightness', exact: true });
+    const whiteLabel = he ? 'גוון לבן' : 'White temperature';
+    const temperature = control.getByRole('slider', { name: whiteLabel, exact: true });
+    const toggle = control.getByRole('button', { name: whiteLabel, exact: true });
+    const style = (input, name) => input.evaluate((el, property) => getComputedStyle(el).getPropertyValue(property).trim(), name);
+    try {
+      await page.goto(url + '&compact-light-reading' + route);
+      await brightness.waitFor();
+      assert.equal(await brightness.getAttribute('aria-valuetext'), he ? 'אין ערך מדווח' : 'No reported value');
+      assert.equal(await control.locator('output:visible').textContent(), '—');
+      assert.equal(await style(brightness, '--white-rail-progress'), '0%');
+      await attrs({ brightness: 153, color_temp_kelvin: 2500, color_mode: 'color_temp', rgb_color: [246, 144, 80] });
+      await power('on');
+      await brightness.and(control.locator('[aria-valuetext="60%"]')).waitFor();
+      assert.equal(await style(brightness, '--white-rail-progress'), '60%');
+      assert.equal(await style(brightness, '--white-rail-fill'), '#f69050');
+      for (const width of [320, 391]) {
+        await page.setViewportSize({ width, height: 844 });
+        const [slider, selector] = await Promise.all([brightness.boundingBox(), toggle.boundingBox()]);
+        assert.ok(slider.width >= 44 && slider.height >= 44 && selector.width >= 44 && selector.height >= 44);
+        assert.ok(slider.x + slider.width <= selector.x);
+        assert.ok(await control.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+      }
+      const rail = await brightness.boundingBox();
+      const screenshot = (await page.screenshot({ scale: 'css' })).toString('base64');
+      const pixels = await page.evaluate(async ({ screenshot, rail }) => {
+        const img = new Image();
+        img.src = 'data:image/png;base64,' + screenshot;
+        await img.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const pixel = (fraction, dy) =>
+          [...ctx.getImageData(Math.round(rail.x + fraction * rail.width), Math.round(rail.y + rail.height / 2 + dy), 1, 1).data];
+        return { start: pixel(.25, 0), upper: pixel(.25, -12), end: pixel(.75, 0) };
+      }, { screenshot, rail });
+      assert.deepEqual(pixels.start, [246, 144, 80, 255]);
+      assert.deepEqual(pixels.upper, pixels.start, 'The reported tint fills the height of the wide rail');
+      assert.notDeepEqual(pixels.end, pixels.start, 'The unfilled portion stays distinct');
+
+      await page.emulateMedia({ contrast: 'more' });
+      if (await page.evaluate(() => matchMedia('(prefers-contrast: more)').matches)) {
+        assert.notEqual(await style(brightness, '--white-rail-outline'), '');
+      }
+      await page.emulateMedia({ contrast: 'no-preference', forcedColors: 'active' });
+      if (await page.evaluate(() => matchMedia('(forced-colors: active)').matches)) {
+        assert.equal(await style(brightness, '--white-rail-fill'), 'Highlight');
+        assert.equal(await style(brightness, '--white-rail-base'), 'Canvas');
+        assert.equal(await style(brightness, '--white-rail-outline'), 'CanvasText');
+      }
+      await page.emulateMedia({ forcedColors: 'none' });
+      await brightness.evaluate(input => { input.value = '80'; input.dispatchEvent(new Event('input')); });
+      assert.equal(await style(brightness, '--white-rail-progress'), '80%');
+      assert.equal(await brightness.getAttribute('aria-valuetext'), '80%');
+      assert.deepEqual(await serviceCalls(), []);
+      await brightness.dispatchEvent('pointercancel');
+      assert.equal(await style(brightness, '--white-rail-progress'), '60%');
+      await brightness.dispatchEvent('change');
+      assert.deepEqual(await serviceCalls(), []);
+
+      const y = rail.y + rail.height / 2;
+      await page.mouse.move(rail.x + .6 * rail.width, y);
+      await page.mouse.down();
+      await page.mouse.move(rail.x + .72 * rail.width, y, { steps: 4 });
+      assert.deepEqual(await serviceCalls(), []);
+      await page.mouse.up();
+      await page.waitForFunction(() => window.bayitTest.calls.filter(call => call.type === 'call_service').length === 1);
+      const [brightnessCall] = await serviceCalls();
+      assert.equal(brightnessCall.domain, 'light');
+      assert.equal(brightnessCall.service, 'turn_on');
+      assert.deepEqual(brightnessCall.target, { entity_id: entity });
+      assert.ok(brightnessCall.service_data.brightness_pct >= 70 && brightnessCall.service_data.brightness_pct <= 74);
+
+      await toggle.tap();
+      await temperature.waitFor();
+      assert.equal(await temperature.getAttribute('aria-valuetext'), '2500 K');
+      assert.equal(await toggle.getAttribute('aria-pressed'), 'true');
+      assert.equal((await serviceCalls()).length, 1);
+      await temperature.press('ArrowRight');
+      await page.waitForFunction(() => window.bayitTest.calls.filter(call => call.type === 'call_service').length === 2);
+      assert.deepEqual((await serviceCalls())[1].service_data, { color_temp_kelvin: 2501 });
+      await attrs({ rgb_color: [255, -1, 40] });
+      await page.waitForFunction(() => {
+        const white = document.querySelector('bayit-dashboard').shadowRoot
+          .querySelector('[data-filled-white-rail] input[data-action=set_color_temp_kelvin]');
+        return white && !white.disabled && !white.style.getPropertyValue('--white-rail-color');
+      });
+
+      await modes(['color_temp', 'rgbw']);
+      await control.waitFor({ state: 'detached' });
+      await modes(['color_temp', 'rgb']);
+      await details.locator('.light-color-palette').waitFor({ state: 'attached' });
+      assert.equal(await control.count(), 0);
+      assert.equal((await serviceCalls()).length, 2);
+
+      await page.goto(url + route);
+      await details.locator('.compact-light-controls').waitFor();
+      assert.equal(await control.count(), 0);
+      await page.goto(url + '&compact-light-reading&dual-light-details' + route);
+      await details.locator('.dual-light-detail-controls').waitFor();
+      assert.equal(await control.count(), 0);
+      await page.goto(url + '&compact-light-reading');
+      await page.getByRole('button', { name: 'Studio', exact: true }).tap();
+      const room = page.getByRole('dialog', { name: 'Studio', exact: true });
+      await room.locator('[data-inline-light] .compact-light-controls').waitFor();
+      assert.equal(await room.locator('[data-filled-white-rail]').count(), 0);
+      assert.deepEqual(await serviceCalls(), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertCompactLightReadings(browser) {
   for (const locale of ['en','he']) {
     const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
@@ -10977,6 +11107,7 @@ try {
 
       await assertDualLightDetails(browser);
       await assertCompactLightReadings(browser);
+      await assertFilledWhiteLightRail(browser);
       const inlinePage = await newRoomConfigPage();
       const inlineUrl = base + '/fixture-home/home?configuration&inline-room-lights';
       await inlinePage.goto(inlineUrl);

@@ -10,16 +10,26 @@ export function parseLightColor(value) {
   return [1, 3, 5].map(offset => Number.parseInt(value.slice(offset, offset + 2), 16));
 }
 
+function validatedRGB(rgb) {
+  return Array.isArray(rgb) && rgb.length === 3 &&
+    rgb.every(channel => Number.isInteger(channel) && channel >= 0 && channel <= 255) &&
+    Math.max(...rgb) > 0 ? rgb : null;
+}
+
 function reportedColor(attributes) {
-  const rgb = attributes?.rgb_color;
-  return colorModes.has(attributes?.color_mode) && Array.isArray(rgb) && rgb.length === 3
-    && rgb.every(channel => Number.isInteger(channel) && channel >= 0 && channel <= 255)
-    && Math.max(...rgb) > 0 ? rgb : null;
+  return colorModes.has(attributes?.color_mode) ? validatedRGB(attributes.rgb_color) : null;
+}
+
+function rgbToHex(color) {
+  return color && "#" + color.map(channel => channel.toString(16).padStart(2, "0")).join("");
 }
 
 export function lightColorHex(attributes) {
-  const color = reportedColor(attributes);
-  return color && "#" + color.map(channel => channel.toString(16).padStart(2, "0")).join("");
+  return rgbToHex(reportedColor(attributes));
+}
+
+export function lightWhiteRailColor(attributes) {
+  return attributes?.color_mode === "color_temp" ? rgbToHex(validatedRGB(attributes.rgb_color)) : null;
 }
 
 export function lightHueSaturation(hex) {

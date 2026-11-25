@@ -855,6 +855,39 @@ export const styles = `
   .compact-light-controls > .field-row { grid-column: 1; grid-row: 1; }
   .compact-light-controls > .round-action { grid-column: 2; grid-row: 1; }
   .compact-light-controls > .round-action[aria-pressed=true] { border-color: var(--warm); }
+  .compact-light-controls[data-filled-white-rail] { gap: 4px; }
+  .compact-light-controls[data-filled-white-rail] > .round-action { border-radius: 8px; }
+  .compact-light-controls[data-filled-white-rail] input[type=range] {
+    --white-rail-fill: var(--white-rail-color, var(--warm));
+    --white-rail-base: color-mix(in srgb,var(--white-rail-fill) 25%,var(--control));
+    --white-rail-background: linear-gradient(to right,var(--white-rail-fill) var(--white-rail-progress),
+      var(--white-rail-base) var(--white-rail-progress));
+    appearance: none; -webkit-appearance: none; margin: 0;
+  }
+  .compact-light-controls[data-filled-white-rail] input::-webkit-slider-runnable-track {
+    height: 30px; border-radius: 8px; background: var(--white-rail-background);
+    border: 1px solid var(--white-rail-outline,var(--line));
+  }
+  .compact-light-controls[data-filled-white-rail] input::-moz-range-track {
+    box-sizing: border-box; height: 30px; border-radius: 8px; background: var(--white-rail-background);
+    border: 1px solid var(--white-rail-outline,var(--line));
+  }
+  .compact-light-controls[data-filled-white-rail] input::-webkit-slider-thumb {
+    appearance: none; -webkit-appearance: none; width: 1px; height: 28px; background: transparent;
+  }
+  .compact-light-controls[data-filled-white-rail] input::-moz-range-thumb {
+    width: 1px; height: 28px; border: 0; background: transparent;
+  }
+  @media (prefers-contrast: more) {
+    .compact-light-controls[data-filled-white-rail] input[type=range] { --white-rail-outline: var(--ink); }
+  }
+  @media (forced-colors: active) {
+    .compact-light-controls[data-filled-white-rail] input[type=range] {
+      --white-rail-fill: Highlight; --white-rail-base: Canvas; --white-rail-outline: CanvasText;
+      forced-color-adjust: none;
+    }
+    .compact-light-controls[data-filled-white-rail] input:focus-visible { outline-color: Highlight; }
+  }
   .shell[dir=rtl] .compact-light-controls label { direction: rtl; }
   .device[data-inline-light][data-compact-light] {
     .device-tile { direction: ltr; }
