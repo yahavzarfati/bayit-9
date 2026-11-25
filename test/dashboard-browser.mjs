@@ -509,23 +509,23 @@ try {
         await homeRoom.evaluate(room => { room.dataset.wallpaperInk = 'dark'; });
         assert.ok((await appearance()).background.slice(0, 3).every(value => value > 190));
       }
-      const roomName = homeRoom.locator('.room-name');
-      const nameLines = () => roomName.evaluate(name => {
+      const quietRoomName = homeRoom.locator('.room-name');
+      const nameLines = () => quietRoomName.evaluate(name => {
         const range = document.createRange();
         range.selectNodeContents(name);
         return new Set([...range.getClientRects()].filter(box => box.width > 0).map(box => box.top)).size;
       });
       const rawName = quietLocale === 'he' ? 'חדר\nהפנאי' : 'Family\nroom';
-      assert.equal(await roomName.textContent(), rawName);
+      assert.equal(await quietRoomName.textContent(), rawName);
       assert.equal(await nameLines(), 2);
-      const labelFits = await roomName.evaluate(name => {
+      const labelFits = await quietRoomName.evaluate(name => {
         const box = name.getBoundingClientRect();
         const tile = name.closest('.room').getBoundingClientRect();
         return box.top >= tile.top && box.bottom <= tile.bottom;
       });
       assert.equal(labelFits, true);
       await quietPage.evaluate(() => window.bayitTest.setRoomLayout('header'));
-      assert.equal(await roomName.textContent(), rawName);
+      assert.equal(await quietRoomName.textContent(), rawName);
       assert.equal(await nameLines(), 1);
       assert.equal(await quietPage.evaluate(() => window.bayitTest.calls.length), 0);
       await quietPage.close();
