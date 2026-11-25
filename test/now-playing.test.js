@@ -14,6 +14,7 @@ test('plays the same track timeline only while the entity reports playing', () =
   const playing = nowPlayingDetails(player('playing', attrs), origin);
   assert.equal(playing.title, 'Track');
   assert.equal(playing.artist, 'Performer');
+  assert.equal(playing.app, 'Music');
   assert.equal(playbackSecond(playing.timeline, time - 1000), 63);
   assert.equal(playbackSecond(playing.timeline, time + 2000), 65);
   assert.equal(playbackSecond(playing.timeline, time + 120000), 90);
@@ -23,6 +24,27 @@ test('plays the same track timeline only while the entity reports playing', () =
   }
   assert.deepEqual(nowPlayingDetails(player('off', attrs), origin), {});
   assert.equal(nowPlayingDetails(player('playing', { ...attrs, media_position: undefined }), origin).timeline, undefined);
+});
+
+test('reads series, episode and playback source from the current state without duplicate labels', () => {
+  const details = nowPlayingDetails(player('paused', {
+    media_series_title: 'Fixture series', media_title: 'Episode title', media_season: '02',
+    media_episode: 4, app_name: 'Video player', source: 'HDMI', media_artist: 'Contributor',
+  }), origin);
+  assert.deepEqual(details, {
+    title: 'Fixture series', episodeTitle: 'Episode title', season: '02', episode: '4',
+    app: 'Video player', artist: 'Contributor', picture: '',
+  });
+  assert.deepEqual(nowPlayingDetails(player('paused', {
+    media_title: 'Same name', media_series_title: 'Same name', media_artist: 'Same name',
+    source: 'Same name', media_season: -1, media_episode: 'unknown',
+  }), origin), { title: 'Same name', artist: '', picture: '' });
+  assert.deepEqual(nowPlayingDetails(player('idle', { source: 'HDMI' }), origin),
+    { title: 'HDMI', artist: '', picture: '' });
+  assert.equal(nowPlayingDetails(player('playing', { media_season:'Specials', media_episode:'A1' }), origin).season,
+    'Specials');
+  assert.deepEqual(nowPlayingDetails({ ...player('paused', { media_title: 'Old track', app_name: 'Video' }),
+    available: false }, origin), {});
 });
 
 test('limits artwork to the selected player proxy and keeps metadata for external artwork', () => {

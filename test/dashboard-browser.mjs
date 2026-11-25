@@ -1452,6 +1452,7 @@ try {
       await mediaPage.getByRole('button', { name: 'Media', exact: true }).click();
       const media = mediaPage.getByRole('dialog');
       await media.getByText('Fixture artist', { exact: true }).waitFor();
+      assert.equal(await media.locator('.now-playing-source').innerText(), 'Radio');
       const cover = media.locator('.now-playing img');
       await cover.waitFor();
       const progress = media.getByRole('progressbar', { name: 'Playback progress' });
@@ -1531,6 +1532,51 @@ try {
       assert.deepEqual(mediaErrors, []);
       await mediaPage.close();
       console.log(engine + ': curated media and vacuum controls, Now Playing, and the original room shortcuts');
+
+      for (const locale of ['en','he']) {
+        const metadataPage = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+        metadataPage.setDefaultTimeout(8000);
+        await metadataPage.goto(base + '/fixture-home/home?toolbar-panels&locale=' + locale + '#panel/media-panel');
+        const nowPlaying = metadataPage.locator('dialog.modal[open] .now-playing');
+        await nowPlaying.waitFor();
+        await metadataPage.evaluate(() => {
+          const entity = 'media_player.demo_speaker';
+          window.bayitTest.setRoomState(entity,'paused');
+          window.bayitTest.setFixtureAttributes(entity,{
+            media_series_title:'Fixture series', media_title:'Episode title', media_season:'2', media_episode:4,
+            media_artist:'Guest contributor', app_name:'Video player', source:'HDMI', media_position:71, media_duration:142,
+            media_position_updated_at:'2000-01-01T00:00:00.000Z',
+          });
+        });
+        await nowPlaying.getByText('Fixture series', {exact:true}).waitFor();
+        assert.equal(await nowPlaying.locator('.now-playing-episode').innerText(),
+          locale === 'he' ? 'Episode title · עונה 2 · פרק 4' : 'Episode title · Season 2 · Episode 4');
+        assert.equal(await nowPlaying.locator('.now-playing-artist').innerText(),'Guest contributor');
+        assert.equal(await nowPlaying.locator('.now-playing-source').innerText(),'Video player');
+        const remaining = nowPlaying.locator('.now-playing-remaining');
+        assert.equal(await remaining.innerText(),'−1:11');
+        assert.equal(await remaining.getAttribute('title'), locale === 'he' ? 'זמן שנותר' : 'Time remaining');
+        const timeline = nowPlaying.locator('.now-playing-timeline');
+        await timeline.waitFor();
+        assert.ok(await timeline.evaluate(node => node.clientWidth >= node.scrollWidth && node.querySelector('progress').offsetWidth > 0));
+        const playControl = metadataPage.locator('section.device[data-entity="media_player.demo_speaker"] [data-action=media_play]');
+        await playControl.waitFor();
+        await metadataPage.evaluate(() => window.bayitTest.setFixtureAttributes('media_player.demo_speaker',{
+          media_title:null, media_series_title:null, media_season:'unknown', media_episode:-1,
+          media_artist:null, app_name:null, media_duration:0,
+        }));
+        await nowPlaying.getByText('HDMI', {exact:true}).waitFor();
+        await nowPlaying.locator('.now-playing-episode').waitFor({state:'hidden'});
+        await nowPlaying.locator('.now-playing-source').waitFor({state:'hidden'});
+        await timeline.waitFor({state:'hidden'});
+        await metadataPage.evaluate(() => window.bayitTest.setRoomState('media_player.demo_speaker','off'));
+        await nowPlaying.getByText(locale === 'he' ? 'אין תוכן שמתנגן' : 'No track playing', {exact:true}).waitFor();
+        await playControl.waitFor({state:'hidden'});
+        assert.equal(await nowPlaying.locator('.now-playing-artist').innerText(),'');
+        assert.deepEqual(await metadataPage.evaluate(() => window.bayitTest.calls),[]);
+        await metadataPage.close();
+      }
+      console.log(engine + ': Now Playing source, episode details and validated remaining time in English and Hebrew');
 
       for (const locale of ['en','he']) {
         const linkedPage = await browser.newPage({ viewport:{width:391,height:845}, hasTouch:true, reducedMotion:'reduce' });
