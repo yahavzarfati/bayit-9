@@ -2810,6 +2810,85 @@ async function assertWeatherSurvivesRegistryReplay(browser) {
   }
 }
 
+async function assertReportedCoverMotion(browser) {
+  const page = await browser.newPage({ viewport:{width:320,height:720}, hasTouch:true, reducedMotion:'reduce' });
+  try {
+    const surfaces = [
+      ['configuration&cover-grid&cover-feedback','Studio','cover.demo_shade'],
+      ['toolbar-panels&security-cover-rail','Security','cover.demo_security_first'],
+    ];
+    const statusFor = { open:'Open', opening:'Opening', closing:'Closing', closed:'Closed',
+      unavailable:'Unavailable', unknown:'Unavailable' };
+    for (const [query, title, entity] of surfaces) {
+      await page.emulateMedia({ contrast:'no-preference', forcedColors:'none' });
+      await page.goto(base + '/fixture-home/home?' + query + '&locale=en');
+      await page.getByRole('button', {name:title,exact:true}).tap();
+      const tile = page.getByRole('dialog',{name:title,exact:true}).locator('.device[data-entity="' + entity + '"]');
+      const current = tile.locator('.current');
+      const measure = () => tile.evaluate(tile => {
+        const rim = getComputedStyle(tile);
+        const caption = getComputedStyle(tile.querySelector('.current'));
+        const bounds = tile.getBoundingClientRect();
+        return { outline:rim.outlineStyle, width:rim.outlineWidth, color:rim.outlineColor, offset:rim.outlineOffset,
+          ink:caption.color, animation:rim.animationName, box:[tile.offsetWidth,tile.offsetHeight],
+          fits:bounds.left >= 0 && bounds.right <= innerWidth + 1 };
+      });
+      const update = async (state, position) => {
+        await page.evaluate(({entity,state,position}) => {
+          window.bayitTest.setFixtureAttributes(entity,{ current_position:position });
+          window.bayitTest.setRoomState(entity,state);
+        }, {entity,state,position});
+        await current.filter({hasText:new RegExp('^' + statusFor[state] + '($| ·)')}).waitFor();
+      };
+      await update('open', 43);
+      const idle = await measure();
+      assert.equal(idle.ink, 'rgb(158, 220, 255)');
+      assert.equal(idle.outline, 'none');
+      assert.equal(idle.fits, true);
+      if (title === 'Studio') {
+        await tile.locator('button[data-action=open]').tap();
+        await current.filter({hasText:'Opening requested'}).waitFor();
+        assert.equal((await measure()).outline, 'none', 'A command alone does not signal confirmed movement');
+      }
+      for (const [state, position] of [['opening',55],['closing',31]]) {
+        await update(state, position);
+        assert.match(await current.innerText(), new RegExp(position + '%'));
+        const moving = await measure();
+        assert.deepEqual(moving, {outline:'solid',width:'1px',color:'rgba(244, 201, 93, 0.72)',offset:'-1px',
+          ink:'rgb(255, 223, 146)',animation:'none',box:idle.box,fits:true});
+      }
+      await page.emulateMedia({ contrast:'more' });
+      if (await page.evaluate(() => matchMedia('(prefers-contrast: more)').matches)) {
+        const enhanced = await measure();
+        assert.deepEqual([enhanced.width, enhanced.color, enhanced.offset], ['2px','rgb(255, 223, 146)','-2px']);
+      }
+      await page.emulateMedia({ contrast:'no-preference', forcedColors:'active' });
+      if (await page.evaluate(() => matchMedia('(forced-colors: active)').matches)) {
+        const forced = await measure();
+        const systemInk = await tile.evaluate(tile => {
+          const probe = document.createElement('span');
+          probe.style.outline = '1px solid CanvasText';
+          tile.append(probe);
+          const value = getComputedStyle(probe).outlineColor;
+          probe.remove();
+          return value;
+        });
+        assert.deepEqual([forced.outline, forced.color], ['solid',systemInk]);
+      }
+      await page.emulateMedia({ forcedColors:'none' });
+      if (title === 'Studio') await page.evaluate(() => window.bayitTest.finishCover(0, true));
+      for (const [state, position] of [['closed',0],['unavailable',31],['unknown',31]]) {
+        await update(state, position);
+        assert.equal((await measure()).outline, 'none');
+      }
+      const sent = await page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service').map(call => call.service));
+      assert.deepEqual(sent, title === 'Studio' ? ['open_cover'] : []);
+    }
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertRoomMirrorPlacement(browser) {
   const rooms = [
     { locale:'en', id:'bayit_room_1', name:'Reading nook', appearance:'Appearance', setup:'Customize home', rooms:'Rooms',
@@ -7100,6 +7179,7 @@ try {
       ]);
       await guardedRail.close();
       console.log(engine + ': Security cover rails at 320–390 px, exact native details, endpoint and latest confirmation');
+      await assertReportedCoverMotion(browser);
 
       const groupOffPage = await browser.newPage({ viewport:{width:320,height:845}, hasTouch:true, reducedMotion:'reduce' });
       groupOffPage.setDefaultTimeout(8000);

@@ -2029,6 +2029,9 @@ export class BayitDashboard extends HTMLElement {
         ? model.attributes.media_title.trim().slice(0, 160) : '';
       const pending = this.pending.get(view.config.entity);
       const feedback = this.coverFeedback(model, pending);
+      if (view.compactCover) {
+        view.item.toggleAttribute('data-cover-motion', model.available && coverMovingStates.has(model.state));
+      }
       if (view.climatePower) {
         const power = view.climatePower;
         const action = roomClimatePowerAction(model);

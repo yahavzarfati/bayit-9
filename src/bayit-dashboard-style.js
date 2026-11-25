@@ -717,6 +717,14 @@ export const styles = `
   .device[data-compact=cover] .device-panel-launch > .device-icon { color: var(--ink); place-items: center; }
   .device[data-compact=cover] .device-detail { grid-column: 2; }
   .device[data-compact=cover] .device-name { font-size: 13px; font-weight: 650; }
+  .device[data-cover-motion] { outline: 1px solid rgba(244,201,93,.72); outline-offset: -1px; }
+  .device[data-cover-motion] .current[data-tone=moving] { color: var(--warm); }
+  @media (prefers-contrast: more) {
+    .device[data-cover-motion] { outline-width: 2px; outline-offset: -2px; outline-color: var(--warm); }
+  }
+  @media (forced-colors: active) {
+    .device[data-cover-motion] { outline-color: CanvasText; }
+  }
   .shell[dir=rtl] .device[data-compact=cover] .device-detail { direction: rtl; text-align: left; }
   .device:has(> .device-tile) { padding: 0; }
   .device-tile {
