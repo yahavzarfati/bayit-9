@@ -2725,12 +2725,14 @@ async function assertRoomVacuumPresentation(browser) {
       await vacuum.getByRole('button',{name:he ? 'חזרה לחדר' : 'Back to room',exact:true}).tap();
       await room.waitFor();
       assert.ok(await tile.evaluate(el => el.getRootNode().activeElement === el));
+      const roomUrl = page.url();
       await tile.press('Shift+Enter');
       const details = page.getByRole('dialog',{name:'Native entity details',exact:true});
       await details.waitFor();
       assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), ['vacuum.demo_robot']);
       await details.getByRole('button',{name:'Close native details',exact:true}).tap();
       await details.waitFor({state:'hidden'});
+      await page.waitForFunction(url => location.href === url && history.state?.dialog !== 'ha-more-info-dialog', roomUrl);
       assert.ok(await tile.evaluate(el => el.getRootNode().activeElement === el));
       assert.deepEqual(await page.evaluate(() => window.bayitTest.calls), []);
 
