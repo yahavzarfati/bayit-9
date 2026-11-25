@@ -1,12 +1,16 @@
 import { bindDeviceDetails } from './popup-motion.js';
 
-function clock(seconds) {
+function clock(seconds, showSeconds, round = Math.ceil) {
   if (!Number.isFinite(seconds)) return '—';
-  const whole = Math.max(0, Math.ceil(seconds));
+  const whole = Math.max(0, round(seconds));
   const minutes = Math.floor(whole / 60);
-  const tail = String(whole % 60).padStart(2, '0');
-  if (minutes < 60) return String(minutes).padStart(2, '0') + ':' + tail;
-  return Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2, '0') + ':' + tail;
+  const hours = Math.floor(minutes / 60);
+  const pad = value => String(value).padStart(2, '0');
+  const minuteText = pad(minutes % 60);
+  const secondText = pad(whole % 60);
+  if (showSeconds === false) return pad(hours) + ':' + minuteText;
+  if (showSeconds === true) return pad(hours) + ':' + minuteText + ':' + secondText;
+  return (hours ? hours + ':' : '') + minuteText + ':' + secondText;
 }
 
 function timerPresets(action) {
@@ -196,7 +200,11 @@ export function buildPanelControls(model, {
     }
     updates.push((current, pending) => {
       const currentTimer = current.timer;
-      time.textContent = currentTimer ? clock(currentTimer.remainingMs === null ? null : currentTimer.remainingMs / 1000) : '00:00';
+      const showSeconds = currentTimer?.showSeconds;
+      const nativePrecision = showSeconds !== undefined;
+      const remaining = currentTimer ? currentTimer.remainingMs === null ? null : currentTimer.remainingMs / 1000 : 0;
+      const countdown = clock(remaining, showSeconds, nativePrecision ? Math.round : Math.ceil);
+      if (time.textContent !== countdown) time.textContent = countdown;
       currentUsage = current.usageSource;
       const hasReading = Number.isFinite(currentTimer?.usedSeconds);
       const tappable = hasReading && canShowUsage(currentUsage);
@@ -205,7 +213,7 @@ export function buildPanelControls(model, {
       usage.disabled = !tappable || pending?.id === 'reset_daily_usage';
       resetRevision = undefined;
       if (!hasReading) return;
-      const reading = t('today_used') + ' ' + clock(currentTimer.usedSeconds);
+      const reading = t('today_used') + ' ' + clock(currentTimer.usedSeconds, showSeconds, nativePrecision ? Math.floor : Math.ceil);
       if (tappable) {
         if (usage.textContent !== reading) usage.textContent = reading;
         label(usage, reading + ' · ' + t('more_info'));

@@ -134,14 +134,15 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
         releaseScheduleRead();
         releaseScheduleRead = undefined;
       },
-      setupState(deviceState, timerState) {
+      setupState(deviceState, timerState, { showSeconds, usedSeconds = 0 } = {}) {
         states[boiler.entity] = { state: deviceState, attributes: {} };
         states['sensor.fixture_runtime'] = {
-          state: timerState === 'unavailable' ? 'unavailable' : '0',
+          state: timerState === 'unavailable' ? 'unavailable' : String(usedSeconds),
           attributes: {
             entry_id: 'fixture-runtime', switch_entity_id: boiler.entity, timer_state: timerState,
             timer_finishes_at: new Date(Date.now() + 120000).toISOString(),
             device_active: deviceState === 'on',
+            ...(showSeconds !== undefined && { show_seconds: showSeconds }),
           },
         };
         card.hass = { ...hass, states: { ...states } };
@@ -545,6 +546,18 @@ try {
         [timerArea.locator('.timer-range'), extend, stop].map(item => item.boundingBox()));
       assert.ok([activeSlider, activeExtend, activeStop].every(bounds => bounds.width >= 44 && bounds.height >= 44));
       assert.ok(activeSlider.x < activeExtend.x && activeExtend.x < activeStop.x);
+      await compact.clock.setFixedTime(new Date('2026-11-25T15:30:00Z'));
+      const clockText = timerArea.locator('.timer-clock');
+      const usageText = timerArea.locator('.timer-usage');
+      for (const [showSeconds, remaining, usage] of [
+        [false, /^00:02$/, /01:30$/],
+        [true, /^00:02:00$/, /01:30:25$/],
+        [undefined, /^02:00$/, /1:30:26$/],
+      ]) {
+        await compact.evaluate(showSeconds => window.fixture.setupState('on', 'active', { showSeconds, usedSeconds: 5425.4 }), showSeconds);
+        await clockText.filter({ hasText: remaining }).waitFor();
+        await usageText.filter({ hasText: usage }).waitFor();
+      }
       await compact.evaluate(() => window.fixture.setupState('off', 'unavailable'));
       await off.waitFor();
       assert.equal(await start.count(), 0);

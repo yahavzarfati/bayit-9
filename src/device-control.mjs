@@ -189,6 +189,7 @@ function readSimpleTimer(entity, device, states, nowMs) {
     entity, state: attrs.timer_state, deadlineMs,
     remainingMs: attrs.timer_state === "idle" ? 0 : deadlineMs === null ? null : Math.max(0, deadlineMs - nowMs),
     usedSeconds: Number.isFinite(seconds) && seconds >= 0 ? seconds : null,
+    ...(typeof attrs.show_seconds === "boolean" && { showSeconds: attrs.show_seconds }),
     reverse: attrs.reverse_mode === true && attrs.timer_state === "active",
   };
 }
