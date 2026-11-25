@@ -1624,12 +1624,15 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const mode = select([['auto', words.allRooms], ['custom', words.selectedRooms]], customSelection ? 'custom' : 'auto');
     mode.dataset.roomFocus = 'room-mode';
     mode.addEventListener('change', () => {
+      if ((mode.value === 'custom') === customSelection) return;
       if (mode.value === 'auto') {
-        this.#commitRooms({ room_selection: 'auto', area_ids: [] }, 'room-mode');
+        this.#commitRooms({ room_selection: 'auto', area_ids: [], manual_area_ids: selected }, 'room-mode');
         return;
       }
-      const visible = discoverRooms(this.#config, this.#hass, language).map(room => room.id).filter(id => byId.has(id));
-      this.#commitRooms({ room_selection: 'manual', area_ids: visible }, 'room-mode');
+      const remembered = this.#config.manual_area_ids;
+      const areaIds = Array.isArray(remembered) ? configuredIds(remembered)
+        : discoverRooms(this.#config, this.#hass, language).map(room => room.id).filter(id => byId.has(id));
+      this.#commitRooms({ room_selection: 'manual', area_ids: areaIds, manual_area_ids: undefined }, 'room-mode');
     });
     const discovery = select([['all', words.allDevices], ['controls', words.controls]],
       this.#config.discovery_mode === 'controls' ? 'controls' : 'all');
@@ -1735,6 +1738,9 @@ export class Bayit9StrategyEditor extends HTMLElement {
           this.#commitRooms({
             room_overrides: after,
             ...(customSelection && { room_selection: 'manual', area_ids: selected.filter(id => id !== active.id) }),
+            ...(Array.isArray(this.#config.manual_area_ids) && this.#config.manual_area_ids.includes(active.id) && {
+              manual_area_ids: this.#config.manual_area_ids.filter(id => id !== active.id),
+            }),
             room_shortcuts: shortcuts,
             ...(aliasesChanged && { popup_aliases: aliases }),
           }, 'room-mode');

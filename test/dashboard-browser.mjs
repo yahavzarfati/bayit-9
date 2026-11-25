@@ -2181,6 +2181,97 @@ async function assertSetupRegistryRefreshKeepsField(browser) {
   }
 }
 
+
+async function assertManualRoomOrderRestored(browser) {
+  const labels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', mode:'Rooms on the dashboard',
+      chooser:'Room to customize', remove:'Delete dashboard room', hide:'Hide room', save:'Save dashboard' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים', mode:'חדרים בדשבורד',
+      chooser:'חדר להתאמה אישית', remove:'מחיקת חדר מהדשבורד', hide:'הסתרת חדר', save:'שמירת הדשבורד' },
+  ];
+  for (const words of labels) {
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      const custom = 'bayit_room_order_fixture';
+      const manual = [custom, 'spare', 'studio'];
+      const baseStrategy = { type:'custom:bayit-9', show_unassigned:false };
+      await page.addInitScript(strategy => {
+        const key = 'bayit9-browser-fixture';
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy }));
+      }, { ...baseStrategy, room_selection:'manual', area_ids:manual,
+        room_overrides:{ [custom]:{ name:'Fixture nook', entities:[] } } });
+      const url = base + '/fixture-home/home?configuration&room-selection&locale=' + words.locale;
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      const mode = setup.getByLabel(words.mode, { exact:true });
+      const chooser = setup.getByLabel(words.chooser, { exact:true });
+      const stored = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      const ids = () => chooser.locator('option').evaluateAll(options => options.map(option => option.value));
+      const homeRooms = () => page.locator('.room').evaluateAll(rooms => rooms.map(room => room.dataset.room));
+      const openRooms = async () => {
+        await page.getByRole('button', { name:words.appearance, exact:true }).tap();
+        await page.getByRole('button', { name:words.setup, exact:true }).tap();
+        await setup.getByText(words.rooms, { exact:true }).tap();
+      };
+      const save = async () => {
+        await setup.getByRole('button', { name:words.save, exact:true }).tap();
+        await setup.waitFor({ state:'hidden' });
+        await page.reload();
+        await page.getByRole('button', { name:words.appearance, exact:true }).waitFor();
+      };
+
+      await page.goto(url);
+      await page.locator('.room[data-room=' + custom + ']').waitFor();
+      assert.deepEqual(await homeRooms(), manual);
+      await openRooms();
+      await mode.selectOption('auto');
+      await mode.selectOption('custom');
+      assert.deepEqual(await ids(), manual);
+      assert.deepEqual((await stored()).area_ids, manual);
+      assert.deepEqual(await homeRooms(), manual);
+
+      await mode.selectOption('auto');
+      await save();
+      assert.equal((await stored()).room_selection, 'auto');
+      assert.deepEqual((await stored()).manual_area_ids, manual);
+      assert.ok((await homeRooms()).includes('lounge'));
+      assert.ok(!(await homeRooms()).includes('spare'));
+      await openRooms();
+      await chooser.selectOption(custom);
+      await setup.getByRole('button', { name:words.remove, exact:true }).tap();
+      await mode.selectOption('custom');
+      assert.deepEqual(await ids(), ['spare','studio']);
+      for (const name of ['Spare room','Studio']) {
+        await setup.getByRole('button', { name:words.hide + ' · ' + name, exact:true }).tap();
+      }
+      assert.equal(await chooser.count(), 0);
+      await save();
+      assert.equal((await stored()).room_selection, 'manual');
+      assert.deepEqual((await stored()).area_ids, []);
+      assert.equal((await stored()).manual_area_ids, undefined);
+
+      await openRooms();
+      await mode.selectOption('auto');
+      await save();
+      assert.deepEqual((await stored()).manual_area_ids, []);
+      await openRooms();
+      await mode.selectOption('custom');
+      assert.equal(await chooser.count(), 0);
+      await save();
+      assert.deepEqual(await homeRooms(), []);
+
+      await page.evaluate(strategy => sessionStorage.setItem('bayit9-browser-fixture', JSON.stringify({ strategy })),
+        { ...baseStrategy, room_selection:'auto', area_ids:[] });
+      await page.reload();
+      await openRooms();
+      await mode.selectOption('custom');
+      assert.deepEqual(await ids(), ['lounge','studio']);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertCompactSettings(browser) {
   const page = await browser.newPage({ viewport: { width:391, height:845 }, isMobile:true, hasTouch:true, reducedMotion:'reduce' });
   page.setDefaultTimeout(8000);
@@ -6032,6 +6123,7 @@ try {
       console.log(engine + ': setup footer stays clear of the scrollable editor');
       await assertSetupDrafts(browser);
       await assertSetupRegistryRefreshKeepsField(browser);
+      await assertManualRoomOrderRestored(browser);
       console.log(engine + ': setup drafts survive closing, preserve conflicts, and retry safely');
       await assertHomeMaterial(browser);
       console.log(engine + ': Home glass, accessibility material, cover states and room labels');
