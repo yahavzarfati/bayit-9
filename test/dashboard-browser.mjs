@@ -3418,6 +3418,7 @@ async function assertStandaloneTimedHeater(browser) {
       assert.equal(await dialog.getByRole('heading', { name, exact: true }).count(), 1);
       assert.equal(await heater.locator('.device-head').count(), 0);
       assert.equal(await state.textContent(), he ? 'כבוי' : 'Off');
+      assert.equal(await css(state, 'text-align'), 'left');
       assert.equal(await info.locator('ha-icon').getAttribute('icon'), await shortcut.locator('ha-icon').getAttribute('icon'));
       await history.waitFor();
       await usage.waitFor();

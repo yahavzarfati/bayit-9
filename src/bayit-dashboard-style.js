@@ -536,7 +536,8 @@ export const styles = `
   .heater-heading-info { grid-area: info; place-self: center; }
   .heater-heading-info > .device-icon { color: inherit; }
   .modal[data-standalone-heater] .modal-heading .current {
-    grid-area: state; align-self: start; margin: 2px 0 0; direction: inherit; unicode-bidi: plaintext;
+    grid-area: state; align-self: start; margin: 2px 0 0; direction: inherit;
+    text-align: left; unicode-bidi: plaintext;
   }
   .confirm .modal-header h2 { min-height: 0; padding: 0; border: 0; }
   .modal-body { flex: 1 1 auto; min-height: 0; padding: 0 15px 15px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
