@@ -897,7 +897,7 @@ export class BayitDashboard extends HTMLElement {
         view.heading.setAttribute('aria-description', lightingDescription);
       }
       view.count.dataset.tone = lit ? 'warm' : 'quiet';
-      view.article.toggleAttribute('data-current', this.panel?.type === 'room' && this.panel.room?.id === id);
+      view.article.toggleAttribute('data-current', this.panel?.roomOrigin === true && this.panel.room?.id === id);
     }
     this.scheduleApplianceUpdate(this.isConnected && !this.ownerDocument.hidden && Number.isFinite(applianceNext)
       ? applianceNext : 0);
@@ -939,7 +939,8 @@ export class BayitDashboard extends HTMLElement {
     if (this.panel?.type === 'room' && n.modal.open) {
       this.roomScroll.set(this.panel.room.id, n.modalBody.scrollTop);
     }
-    const panel = { type, room, returnTo, routeHash: navigation.hash ?? this.panel?.routeHash };
+    const panel = { type, room, returnTo, roomOrigin: type === 'room' && Boolean(source),
+      routeHash: navigation.hash ?? this.panel?.routeHash };
     this.panel = panel;
     n.back.hidden = !returnTo;
     this.setup = null;

@@ -588,17 +588,27 @@ try {
       await studioHeading.waitFor();
       assert.equal(new URL(routesPage.url()).hash, '#room-studio');
       assert.equal(await routesPage.locator('.room[data-popup-origin]').count(), 1);
+      assert.equal(await routesPage.locator('.room[data-current]').count(), 1);
       await routeDialog.locator('[data-entity="light.demo_lamp"] .device-tile').press('Shift+Enter');
       await deskHeading.waitFor();
       assert.equal(new URL(routesPage.url()).hash, '#device/studio/light.demo_lamp');
       await routesPage.evaluate(() => history.back());
       await studioHeading.waitFor();
       assert.equal(await routesPage.locator('[data-popup-origin]').count(), 0);
+      assert.equal(await routesPage.locator('.room[data-current]').count(), 0);
       await routesPage.evaluate(() => history.forward());
       await deskHeading.waitFor();
       await routeClose.tap();
       await routeDialog.waitFor({ state: 'hidden' });
       await routesPage.waitForURL(delayedUrl);
+      await routesPage.goto(routeUrl + '#room-studio');
+      await studioHeading.waitFor();
+      assert.equal(await routesPage.locator('.room[data-current], .room[data-popup-origin]').count(), 0);
+      await routeClose.tap();
+      await routeDialog.waitFor({ state: 'hidden' });
+      await routesPage.goto(delayedUrl);
+      await routesPage.waitForFunction(() => window.bayitTest);
+      await routesPage.evaluate(() => window.bayitTest.loadPopupHass());
 
       // Closing an animated source-open panel must remove its route before a refresh can reopen it.
       await routesPage.getByRole('button', { name: 'Studio', exact: true }).tap();
