@@ -1620,6 +1620,58 @@ try {
       assert.equal(await geometryShortcut.evaluate(button => button.getRootNode().activeElement === button), true);
       await geometryPage.close();
 
+      const motionResizePage = await browser.newPage({
+        viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: 'no-preference',
+      });
+      await motionResizePage.goto(base + '?popup-geometry');
+      const motionSource = motionResizePage.getByRole('button', { name: 'Studio', exact: true });
+      const motionResize = await motionSource.evaluate(async source => {
+        const root = source.getRootNode();
+        const dialog = root.querySelector('dialog.modal');
+        const grid = root.querySelector('.room-scroll');
+        const start = grid.scrollTop;
+        source.click();
+        const animation = dialog.getAnimations()[0];
+        const sample = () => ({ active: dialog.getAnimations().includes(animation), scroll: grid.scrollTop });
+        const before = sample();
+        // WallPanel can dispatch a window resize on a mounted popup at the same dimensions.
+        window.dispatchEvent(new Event('resize'));
+        const after = sample();
+        const frames = [];
+        while (animation?.playState === 'running' || animation?.pending) {
+          await new Promise(resolve => requestAnimationFrame(resolve));
+          frames.push(grid.scrollTop);
+          if (frames.length > 60) break;
+        }
+        return { start, before, after, frames, end: grid.scrollTop };
+      });
+      assert.equal(motionResize.before.active, true);
+      assert.deepEqual(motionResize.after, motionResize.before, 'Same-size resize preserves the running entrance and scroll');
+      assert.ok(motionResize.end > motionResize.start);
+      assert.ok(motionResize.frames.some(top => top > motionResize.start + 1 && top < motionResize.end - 1),
+        'The room grid should visibly ease through an intermediate scroll position');
+      const motionDialog = motionResizePage.getByRole('dialog', { name: 'Studio', exact: true });
+      const popupAreaTopIs = top => motionResizePage.waitForFunction(expected =>
+        document.querySelector('bayit-dashboard').shadowRoot.querySelector('dialog.modal')
+          .style.getPropertyValue('--bayit-popup-area-top') === expected + 'px', top);
+      await motionResizePage.setViewportSize({ width: 390, height: 280 });
+      await popupAreaTopIs(100);
+      await motionResizePage.setViewportSize({ width: 390, height: 844 });
+      await popupAreaTopIs(150);
+      // A change to the clipping area's top inset must reposition even at the same viewport size.
+      await motionDialog.evaluate(dialog => {
+        dialog.getRootNode().querySelector('.room-scroll').style.marginBlockStart = '14px';
+        (window.visualViewport ?? window).dispatchEvent(new Event('resize'));
+      });
+      await popupAreaTopIs(164);
+      await motionDialog.getByRole('button', { name: 'Close', exact: true }).tap();
+      await motionDialog.waitFor({ state: 'hidden' });
+      await motionResizePage.locator('[data-popup-origin]').waitFor({ state: 'detached' });
+      assert.equal(await motionResizePage.locator('.room-scroll').evaluate(grid => grid.scrollTop), motionResize.start);
+      assert.equal(await motionSource.evaluate(source => source.getRootNode().activeElement === source), true);
+      await motionResizePage.close();
+      console.log(engine + ': room popup easing survives duplicate resize, true geometry changes and close restoration');
+
       for (const [locale, width] of [['he', 320], ['en', 375], ['he', 390]]) {
         const coverGridPage = await browser.newPage({ viewport: { width, height: 800 }, hasTouch: true, reducedMotion: 'reduce' });
         await coverGridPage.goto(base + '?cover-grid&locale=' + locale);

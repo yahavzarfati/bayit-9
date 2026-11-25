@@ -120,13 +120,27 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     stopFrame(current);
   }
 
-  function updateArea() {
-    const clipTop = clip?.getBoundingClientRect().top;
+  function measureArea() {
+    const bounds = clip?.getBoundingClientRect();
     const toolbarBottom = toolbar?.getBoundingClientRect().bottom ?? 0;
-    const top = Number.isFinite(clipTop) && clipTop >= 0 ? clipTop : toolbarBottom;
-    const viewportHeight = view.innerHeight;
+    const viewport = view.visualViewport;
+    return {
+      top: Number.isFinite(bounds?.top) && bounds.top >= 0 ? bounds.top : toolbarBottom,
+      viewportHeight: view.innerHeight,
+      geometry: [view.innerWidth, view.innerHeight, viewport?.width, viewport?.height,
+        viewport?.offsetLeft, viewport?.offsetTop, bounds?.left, bounds?.top, bounds?.width, bounds?.height, toolbarBottom],
+    };
+  }
+
+  function updateArea(context, { top, viewportHeight, geometry } = measureArea()) {
+    context.geometry = geometry;
     const roomTop = Math.min(Math.max(0, top + 86), Math.max(0, viewportHeight - 180));
     dialog.style.setProperty('--bayit-popup-area-top', roomTop + 'px');
+  }
+
+  function watchResize() {
+    view.addEventListener('resize', reposition);
+    view.visualViewport?.addEventListener('resize', reposition);
   }
 
   function setOrigin(sourceRect, panelRect, delta = 0) {
@@ -207,6 +221,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     stopAnimation(context);
     context.highlighted?.removeAttribute('data-popup-origin');
     view.removeEventListener('resize', reposition);
+    view.visualViewport?.removeEventListener('resize', reposition);
     clip?.removeEventListener('scroll', onScroll);
     context.spacer?.remove();
     if (isConnected(clip) && context.originalScroll !== undefined && !context.externalScroll) {
@@ -222,9 +237,12 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
   function reposition() {
     const context = current;
     if (!context || context.closing || !dialog.open) return;
+    const area = measureArea();
+    // Dashboard integrations can dispatch a resize without changing the layout.
+    if (area.geometry.every((value, index) => value === context.geometry[index])) return;
     stopFrame(context);
     stopAnimation(context);
-    updateArea();
+    updateArea(context, area);
     if (!isConnected(context.source)) return;
     const sourceRect = context.source.getBoundingClientRect();
     const panelRect = dialog.getBoundingClientRect();
@@ -239,9 +257,9 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
       resetContext(current, false);
       current = { kind };
       dialog.dataset.kind = kind;
-      updateArea();
+      updateArea(current);
       if (!dialog.open) dialog.showModal();
-      view.addEventListener('resize', reposition);
+      watchResize();
       focusWithoutScroll(focusTarget);
       return;
     }
@@ -253,7 +271,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
       context.restoreFocus = true;
       delete dialog.dataset.closing;
       dialog.dataset.kind = kind;
-      updateArea();
+      updateArea(context);
       focusWithoutScroll(focusTarget);
       return;
     }
@@ -264,11 +282,11 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     const context = { source, highlighted: highlighted || source, kind, originalScroll, expectedScroll: originalScroll };
     current = context;
     dialog.dataset.kind = kind;
-    updateArea();
+    updateArea(context);
     if (!dialog.open) dialog.showModal();
     const panelRect = dialog.getBoundingClientRect();
     context.highlighted.dataset.popupOrigin = '';
-    view.addEventListener('resize', reposition);
+    watchResize();
     clip?.addEventListener('scroll', onScroll, { passive: true });
     setOrigin(sourceRect, panelRect);
     liftSource(context, sourceRect, panelRect, media.matches ? 0 : OPEN_MS);
