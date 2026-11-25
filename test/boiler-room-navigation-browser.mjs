@@ -677,6 +677,13 @@ async function assertRoomBoilerScheduleEntry(browser, locale) {
       assert.equal(await schedule.getAttribute('aria-pressed'),'true');
       assert.equal(await details.locator('.device-timer').count(),1);
       await noWrite();
+      await page.evaluate(() => history.back());
+      await page.waitForURL(value => value.hash === '#room-kitchen');
+      await entry.and(page.locator(':focus')).waitFor();
+      await page.evaluate(() => history.forward());
+      await details.locator('.schedule-list').getByText('Morning',{exact:true}).waitFor();
+      await page.waitForURL(value => value.hash === route + '/schedule');
+      await noWrite();
       await details.locator('[data-role=back]').tap();
       await page.waitForURL(value => value.hash === '#room-kitchen');
       await entry.waitFor();
@@ -790,7 +797,12 @@ try {
       await routed.evaluate(() => history.forward());
       const reopenedBoiler = routed.getByRole('dialog', { name: 'Fixture boiler', exact: true });
       await reopenedBoiler.waitFor();
-      await reopenedBoiler.locator('[data-role=back]').waitFor({ state: 'hidden' });
+      await reopenedBoiler.locator('[data-role=back]').tap();
+      await routed.waitForURL(value => value.hash === '#room-kitchen');
+      await routedRoom.waitFor();
+      await routedRoom.locator('.device-panel-launch:focus').waitFor();
+      assert.equal(await routedDetails.evaluate(button => button.getRootNode().activeElement === button), true);
+      assert.equal(await routed.evaluate(() => window.fixture.requests.includes('call_service')), false);
       await routed.close();
       await assertCompactBoilerHistory(browser, locale);
       await assertBoilerScheduleLinks(browser, locale);
