@@ -55,8 +55,8 @@ export const styles = `
     padding-inline: 0;
   }
   .shell[data-page=true] .toolbar { margin-inline: var(--edge); margin-block-end: 0; }
-  .shell[data-page=true] > :is(.room-scroll,.empty) { grid-area: 2 / 1; }
-  .shell[data-page=true] > .empty { margin-inline: var(--edge); }
+  .shell[data-page=true] > :is(.room-scroll,.home-empty) { grid-area: 2 / 1; }
+  .shell[data-page=true] > .home-empty { align-self: start; margin-inline: var(--edge); }
   .shell[data-page=true] .room-scroll {
     min-height: 0;
     overflow: auto;
@@ -424,6 +424,7 @@ export const styles = `
     padding: 16px 2px 6px;
     color: var(--secondary);
   }
+  .home-empty > .control-button { margin-block: 6px; }
   .modal {
     --panel-top: max(54px,9dvh);
     --panel-bottom: var(--bayit-popup-view-bottom,100dvh);

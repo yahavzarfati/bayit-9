@@ -1127,6 +1127,7 @@ export function generateDashboard(config = {}, hass = {}) {
     title,
     rooms: discoverRooms(config, hass, locale),
   };
+  if (!card.rooms.length) card.setup_rooms_on_empty = true;
   const popupAliases = normalizePopupAliases(config.popup_aliases);
   if (Object.keys(popupAliases).length) card.popup_aliases = popupAliases;
   const visible = new Set(card.rooms.flatMap(room => room.entities.map(device => device.entity)));

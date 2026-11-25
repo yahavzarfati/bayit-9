@@ -534,6 +534,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
     }
   }
 
+  openRooms() {
+    this.#open.rooms = true;
+    this.render();
+  }
+
   connectedCallback() {
     this.render();
   }

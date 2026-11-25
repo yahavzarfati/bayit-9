@@ -1827,6 +1827,69 @@ async function assertSetupFooterLayout(browser) {
   }
 }
 
+async function assertEmptyRoomSetup(browser) {
+  const words = [
+    { locale:'en', empty:'No rooms have been added.', customize:'Customize rooms', setup:'Customize home',
+      rooms:'Rooms', picker:'Available rooms', add:'Show room', save:'Save dashboard' },
+    { locale:'he', empty:'עדיין אין חדרים בדשבורד.', customize:'התאמת חדרים', setup:'התאמת הבית',
+      rooms:'חדרים', picker:'חדרים זמינים', add:'הצגת חדר', save:'שמירת הדשבורד' },
+  ];
+  for (const { locale, empty, customize, setup, rooms, picker, add, save } of words) {
+    const page = await browser.newPage({
+      viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce',
+    });
+    try {
+      const action = page.getByRole('button', { name:customize, exact:true });
+      const message = page.getByText(empty, { exact:true });
+      await page.goto(base + '?empty&locale=' + locale);
+      await message.waitFor();
+      assert.equal(await action.count(), 0);
+
+      await page.addInitScript(() => {
+        const key = 'bayit9-browser-fixture';
+        if (!sessionStorage.getItem(key)) {
+          sessionStorage.setItem(key, JSON.stringify({
+            strategy: { type:'custom:bayit-9', room_selection:'manual', area_ids:[] },
+          }));
+        }
+      });
+      await page.goto(base + '/fixture-home/home?configuration&locale=' + locale);
+      await message.waitFor();
+      await action.waitFor();
+      assert.equal(await action.count(), 1);
+      await action.tap();
+      const editor = page.getByRole('dialog', { name:setup, exact:true });
+      const roomPicker = editor.getByLabel(picker, { exact:true });
+      const saveButton = editor.getByRole('button', { name:save, exact:true });
+      await roomPicker.waitFor();
+      assert.equal(await editor.getByText(rooms, { exact:true }).evaluate(item => item.parentElement.open), true);
+      assert.equal(await saveButton.isEnabled(), false);
+      assert.equal(new URL(page.url()).hash, '');
+      const writes = () => page.evaluate(() => window.bayitTest.calls.filter(request =>
+        request.type === 'lovelace/config/save' || request.type === 'call_service' || request.domain));
+      assert.deepEqual(await writes(), []);
+      await roomPicker.selectOption('studio');
+      await editor.getByRole('button', { name:add, exact:true }).tap();
+      assert.equal(await saveButton.isEnabled(), true);
+      assert.deepEqual(await writes(), []);
+      await saveButton.tap();
+      await page.locator('.room[data-room="studio"]').waitFor();
+      assert.equal(await message.isVisible(), false);
+      assert.equal(await action.count(), 0);
+      const selectedRooms = await page.evaluate(() =>
+        JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.area_ids);
+      assert.deepEqual(selectedRooms, ['studio']);
+
+      const card = page.locator('bayit-dashboard');
+      await card.evaluate((card, locale) => card.setConfig({ page:true, locale, rooms:[] }), locale);
+      await message.waitFor();
+      assert.equal(await action.count(), 0);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertSetupDrafts(browser) {
   const page = await browser.newPage({
     viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce',
@@ -8708,11 +8771,8 @@ try {
       await assertToolbarPressAcrossReplacement(browser);
       console.log(engine + ' 320: editable popup links, preserved legacy routes and same-dashboard URL reopen');
 
-      const emptyPage = await browser.newPage();
-      await emptyPage.goto(base + '?empty');
-      await emptyPage.getByText('No rooms have been added.', { exact: true }).waitFor();
-      await emptyPage.close();
-      console.log(engine + ': visual profile editor, locale changes and no-device installation');
+      await assertEmptyRoomSetup(browser);
+      console.log(engine + ': no-device installation and administrator room setup in English and Hebrew');
     } finally {
       await browser.close();
     }

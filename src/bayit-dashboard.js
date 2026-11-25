@@ -438,6 +438,7 @@ export function normalizeDashboardConfig(config = {}) {
     ? config.background : 'aurora';
   return {
     locale, rooms, overview, context, toolbar, page: config.page === true, fullscreen: config.fullscreen === true,
+    setupRoomsOnEmpty: config.page === true && config.setup_rooms_on_empty === true,
     hiddenEntities: new Set(Array.isArray(config.hidden_entities)
       ? config.hidden_entities.filter(id => typeof id === 'string' && entityPattern.test(id)) : []),
     popupAliases: new Map(Object.entries(normalizePopupAliases(config.popup_aliases))),
@@ -457,7 +458,12 @@ const layout = `
       <div class="toolbar-actions"></div>
     </header>
     <div class="room-scroll"><div class="rooms" role="region"></div></div>
-    <p class="empty"></p>
+    <div class="home-empty" hidden>
+      <p class="empty" data-role="empty-message"></p>
+      <button type="button" class="control-button" data-role="empty-setup" hidden>
+        <ha-icon icon="mdi:tune-variant" aria-hidden="true"></ha-icon><span></span>
+      </button>
+    </div>
     <div class="notice" data-role="page-notice" role="status" aria-atomic="true"></div>
     <dialog class="modal">
       <header class="modal-header">
@@ -495,7 +501,8 @@ export class BayitDashboard extends HTMLElement {
     const role = name => get('[data-role="' + name + '"]');
     this.nodes = {
       shell: get('.shell'), toolbar: get('.toolbar'), toolbarActions: get('.toolbar-actions'),
-      roomScroll: get('.room-scroll'), rooms: get('.rooms'), empty: get('.empty'), title: get('h1'),
+      roomScroll: get('.room-scroll'), rooms: get('.rooms'), title: get('h1'),
+      empty: get('.home-empty'), emptyMessage: role('empty-message'), emptySetup: role('empty-setup'),
       back: role('back'), close: role('close'),
       modal: get('dialog:not(.confirm)'), modalTitle: get('dialog:not(.confirm) h2'),
       modalBody: get('dialog:not(.confirm) .modal-body'), content: role('content'), setupFooter: role('setup-footer'),
@@ -511,6 +518,9 @@ export class BayitDashboard extends HTMLElement {
     this.popupMotion = createPopupMotion({ dialog: n.modal, clip: n.roomScroll, toolbar: n.toolbar });
     this.popupScroll = createPopupScrollMemory(n.modalBody, n.content);
     this.pageChrome = createPageChrome(this, { onChange: () => this.fitPage() });
+    n.emptySetup.onclick = () => {
+      if (!n.emptySetup.hidden) this.openSetup(n.emptySetup, { setupRooms: true });
+    };
     n.back.onclick = () => this.backToRoom();
     n.close.onclick = () => this.dismissPanel();
     n.abort.onclick = () => n.confirm.close();
@@ -586,7 +596,8 @@ export class BayitDashboard extends HTMLElement {
     n.shell.style.setProperty('--bayit-room-rows', String(Math.max(1, Math.ceil(next.rooms.length / 2))));
     n.shell.style.setProperty('--bayit-room-rows-wide', String(Math.max(1, Math.ceil(next.rooms.length / 4))));
     setText(n.title, next.title);
-    setText(n.empty, this.t('empty'));
+    setText(n.emptyMessage, this.t('empty'));
+    setText(n.emptySetup.lastElementChild, this.t('setup_rooms'));
     label(n.back, this.t('back_to_room'));
     setIcon(n.back.firstElementChild, next.locale === 'he' ? 'mdi:chevron-right' : 'mdi:chevron-left');
     label(n.close, this.t('close'));
@@ -1324,6 +1335,7 @@ export class BayitDashboard extends HTMLElement {
   update() {
     if (!this.config) return;
     const n = this.nodes;
+    n.emptySetup.hidden = !this.config.setupRoomsOnEmpty || this.roomViews.size > 0 || !this._hass?.user?.is_admin;
     const active = new Map();
     const haveStates = !!this._hass?.states;
     const now = Date.now();
@@ -1481,6 +1493,7 @@ export class BayitDashboard extends HTMLElement {
     const scrollRoute = type === 'room' ? { kind: 'room', room: room.id }
       : boilerControls && this.config.page ? { kind: 'device', room: room.id, entity, detail:navigation.detail } : null;
     const panel = { type, room, returnTo, roomOrigin: type === 'room' && Boolean(source),
+      setupRooms: type === 'setup' && navigation.setupRooms === true,
       scrollHash: popupRouteFragment(scrollRoute), routeHash: navigation.hash ?? this.panel?.routeHash };
     this.panel = panel;
     n.back.hidden = !returnTo;
@@ -2266,12 +2279,15 @@ export class BayitDashboard extends HTMLElement {
     }
     if (this._hass?.user?.is_admin) {
       const setup = button('control-button setup-entry', this.t('setup'), 'mdi:tune-variant');
-      setup.onclick = () => {
-        if (!this.canSyncAppearance() || !this.appearanceSave) this.openPanel('setup', setup);
-      };
+      setup.onclick = () => this.openSetup(setup);
       system.append(setup);
     }
     if (system.childElementCount) content.append(system);
+  }
+
+  openSetup(source, navigation) {
+    if (!this._hass?.user?.is_admin || (this.canSyncAppearance() && this.appearanceSave)) return;
+    this.openPanel('setup', source, undefined, undefined, undefined, undefined, navigation);
   }
 
   async paintSetup() {
@@ -2302,6 +2318,7 @@ export class BayitDashboard extends HTMLElement {
       let conflict = JSON.stringify(current.strategy) !== baseline;
       const editor = customElements.get('ll-strategy-dashboard-' + STRATEGY_NAME).getConfigElement();
       editor.classList.add('setup-editor');
+      if (page.setupRooms) editor.openRooms();
       editor.setConfig(structuredClone(session.draft));
       editor.hass = this._hass;
       this.setup = { editor };
