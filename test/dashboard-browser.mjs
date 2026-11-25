@@ -285,6 +285,13 @@ const hass = {
   devices: {},
   callWS(request) {
     calls.push(request);
+    if (request.type === 'history/history_during_period' && query.has('room-temperature-chart')) {
+      const end = Date.parse(request.end_time) / 1000;
+      return Promise.resolve({ 'sensor.demo_temperature': [
+        { s:'21', lu:end - 85000 }, { s:'22', lu:end - 78000 }, { s:'unknown', lu:end - 72000 },
+        { s:'22.5', lu:end - 71000 }, { s:'23.5', lu:end - 20800 },
+      ] });
+    }
     if (request.type === 'lovelace/dashboards/list') {
       return Promise.resolve([{ url_path: 'fixture-home', mode: 'storage' }]);
     }
@@ -576,6 +583,7 @@ const roomStatusSelected = {
       entities: ['climate.demo_room', 'cover.demo_window', 'sensor.demo_temperature', 'light.demo_unavailable',
         'light.demo_side1', 'light.demo_side2', 'light.demo_side3',
         ...(query.has('temperature-source') ? ['sensor.demo_preferred_temperature'] : [])],
+      ...(query.has('room-temperature-chart') && { room_temperature_graph_colors:{ 'sensor.demo_temperature':'#9ac8ff' } }),
       ...(query.has('temperature-source') && {
         room_temperature_entity: query.has('temperature-from-climate') ? 'climate.demo_room' : 'sensor.demo_preferred_temperature',
         ...(!query.has('temperature-no-fallback') && {room_temperature_fallback_entity: 'climate.demo_room'}),
@@ -1050,7 +1058,7 @@ if (query.has('editor')) {
   editor.setConfig({ type: 'custom:bayit-9',
     ...((query.has('toolbar-panels') || query.has('automation-compact') || query.has('overview-opt-in') || query.has('lighting-count') ||
       query.has('preset-shortcut') || query.has('entrance-popup-position') || query.has('timer-usage') ||
-      query.has('swing-unreported') || query.has('temperature-source') || query.has('dual-light-details') ||
+      query.has('swing-unreported') || query.has('temperature-source') || query.has('room-temperature-chart') || query.has('dual-light-details') ||
       query.has('compact-light-reading')) && selected) });
   editor.hass = hass;
   editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
@@ -2345,6 +2353,61 @@ async function assertCompactRoomHeater(browser) {
       await off.waitFor();
       assert.equal(await start.count(), 0);
       assert.equal(await heater.locator('.heat-level-choice[aria-pressed="true"]').isDisabled(), true);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+async function assertRoomTemperatureCharts(browser) {
+  for (const locale of ['en', 'he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const url = base + '?room-status&locale=' + locale;
+    const route = '#room-bayit_room_status';
+    const compact = '&room-temperature-chart';
+    const dialog = page.getByRole('dialog', { name:he ? 'חדר הפנאי' : 'Family room', exact:true });
+    try {
+      await page.goto(url + route);
+      await dialog.locator('.native-panel-card [data-entity="sensor.demo_temperature"]').waitFor();
+      assert.equal(await dialog.locator('.room-temperature-chart').count(),0);
+      await page.goto(url + compact + route);
+      const chart = dialog.locator('.room-temperature-chart');
+      const value = chart.locator('.room-temperature-value');
+      await chart.locator('path.room-temperature-line').first().waitFor();
+      assert.equal(await chart.locator('path.room-temperature-line').count(),2,'Unknown history must split the line');
+      assert.equal(await value.textContent(),'23.5');
+      assert.equal(await chart.locator('.room-temperature-unit').textContent(),'°C');
+      assert.equal(await chart.evaluate(el=>el.style.getPropertyValue('--room-chart-color')),'#9AC8FF');
+      await chart.press('Enter');
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.moreInfoCalls),['sensor.demo_temperature']);
+      await page.evaluate(()=>window.bayitTest.setRoomState('sensor.demo_temperature','unavailable'));
+      await chart.getByText('—',{ exact:true }).waitFor();
+      assert.equal(await chart.locator('.room-temperature-unit').textContent(),'');
+      const calls = await page.evaluate(()=>window.bayitTest.calls);
+      const histories = calls.filter(call=>call.type==='history/history_during_period');
+      assert.equal(histories.length,1);
+      assert.deepEqual(histories[0].entity_ids,['sensor.demo_temperature']);
+      assert.equal(Date.parse(histories[0].end_time)-Date.parse(histories[0].start_time),24.5*3600000);
+      assert.equal(calls.filter(call=>call.domain).length,0);
+
+      await page.goto(url + compact + '&editor');
+      await page.getByText(he ? 'חדרים' : 'Rooms',{ exact:true }).tap();
+      await page.getByLabel(he ? 'חדר להתאמה אישית' : 'Room to customize',{ exact:true }).selectOption('bayit_room_status');
+      await page.getByText(he ? 'תצוגת מכשירים' : 'Device display',{ exact:true }).tap();
+      await page.getByLabel(he ? 'מכשיר להתאמה אישית' : 'Device to customize',{ exact:true }).selectOption('sensor.demo_temperature');
+      const option = page.getByRole('checkbox',{ name:he ? 'גרף טמפרטורה קומפקטי' : 'Compact temperature graph', exact:true });
+      assert.equal(await option.isChecked(),true);
+      const readMap = () => page.evaluate(()=>window.latest.room_overrides.bayit_room_status.room_temperature_graph_colors);
+      await option.uncheck();
+      assert.equal(await readMap(),undefined);
+      await option.check();
+      assert.deepEqual(await readMap(),{'sensor.demo_temperature':'#7AA7FF'});
+      const color = page.getByLabel(he ? 'צבע קו הגרף' : 'Graph line color',{ exact:true });
+      await color.fill('#5faaff');
+      await color.dispatchEvent('change');
+      assert.deepEqual(await readMap(),{'sensor.demo_temperature':'#5FAAFF'});
     } finally {
       await page.close();
     }
@@ -6360,6 +6423,7 @@ try {
       await utilityPage.close();
       console.log(engine + ': Energy, Weather and room graph details leave the Bayit popup open underneath');
       await assertSelectedRoomTemperature(browser);
+      await assertRoomTemperatureCharts(browser);
       console.log(engine + ': room temperature source, fallback, units and editor');
       await assertEnergyReadingCards(browser);
       console.log(engine + ': optional Energy headline readings, native details, fallback and editor');

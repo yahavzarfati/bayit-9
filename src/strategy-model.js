@@ -123,6 +123,12 @@ export function roomTemperatureUnit(value) {
   return ['°C', '°F', 'K'].includes(unit) ? unit : undefined;
 }
 
+export const DEFAULT_ROOM_TEMPERATURE_GRAPH_COLOR = '#7AA7FF';
+
+export function normalizeRoomTemperatureGraphColor(value) {
+  return typeof value === 'string' && /^#[a-f\d]{6}$/i.test(value) ? value.toUpperCase() : undefined;
+}
+
 export function supportsRoomTemperatureSource(entity, attributes) {
   const domain = domainOf(entity);
   if (domain === 'climate') return true;
@@ -382,6 +388,7 @@ function dashboardAreas(config, hass) {
       lightingCount: idList(override.lighting_count_entities),
       temperatureEntity: typeof override.room_temperature_entity === 'string' ? override.room_temperature_entity : undefined,
       temperatureFallback: typeof override.room_temperature_fallback_entity === 'string' ? override.room_temperature_fallback_entity : undefined,
+      temperatureGraphColors: override.room_temperature_graph_colors,
       shutdown: idList(override.turn_off_entities).filter(supportsRoomShutdown),
       activities: override.activities,
       climatePower: new Set(idList(override.climate_power_entities)),
@@ -656,6 +663,11 @@ export function discoverRooms(config, hass, locale) {
         if (name !== undefined) device.room_name = name;
       }
       if (area.readOnly?.has(device.entity)) device.role = 'status';
+      if (domainOf(device.entity) === 'sensor' && area.temperatureGraphColors &&
+          Object.hasOwn(area.temperatureGraphColors, device.entity) && !room.panel_hidden_entities?.includes(device.entity)) {
+        const color = normalizeRoomTemperatureGraphColor(area.temperatureGraphColors[device.entity]);
+        if (color) device.room_temperature_graph_color = color;
+      }
       if (domainOf(device.entity) === 'climate' && device.role !== 'status' && !['heater', 'boiler'].includes(device.kind) &&
           !room.panel_hidden_entities?.includes(device.entity) && area.presetShortcuts && Object.hasOwn(area.presetShortcuts, device.entity)) {
         const shortcut = normalizeClimatePresetShortcut(area.presetShortcuts[device.entity]);

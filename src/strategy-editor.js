@@ -1,8 +1,8 @@
 import { normalizeSharedWallpaperPath, normalizeSharedWallpapers } from './shared-wallpapers.js';
 import {
-  BACKGROUNDS, classicRoomTitle, CUSTOM_ROOM_PREFIX, dashboardRoomMemberships, dashboardRoomOptions, DEVICE_ICONS, discoverRooms,
+  BACKGROUNDS, classicRoomTitle, CUSTOM_ROOM_PREFIX, dashboardRoomMemberships, dashboardRoomOptions, DEFAULT_ROOM_TEMPERATURE_GRAPH_COLOR, DEVICE_ICONS, discoverRooms,
   isVisibleEntity, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
-  normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeRoomIcon, normalizeShortcutDetailEntities, normalizeShortcutDetailRoutes,
+  normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeRoomIcon, normalizeRoomTemperatureGraphColor, normalizeShortcutDetailEntities, normalizeShortcutDetailRoutes,
   normalizeRoomVacuumSummary, normalizeUnreportedSwingMode,
   popupAliasDestinations, PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, roomShortcutDevices, roomVacuumPresentation, ROOM_VACUUM_SUMMARY_DOMAINS,
   selectableRoomEntities, selectedRoomIds,
@@ -71,6 +71,7 @@ const WORDS = {
     roomCompactMedia: 'Show compact media controls in this room',
     roomMediaLink: 'Open on media press and hold', roomMediaNone: 'No panel', roomMediaDefault: 'Media',
     roomTemperatureSource: 'Temperature on home card', roomTemperatureAuto: 'Automatic',
+    roomTemperatureGraph: 'Compact temperature graph', roomTemperatureGraphColor: 'Graph line color',
     roomTemperatureFallback: 'Fallback room temperature', roomTemperatureNoFallback: 'None',
     roomVacuumLink: 'Vacuum panel', roomVacuumDefault: 'Robot vacuum',
     roomVacuumGesture: 'Open the vacuum panel with', roomVacuumTap: 'Tap', roomVacuumHold: 'Press and hold',
@@ -185,6 +186,7 @@ const WORDS = {
     roomCompactMedia: 'הצגת פקדי מדיה קומפקטיים בחדר',
     roomMediaLink: 'פתיחה בלחיצה ארוכה על מכשיר מדיה', roomMediaNone: 'ללא חלונית', roomMediaDefault: 'מדיה',
     roomTemperatureSource: 'טמפרטורה בכרטיס הבית', roomTemperatureAuto: 'אוטומטי',
+    roomTemperatureGraph: 'גרף טמפרטורה קומפקטי', roomTemperatureGraphColor: 'צבע קו הגרף',
     roomTemperatureFallback: 'מקור גיבוי לטמפרטורת החדר', roomTemperatureNoFallback: 'ללא גיבוי',
     roomVacuumLink: 'חלונית השואב', roomVacuumDefault: 'שואב',
     roomVacuumGesture: 'פתיחת חלונית השואב באמצעות', roomVacuumTap: 'לחיצה', roomVacuumHold: 'לחיצה ארוכה',
@@ -886,6 +888,31 @@ export class Bayit9StrategyEditor extends HTMLElement {
           saveText();
         });
         fields.replaceChildren(showDevice, show, field(words.roomControlName, input), deviceIcon);
+        if (id.startsWith('sensor.') && supportsRoomTemperatureSource(id, this.#hass.states?.[id]?.attributes)) {
+          const selected = normalizeRoomTemperatureGraphColor(override.room_temperature_graph_colors?.[id]);
+          const saveGraph = (color, focus) => {
+            const next = { ...this.#roomOverride(room.id) };
+            const colors = { ...next.room_temperature_graph_colors };
+            if (color) colors[id] = color;
+            else delete colors[id];
+            if (Object.keys(colors).length) next.room_temperature_graph_colors = colors;
+            else delete next.room_temperature_graph_colors;
+            this.#setRoomOverride(room.id, next, focus);
+          };
+          const graph = checkbox(words.roomTemperatureGraph, Boolean(selected), checked =>
+            saveGraph(checked ? DEFAULT_ROOM_TEMPERATURE_GRAPH_COLOR : undefined, 'room-compact-temperature-graph'));
+          graph.firstElementChild.dataset.roomFocus = 'room-compact-temperature-graph';
+          fields.append(graph);
+          if (selected) {
+            const color = node('input', { type: 'color', value: selected });
+            color.dataset.roomFocus = 'room-temperature-graph-color';
+            color.addEventListener('change', () => {
+              const choice = normalizeRoomTemperatureGraphColor(color.value);
+              if (choice && choice !== selected) saveGraph(choice, 'room-temperature-graph-color');
+            });
+            fields.append(field(words.roomTemperatureGraphColor, color));
+          }
+        }
         if (id.startsWith('climate.') && !configuredIds(override.read_only_entities).includes(id) &&
             !['heater', 'boiler'].includes(profile?.kind)) {
           const power = checkbox(words.roomClimatePower, configuredIds(override.climate_power_entities).includes(id), checked => {
@@ -1248,6 +1275,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         if (!next[key].length) delete next[key];
       }
       for (const key of ['climate_preset_shortcuts', 'shortcut_detail_routes', 'vacuum_panel_presentation', 'vacuum_panel_summary',
+        'room_temperature_graph_colors',
         ...[...ROOM_PANEL_KINDS.values()].map(kind => kind + '_panel_links')]) {
         if (!next[key]) continue;
         next[key] = Object.fromEntries(Object.entries(next[key]).filter(([id]) => entities.includes(id)));

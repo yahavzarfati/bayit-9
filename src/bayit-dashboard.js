@@ -3,7 +3,7 @@ import { languages } from './bayit-dashboard-i18n.js';
 import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isToolbarReadouts, isVacuumProgramAction,
   isCompactAutomationActions, isEnergyReadingCards, isWeatherReadingsList,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
-  normalizeRoomVacuumSummary, normalizeToolbarReadout, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
+  normalizeRoomVacuumSummary, normalizeToolbarReadout, normalizeRoomTemperatureGraphColor, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
   ROOM_PANEL_KINDS, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
   sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
@@ -18,7 +18,8 @@ import { buildPanelControls, climateOptionLabel, panelControlStyles } from './pa
 import { lightColorHex, parseLightColor } from './light-color.mjs';
 import { activityKinds, applianceActivity, normalizeRoomActivities } from './room-appliance.mjs';
 import { createLightEffectGallery, lightEffectStyles, normalizeLightEffectGroups, organizeLightModes } from './light-effects.js';
-import { createNativeCards, createToolbarPanel, sensorGraphConfig, toolbarPanelStyles } from './toolbar-panels.js';
+import { createToolbarPanel, toolbarPanelStyles } from './toolbar-panels.js';
+import { createRoomGraphs, roomTemperatureChartStyles } from './room-temperature-chart.js';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
 import { normalizeMediaStage } from './now-playing.js';
@@ -263,6 +264,10 @@ function normalizeEntity(item) {
     const unreported = item.kind === 'climate' && normalizeUnreportedSwingMode(item.unreported_swing_mode);
     if (unreported) entry.unreported_swing_mode = unreported;
   }
+  if (domain === 'sensor') {
+    const color = normalizeRoomTemperatureGraphColor(item.room_temperature_graph_color);
+    if (color) entry.room_temperature_graph_color = color;
+  }
   if (domain === 'media_player' && entry.role !== 'status' && item.room_media_compact === true) entry.room_media_compact = true;
   if (item.room_appliance_tile === true && supportsRoomApplianceTile(entry)) entry.room_appliance_tile = true;
   if (item.room_boiler_quick_power === true && supportsRoomBoilerQuickPower(entry)) entry.room_boiler_quick_power = true;
@@ -477,7 +482,7 @@ export class BayitDashboard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' }).innerHTML = '<style>' + styles + panelControlStyles + toolbarPanelStyles +
-      wallpaperStyles + boilerHistoryStyles + lightEffectStyles + '</style>' + layout;
+      wallpaperStyles + boilerHistoryStyles + lightEffectStyles + roomTemperatureChartStyles + '</style>' + layout;
     const get = selector => this.shadowRoot.querySelector(selector);
     const role = name => get('[data-role="' + name + '"]');
     this.nodes = {
@@ -1618,15 +1623,18 @@ export class BayitDashboard extends HTMLElement {
           single.role !== 'status' && !['heater', 'boiler'].includes(single.kind);
         for (const config of members) {
           const temperature = (key === 'room_sensors' || key === 'room_weather') &&
-            isTemperatureSensor(domainFor(config), this._hass?.states?.[config.entity]?.attributes);
+            (config.room_temperature_graph_color || isTemperatureSensor(domainFor(config), this._hass?.states?.[config.entity]?.attributes));
           if (!temperature) {
             this.buildDevice(config, group, room, key, { inlineClimate });
             continue;
           }
-          this.roomGraphs ??= createNativeCards(content, this._hass, make);
+          this.roomGraphs ??= createRoomGraphs(content, this._hass, {
+            make, icon, locale: this.config.locale, t: name => this.t(name),
+            moreInfo: (item, source) => this.moreInfo(item, source),
+          });
           const fallback = content.ownerDocument.createDocumentFragment();
-          this.buildDevice(config, fallback, room, key);
-          group.append(this.roomGraphs.mount(sensorGraphConfig(config, { moreInfo: true }), fallback.firstElementChild));
+          if (!config.room_temperature_graph_color) this.buildDevice(config, fallback, room, key);
+          group.append(this.roomGraphs.mount(config, fallback.firstElementChild));
         }
         content.append(group);
       }

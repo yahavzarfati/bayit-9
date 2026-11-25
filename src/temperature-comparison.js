@@ -1,7 +1,7 @@
 const MINUTE_MS = 60000;
 const decimal = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
 
-function sensorValue(raw) {
+export function parseTemperatureValue(raw) {
   const value = typeof raw === 'string' && decimal.test(raw.trim()) ? Number(raw) : raw;
   return Number.isFinite(value) ? value : null;
 }
@@ -29,7 +29,7 @@ function recorderEvents(history, unit) {
   for (const event of valid) {
     // Compact recorder rows omit attributes when the previous unit still applies.
     if (event.unit) recordedUnit = event.unit;
-    const value = recordedUnit === expectedUnit ? sensorValue(event.state) : null;
+    const value = recordedUnit === expectedUnit ? parseTemperatureValue(event.state) : null;
     if (events.at(-1)?.at === event.at) events.pop();
     events.push({ at: event.at, value });
   }
