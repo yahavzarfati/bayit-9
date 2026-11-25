@@ -519,27 +519,23 @@ export function normalizeDashboardConfig(config = {}) {
 const layout = `
   <main class="shell">
     <header class="toolbar">
-      <div class="brand"><ha-icon icon="mdi:home-variant-outline" aria-hidden="true"></ha-icon><h1></h1></div>
+      <div class="brand"><h1></h1></div>
       <div class="toolbar-actions"></div>
     </header>
     <div class="room-scroll"><div class="rooms" role="region"></div></div>
     <div class="home-empty" hidden>
       <p class="empty" data-role="empty-message"></p>
       <button type="button" class="control-button" data-role="empty-setup" hidden>
-        <ha-icon icon="mdi:tune-variant" aria-hidden="true"></ha-icon><span></span>
+        <span></span>
       </button>
     </div>
     <div class="notice" data-role="page-notice" role="status" aria-atomic="true"></div>
     <dialog class="modal">
       <header class="modal-header">
-        <button type="button" class="round-action" data-role="back" hidden>
-          <ha-icon aria-hidden="true"></ha-icon>
-        </button>
+        <button type="button" class="round-action" data-role="back" hidden></button>
         <div class="modal-heading"><h2></h2></div>
         <div class="modal-heading-actions" hidden></div>
-        <button type="button" class="round-action" data-role="close" autofocus>
-          <ha-icon icon="mdi:close" aria-hidden="true"></ha-icon>
-        </button>
+        <button type="button" class="round-action" data-role="close" autofocus></button>
       </header>
       <div class="modal-body"><div data-role="content"></div>
         <div class="notice" data-role="modal-notice" role="status" aria-atomic="true"></div>
@@ -577,6 +573,10 @@ export class BayitDashboard extends HTMLElement {
       accept: role('accept'), abort: role('abort'), pageNotice: role('page-notice'), modalNotice: role('modal-notice'),
     };
     const n = this.nodes;
+    n.title.before(icon('mdi:home-variant-outline', true));
+    n.emptySetup.prepend(icon('mdi:tune-variant', true));
+    n.back.append(icon('mdi:chevron-left', true));
+    n.close.append(icon('mdi:close', true));
     const prefix = 'bayit-9-' + ++nextId;
     n.confirmTitle.id = prefix + '-confirm';
     n.confirmText.id = prefix + '-message';
