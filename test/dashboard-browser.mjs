@@ -341,6 +341,9 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
   } }),
 } : query.has('device-panel') ? {
   room_shortcuts: { studio: ['light.demo_lamp', 'climate.demo_air'] },
+  ...(query.has('inline-timer-caption') && { room_overrides: { studio: {
+    entity_names: { 'climate.demo_air': 'Near the window' },
+  } } }),
   profiles: [{ entity: 'climate.demo_air', kind: 'climate', timed: {
     simple_timer_entity: 'sensor.demo_air_usage', simple_timer_target: 'input_boolean.demo_air_timer',
     min_minutes: 15, max_minutes: 120, step_minutes: 15, presets: [30,60,90,120],
@@ -1262,6 +1265,69 @@ try {
         await readOnlyLight.waitFor();
         assert.equal(await readOnlyLight.locator('.light-effect-gallery, .light-mode-bar, [data-action="set_effect"]').count(), 0);
         await effectsPage.close();
+      }
+
+      for (const locale of ['en', 'he']) {
+        for (const width of [320, 390]) {
+          const page = await browser.newPage({ viewport: { width, height: 760 }, hasTouch: true, reducedMotion: 'reduce' });
+          const rtl = locale === 'he';
+          const caption = width === 390 ? '&inline-timer-caption' : '';
+          const name = caption ? 'Near the window' : 'Studio air conditioner';
+          const fullUnit = rtl ? 'דקות' : 'Minutes';
+          const shortUnit = rtl ? 'דק׳' : 'min';
+          const start = rtl ? 'הפעלת טיימר' : 'Start timer';
+          await page.goto(base + '?device-panel&locale=' + locale + caption);
+          await page.getByRole('button', { name: 'Studio', exact: true }).tap();
+          const room = page.getByRole('dialog', { name: 'Studio', exact: true });
+          const inline = room.locator('[data-inline-climate]');
+          await inline.waitFor();
+          const climate = await inline.evaluate(card => {
+            const frame = card.parentElement;
+            const glyph = card.querySelector('.device-icon').getBoundingClientRect();
+            const info = card.querySelector('.round-action').getBoundingClientRect();
+            return {
+              sectionRim: getComputedStyle(frame).borderTopWidth,
+              innerRim: getComputedStyle(card).borderTopWidth,
+              innerPadding: getComputedStyle(card).paddingTop,
+              glyphSize: glyph.width,
+              glyphLeft: glyph.right < info.left,
+              infoSize: [info.width, info.height],
+              horizontalOverflow: card.scrollWidth > card.clientWidth,
+            };
+          });
+          assert.deepEqual(climate, { sectionRim: '1px', innerRim: '0px', innerPadding: '0px',
+            glyphSize: 36, glyphLeft: true, infoSize: [44, 44], horizontalOverflow: false });
+          const title = inline.getByRole('heading', { name, exact: true });
+          assert.equal(await title.getAttribute('data-room-name-hidden'), caption ? null : '');
+          const info = inline.getByRole('button', { name: (rtl ? 'מידע נוסף' : 'More info') + ' · ' + name, exact: true });
+
+          const duration = inline.getByRole('slider', { name: fullUnit, exact: true });
+          assert.equal(await duration.inputValue(), '120');
+          assert.equal(await duration.getAttribute('aria-valuetext'), '120 ' + fullUnit);
+          assert.equal(await duration.evaluate(element => getComputedStyle(element).appearance), 'none');
+          assert.ok((await duration.boundingBox()).height >= 44);
+          await duration.press('ArrowLeft');
+          assert.equal(await duration.inputValue(), '105');
+          assert.equal(await duration.getAttribute('aria-valuetext'), '105 ' + fullUnit);
+          assert.equal(await inline.locator('.timer-amount').innerText(), '105 ' + shortUnit);
+          const preset = inline.getByRole('button', { name: start + ' · 60 ' + fullUnit, exact: true });
+          assert.equal(await preset.innerText(), '60 ' + shortUnit);
+          assert.equal(await preset.evaluate(button => getComputedStyle(button, '::before').top), '6px');
+          assert.ok((await preset.boundingBox()).height >= 44);
+          const startButton = inline.getByRole('button', { name: start, exact: true });
+          assert.ok((await startButton.boundingBox()).height >= 44);
+          assert.equal(await page.evaluate(() => window.bayitTest.calls.length), 0);
+          await startButton.press('Enter');
+          await page.waitForFunction(() => window.bayitTest.calls.length === 1);
+          assert.deepEqual(await page.evaluate(() => window.bayitTest.calls[0]), {
+            type: 'call_service', domain: 'simple_timer', service: 'start_timer',
+            service_data: { entity_id: 'sensor.demo_air_usage', duration: 105, unit: 'min', reverse_mode: false },
+          });
+          await info.tap();
+          await room.waitFor({ state: 'hidden' });
+          assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), ['climate.demo_air']);
+          await page.close();
+        }
       }
 
       const detailPage = await browser.newPage({ viewport: { width: 390, height: 844 } });

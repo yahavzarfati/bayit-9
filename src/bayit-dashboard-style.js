@@ -491,6 +491,22 @@ export const styles = `
   .device-head { display: grid; grid-template-columns: 32px minmax(0,1fr) 44px; align-items: center; gap: 8px; }
   .device-head.device-state-head { grid-template-columns: minmax(0,1fr) 44px; }
   .device-state-head .current { margin-block-start: 0; }
+  .device[data-inline-climate] { padding: 0; border: 0; }
+  .device[data-inline-climate] .device-head {
+    direction: ltr;
+    grid-template-columns: 36px minmax(0,1fr) 44px;
+  }
+  .device[data-inline-climate] .device-icon {
+    width: 36px;
+    height: 36px;
+    --mdc-icon-size: 24px;
+    place-items: center;
+    color: var(--ink);
+    background: color-mix(in srgb,var(--ink) 12%,transparent);
+    border-radius: 50%;
+  }
+  .shell[dir=rtl] .device[data-inline-climate] .device-detail { direction: rtl; text-align: left; }
+  .device[data-inline-climate] .action-list { margin-block-start: 4px; gap: 5px; }
   .device-panel-launch {
     width:100%; min-block-size:44px; border:0; background:transparent; color:inherit;
     font:inherit; text-align:start; padding:0; border-radius:10px;

@@ -1043,11 +1043,16 @@ export class BayitDashboard extends HTMLElement {
         const group = make('section', 'device-group');
         group.dataset.group = key;
         if (title !== '') group.append(make('h3', 'device-group-title', title ?? this.t(key)));
+        const single = members.length === 1 ? members[0] : null;
+        const timed = single?.timed;
+        const inlineClimate = key === 'room_climate' && single && domainFor(single) === 'climate' &&
+          Boolean(timed?.simple_timer_entity || timed?.timer_entity || timed?.start_script || timed?.stop_script) &&
+          single.role !== 'status' && !['heater', 'boiler'].includes(single.kind);
         for (const config of members) {
           const temperature = (key === 'room_sensors' || key === 'room_weather') &&
             isTemperatureSensor(domainFor(config), this._hass?.states?.[config.entity]?.attributes);
           if (!temperature) {
-            this.buildDevice(config, group, room, key);
+            this.buildDevice(config, group, room, key, { inlineClimate });
             continue;
           }
           this.roomGraphs ??= createNativeCards(content, this._hass, make);
@@ -1073,7 +1078,7 @@ export class BayitDashboard extends HTMLElement {
     return groups.values();
   }
 
-  buildDevice(config, parent, room, groupKey, { titleInDialog = false } = {}) {
+  buildDevice(config, parent, room, groupKey, { titleInDialog = false, inlineClimate = false } = {}) {
     const item = make('section', 'device');
     const domain = domainFor(config);
     const tileMode = groupKey === 'room_lights' && ['light', 'switch'].includes(domain) && !config.kind;
@@ -1083,11 +1088,12 @@ export class BayitDashboard extends HTMLElement {
       entry => entry.kind === panelKind && entry.id === panelId);
     item.dataset.entity = config.entity;
     item.dataset.treatment = config.kind || domain;
+    item.toggleAttribute('data-inline-climate', inlineClimate);
     const glyph = icon(config.icon || 'mdi:information-outline');
     glyph.className = 'device-icon';
     const name = make(tileMode || panelTarget ? 'span' : room ? 'h4' : 'h3', 'device-name');
     const state = make('span', 'current');
-    const view = { config, item, glyph, name, state, fields: [], room };
+    const view = { config, item, glyph, name, state, fields: [], room, inlineClimate };
     if (tileMode) {
       item.dataset.compact = 'tile';
       const tile = button('device-tile');
@@ -1230,7 +1236,7 @@ export class BayitDashboard extends HTMLElement {
       const roomName = view.room ? view.config.room_name : undefined;
       const labelName = roomName || model.name;
       setText(view.name, labelName);
-      view.name.toggleAttribute('data-room-name-hidden', roomName === '');
+      view.name.toggleAttribute('data-room-name-hidden', roomName === '' || (view.inlineClimate && roomName === undefined));
       setIcon(view.glyph, model.icon);
       if (model.timer?.state === 'active') countdown = true;
       const media = model.domain === 'media_player' && view.config.role !== 'now_playing' &&
@@ -1252,7 +1258,10 @@ export class BayitDashboard extends HTMLElement {
       if (view.panelLaunch) {
         label(view.more, labelName + ' · ' + view.panelLaunch.action);
         if (view.more.title !== view.panelLaunch.hint) view.more.title = view.panelLaunch.hint;
-      } else view.more.hidden = !model.actions.more_info;
+      } else {
+        view.more.hidden = !model.actions.more_info;
+        if (view.inlineClimate) label(view.more, this.t('more_info') + ' · ' + labelName);
+      }
       const timerLayout = model.timer ? [model.timer.state, Number.isFinite(model.timer.usedSeconds), model.state === 'on'] : null;
       const coverClass = model.domain === 'cover' ? model.attributes.device_class : null;
       const signature = JSON.stringify([actionsInOrder.map(id => model.actions[id] || null), timerLayout, model.levelAction, coverClass]);
@@ -1417,7 +1426,8 @@ export class BayitDashboard extends HTMLElement {
     const timing = view.config.timed;
     const timerPreferenceKey = timing && 'bayit-9.timer-duration.v1:' +
       (timing.simple_timer_entity ?? timing.timer_entity ?? view.config.entity);
-    view.special = buildPanelControls(model, { make, button, icon, label, timerPreferenceKey, t: key => this.t(key),
+    view.special = buildPanelControls(model, { make, button, icon, label, t: key => this.t(key),
+      compactTimer: view.inlineClimate, timerPreferenceKey,
       request: (id, value, control) => this.requestAction(view.config, id, value, control) });
     for (const id of actionsInOrder) {
       const action = model.actions[id];

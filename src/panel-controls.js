@@ -42,7 +42,7 @@ function climateOptionLabel(action, value, options, t) {
   return t(value);
 }
 
-export function buildPanelControls(model, { make, button, icon, label, t, request, timerPreferenceKey }) {
+export function buildPanelControls(model, { make, button, icon, label, t, request, compactTimer = false, timerPreferenceKey }) {
   const used = new Set();
   const updates = [];
   const content = [];
@@ -121,6 +121,8 @@ export function buildPanelControls(model, { make, button, icon, label, t, reques
   if (model.timer || duration || showStop) {
     for (const id of ['start_timed', 'extend_timed', 'stop_timed']) used.add(id);
     const card = make('section', 'device-timer');
+    const visibleDuration = value => value + ' ' + t(compactTimer ? 'duration_short' : 'duration');
+    const spokenDuration = value => value + ' ' + t('duration');
     card.setAttribute('aria-label', t('timed'));
     const time = make('p', 'timer-clock');
     time.setAttribute('aria-label', t('remaining_time'));
@@ -151,13 +153,17 @@ export function buildPanelControls(model, { make, button, icon, label, t, reques
       }
       input.setAttribute('aria-label', t('duration'));
       const amount = make('output', 'timer-amount');
-      amount.textContent = input.value + ' ' + t('duration');
+      const showDuration = () => {
+        amount.textContent = visibleDuration(input.value);
+        if (compactTimer) input.setAttribute('aria-valuetext', spokenDuration(input.value));
+      };
       input.oninput = () => {
-        amount.textContent = input.value + ' ' + t('duration');
+        showDuration();
         if (timerPreferenceKey) {
           try { localStorage.setItem(timerPreferenceKey, input.value); } catch {}
         }
       };
+      showDuration();
       const go = button('control-button timer-command', t(id), running ? 'mdi:plus' : 'mdi:play', true);
       go.onclick = () => request(id, input.valueAsNumber, go);
       go.dataset.action = id;
@@ -176,9 +182,8 @@ export function buildPanelControls(model, { make, button, icon, label, t, reques
     if (duration) {
       const list = make('div', 'timer-presets');
       for (const minutes of timerPresets(duration)) {
-        const shown = minutes + ' ' + t('duration');
-        const choice = button('control-button timer-preset', shown);
-        label(choice, t(duration.id) + ' · ' + shown);
+        const choice = button('control-button timer-preset', visibleDuration(minutes));
+        label(choice, t(duration.id) + ' · ' + spokenDuration(minutes));
         choice.dataset.action = duration.id;
         choice.onclick = () => request(duration.id, minutes, choice);
         buttons.push(choice);
@@ -262,6 +267,62 @@ export const panelControlStyles = `
   .timer-presets, .heat-level-options { display: grid; gap: 4px; direction: ltr; }
   .timer-presets { grid-template-columns: repeat(auto-fit,minmax(48px,1fr)); }
   .timer-preset { padding-inline: 3px; }
+  .device[data-inline-climate] .device-timer {
+    --timer-rail: color-mix(in srgb,var(--ink) 10%,transparent);
+  }
+  .device[data-inline-climate] .timer-clock { line-height: 1.2; }
+  .device[data-inline-climate] .timer-range {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+  }
+  .device[data-inline-climate] .timer-range::-webkit-slider-runnable-track {
+    height: 8px;
+    background: var(--timer-rail);
+    border-radius: 999px;
+  }
+  .device[data-inline-climate] .timer-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    margin-top: -5px;
+    background: var(--moving);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+  }
+  .device[data-inline-climate] .timer-range::-moz-range-track {
+    height: 8px;
+    background: var(--timer-rail);
+    border-radius: 999px;
+  }
+  .device[data-inline-climate] .timer-range::-moz-range-progress { background: transparent; }
+  .device[data-inline-climate] .timer-range::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    background: var(--moving);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+  }
+  .device[data-inline-climate] :is(.timer-command,.timer-preset) {
+    isolation: isolate;
+    position: relative;
+    border: 0;
+    background: transparent;
+  }
+  .device[data-inline-climate] :is(.timer-command,.timer-preset)::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    inset: 6px 0;
+    background: var(--control);
+    border: 1px solid var(--soft-line);
+    border-radius: inherit;
+    pointer-events: none;
+  }
+  .device[data-inline-climate] :is(.timer-command,.timer-preset):hover::before {
+    background: color-mix(in srgb,var(--ink) 10%,var(--control));
+  }
   .heat-level-options {
     margin-top: 5px;
     grid-template-columns: repeat(auto-fit,minmax(25px,1fr));
