@@ -22,6 +22,32 @@ export function lightColorHex(attributes) {
   return color && "#" + color.map(channel => channel.toString(16).padStart(2, "0")).join("");
 }
 
+export function lightHueSaturation(hex) {
+  const rgb = parseLightColor(hex);
+  if (!rgb) return null;
+  const [red, green, blue] = rgb;
+  const high = Math.max(...rgb);
+  const chroma = high - Math.min(...rgb);
+  if (!chroma) return { hue: 0, saturation: 0 };
+  const angle = high === red ? (green - blue) / chroma
+    : high === green ? 2 + (blue - red) / chroma : 4 + (red - green) / chroma;
+  return { hue: Math.round((angle * 60 + 360) % 360), saturation: Math.round(chroma * 100 / high) };
+}
+
+export function lightColorFromHueSaturation(hue, saturation) {
+  if (!Number.isFinite(hue) || hue < 0 || hue > 360 ||
+      !Number.isFinite(saturation) || saturation < 0 || saturation > 100) return null;
+  const chroma = saturation / 100;
+  const angle = (hue % 360) / 60;
+  const middle = chroma * (1 - Math.abs(angle % 2 - 1));
+  const channels = [
+    [chroma, middle, 0], [middle, chroma, 0], [0, chroma, middle],
+    [0, middle, chroma], [middle, 0, chroma], [chroma, 0, middle],
+  ][Math.floor(angle)];
+  return '#' + channels.map(channel => Math.round((channel + 1 - chroma) * 255)
+    .toString(16).padStart(2, '0')).join('');
+}
+
 function rgbChromaticity(rgb) {
   // Wide RGB D65 transform used by Core for rgb_color to xy_color.
   const [red, green, blue] = rgb.map(channel => {

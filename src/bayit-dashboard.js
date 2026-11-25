@@ -20,6 +20,7 @@ import { buildPanelControls, climateOptionLabel, panelControlStyles } from './pa
 import { lightColorHex, parseLightColor } from './light-color.mjs';
 import { activityKinds, applianceActivity, normalizeRoomActivities } from './room-appliance.mjs';
 import { createLightEffectGallery, lightEffectStyles, normalizeLightEffectGroups, organizeLightModes } from './light-effects.js';
+import { createLightColorPalette, lightColorPaletteStyles } from './light-color-palette.js';
 import { createToolbarPanel, toolbarPanelStyles } from './toolbar-panels.js';
 import { createRoomGraphs, roomTemperatureChartStyles } from './room-temperature-chart.js';
 import { normalizeOrefMap } from './oref-alert-map.js';
@@ -511,7 +512,7 @@ export class BayitDashboard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' }).innerHTML = '<style>' + styles + panelControlStyles + toolbarPanelStyles +
-      wallpaperStyles + boilerHistoryStyles + lightEffectStyles + roomTemperatureChartStyles + '</style>' + layout;
+      wallpaperStyles + boilerHistoryStyles + lightEffectStyles + lightColorPaletteStyles + roomTemperatureChartStyles + '</style>' + layout;
     const get = selector => this.shadowRoot.querySelector(selector);
     const role = name => get('[data-role="' + name + '"]');
     this.nodes = {
@@ -2308,6 +2309,7 @@ export class BayitDashboard extends HTMLElement {
       }
       view.special.update(model, pending);
       view.effectGallery?.update(model, this.canRequest(view.config.entity, 'set_effect'));
+      view.colorPalette?.update(model, pending);
       for (const field of view.fields) {
         this.syncField(field, model);
         if (field.valid && !field.valid(field.input.value)) field.apply.disabled = true;
@@ -2563,6 +2565,7 @@ export class BayitDashboard extends HTMLElement {
     view.fields = [];
     if (view.config.effect_favorites && view.effectGallery) view.effectGallerySession = view.effectGallery.capture();
     view.effectGallery = null;
+    view.colorPalette = null;
     const basic = make('div', 'basic-actions');
     const complex = new Map();
     const standaloneClimate = this.panel?.type === 'device' && model.kind === 'climate';
@@ -2616,6 +2619,12 @@ export class BayitDashboard extends HTMLElement {
       if (compactLightPower && (id === 'turn_on' || id === 'turn_off')) continue;
       if (view.compactLight && inlineLightActions.has(id)) continue;
       if (action.color && this.panel?.type !== 'device') continue;
+      if (action.color && view.compactColorLight) {
+        view.colorPalette = createLightColorPalette({ make, button, label, t: key => this.t(key),
+          request: (value, control) => this.requestAction(view.config, id, value, control) });
+        complex.set(id, view.colorPalette.element);
+        continue;
+      }
       if (id === 'set_effect' && this.panel?.type === 'device') {
         view.effectGallery = createLightEffectGallery(view.config.effect_groups, action.options, { make, button, icon,
           t: key => this.t(key), request: (value, control) => this.requestAction(view.config, id, value, control),
@@ -2655,8 +2664,10 @@ export class BayitDashboard extends HTMLElement {
       control.disabled = true;
       basic.append(control);
     }
-    if (view.effectGallery) organizeLightModes(complex, view.lightMode, mode => { view.lightMode = mode; },
-      { make, button, t: key => this.t(key), model });
+    if (view.effectGallery) organizeLightModes(complex, view.lightMode, mode => {
+      view.lightMode = mode;
+      if (mode !== 'set_light_color') view.colorPalette?.cancel();
+    }, { make, button, t: key => this.t(key), model });
     const hasAdvanced = !!advancedClimate?.childElementCount;
     if (hasAdvanced) {
       advancedClimate.open = view.climateExtraControls?.open ?? false;

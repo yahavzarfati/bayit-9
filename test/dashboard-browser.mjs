@@ -361,7 +361,8 @@ const hass = {
       const attributes = { ...states[id].attributes };
       if (brightness_pct !== undefined) attributes.brightness = Math.round(brightness_pct * 255 / 100);
       if (color_temp_kelvin !== undefined) attributes.color_temp_kelvin = color_temp_kelvin;
-      if (rgb_color) Object.assign(attributes, { rgb_color: [255, 135, 75], xy_color: [0.574, 0.359], color_mode: 'xy' });
+      if (rgb_color) Object.assign(attributes, query.has('compact-color-palette') ? { rgb_color, color_mode: 'rgb' }
+        : { rgb_color: [255, 135, 75], xy_color: [0.574, 0.359], color_mode: 'xy' });
       if (effect !== undefined) attributes.effect = effect;
       states[id] = { ...states[id], attributes, state: request.service === 'turn_off' ? 'off' : 'on' };
       card.hass = { ...hass, states: { ...states } };
@@ -531,6 +532,10 @@ if (query.has('room-grid')) {
       min_color_temp_kelvin: 2200, max_color_temp_kelvin: 7000, color_temp_kelvin: 3200,
       supported_features: 4, effect_list: ['Color loop', 'Slow pulse'], effect: 'off',
     });
+  }
+  if (query.has('compact-color-palette')) {
+    states['light.demo_pendant'].state = 'off';
+    delete states['light.demo_pendant'].attributes.color_mode;
   }
   if (query.has('light-status-refresh')) {
     states['button.fixture_refresh_lamp'] = { state:'unknown', attributes:{ friendly_name:'Lamp status request' } };
@@ -5612,6 +5617,129 @@ async function assertCompactRoomMedia(browser) {
   }
 }
 
+async function assertCompactColorPalette(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const url = base + '?room-grid&grouped-effects&inline-color-light&compact-color-palette&locale=' + locale;
+    const entity = 'light.demo_pendant';
+    const dialog = page.getByRole('dialog',{name:'Pendant lamp',exact:true});
+    const color = dialog.getByRole('button',{name:he ? 'צבע קבוע' : 'Fixed color',exact:true});
+    const effects = dialog.getByRole('button',{name:he ? 'אפקטים' : 'Effects',exact:true});
+    const palette = dialog.locator('.light-color-palette');
+    const hue = palette.getByRole('slider',{name:he ? 'גוון' : 'Hue',exact:true});
+    const saturation = palette.getByRole('slider',{name:he ? 'רוויה' : 'Saturation',exact:true});
+    const swatches = palette.getByRole('group',{name:he ? 'צבעים מהירים' : 'Quick colors',exact:true});
+    const red = swatches.getByRole('button',{name:he ? 'בחירת אדום' : 'Set to Red',exact:true});
+    const white = swatches.getByRole('button',{name:he ? 'בחירת לבן' : 'Set to White',exact:true});
+    const preview = palette.locator('.light-color-preview');
+    const commands = () => page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type === 'call_service'));
+    const choose = async flag => {
+      await page.goto(url + flag);
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+      await page.getByRole('dialog',{name:'Studio',exact:true})
+        .locator('.device[data-entity="light.demo_pendant"] .device-tile').press('Shift+Enter');
+      await dialog.waitFor();
+    };
+    const stage = (range,value) => range.evaluate((input,value)=>{
+      input.value = String(value);
+      input.dispatchEvent(new Event('input',{bubbles:true}));
+    },value);
+    const committed = async (count, rgb) => {
+      await page.waitForFunction(count=>window.bayitTest.calls.filter(call=>call.type==='call_service').length === count,count);
+      assert.deepEqual((await commands()).at(-1),{
+        type:'call_service',domain:'light',service:'turn_on',service_data:{rgb_color:rgb},target:{entity_id:entity},
+      });
+      await palette.locator('input:enabled').first().waitFor();
+    };
+    try {
+      await choose('');
+      await color.tap();
+      await dialog.locator('input[type=color]').waitFor();
+      assert.equal(await palette.count(),0);
+      await choose('&compact-color-light');
+      assert.equal(await effects.getAttribute('aria-pressed'),'true');
+      await color.tap();
+      await hue.waitFor();
+      assert.equal(await dialog.locator('input[type=color]').count(),0);
+      assert.equal(await preview.isHidden(),true);
+      await hue.focus();
+      await hue.dispatchEvent('change');
+      assert.deepEqual(await commands(),[]);
+
+      for (const width of [320,391]) {
+        await page.setViewportSize({width,height:844});
+        const positions = await palette.evaluate(node=> {
+          const outline = node.getBoundingClientRect();
+          return [...node.querySelectorAll('input,button')].map(element=>{
+            const box = element.getBoundingClientRect();
+            return {width:box.width,height:box.height,inside:box.left >= outline.left - 1 && box.right <= outline.right + 1};
+          });
+        });
+        assert.equal(positions.length,14);
+        assert.ok(positions.every(({width,height,inside})=>width >= 44 && height >= 44 && inside),JSON.stringify({locale,width,positions}));
+      }
+
+      await stage(hue,120);
+      assert.match(await preview.getAttribute('aria-label'),/#00ff00$/);
+      assert.deepEqual(await commands(),[]);
+      await hue.dispatchEvent('pointercancel');
+      assert.equal(await hue.inputValue(),'0');
+      await stage(hue,180);
+      await effects.tap();
+      await color.tap();
+      assert.equal(await hue.inputValue(),'0');
+      await hue.dispatchEvent('change');
+      assert.deepEqual(await commands(),[]);
+
+      await stage(hue,240);
+      assert.deepEqual(await commands(),[]);
+      await hue.dispatchEvent('change');
+      await committed(1,[0,0,255]);
+      assert.equal(await hue.getAttribute('aria-valuetext'),'240°');
+      await saturation.press('ArrowLeft');
+      await committed(2,[3,3,255]);
+      assert.equal(await saturation.getAttribute('aria-valuetext'),'99%');
+
+      await red.tap();
+      await committed(3,[255,0,0]);
+      assert.equal(await red.getAttribute('aria-pressed'),'true');
+      await page.evaluate(()=>window.bayitTest.rejectNextInlineLight());
+      await stage(saturation,80);
+      await saturation.dispatchEvent('change');
+      await committed(4,[255,51,51]);
+      assert.equal(await saturation.inputValue(),'100');
+      assert.equal(await red.getAttribute('aria-pressed'),'true');
+
+      await white.tap();
+      await committed(5,[255,255,255]);
+      await stage(hue,120);
+      await hue.dispatchEvent('change');
+      assert.equal((await commands()).length,5);
+      await stage(saturation,100);
+      await saturation.dispatchEvent('change');
+      await committed(6,[0,255,0]);
+      await hue.scrollIntoViewIfNeeded();
+      const rail = await hue.boundingBox();
+      const center = rail.y + rail.height / 2;
+      await page.mouse.move(rail.x + rail.width / 3,center);
+      await page.mouse.down();
+      await page.mouse.move(rail.x + rail.width * .8,center,{steps:5});
+      assert.equal((await commands()).length,6);
+      await page.mouse.up();
+      await page.waitForFunction(()=>window.bayitTest.calls.filter(call=>call.type==='call_service').length===7);
+      assert.equal((await commands()).at(-1).service,'turn_on');
+      assert.equal((await commands()).at(-1).service_data.rgb_color[2],255);
+      await page.evaluate(id=>window.bayitTest.setRoomState(id,'unavailable'),entity);
+      await palette.waitFor({state:'detached'});
+      assert.equal((await commands()).length,7);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertCompactColorLightDetail(browser) {
   for (const locale of ['en','he']) {
     const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
@@ -5687,7 +5815,7 @@ async function assertCompactColorLightDetail(browser) {
       await dialog.locator('.compact-light-power[data-action=turn_on]:enabled').waitFor();
 
       await dialog.locator('.light-mode-bar [data-light-mode=set_light_color]').tap();
-      await dialog.locator('input[type=color]').waitFor();
+      await dialog.locator('.light-color-palette').waitFor();
       await dialog.locator('.light-mode-bar [data-light-mode=set_color_temp_kelvin]').tap();
       await dialog.locator('input[data-action=set_color_temp_kelvin]').waitFor();
       assert.equal(await dialog.locator('.field-row:has(input[data-action=set_color_temp_kelvin]) > button').count(),1);
@@ -6421,7 +6549,7 @@ async function assertCompactLightReadings(browser) {
       assert.equal(await dual.locator('input[data-action=set_brightness]').getAttribute('min'),'0');
       assert.equal(await dual.locator('button[data-action=set_brightness]').count(),1);
       await page.evaluate(()=>window.bayitTest.setLightModes('light.demo_lamp',['color_temp','rgb']));
-      await details.locator('input[type=color]').waitFor();
+      await details.locator('.light-color-palette').waitFor();
       assert.equal(await dual.count(),0);
       assert.deepEqual(await calls(),[]);
 
@@ -7302,6 +7430,8 @@ try {
       await assertCompactRoomDevicePair(browser);
       await assertAuthoredKitchenDeviceGrid(browser);
       await assertKitchenApplianceTiles(browser);
+      await assertCompactColorPalette(browser);
+      console.log(engine + ': opt-in color palette fits and only sends committed changes');
       await assertCompactColorLightDetail(browser);
       console.log(engine + ': opted-in color light keeps compact direct brightness, modes and guarded refresh');
       await assertLightStatusRefresh(browser);
