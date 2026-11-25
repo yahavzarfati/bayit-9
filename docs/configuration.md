@@ -96,6 +96,10 @@ A Media screen can also include a remote. In the toolbar editor select a playbac
 
 In YAML add `media_remote: { transport_entity: media_player.streamer, volume_entity: media_player.television, allow_standby: true }` to a Media toolbar entry. Either device can be omitted. Existing Media device controls and power buttons operate separately.
 
+Use **Device display → Preset shortcut** on a climate device to add a one-tap native preset in its room and its dedicated details. The preset and highlight can be different. The highlight reflects the preset reported by Home Assistant. You can also set a short label and an MDI icon. Only presets currently advertised by the device can be sent.
+
+In YAML, set `climate_preset_shortcuts` on a room override. For example `climate_preset_shortcuts: {climate.study: {preset: none, label: SE, icon: 'mdi:leaf', highlight_when: eco}}` adds a shortcut to the default preset and highlights it while Eco is reported. Other rooms keep their own settings.
+
 For a vacuum in a room, choose a configured Vacuum panel under **Open on vacuum tap**. A regular press opens that panel, a press and hold opens the vacuum's Home Assistant details, and **Back to room** returns to the source row. In YAML, `vacuum_panel_links` maps the vacuum entity ID to a Vacuum toolbar entry ID.
 
 The Presence toolbar button uses different icons for zero, one, or multiple home occupants. It counts the people and device trackers configured for that panel and uses their reported Home Assistant states. **Change icon with the number of people at home** controls this behavior in the toolbar editor. In YAML, use `presence_dynamic_icon: true` or `false` on the Presence entry. An explicit `icon` defaults to a fixed icon and is retained when switching modes.

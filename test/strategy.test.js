@@ -440,6 +440,34 @@ test('supports additional dashboard-only rooms in the room order and retains emp
   assert.ok(automatic.some(room => room.id === custom));
 });
 
+test('scopes optional climate preset shortcuts to visible, writable room thermostats', () => {
+  const hass = home();
+  const thermostat = 'climate.demo_thermostat';
+  const readOnly = 'climate.demo_status';
+  const hidden = 'climate.demo_hidden';
+  for (const entity of [thermostat, readOnly, hidden]) {
+    hass.states[entity] = { state: 'off', attributes: { supported_features: 16, preset_modes: ['eco', 'none'] } };
+  }
+  const shortcut = { preset: 'none', label: 'SE', icon: 'mdi:leaf', highlight_when: 'eco' };
+  const extra = 'bayit_room_preset_test';
+  const section = { kind: 'climate', entities: [thermostat, readOnly, hidden] };
+  const rooms = discoverRooms({ area_ids: ['studio', extra], show_unassigned: false, room_overrides: {
+    studio: {
+      entities: [thermostat, readOnly, hidden, 'light.demo_lamp'], sections: [section],
+      read_only_entities: [readOnly], panel_hidden_entities: [hidden],
+      climate_preset_shortcuts: { [thermostat]: shortcut, [readOnly]: shortcut, [hidden]: shortcut,
+        'light.demo_lamp': shortcut, 'climate.missing': shortcut },
+    },
+    [extra]: { name: 'Second room', entities: [thermostat] },
+  } }, hass, 'en');
+  const [owner, other] = rooms;
+  const selected = owner.entities.find(item => item.entity === thermostat);
+  assert.deepEqual(selected.room_climate_preset, shortcut);
+  assert.deepEqual(owner.sections[0].entities[0].room_climate_preset, shortcut);
+  assert.equal(owner.entities.filter(item => item.room_climate_preset).length, 1);
+  assert.equal(other.entities[0].room_climate_preset, undefined);
+});
+
 test('projects explicit names and blank captions only onto visible members of the configured room', () => {
   const hass = home();
   const thermostat = 'climate.room_fixture';

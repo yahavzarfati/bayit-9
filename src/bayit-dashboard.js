@@ -1,7 +1,8 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
-import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isVacuumProgramAction, isVisibleEntity,
-  MAX_ROOM_SHORTCUTS, normalizeRoomControlName, overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
+import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isVacuumProgramAction,
+  isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName,
+  overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { createDeviceController, getDeviceModel, roomShutdownTargets, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
@@ -231,6 +232,10 @@ function normalizeEntity(item) {
   }
   if (typeof item.role === 'string') entry.role = item.role;
   const domain = domainFor(entry);
+  if (domain === 'climate' && entry.role !== 'status' && !['heater', 'boiler'].includes(entry.kind)) {
+    const shortcut = normalizeClimatePresetShortcut(item.room_climate_preset);
+    if (shortcut) entry.room_climate_preset = shortcut;
+  }
   if (domain === 'calendar') {
     const accent = calendarAccent(item.accent_color);
     if (accent) entry.accent_color = accent;
@@ -1166,7 +1171,7 @@ export class BayitDashboard extends HTMLElement {
     if (type === 'room') this.buildDevices(room.entities, room);
     if (selected) {
       const titleInDialog = ['light', 'climate'].includes(domainFor(selected)) || ['heater', 'boiler'].includes(selected.kind);
-      this.buildDevices([selected], undefined, { titleInDialog });
+      this.buildDevices([selected], undefined, { titleInDialog, showRoomPreset: !room.panelHidden?.has(entity) });
       if (boilerControls) this.buildBoilerView(selected);
     }
     if (type === 'overview') {
@@ -1297,7 +1302,7 @@ export class BayitDashboard extends HTMLElement {
   }
 
   buildDevice(config, parent, room, groupKey, {
-    titleInDialog = false, inlineClimate = false, toolbarLightTile = false, toolbarCoverRail = false,
+    titleInDialog = false, inlineClimate = false, toolbarLightTile = false, toolbarCoverRail = false, showRoomPreset = false,
   } = {}) {
     const item = make('section', 'device');
     const domain = domainFor(config);
@@ -1366,7 +1371,25 @@ export class BayitDashboard extends HTMLElement {
         head.append(glyph, details);
         if (boilerPanel) head.append(icon('mdi:arrow-top-right'));
         view.panelLaunch = { action: this.t(toolbarCoverRail ? 'more_info' : 'device_controls'), native: toolbarCoverRail };
-      } else head.append(glyph, details, more);
+      } else {
+        head.append(glyph, details);
+        const shortcut = (room || showRoomPreset) && config.room_climate_preset;
+        if (shortcut) {
+          const action = button('round-action climate-preset-shortcut', '', shortcut.icon || 'mdi:tune-variant', true);
+          const caption = make('span', '', shortcut.label || this.t('set_preset_mode'));
+          action.append(caption);
+          label(action, (shortcut.label ? shortcut.label + ' · ' : '') +
+            this.t('climate_apply_preset').replace('{preset}', this.presetName(shortcut.preset)));
+          action.onclick = () => {
+            if (this.canUseRoomPreset(config, this.model(config))) {
+              this.requestAction(config, 'set_preset_mode', shortcut.preset, action);
+            }
+          };
+          head.append(action);
+          view.presetShortcut = action;
+        }
+        head.append(more);
+      }
       const group = make('div', 'action-list');
       item.append(head, group);
       Object.assign(view, { more, group });
@@ -1454,6 +1477,18 @@ export class BayitDashboard extends HTMLElement {
     this.boilerView = {update:hass=>panel?.update(hass), dispose:()=>panel?.dispose()};
   }
 
+  presetName(preset) {
+    return preset === 'none' ? this.t('climate_preset_none')
+      : preset === 'eco' ? this.t('climate_preset_eco') : preset;
+  }
+
+  canUseRoomPreset(config, model) {
+    const hass = this._hass;
+    return model.actions.set_preset_mode?.options.includes(config.room_climate_preset.preset) === true &&
+      Object.hasOwn(hass?.services?.climate ?? {}, 'set_preset_mode') &&
+      isVisibleEntity(config.entity, hass?.states ?? {}, hass?.entities, this.config.hiddenEntities);
+  }
+
   moreInfo(config) {
     if (!this.model(config).actions.more_info) return;
     this.dismissPanel({ immediate: true, restoreFocus: false });
@@ -1485,6 +1520,18 @@ export class BayitDashboard extends HTMLElement {
         ? model.attributes.media_title.trim().slice(0, 160) : '';
       const pending = this.pending.get(view.config.entity);
       const feedback = this.coverFeedback(model, pending);
+      if (view.presetShortcut) {
+        const action = view.presetShortcut;
+        const shortcut = view.config.room_climate_preset;
+        const active = model.attributes.preset_mode;
+        const observed = model.actions.set_preset_mode?.options.includes(active);
+        action.hidden = !this.canUseRoomPreset(view.config, model);
+        action.disabled = action.hidden || !!pending;
+        action.toggleAttribute('data-highlighted', !!observed && active === (shortcut.highlight_when ?? shortcut.preset));
+        action.setAttribute('aria-busy', String(pending?.id === 'set_preset_mode'));
+        if (observed) action.setAttribute('aria-description', this.t('climate_current_preset').replace('{preset}', this.presetName(active)));
+        else action.removeAttribute('aria-description');
+      }
       setText(view.state, (feedback?.requestLabel || this.stateLabel(model, view.inlineClimate ? 'inline-climate' : undefined)) + (media ? ' · ' + media : ''));
       view.state.dataset.tone = feedback ? 'moving' : this.tone(model);
       if (view.tile) {

@@ -179,6 +179,15 @@ export function classicRoomTitle(name, breakAfter) {
   return words.slice(0, breakAfter).join(' ') + '\n' + words.slice(breakAfter).join(' ');
 }
 
+export function normalizeClimatePresetShortcut(value) {
+  const validPreset = preset => typeof preset === 'string' && preset.trim() && preset.length <= 120;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !validPreset(value.preset)) return undefined;
+  const label = typeof value.label === 'string' ? value.label.trim().slice(0, 16) : '';
+  const icon = typeof value.icon === 'string' ? value.icon.trim() : '';
+  return { preset: value.preset, ...(label && { label }), ...(ROOM_ICON.test(icon) && { icon }),
+    ...(validPreset(value.highlight_when) && { highlight_when: value.highlight_when }) };
+}
+
 export function usesAutomaticRoomDevices(override, sections, custom) {
   return !custom && (override.device_selection === 'auto' ||
     (!Array.isArray(override.entities) && !sections?.length));
@@ -197,6 +206,7 @@ function dashboardAreas(config, hass) {
     const icon = typeof override.icon === 'string' ? override.icon.trim() : '';
     const entityIcons = override.entity_icons;
     const entityNames = override.entity_names;
+    const presetShortcuts = override.climate_preset_shortcuts;
     const sections = roomSections(override.sections);
     const entityIds = usesAutomaticRoomDevices(override, sections, !area) ? undefined
       : Array.isArray(override.entities) ? idList(override.entities) : idList(sections?.flatMap(section => section.entities));
@@ -218,6 +228,7 @@ function dashboardAreas(config, hass) {
       })),
       entityIcons: entityIcons && typeof entityIcons === 'object' && !Array.isArray(entityIcons) ? entityIcons : null,
       entityNames: entityNames && typeof entityNames === 'object' && !Array.isArray(entityNames) ? entityNames : null,
+      presetShortcuts: presetShortcuts && typeof presetShortcuts === 'object' && !Array.isArray(presetShortcuts) ? presetShortcuts : null,
       custom: !area,
     });
   }
@@ -421,6 +432,11 @@ export function discoverRooms(config, hass, locale) {
         if (name !== undefined) device.room_name = name;
       }
       if (area.readOnly?.has(device.entity)) device.role = 'status';
+      if (domainOf(device.entity) === 'climate' && device.role !== 'status' && !['heater', 'boiler'].includes(device.kind) &&
+          !room.panel_hidden_entities?.includes(device.entity) && area.presetShortcuts && Object.hasOwn(area.presetShortcuts, device.entity)) {
+        const shortcut = normalizeClimatePresetShortcut(area.presetShortcuts[device.entity]);
+        if (shortcut) device.room_climate_preset = shortcut;
+      }
       const panelKind = ROOM_PANEL_KINDS.get(domainOf(device.entity));
       const links = area.panelLinks?.[panelKind];
       if (links && Object.hasOwn(links, device.entity)) {

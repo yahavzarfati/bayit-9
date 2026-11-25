@@ -550,9 +550,26 @@ export const styles = `
   .device-state-head .current { margin-block-start: 0; }
   .device[data-inline-climate] { padding: 0; border: 0; }
   .device[data-inline-climate] .device-head {
+    --climate-header-icon-width: 36px;
     direction: ltr;
     grid-template-columns: 36px minmax(0,1fr) 44px;
   }
+  .device-head:has(> .climate-preset-shortcut:not([hidden])) {
+    grid-template-columns: var(--climate-header-icon-width,32px) minmax(0,1fr) 44px 44px;
+  }
+  .device-state-head:has(> .climate-preset-shortcut:not([hidden])) {
+    grid-template-columns: minmax(0,1fr) 44px 44px;
+  }
+  .climate-preset-shortcut {
+    width: 44px; height: 44px; grid-template-rows: 16px 11px; align-content: center; gap: 2px;
+    color: var(--secondary);
+  }
+  .climate-preset-shortcut[data-highlighted] { color: var(--warm); }
+  .climate-preset-shortcut > ha-icon { width: 16px; height: 16px; --mdc-icon-size: 16px; }
+  .climate-preset-shortcut > span {
+    max-width: 36px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px;
+  }
+  .climate-preset-shortcut[hidden] { display: none; }
   .device[data-inline-climate] .device-icon {
     width: 36px;
     height: 36px;

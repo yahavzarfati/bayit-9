@@ -29,6 +29,7 @@ document.addEventListener('hass-more-info', event => {
 const coverRequests = [];
 let finishLevel;
 let finishPreselect;
+let finishClimatePreset;
 let finishRoomOff;
 let scriptSerial = 0;
 function observeScript(state) {
@@ -177,6 +178,16 @@ const hass = {
         };
       });
     }
+    if (request.domain === 'climate' && request.service === 'set_preset_mode' && query.has('preset-shortcut')) {
+      return new Promise(resolve => {
+        finishClimatePreset = () => {
+          const id = request.target.entity_id;
+          states[id].attributes = { ...states[id].attributes, preset_mode: request.service_data.preset_mode };
+          card.hass = { ...hass, states: { ...states } };
+          resolve({});
+        };
+      });
+    }
     if (request.domain === 'simple_timer' && request.service === 'start_timer') {
       const id = request.service_data.entity_id;
       const attrs = states[id].attributes;
@@ -275,6 +286,11 @@ if (query.has('device-panel')) {
   } };
   hass.entities['climate.demo_air'] = { area_id: 'studio' };
   const attributes = states['climate.demo_air'].attributes;
+  if (query.has('preset-shortcut')) {
+    Object.assign(attributes, { supported_features: attributes.supported_features | 16,
+      preset_modes: ['none', 'eco', 'boost'], preset_mode: 'eco' });
+    hass.services = { climate: query.has('missing-preset-service') ? {} : { set_preset_mode: {} } };
+  }
   if (query.has('compact-climate-summary')) {
     hass.config = { unit_system: { temperature: '°C' } };
     Object.assign(attributes, { current_temperature: 22.5, temperature: 23.5 });
@@ -482,7 +498,14 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     'light.demo_monitor': [{ title: 'Evening', effects: ['Slow pulse'] }],
   } }),
 } : query.has('device-panel') ? {
-  room_shortcuts: { studio: ['light.demo_lamp', 'climate.demo_air'] },
+  room_shortcuts: { studio: ['light.demo_lamp', 'climate.demo_air'],
+    ...(query.has('preset-shortcut') && { bayit_room_other_preset: ['climate.demo_air'] }) },
+  ...(query.has('preset-shortcut') && { area_ids: ['studio', 'bayit_room_other_preset'], room_overrides: {
+    studio: { entities: ['light.demo_lamp', 'climate.demo_air'], climate_preset_shortcuts: {
+      'climate.demo_air': { preset: 'none', label: 'SE', icon: 'mdi:leaf', highlight_when: 'eco' },
+    } },
+    bayit_room_other_preset: { name: 'Second room', entities: ['climate.demo_air'] },
+  } }),
   ...(query.has('inline-timer-caption') && { room_overrides: { studio: {
     entity_names: { 'climate.demo_air': 'Near the window' },
   } } }),
@@ -593,7 +616,7 @@ if (query.has('editor')) {
   document.querySelector('#surface').hidden = true;
   const editor = Strategy.getConfigElement();
   editor.setConfig({ type: 'custom:bayit-9',
-    ...((query.has('toolbar-panels') || query.has('overview-opt-in') || query.has('lighting-count')) && selected) });
+    ...((query.has('toolbar-panels') || query.has('overview-opt-in') || query.has('lighting-count') || query.has('preset-shortcut')) && selected) });
   editor.hass = hass;
   editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
   document.querySelector('#editor').append(editor);
@@ -632,6 +655,7 @@ window.bayitTest = {
   },
   finishLevel: () => finishLevel(),
   finishPreselect: () => finishPreselect(),
+  finishClimatePreset: () => finishClimatePreset(),
   finishRoomOff: failed => finishRoomOff(failed),
   heatingState: () => [states[heaterFan].state, states[heaterRelay].state, states[heaterTimer].attributes.timer_state],
   setHeaterPower: state => {
@@ -1979,6 +2003,78 @@ try {
       ]));
       await labelPage.close();
       console.log(engine + ' 320: horizontal and vertical climate controls keep independent native values and respect advertised capabilities');
+
+      const presetPage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+      const presetURL = base + '?device-panel&preset-shortcut';
+      const presetName = rightToLeft ? 'SE · בחירת תוכנית ברירת מחדל' : 'SE · Set preset to Default';
+      const preset = panel => panel.getByRole('button', { name: presetName, exact: true });
+      const climatePanel = presetPage.getByRole('dialog', { name: 'Studio air conditioner', exact: true });
+      const studioRoom = presetPage.getByRole('dialog', { name: 'Studio', exact: true });
+      const openDetails = room => presetPage.locator('.room[data-room="' + room + '"] .quick-button[data-entity="climate.demo_air"]')
+        .press('Shift+Enter');
+      const reportPreset = (options, observed) => presetPage.evaluate(async ({ options, observed }) => {
+        window.bayitTest.setFixtureAttributes('climate.demo_air', { preset_modes: options, preset_mode: observed });
+        await new Promise(requestAnimationFrame);
+      }, { options, observed });
+      await presetPage.goto(presetURL + '&locale=' + (rightToLeft ? 'he' : 'en'));
+      await presetPage.getByRole('button', { name: 'Studio', exact: true }).tap();
+      await preset(studioRoom).waitFor();
+      assert.equal(await preset(studioRoom).getAttribute('data-highlighted'), '');
+      assert.ok((await preset(studioRoom).boundingBox()).height >= 44);
+      assert.equal(await preset(studioRoom).locator('ha-icon').getAttribute('icon'), 'mdi:leaf');
+      assert.equal(await preset(studioRoom).getAttribute('aria-description'),
+        rightToLeft ? 'תוכנית נוכחית: חיסכון' : 'Current preset: Eco');
+      assert.deepEqual(await presetPage.evaluate(() => window.bayitTest.calls), []);
+      await preset(studioRoom).tap();
+      assert.equal(await preset(studioRoom).getAttribute('data-highlighted'), '');
+      assert.ok(await preset(studioRoom).isDisabled());
+      assert.deepEqual(await presetPage.evaluate(() => window.bayitTest.calls), [{
+        type: 'call_service', domain: 'climate', service: 'set_preset_mode',
+        target: { entity_id: 'climate.demo_air' }, service_data: { preset_mode: 'none' },
+      }]);
+      await presetPage.evaluate(() => window.bayitTest.finishClimatePreset());
+      await presetPage.waitForFunction(() => {
+        const control = document.querySelector('bayit-dashboard').shadowRoot.querySelector('.climate-preset-shortcut');
+        return !control.disabled && !control.hasAttribute('data-highlighted');
+      });
+      await presetPage.keyboard.press('Escape');
+      await studioRoom.waitFor({ state: 'hidden' });
+      await openDetails('studio');
+      await preset(climatePanel).waitFor();
+      await reportPreset(['none', 'eco', 'boost'], 'eco');
+      assert.equal(await preset(climatePanel).getAttribute('data-highlighted'), '');
+      await reportPreset(['none', 'eco', 'boost'], null);
+      assert.equal(await preset(climatePanel).getAttribute('data-highlighted'), null);
+      assert.equal(await preset(climatePanel).getAttribute('aria-description'), null);
+      await reportPreset(['eco', 'boost'], 'eco');
+      assert.equal(await preset(climatePanel).count(), 0);
+      await presetPage.keyboard.press('Escape');
+      await climatePanel.waitFor({ state: 'hidden' });
+      await reportPreset(['none', 'eco', 'boost'], 'eco');
+      await openDetails('bayit_room_other_preset');
+      await climatePanel.waitFor();
+      assert.equal(await preset(climatePanel).count(), 0);
+      assert.equal(await presetPage.evaluate(() => window.bayitTest.calls.length), 1);
+      await presetPage.goto(presetURL + '&missing-preset-service');
+      await presetPage.getByRole('button', { name: 'Studio', exact: true }).tap();
+      await studioRoom.waitFor();
+      assert.equal(await studioRoom.locator('.climate-preset-shortcut:visible').count(), 0);
+      assert.deepEqual(await presetPage.evaluate(() => window.bayitTest.calls), []);
+      await presetPage.goto(presetURL + '&editor');
+      await presetPage.getByText('Rooms', { exact: true }).click();
+      await presetPage.getByLabel('Room to customize', { exact: true }).selectOption('studio');
+      await presetPage.getByText('Device display', { exact: true }).click();
+      await presetPage.getByLabel('Device to customize', { exact: true }).selectOption('climate.demo_air');
+      const presetPicker = presetPage.getByLabel('Preset shortcut', { exact: true });
+      assert.equal(await presetPicker.inputValue(), 'none');
+      assert.equal(await presetPage.getByLabel('Highlight when this preset is reported', { exact: true }).inputValue(), 'eco');
+      await presetPicker.selectOption('boost');
+      assert.deepEqual(await presetPage.evaluate(() => window.latest.room_overrides.studio
+        .climate_preset_shortcuts['climate.demo_air']), { preset: 'boost', label: 'SE', icon: 'mdi:leaf', highlight_when: 'eco' });
+      await presetPicker.selectOption('');
+      assert.equal(await presetPage.evaluate(() => window.latest.room_overrides.studio.climate_preset_shortcuts), undefined);
+      await presetPage.close();
+      console.log(engine + ' 320: room-scoped climate preset, native feedback, capability guards and editor');
 
       const heaterPage = await browser.newPage({ viewport: { width: 375, height: 812 } });
       await heaterPage.goto(base + '?heater-level&locale=' + (rightToLeft ? 'he' : 'en'));

@@ -1,6 +1,6 @@
 import {
   BACKGROUNDS, classicRoomTitle, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
-  normalizeRoomControlName,
+  normalizeClimatePresetShortcut, normalizeRoomControlName,
   PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomPanelOptions, roomSections, selectableRoomEntities, selectedRoomIds, STRATEGY_NAME,
   usesAutomaticRoomDevices,
 } from './strategy-model.js';
@@ -28,6 +28,9 @@ const WORDS = {
     roomControlDisplay: 'Device display', roomControlDevice: 'Device to customize', roomControlName: 'Name in this room',
     roomControlShow: 'Show name in this room',
     roomInlineLight: 'Show brightness and temperature in this room',
+    climatePresetShortcut: 'Preset shortcut', climatePresetNone: 'No shortcut', climatePresetLabel: 'Shortcut label',
+    climatePresetIcon: 'Shortcut icon', climatePresetHighlight: 'Highlight when this preset is reported',
+    climatePresetHighlightDefault: 'When the shortcut preset is active', climatePresetUnavailable: 'Unavailable preset',
     roomPanelShow: 'Show device in room panel', roomPanelHint: 'For quick access from Home, add the device in Room shortcuts.',
     lightCount: 'Lights in the room count', lightCountHint: 'With no lights selected, the count includes every room light.',
     lightCountReset: 'Use automatic lighting count',
@@ -100,6 +103,9 @@ const WORDS = {
     roomControlDisplay: 'תצוגת מכשירים', roomControlDevice: 'מכשיר להתאמה אישית', roomControlName: 'שם המכשיר בחדר הזה',
     roomControlShow: 'הצגת שם המכשיר בחדר הזה',
     roomInlineLight: 'הצגת בהירות וגוון אור בתוך החדר',
+    climatePresetShortcut: 'קיצור לתוכנית מזגן', climatePresetNone: 'ללא קיצור', climatePresetLabel: 'שם הקיצור',
+    climatePresetIcon: 'סמל הקיצור', climatePresetHighlight: 'הדגשה כשהמזגן מדווח על תוכנית זו',
+    climatePresetHighlightDefault: 'כשתוכנית הקיצור פעילה', climatePresetUnavailable: 'תוכנית לא זמינה',
     roomPanelShow: 'הצגת המכשיר בחלונית החדר', roomPanelHint: 'לגישה מהירה ממסך הבית, הוסיפו את המכשיר בהגדרה קיצורים בחדרים.',
     lightCount: 'תאורה שנכללת במונה החדר', lightCountHint: 'כשלא מסומן אף פריט, המונה כולל את כל התאורה בחדר.',
     lightCountReset: 'חזרה לספירת תאורה אוטומטית',
@@ -574,6 +580,50 @@ export class Bayit9StrategyEditor extends HTMLElement {
     return node('div', { className:'stack' }, [field(title, input), node('small', { textContent:hint }), resetButton]);
   }
 
+  #climatePresetFields(room, config, words) {
+    const id = config.entity;
+    const setting = 'climate_preset_shortcuts';
+    const saved = normalizeClimatePresetShortcut(this.#roomOverride(room.id)[setting]?.[id]);
+    const options = getDeviceModel(config, this.#hass.states).actions.set_preset_mode?.options ?? [];
+    if (!saved && !options.length) return [];
+    const save = (edits, focus) => {
+      const next = { ...this.#roomOverride(room.id) };
+      const shortcuts = { ...next[setting] };
+      const value = normalizeClimatePresetShortcut({ ...saved, ...edits });
+      if (value) shortcuts[id] = value;
+      else delete shortcuts[id];
+      if (Object.keys(shortcuts).length) next[setting] = shortcuts;
+      else delete next[setting];
+      this.#setRoomOverride(room.id, next, focus);
+    };
+    const pick = (key, title, none) => {
+      const current = saved?.[key] ?? '';
+      const choices = [['', none], ...options.map(value => [value, value])];
+      if (current && !options.includes(current)) choices.push([current, current + ' · ' + words.climatePresetUnavailable]);
+      const control = select(choices, current);
+      control.dataset.roomFocus = 'climate-preset-' + key;
+      control.addEventListener('change', () => save({ [key]: control.value }, control.dataset.roomFocus));
+      return field(title, control);
+    };
+    const fields = [pick('preset', words.climatePresetShortcut, words.climatePresetNone)];
+    if (saved) {
+      for (const [key, title, settings] of [
+        ['label', words.climatePresetLabel, { maxLength: 16 }],
+        ['icon', words.climatePresetIcon, { maxLength: 80, pattern: 'mdi:[a-z0-9-]+', placeholder: 'mdi:tune-variant' }],
+      ]) {
+        const control = node('input', { ...settings, value: saved[key] ?? '' });
+        control.dataset.roomFocus = 'climate-preset-' + key;
+        control.addEventListener('change', () => {
+          if (control.checkValidity()) save({ [key]: control.value }, control.dataset.roomFocus);
+          else control.reportValidity();
+        });
+        fields.push(field(title, control));
+      }
+      fields.push(pick('highlight_when', words.climatePresetHighlight, words.climatePresetHighlightDefault));
+    }
+    return fields;
+  }
+
   #roomControlDisplay(room, chosen, words) {
     const body = node('div', { className: 'stack' });
     const paint = () => {
@@ -634,6 +684,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
           saveText();
         });
         fields.replaceChildren(showDevice, show, field(words.roomControlName, input));
+        const profile = profiles.find(item => item.entity === id);
+        if (id.startsWith('climate.') && !configuredIds(override.read_only_entities).includes(id) &&
+            !['heater', 'boiler'].includes(profile?.kind)) {
+          fields.append(...this.#climatePresetFields(room, profile ?? { entity: id }, words));
+        }
         const inlineLight = configuredIds(override.inline_light_entities).includes(id);
         const lightActions = id.startsWith('light.') && getDeviceModel({ entity: id }, this.#hass.states).actions;
         if (lightActions && !configuredIds(override.read_only_entities).includes(id) &&
@@ -771,8 +826,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         next[key] = next[key].filter(id => entities.includes(id));
         if (!next[key].length) delete next[key];
       }
-      for (const kind of ROOM_PANEL_KINDS.values()) {
-        const key = kind + '_panel_links';
+      for (const key of ['climate_preset_shortcuts', ...[...ROOM_PANEL_KINDS.values()].map(kind => kind + '_panel_links')]) {
         if (!next[key]) continue;
         next[key] = Object.fromEntries(Object.entries(next[key]).filter(([id]) => entities.includes(id)));
         if (!Object.keys(next[key]).length) delete next[key];
