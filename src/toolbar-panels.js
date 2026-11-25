@@ -76,7 +76,7 @@ export function createNativeCards(host, hass, make) {
   return {
     mount(config, fallback) {
       const slot = make('div', 'native-panel-card');
-      slot.append(fallback);
+      if (fallback) slot.append(fallback);
       void (async () => {
         try {
           const helpers = await loadHelpers();
@@ -555,56 +555,49 @@ export function createToolbarPanel(kind, configuration, context) {
       handlers.push(paint);
       paint();
     });
-    const build = (mode, count) => nativeCard({
-      type: 'weather-forecast', entity: item.entity, name: item.name, show_current: true,
+    const build = (mode, count, current = true) => nativeCard({
+      type: 'weather-forecast', entity: item.entity, name: item.name, show_current: current,
       show_forecast: Boolean(mode), forecast_type: mode ?? 'daily', forecast_slots: count, tap_action: { action: 'none' },
-    }, fallback());
+    }, current ? fallback() : undefined);
     if (!item.hourly_forecast) return build(knownForecast(getState()?.attributes?.supported_features), 5);
 
-    const region = make('div', 'weather-forecast-modes');
-    const choices = make('div', 'weather-forecast-choices');
-    choices.setAttribute('role', 'group');
-    choices.setAttribute('aria-label', t('forecast_period'));
-    const forecast = make('div', 'weather-forecast-view');
-    forecast.dataset.weatherForecastScroll = '';
-    forecast.tabIndex = -1;
+    const region = make('div', 'weather-forecast-stack');
+    region.dataset.weatherForecastScroll = '';
+    const current = fallback();
+    const hourly = make('div', 'weather-forecast-view');
+    const daily = make('div', 'weather-forecast-view');
     const views = new Map();
-    let selected = 'daily';
-    let rendered;
-    const modes = new Map(['daily', 'hourly'].map(mode => {
-      const control = button('control-button', t('forecast_' + mode));
-      control.onclick = () => {
-        if (selected === mode) return;
-        selected = mode;
-        update();
-      };
-      choices.append(control);
-      return [mode, control];
-    }));
+    function show(slot, mode, { count, showsCurrent, labelKey }) {
+      if (slot.dataset.mode === mode) return;
+      if (!mode) {
+        delete slot.dataset.mode;
+        slot.replaceChildren();
+        return;
+      }
+      slot.dataset.mode = mode;
+      if (!views.has(mode)) {
+        const card = build(mode, count, showsCurrent);
+        card.setAttribute('role', 'group');
+        card.setAttribute('aria-label', t(labelKey));
+        views.set(mode, card);
+      }
+      slot.replaceChildren(views.get(mode));
+    }
 
     function update() {
       const state = getState();
       const features = state && !['unknown', 'unavailable'].includes(state.state)
         ? state.attributes?.supported_features : undefined;
-      const canChoose = Number.isInteger(features) && (features & 3) === 3;
-      const returnFocus = !canChoose && choices.contains(choices.getRootNode().activeElement);
-      choices.hidden = !canChoose;
-      if (!canChoose) selected = 'daily';
-      for (const [mode, control] of modes) control.setAttribute('aria-pressed', String(mode === selected));
-
-      const mode = canChoose ? selected : knownForecast(features);
-      const count = canChoose && mode === 'hourly' ? 24 : 5;
-      const key = mode ? mode + ':' + count : 'current';
-      if (key !== rendered) {
-        rendered = key;
-        if (!views.has(key)) views.set(key, mode ? build(mode, count) : fallback());
-        // Only the connected native card subscribes to Home Assistant forecasts.
-        forecast.replaceChildren(views.get(key));
-      }
-      if (returnFocus) forecast.focus({ preventScroll: true });
+      const preferred = knownForecast(features);
+      const days = preferred && preferred !== 'hourly' ? preferred : undefined;
+      const hours = Number.isInteger(features) && (features & 2) === 2 ? 'hourly' : undefined;
+      current.hidden = Boolean(days);
+      // A capability change detaches only the forecast whose type changed.
+      show(hourly, hours, { count: 24, showsCurrent: false, labelKey: 'forecast_hourly' });
+      show(daily, days, { count: 5, showsCurrent: true, labelKey: days === 'daily' ? 'forecast_daily' : 'toolbar_forecast' });
     }
 
-    region.append(choices, forecast);
+    region.append(current, hourly, daily);
     handlers.push(update);
     update();
     return region;
@@ -995,10 +988,9 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .weather-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   [data-weather-swipe] { touch-action: pan-y pinch-zoom; }
   [data-weather-swipe]:has([data-weather-forecast-scroll]) { touch-action: auto; }
-  .weather-forecast-modes { display: grid; gap: 8px; min-width: 0; }
-  .weather-forecast-choices:not([hidden]) { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  .weather-forecast-choices .control-button { justify-content: center; }
-  .weather-forecast-view { min-width: 0; }
+  .weather-forecast-stack { display: grid; gap: 8px; min-width: 0; }
+  .weather-forecast-view { display: contents; }
+  .weather-forecast-view > .native-panel-card:empty { display: none; }
   .forecast-clock { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 3px 3px 8px; }
   .forecast-clock strong { font-variant-numeric: tabular-nums; font-size: 19px; }
   .forecast-clock span { font-size: 13px; color: var(--secondary); }
