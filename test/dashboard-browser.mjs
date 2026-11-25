@@ -959,7 +959,9 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
 } : query.has('room-status') ? roomStatusSelected : query.has('heater-level') ? {
   ...(query.has('compact-heater-steps') && { shape: 'circle' }),
   ...(query.has('embedded-heater') && { room_overrides: {
-    studio: { entities: ['light.demo_lamp', heaterFan], sections: [
+    studio: { entities: ['light.demo_lamp', heaterFan],
+      ...(query.has('heater-popup-title') && { device_popup_names: { [heaterFan]: query.get('heater-popup-title') } }),
+      sections: [
       { kind: 'lights', entities: ['light.demo_lamp'] },
       { kind: 'heating', title: '', entities: [heaterFan] },
     ] },
@@ -3403,7 +3405,8 @@ async function assertStandaloneTimedHeater(browser) {
       await dialog.waitFor();
     };
     try {
-      await page.goto(base + '/fixture-home/home?heater-level&preselect&embedded-heater&native-more-info=modern&native-focus-anchor&locale=' + locale);
+      const url = base + '/fixture-home/home?heater-level&preselect&embedded-heater&native-more-info=modern&native-focus-anchor&locale=' + locale;
+      await page.goto(url);
       const shortcut = page.locator('.quick-button[data-entity="' + entity + '"]');
       await shortcut.tap();
       await range.waitFor();
@@ -3414,29 +3417,35 @@ async function assertStandaloneTimedHeater(browser) {
       assert.equal(await info.locator('ha-icon').getAttribute('icon'), await shortcut.locator('ha-icon').getAttribute('icon'));
       await history.waitFor();
       await usage.waitFor();
-      for (const width of [320, 391]) {
-        await page.setViewportSize({ width, height: 845 });
-        const layout = await dialog.evaluate(panel => {
-          const heading = panel.querySelector('.modal-heading');
-          const title = heading.querySelector('h2').getBoundingClientRect();
-          const status = heading.querySelector('.current').getBoundingClientRect();
-          const glyph = heading.querySelector('button').getBoundingClientRect();
-          const controls = [...panel.querySelectorAll(
+      const measureLayout = panel => {
+        const heading = panel.querySelector('.modal-heading');
+        const titleNode = heading.querySelector('h2');
+        const title = titleNode.getBoundingClientRect();
+        const status = heading.querySelector('.current').getBoundingClientRect();
+        const glyph = heading.querySelector('button').getBoundingClientRect();
+        const bounds = heading.getBoundingClientRect();
+        const describe = rect => [rect.left, rect.top, rect.right, rect.bottom].map(Math.round);
+        const controls = [...panel.querySelectorAll(
             '.heater-heading-info, [data-role=close], .timer-usage, .timer-history, .timer-range, .timer-command, .timer-preset, .heat-level-choice'
-          )].filter(el => !el.hidden);
-          const targetSizes = controls.map(el => {
+        )].filter(el => !el.hidden);
+        const targetSizes = controls.map(el => {
             const rect = el.getBoundingClientRect();
             return [el.className, rect.width, rect.height];
-          });
-          const levelButtons = [...panel.querySelectorAll('.heat-level-choice')];
-          return {
-            aligned: title.x === status.x && glyph.x + glyph.width < title.x &&
-              status.top >= title.bottom && status.bottom <= glyph.bottom + 4,
-            fits: [panel.querySelector('.modal-body'),panel.querySelector('.device')].every(el => el.scrollWidth <= el.clientWidth + 1),
+        });
+        const levelButtons = [...panel.querySelectorAll('.heat-level-choice')];
+        return {
+            title: describe(title), status: describe(status), glyph: describe(glyph), heading: describe(bounds),
+            aligned: Math.abs(title.left - status.left) <= 1 && glyph.right < title.left &&
+              status.top >= title.bottom - 1 && title.top >= bounds.top - 1 && status.bottom <= bounds.bottom + 1,
+            wrappedTitle: title.height > parseFloat(getComputedStyle(titleNode).lineHeight) * 1.5,
+            fits: [panel.querySelector('.modal-body'), panel.querySelector('.device')].every(el => el.scrollWidth <= el.clientWidth + 1),
             targetSizes, levelCount: levelButtons.length, stepRadius: getComputedStyle(levelButtons[0]).borderTopLeftRadius,
             height: panel.getBoundingClientRect().height,
-          };
-        });
+        };
+      };
+      for (const width of [320, 391]) {
+        await page.setViewportSize({ width, height: 845 });
+        const layout = await dialog.evaluate(measureLayout);
         assert.equal(layout.aligned, true, JSON.stringify({ locale, width, layout }));
         assert.equal(layout.fits, true);
         assert.ok(layout.targetSizes.every(([, w, h]) => w >= 43.9 && h >= 43.9), JSON.stringify({ locale, width, layout }));
@@ -3478,6 +3487,14 @@ async function assertStandaloneTimedHeater(browser) {
       await room.getByRole('heading', { name, level: 4, exact: true }).waitFor();
       assert.equal(await room.getAttribute('data-standalone-heater'), null);
       assert.equal(await room.locator('.heater-heading-info').count(), 0);
+
+      const extendedName = he ? 'תנור האמבטיה ליד החלון המזרחי' : 'Bathroom heater near the east window';
+      await page.setViewportSize({ width: 320, height: 845 });
+      await page.goto(url + '&heater-popup-title=' + encodeURIComponent(extendedName) + '#device/studio/' + entity);
+      const extended = page.getByRole('dialog', { name: extendedName, exact: true });
+      await extended.getByRole('heading', { name: extendedName, exact: true }).waitFor();
+      const longLayout = await extended.evaluate(measureLayout);
+      assert.ok(longLayout.wrappedTitle && longLayout.aligned && longLayout.fits, JSON.stringify({ locale, longLayout }));
     } finally {
       await page.close();
     }
