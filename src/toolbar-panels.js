@@ -538,6 +538,8 @@ export function createToolbarPanel(kind, configuration, context) {
       chart.hidden = readings.hidden = !visible || !available;
       empty.hidden = !chart.hidden;
       if (!empty.hidden) {
+        marker.hidden = true;
+        for (const { value } of rows) value.textContent = '—';
         empty.textContent = t(visible && state === 'unknown' ? 'unknown' : 'unavailable');
         return;
       }
