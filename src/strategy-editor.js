@@ -39,7 +39,8 @@ const WORDS = {
     applianceBadges: 'Appliance activity badges', applianceKind: 'Appliance', saveAppliance: 'Save badge', removeAppliance: 'Remove badge',
     applianceMissing: 'Choose the required sources to save this badge.',
     applianceFields: { operation_entity: 'Operating state', finish_entity: 'Expected finish time',
-      power_entity: 'Power state', done_entity: 'Completion sensor', progress_entity: 'Progress (%)' },
+      power_entity: 'Power state', done_entity: 'Completion sensor', progress_entity: 'Progress (%)',
+      boiler_entity: 'Boiler in this room', started_at_entity: 'Boiler start date and time helper' },
     roomMediaLink: 'Open on media press and hold', roomMediaNone: 'No panel', roomMediaDefault: 'Media',
     roomVacuumLink: 'Open on vacuum tap', roomVacuumDefault: 'Robot vacuum',
     sections: 'Room sections', sectionMode: 'Section arrangement', automaticSections: 'Automatic grouping',
@@ -106,7 +107,8 @@ const WORDS = {
     applianceBadges: 'חיווי פעילות מכשירים', applianceKind: 'מכשיר', saveAppliance: 'שמירת חיווי', removeAppliance: 'הסרת חיווי',
     applianceMissing: 'בחרו את מקורות הנתונים הנדרשים לשמירת החיווי.',
     applianceFields: { operation_entity: 'מצב פעולה', finish_entity: 'זמן סיום צפוי',
-      power_entity: 'מצב הפעלה', done_entity: 'חיישן סיום', progress_entity: 'התקדמות (%)' },
+      power_entity: 'מצב הפעלה', done_entity: 'חיישן סיום', progress_entity: 'התקדמות (%)',
+      boiler_entity: 'דוד בחדר הזה', started_at_entity: 'עזר תאריך ושעת הפעלת הדוד' },
     roomMediaLink: 'פתיחה בלחיצה ארוכה על מכשיר מדיה', roomMediaNone: 'ללא חלונית', roomMediaDefault: 'מדיה',
     roomVacuumLink: 'פתיחה בלחיצה על השואב', roomVacuumDefault: 'שואב',
     sections: 'קבוצות בחדר', sectionMode: 'סידור הקבוצות', automaticSections: 'קיבוץ אוטומטי',
@@ -863,9 +865,17 @@ export class Bayit9StrategyEditor extends HTMLElement {
         memory.kind = kind.value;
         const current = activities.find(item => item.kind === kind.value);
         const { required, optional } = activityKinds[kind.value];
+        const boilerDevices = kind.value === 'boiler'
+          ? discoverRooms(this.#config, this.#hass, language).find(candidate => candidate.id === room.id)?.entities
+          : undefined;
         const fields = [...required, ...(optional ?? [])].map(key => {
-          const items = options.filter(item => activitySources[key].includes(item.entity.split('.')[0]))
-            .map(item => [item.entity, item.name && item.name !== item.entity ? item.name + ' · ' + item.entity : item.entity])
+          const items = options.filter(item => {
+            if (!activitySources[key].includes(item.entity.split('.')[0])) return false;
+            if (key === 'boiler_entity') return boilerDevices?.some(device => device.entity === item.entity && device.kind === 'boiler');
+            if (key !== 'started_at_entity') return true;
+            const attributes = this.#hass.states?.[item.entity]?.attributes;
+            return attributes?.has_date === true && attributes?.has_time === true;
+          }).map(item => [item.entity, item.name && item.name !== item.entity ? item.name + ' · ' + item.entity : item.entity])
             .sort((a, b) => a[1].localeCompare(b[1], language));
           if (current?.[key] && !items.some(([id]) => id === current[key])) items.unshift([current[key], current[key]]);
           const input = select([['', words.none], ...items], current?.[key] ?? '');

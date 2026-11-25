@@ -261,7 +261,8 @@ export function normalizeDashboardConfig(config = {}) {
       if (!unique.has(entry.entity)) unique.set(entry.entity, entry);
     }
     const parsed = { id, name, icon: validIcon(room.icon, 'mdi:door-open'), entities: [...unique.values()],
-      activities: normalizeRoomActivities(room.activities) };
+      activities: normalizeRoomActivities(room.activities).filter(activity => activity.kind !== 'boiler' ||
+        unique.get(activity.boiler_entity)?.kind === 'boiler') };
     if (Array.isArray(room.panel_hidden_entities)) {
       const panelHidden = new Set(room.panel_hidden_entities.filter(entity => unique.has(entity)));
       if (panelHidden.size) parsed.panelHidden = panelHidden;
@@ -501,7 +502,7 @@ export class BayitDashboard extends HTMLElement {
     window.visualViewport?.addEventListener('resize', this.resize);
     this.ownerDocument.addEventListener('visibilitychange', this.applianceVisibility);
     for (const view of this.roomViews.values()) {
-      if (view.appliances.length) this.applianceObserver?.observe(view.article);
+      if (view.appliances.length || view.boilerActivity) this.applianceObserver?.observe(view.article);
     }
     if (this.config) this.applyPreferences();
     this.pageChrome.update({ enabled: this.config?.page && this.config.fullscreen });
@@ -811,7 +812,8 @@ export class BayitDashboard extends HTMLElement {
       const temperature = roomBadge('temperature', 'mdi:thermometer');
       const activity = roomBadge('activity', 'mdi:timer-outline');
       const availability = roomBadge('availability', 'mdi:alert-circle-outline');
-      const appliances = room.activities.map(mapping => ({
+      const boilerActivity = room.activities.find(item => item.kind === 'boiler');
+      const appliances = room.activities.filter(item => item !== boilerActivity).map(mapping => ({
         mapping, badge: roomBadge(mapping.kind, activityKinds[mapping.kind].icon),
       }));
       status.append(temperature.element, activity.element, ...appliances.map(item => item.badge.element), availability.element);
@@ -834,9 +836,9 @@ export class BayitDashboard extends HTMLElement {
       n.rooms.append(article);
       this.roomViews.set(room.id, {
         room, article, heading, count, temperature, activityBadges: [activity],
-        activityAnchor: appliances[0]?.badge.element ?? availability.element, appliances, availability, shortcut,
+        activityAnchor: appliances[0]?.badge.element ?? availability.element, appliances, boilerActivity, availability, shortcut,
       });
-      if (this.isConnected && appliances.length) this.applianceObserver?.observe(article);
+      if (this.isConnected && (appliances.length || boilerActivity)) this.applianceObserver?.observe(article);
     }
     n.empty.hidden = this.roomViews.size > 0;
   }
@@ -911,14 +913,13 @@ export class BayitDashboard extends HTMLElement {
     }, Math.max(30, nextAt - Date.now()));
   }
 
-  applianceBadge(kind, status) {
+  applianceBadge(kind, status, name = this.t('activity_' + kind)) {
     const { type, minutes } = status;
-    const name = this.t('activity_' + kind);
     const state = this.t('activity_' + type);
     if (minutes === undefined) return { text: state, label: name + ' · ' + state,
       tone: type === 'finished' ? 'finished' : 'warm' };
     const clock = ltr(String(Math.floor(minutes / 60)).padStart(2, '0') + ':' + String(minutes % 60).padStart(2, '0'));
-    const text = type === 'elapsed' && minutes < 60 ? ltr(minutes) + ' ' + this.t('activity_short_minutes') : clock;
+    const text = type === 'elapsed' && kind !== 'boiler' && minutes < 60 ? ltr(minutes) + ' ' + this.t('activity_short_minutes') : clock;
     return { text, label: name + ' · ' + state + ' · ' + text, tone: 'warm' };
   }
 
@@ -937,6 +938,7 @@ export class BayitDashboard extends HTMLElement {
       let temperature;
       let ambient;
       const activities = [];
+      const countMinutes = !this.applianceObserver || this.applianceRoomsInView.has(view.article);
       for (const config of view.room.entities) {
         const model = this.model(config);
         const tone = this.tone(model);
@@ -954,7 +956,12 @@ export class BayitDashboard extends HTMLElement {
           }
           if (model.domain === 'climate') ambient ||= this.temperatureBadge(model.attributes?.current_temperature);
         }
-        if (model.timer?.state === 'active') {
+        const trackBoiler = view.boilerActivity?.boiler_entity === model.entity;
+        const elapsed = trackBoiler && applianceActivity(view.boilerActivity, this._hass?.states, now);
+        if (elapsed) {
+          activities.push({ ...this.applianceBadge('boiler', elapsed, model.name), glyph: activityDeviceIcon(model) });
+          if (countMinutes) applianceNext = Math.min(applianceNext, elapsed.nextAt);
+        } else if (model.timer?.state === 'active') {
           countdown = true;
           activities.push({
             text: this.timerLabel(model.timer, true),
@@ -988,7 +995,7 @@ export class BayitDashboard extends HTMLElement {
         updateRoomBadge(badge, status && this.applianceBadge(mapping.kind, status));
         if (!status) continue;
         visibleAppliance = true;
-        if (status.nextAt && (!this.applianceObserver || this.applianceRoomsInView.has(view.article))) {
+        if (status.nextAt && countMinutes) {
           applianceNext = Math.min(applianceNext, status.nextAt);
         }
       }

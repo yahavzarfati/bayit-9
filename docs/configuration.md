@@ -43,6 +43,8 @@ On a standalone Bayit 9 dashboard, opening a room, device or screen updates the 
 
 In **Rooms**, open **Appliance activity badges** to map the room's oven, cooktop, dishwasher or washer. Each `activities` entry has a `kind` (`oven`, `hob`, `dishwasher` or `washer`) and an `operation_entity` sensor. Add `finish_entity` for an expected finish timestamp. The oven requires a finish sensor. The cooktop and washer require a `power_entity`; the cooktop uses the time the power state last changed. A washer can also read a `done_entity` and a percentage `progress_entity`. The badges read these sources directly without adding device controls.
 
+Choose **Boiler elapsed time** to show `HH:MM` for an existing boiler switch in that room. In YAML, add an `activities` entry with `kind: boiler`, `boiler_entity` pointing to the boiler switch in that room and `started_at_entity` pointing to a date-and-time `input_datetime` that records the start of the current run. When that timestamp is unavailable or from an earlier run, the room shows the usual countdown or power state.
+
 Use `read_only_entities` on a room to display a device's state and let users open Home Assistant's details from that room. Bayit omits the device's direct controls in that room and its shortcuts. This is a dashboard display setting. Home Assistant permissions still govern the underlying device and its native details.
 
 A cover shortcut shows the requested direction while Home Assistant is responding. If the cover supports Stop, press the shortcut again during movement to send Stop. The position shown in the dashboard comes from Home Assistant.

@@ -391,7 +391,8 @@ export function discoverRooms(config, hass, locale) {
       const scope = area.lightingCount.filter(entity => lights.has(entity));
       if (scope.length) room.lighting_count_entities = scope;
     }
-    const activities = normalizeRoomActivities(area.activities, visible);
+    const activities = normalizeRoomActivities(area.activities, visible).filter(activity => activity.kind !== 'boiler' ||
+      entities.some(device => device.entity === activity.boiler_entity && device.kind === 'boiler'));
     if (activities.length) room.activities = activities;
     for (const device of entities) {
       if (area.entityNames && Object.hasOwn(area.entityNames, device.entity)) {

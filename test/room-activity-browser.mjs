@@ -23,6 +23,7 @@ const bathHeat = {
   timed: { simple_timer_entity: 'sensor.bath_heat_timer', simple_timer_target: 'switch.bath_heat_relay' },
 };
 const power = { state: 'on', attributes: {} };
+const boilerStarted = Date.now() - 12 * minute;
 const air = temperature => ({ state: 'cool', attributes: { temperature, current_temperature: 21.5 } });
 const states = {
   'sensor.bedroom_temperature': { state: '23.5', attributes: { device_class: 'temperature', unit_of_measurement: '°C' } },
@@ -33,8 +34,11 @@ const states = {
   'fan.bathroom_heater': power,
   'switch.bath_heat_relay': power,
   'sensor.bath_heat_timer': timer('switch.bath_heat_relay', 18),
-  'switch.boiler': power,
+  'switch.boiler': { ...power, last_changed: new Date(boilerStarted + 541).toISOString() },
   'sensor.boiler_timer': timer('switch.boiler', 40),
+  'input_datetime.boiler_started': {
+    state: '2026-11-25 17:18:00', attributes: { has_date: true, has_time: true, timestamp: boilerStarted / 1000 },
+  },
   'climate.solo': air(24),
   'timer.solo': { state: 'active', attributes: { finishes_at: finish(12) } },
   'light.one': power, 'light.two': power, 'light.three': power, 'light.four': power,
@@ -51,6 +55,11 @@ card.setConfig({
     ] },
     { id: 'bathroom', name: 'Bathroom', entities: [
       bathHeat, { entity: 'switch.boiler', name: 'Boiler', kind: 'boiler', timed: { simple_timer_entity: 'sensor.boiler_timer' } },
+    ], activities: settings.has('elapsed') ? [
+      { kind: 'boiler', boiler_entity: 'switch.boiler', started_at_entity: 'input_datetime.boiler_started' },
+    ] : [] },
+    { id: 'kitchen', name: 'Kitchen', entities: [
+      { entity: 'switch.boiler', name: 'Kitchen boiler', kind: 'boiler', timed: { simple_timer_entity: 'sensor.boiler_timer' } },
     ] },
     { id: 'solo', name: 'Solo', entities: [
       { entity: 'climate.solo', name: 'Solo AC', timed: { timer_entity: 'timer.solo' } },
@@ -136,6 +145,20 @@ try {
         await page.close();
         console.log(engine + ' ' + locale + ' ' + layout + ': independent climate and heating statuses at 320px');
       }
+      const elapsedPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      await elapsedPage.clock.setFixedTime(new Date('2026-11-25T15:30:00Z'));
+      await elapsedPage.goto(base + '/?locale=en&layout=classic&elapsed');
+      const bathroom = elapsedPage.locator('.room[data-room="bathroom"]');
+      const kitchen = elapsedPage.locator('.room[data-room="kitchen"]');
+      await expectVisible(activities(bathroom), 'mdi:water-boiler', /Boiler · Time running/, /00:12/);
+      await expectVisible(activities(bathroom), 'mdi:radiator', /Bathroom heater/, /18:00/);
+      await expectVisible(activities(kitchen), 'mdi:timer-outline', /Kitchen boiler · Time remaining/, /40:00/);
+      assert.equal(await activities(bathroom).count(), 2);
+      await elapsedPage.evaluate(() => window.changeFixture('input_datetime.boiler_started', 'unavailable'));
+      await expectVisible(activities(bathroom), 'mdi:water-boiler', /Boiler · Time remaining/, /40:00/);
+      await expectVisible(activities(kitchen), 'mdi:timer-outline', /Kitchen boiler · Time remaining/, /40:00/);
+      console.log(engine + ': boiler elapsed is room scoped and missing helper preserves the native timer');
+      await elapsedPage.close();
     } finally {
       await browser.close();
     }

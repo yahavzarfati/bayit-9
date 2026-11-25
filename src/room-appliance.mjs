@@ -4,12 +4,14 @@ export const activityKinds = {
   dishwasher: { icon: 'mdi:dishwasher', required: ['operation_entity'], optional: ['finish_entity'] },
   washer: { icon: 'mdi:washing-machine', required: ['operation_entity', 'power_entity'],
     optional: ['finish_entity', 'done_entity', 'progress_entity'] },
+  boiler: { icon: 'mdi:water-boiler', required: ['boiler_entity', 'started_at_entity'] },
 };
 
 export const activitySources = {
   operation_entity: ['sensor'], finish_entity: ['sensor'], progress_entity: ['sensor'],
   power_entity: ['switch', 'binary_sensor', 'input_boolean'],
   done_entity: ['sensor', 'binary_sensor', 'input_boolean'],
+  boiler_entity: ['switch'], started_at_entity: ['input_datetime'],
 };
 
 const entityId = /^[a-z_]+\.[a-z0-9_]+$/;
@@ -43,7 +45,28 @@ function timestamp(value) {
 const stateOf = (states, id) => typeof states?.[id]?.state === 'string' ? states[id].state.trim().toLowerCase() : '';
 const finished = value => /finish|complete|\bdone\b|סיום|הסתיים/.test(value);
 
+function elapsed(start, now) {
+  const minutes = Math.floor((now - start) / step);
+  return { type: 'elapsed', minutes, nextAt: start + (minutes + 1) * step };
+}
+
+function boilerElapsed(activity, states, now) {
+  const { boiler_entity, started_at_entity } = activity;
+  const power = states?.[boiler_entity];
+  const helper = states?.[started_at_entity];
+  const attributes = helper?.attributes;
+  const epochSeconds = attributes?.timestamp;
+  if (power?.state !== 'on' || unavailable.has(stateOf(states, started_at_entity)) ||
+      attributes?.has_date !== true || attributes?.has_time !== true || !Number.isFinite(epochSeconds)) return null;
+  const started = epochSeconds * 1000;
+  const switchedOn = timestamp(power.last_changed);
+  // input_datetime stores whole seconds. Allow the recorded on time to round down.
+  if (!Number.isFinite(switchedOn) || started + 1000 < switchedOn || started > now) return null;
+  return elapsed(started, now);
+}
+
 export function applianceActivity(activity, states, now) {
+  if (activity.kind === 'boiler') return boilerElapsed(activity, states, now);
   const { kind, operation_entity, finish_entity, power_entity, done_entity, progress_entity } = activity;
   const operation = stateOf(states, operation_entity);
   const powered = stateOf(states, power_entity) === 'on';
@@ -57,8 +80,7 @@ export function applianceActivity(activity, states, now) {
   if (kind === 'hob') {
     const start = timestamp(states?.[power_entity]?.last_changed);
     if (!powered || !active || !Number.isFinite(start) || start > now) return null;
-    const minutes = Math.floor((now - start) / step);
-    return { type: 'elapsed', minutes, nextAt: start + (minutes + 1) * step };
+    return elapsed(start, now);
   }
   if (kind === 'dishwasher') {
     if (finished(operation)) return { type: 'finished' };

@@ -9,6 +9,9 @@ const script = function () {
   const query = new URL(location.href).searchParams;
   const states = {
     'light.demo_kitchen': { state: 'off', attributes: {} },
+    'switch.demo_boiler': { state: 'off', attributes: {} },
+    'input_datetime.demo_boiler_start': { state: '2026-11-25 17:18:00', attributes: { has_date: true, has_time: true } },
+    'input_datetime.demo_time_only': { state: '17:18:00', attributes: { has_date: false, has_time: true } },
     'light.demo_laundry': { state: 'off', attributes: {} },
     'sensor.demo_room_temp': { state: '23.5', attributes: { device_class: 'temperature', unit_of_measurement: '°C' } },
     'sensor.demo_oven_mode': { state: 'run', attributes: {} },
@@ -30,6 +33,7 @@ const script = function () {
   const config = {
     type: 'custom:bayit-9', locale: 'he', layout: query.has('header') ? 'header' : 'classic',
     area_ids: ['kitchen','laundry'], show_unassigned: false,
+    profiles: [{ kind: 'boiler', entity: 'switch.demo_boiler' }],
     room_overrides: {
       kitchen: { entities: ['light.demo_kitchen','sensor.demo_room_temp'], activities: mappings },
       laundry: { entities: ['light.demo_laundry'], activities: [
@@ -40,7 +44,7 @@ const script = function () {
   };
   const calls = [];
   const hass = {
-    user: { is_admin: true }, states, entities: {}, devices: {},
+    user: { is_admin: true }, states, entities: { 'switch.demo_boiler': { area_id: 'kitchen' } }, devices: {},
     areas: { kitchen: { area_id: 'kitchen', name: 'מטבח' }, laundry: { area_id: 'laundry', name: 'כביסה' } },
     callWS(message) { calls.push(message); return Promise.resolve({}); },
   };
@@ -139,6 +143,17 @@ try {
       ]);
       await editor.getByRole('button',{name:'הסרת חיווי'}).click();
       assert.equal(await editor.evaluate(() => window.latestConfig.room_overrides.kitchen), undefined);
+      await editor.getByLabel('מכשיר', { exact: true }).selectOption('boiler');
+      const boiler = editor.getByLabel('דוד בחדר הזה', { exact: true });
+      const started = editor.getByLabel('עזר תאריך ושעת הפעלת הדוד', { exact: true });
+      assert.deepEqual(await boiler.locator('option').evaluateAll(items => items.map(item => item.value)), ['', 'switch.demo_boiler']);
+      assert.deepEqual(await started.locator('option').evaluateAll(items => items.map(item => item.value)), ['', 'input_datetime.demo_boiler_start']);
+      await boiler.selectOption('switch.demo_boiler');
+      await started.selectOption('input_datetime.demo_boiler_start');
+      await editor.getByRole('button',{name:'שמירת חיווי'}).click();
+      assert.deepEqual(await editor.evaluate(() => window.latestConfig.room_overrides.kitchen.activities), [
+        { kind: 'boiler', boiler_entity: 'switch.demo_boiler', started_at_entity: 'input_datetime.demo_boiler_start' },
+      ]);
       assert.deepEqual(await editor.evaluate(() => window.fixtureCalls), []);
       await editor.close();
       console.log(launcher.name() + ' Hebrew 320px: appliance display, minute tick, no writes and native editor passed');

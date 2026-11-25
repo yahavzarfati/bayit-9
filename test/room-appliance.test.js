@@ -89,3 +89,50 @@ test('washer reports completion from four native sources and future finish takes
   }
   assert.deepEqual(applianceActivity(washer, { ...running, [washer.progress_entity]: source('98.99') }, now), { type: 'running' });
 });
+
+const boiler = { kind: 'boiler', boiler_entity: 'switch.fixture_boiler', started_at_entity: 'input_datetime.fixture_boiler_started' };
+
+test('boiler elapsed uses the current powered cycle and the helper native epoch', () => {
+  const began = now - 17 * minute - 1000;
+  const power = { last_changed: new Date(began + 541).toISOString() };
+  const attrs = { has_date: true, has_time: true, timestamp: began / 1000 };
+  const valid = source('2030-01-02 07:42:59', { attributes: attrs });
+  const states = { [boiler.boiler_entity]: source('on', power), [boiler.started_at_entity]: valid };
+  assert.deepEqual(applianceActivity(boiler, states, now),
+    { type: 'elapsed', minutes: 17, nextAt: now + minute - 1000 });
+  assert.deepEqual(applianceActivity(boiler, states, now + minute),
+    { type: 'elapsed', minutes: 18, nextAt: now + 2 * minute - 1000 });
+  for (const helper of [
+    source('unavailable', { attributes: attrs }), undefined,
+    source(valid.state, { attributes: { ...attrs, has_date: false } }),
+    source(valid.state, { attributes: { ...attrs, timestamp: String(attrs.timestamp) } }),
+    source(valid.state, { attributes: { ...attrs, timestamp: (now + 1000) / 1000 } }),
+    source(valid.state, { attributes: { ...attrs, timestamp: (began - 1000) / 1000 } }),
+  ]) assert.equal(applianceActivity(boiler, { ...states, [boiler.started_at_entity]: helper }, now), null);
+  for (const powerState of [source('off', power), source('unavailable', power), source('on')]) {
+    assert.equal(applianceActivity(boiler, { ...states, [boiler.boiler_entity]: powerState }, now), null);
+  }
+});
+
+test('boiler elapsed supports only a room member already configured as a boiler, with access to the helper', () => {
+  const config = {
+    area_ids: ['bath', 'kitchen'],
+    room_overrides: {
+      bath: { entities: [boiler.boiler_entity], activities: [boiler] },
+      kitchen: { entities: [boiler.boiler_entity] },
+    },
+    profiles: [{ kind: 'boiler', entity: boiler.boiler_entity }],
+  };
+  const hass = {
+    states: { [boiler.boiler_entity]: source('off'), [boiler.started_at_entity]: source('unavailable') },
+    areas: { bath: { name: 'Bathroom' }, kitchen: { name: 'Kitchen' } },
+  };
+  const rooms = (options = config, data = hass) => generateDashboard(options, data).views[0].cards[0].rooms;
+  const [bathroom, kitchen] = rooms();
+  assert.deepEqual(bathroom.activities, [boiler]);
+  assert.equal(kitchen.activities, undefined);
+  assert.deepEqual(bathroom.entities.map(item => item.entity), [boiler.boiler_entity]);
+  assert.equal(rooms({ ...config, profiles: [] })[0].activities, undefined);
+  assert.equal(rooms(config, { ...hass, entities: { [boiler.started_at_entity]: { hidden_by: 'user' } } })[0].activities, undefined);
+  assert.deepEqual(normalizeRoomActivities([{ ...boiler, started_at_entity: 'sensor.wrong_domain' }]), []);
+});
