@@ -1538,6 +1538,7 @@ export class BayitDashboard extends HTMLElement {
     host.hidden = true;
     const tabs = make('div', 'boiler-tabs');
     let panel;
+    const stacked = config.boiler_timer_with_details === true;
     const choices = [
       {label:'timed', icon:'mdi:timer-outline', element:controls},
       {label:'boiler_history', icon:'mdi:history', element:host,
@@ -1547,11 +1548,12 @@ export class BayitDashboard extends HTMLElement {
       const scheduleHost = make('div','boiler-pane boiler-schedule-host');
       scheduleHost.hidden = true;
       choices.splice(1,0,{label:'boiler_schedule',icon:'mdi:calendar-clock',element:scheduleHost,open:() => {
-        const schedule = createBoilerSchedulePanel(config, {host:scheduleHost,hass:this._hass,locale:this.config.locale});
+        const schedule = createBoilerSchedulePanel(config, {
+          host: scheduleHost, hass: this._hass, locale: this.config.locale, compact: stacked,
+        });
         return {update:schedule.update,dispose:schedule.destroy};
       }});
     }
-    const stacked = config.boiler_timer_with_details === true;
     const compactNavigation = !stacked && !!(config.timed?.simple_timer_entity ||
       (config.timed?.start_script && config.timed.timer_entity));
     const [timer, ...secondary] = choices;

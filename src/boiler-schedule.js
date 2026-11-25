@@ -283,7 +283,7 @@ const text = {
   en: {
     loading: 'Loading schedules…', unavailable: 'No compatible Scheduler and Simple Timer setup was found for this boiler.',
     empty: 'No boiler schedules yet.', add: 'Add schedule', refresh: 'Refresh', edit: 'Edit', enable: 'Enable', disable: 'Disable',
-    enabled: 'Enabled', disabled: 'Disabled', custom: 'Managed in Scheduler', name: 'Name', time: 'Start time',
+    enabled: 'Enabled', disabled: 'Disabled', scheduleSwitch: 'Schedule status', custom: 'Managed in Scheduler', name: 'Name', time: 'Start time',
     duration: 'Duration', days: 'Days', daily: 'Every day', work: 'Weekdays', weekend: 'Weekend', clear: 'Clear',
     save: 'Save schedule', cancel: 'Cancel', remove: 'Delete schedule', confirm: 'Delete this schedule?',
     yes: 'Delete', invalid: 'Check the time, duration and days. Select at least one day.',
@@ -294,7 +294,7 @@ const text = {
   he: {
     loading: 'טוען תזמונים…', unavailable: 'לא נמצאה הגדרה מתאימה של Scheduler ו־Simple Timer לדוד הזה.',
     empty: 'עדיין אין תזמונים לדוד.', add: 'הוספת תזמון', refresh: 'רענון', edit: 'עריכה', enable: 'הפעלה', disable: 'השבתה',
-    enabled: 'פעיל', disabled: 'מושבת', custom: 'מנוהל במתזמן', name: 'שם', time: 'שעת התחלה',
+    enabled: 'פעיל', disabled: 'מושבת', scheduleSwitch: 'מצב התזמון', custom: 'מנוהל במתזמן', name: 'שם', time: 'שעת התחלה',
     duration: 'משך חימום', days: 'ימי הפעלה', daily: 'כל יום', work: 'ימי חול', weekend: 'סוף שבוע', clear: 'נקה',
     save: 'שמירת תזמון', cancel: 'ביטול', remove: 'מחיקת תזמון', confirm: 'למחוק את התזמון הזה?',
     yes: 'מחיקה', invalid: 'בדקו את השעה והמשך ובחרו לפחות יום אחד.',
@@ -315,6 +315,18 @@ const styles = [
   '.bayit-boiler-schedules .schedule-summary { display:grid; gap:4px; overflow-wrap:anywhere; }',
   '.bayit-boiler-schedules .schedule-details { display:flex; gap:6px; flex-wrap:wrap; font-size:.85em; }',
   '.bayit-boiler-schedules .schedule-is-enabled { color:var(--warm,currentColor); }',
+  '.schedule-compact { gap:6px; margin-block-start:8px; padding:6px; border:1px solid var(--soft-line); border-radius:12px; }',
+  '.schedule-compact .schedule-list { gap:5px; }',
+  '.schedule-compact .schedule-toolbar > .schedule-add { flex:1; }',
+  '.schedule-compact .schedule-row { display:flex; align-items:stretch; gap:0; padding:0; border:1px solid var(--soft-line); border-radius:8px; background:var(--room-tile-fill); }',
+  '.schedule-compact .schedule-summary { flex:1; min-width:0; display:flex; flex-wrap:wrap; align-content:center; align-items:center; gap:2px 5px; min-height:44px; padding:4px 7px; font-size:12px; text-align:start; }',
+  '.schedule-compact .schedule-summary.control-button { justify-content:flex-start; border:0; border-radius:8px; background:transparent; }',
+  '.schedule-compact .schedule-details { gap:2px 5px; font-size:inherit; align-items:center; }',
+  '.schedule-compact .schedule-details > :not(:last-child)::after { content:" ·"; }',
+  '.schedule-compact .schedule-toggle { flex:0 0 44px; min-height:44px; display:grid; place-items:center; padding:0; border:0; background:transparent; border-radius:8px; }',
+  '.schedule-switch-track { display:flex; align-items:center; width:26px; height:14px; padding:1px; border:1px solid var(--soft-line); border-radius:999px; color:var(--secondary); }',
+  '.schedule-switch-track::after { content:""; width:10px; height:10px; border-radius:50%; background:currentColor; }',
+  '.schedule-toggle[aria-checked=true] .schedule-switch-track { justify-content:flex-end; background:#83d9aa; color:#143c29; border-color:transparent; }',
   '.bayit-boiler-schedules .schedule-form label { display:grid; gap:5px; flex:1; min-width:0; }',
   '.bayit-boiler-schedules .schedule-form input,.bayit-boiler-schedules .schedule-form select { width:100%; box-sizing:border-box; min-height:44px; font:inherit; color:inherit; border:1px solid var(--edge,rgba(255,255,255,.28)); border-radius:10px; background:transparent; padding:6px 9px; }',
   '.bayit-boiler-schedules .schedule-form select option { color:CanvasText; background:Canvas; }',
@@ -323,7 +335,7 @@ const styles = [
   '.bayit-boiler-schedules .schedule-confirm { border:1px solid var(--critical,currentColor); display:grid; gap:8px; padding:10px; border-radius:10px; }',
 ].join('\n');
 
-export function createBoilerSchedulePanel(config, { host, hass, locale = 'en' }) {
+export function createBoilerSchedulePanel(config, { host, hass, locale = 'en', compact = false }) {
   const t = text[locale] ?? text.en;
   const make = (tag, cls, value) => {
     const node = host.ownerDocument.createElement(tag);
@@ -342,7 +354,7 @@ export function createBoilerSchedulePanel(config, { host, hass, locale = 'en' })
   let draft;
   let confirmedRemove = false;
   let ready = false;
-  const region = make('section', 'bayit-boiler-schedules');
+  const region = make('section', compact ? 'bayit-boiler-schedules schedule-compact' : 'bayit-boiler-schedules');
   region.lang = locale;
   region.dir = locale === 'he' ? 'rtl' : 'ltr';
   region.append(make('style', '', styles));
@@ -362,6 +374,16 @@ export function createBoilerSchedulePanel(config, { host, hass, locale = 'en' })
   };
   const add = button(t.add, () => openForm());
   const refreshing = button(t.refresh, () => { void refresh(); });
+  if (compact) {
+    add.classList.add('schedule-add');
+    refreshing.classList.add('round-action');
+    refreshing.setAttribute('aria-label', t.refresh);
+    refreshing.title = t.refresh;
+    const refreshIcon = make('ha-icon');
+    refreshIcon.setAttribute('icon', 'mdi:refresh');
+    refreshIcon.setAttribute('aria-hidden', 'true');
+    refreshing.replaceChildren(refreshIcon);
+  }
   add.hidden = true;
   toolbar.append(add, refreshing);
   const short = locale === 'he' ? ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳'] : ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
@@ -384,30 +406,20 @@ export function createBoilerSchedulePanel(config, { host, hass, locale = 'en' })
     for (const node of list.querySelectorAll('button')) node.disabled = !ready || pending || needsRefresh || !!draft;
   }
 
-  function rowActions(row) {
-    const wrap = make('div', 'schedule-row-actions');
-    const caps = schedule.capabilities();
-    if (row.mutable && caps.toggle) {
-      const toggle = button(row.enabled ? t.disable : t.enable,
-        () => operate(() => schedule.setEnabled(schedule.revisionOf(row), !row.enabled), t.updated));
-      toggle.setAttribute('aria-label', toggle.textContent + ' · ' + (row.name || row.title || row.time));
-      wrap.append(toggle);
-    }
-    if (row.mutable && caps.edit) {
-      const edit = button(t.edit, () => openForm(row));
-      edit.setAttribute('aria-label', t.edit + ' · ' + (row.name || row.title || row.time));
-      wrap.append(edit);
-    }
-    return wrap;
-  }
-
   function renderList() {
+    const caps = schedule.capabilities();
     list.replaceChildren();
     for (const row of listRows) {
       const tile = make('section', 'schedule-row');
-      const summary = make('div', 'schedule-summary');
-      summary.append(make('strong', '', row.title || row.name || t.name));
-      const details = make('div', 'schedule-details');
+      const rowName = row.name || row.title || row.time;
+      const canToggle = row.mutable && caps.toggle;
+      const canEdit = row.mutable && caps.edit;
+      const edit = canEdit ? button(t.edit, () => openForm(row)) : undefined;
+      if (edit) edit.setAttribute('aria-label', t.edit + ' · ' + rowName);
+      const summary = compact && edit ? edit : make('div');
+      summary.classList.add('schedule-summary');
+      summary.replaceChildren(make('strong', '', (compact ? rowName : row.title || row.name) || t.name));
+      const details = make('span', 'schedule-details');
       if (row.time) {
         const time = make('bdi', '', row.time);
         time.dir = 'ltr';
@@ -415,10 +427,31 @@ export function createBoilerSchedulePanel(config, { host, hass, locale = 'en' })
       }
       if (row.weekdays.length) details.append(make('span', '', row.weekdays.length === 7
         ? t.daily : row.weekdays.map(day => short[SCHEDULE_DAYS.indexOf(day)]).join(' · ')));
-      details.append(make('span', row.enabled ? 'schedule-is-enabled' : '',
+      if (compact && row.duration && row.name) details.append(make('span', '', durationName(row.duration, locale)));
+      if (!compact || !canToggle) details.append(make('span', row.enabled ? 'schedule-is-enabled' : '',
         !row.mutable ? t.custom : row.enabled ? t.enabled : t.disabled));
       summary.append(details);
-      tile.append(summary, rowActions(row));
+      const toggle = canToggle ? button(row.enabled ? t.disable : t.enable,
+        () => operate(() => schedule.setEnabled(schedule.revisionOf(row), !row.enabled), t.updated)) : undefined;
+      tile.append(summary);
+      if (compact) {
+        if (toggle) {
+          toggle.classList.add('schedule-toggle');
+          toggle.setAttribute('role', 'switch');
+          toggle.setAttribute('aria-checked', String(row.enabled));
+          toggle.setAttribute('aria-label', t.scheduleSwitch + ' · ' + rowName);
+          toggle.replaceChildren(make('span', 'schedule-switch-track'));
+          tile.append(toggle);
+        }
+      } else {
+        const actions = make('div', 'schedule-row-actions');
+        if (toggle) {
+          toggle.setAttribute('aria-label', toggle.textContent + ' · ' + rowName);
+          actions.append(toggle);
+        }
+        if (edit) actions.append(edit);
+        tile.append(actions);
+      }
       list.append(tile);
     }
     syncButtons();

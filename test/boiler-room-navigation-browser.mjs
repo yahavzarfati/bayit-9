@@ -34,6 +34,8 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     }));
     const requests = [];
     const moreInfo = [];
+    const scheduleActions = params.has('schedule-actions');
+    const scheduleCalls = [];
     const card = document.createElement('bayit-dashboard');
     card.setConfig({ locale, page: params.has('routed'), rooms: [
       { id: 'kitchen', name: 'Kitchen', entities: [...sensors, boiler], shortcuts: [] },
@@ -42,11 +44,29 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     ] });
     const services = { simple_timer: { start_timer: {} } };
     if (!params.has('without-scheduler')) services.scheduler = { add: {} };
+    if (scheduleActions) {
+      services.scheduler.edit = {};
+      services.switch = { turn_on: {}, turn_off: {} };
+      for (const schedule of schedules) states[schedule.entity_id] = { state: 'on', attributes: {} };
+    }
     const hass = {
       user: { is_admin: true }, states, services,
       callWS(request) {
         requests.push(request.type);
         if (params.has('stacked') && request.type === 'scheduler') return Promise.resolve(schedules);
+        if (scheduleActions && request.type === 'scheduler/item') {
+          return Promise.resolve(schedules.find(schedule => schedule.schedule_id === request.schedule_id));
+        }
+        if (scheduleActions && request.type === 'call_service') {
+          const schedule = schedules.find(entry => entry.entity_id === request.target?.entity_id);
+          if (request.domain !== 'switch' || request.service !== 'turn_off' || !schedule) {
+            return Promise.reject(new Error('Unexpected service in schedule fixture'));
+          }
+          scheduleCalls.push(request);
+          schedule.enabled = false;
+          states[schedule.entity_id].state = 'off';
+          return Promise.resolve({});
+        }
         return Promise.resolve(request.type === 'history/history_during_period' ? {} : []);
       },
     };
@@ -60,7 +80,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
       document.body.append(editor);
     } else document.body.append(card);
     window.fixture = {
-      requests, moreInfo,
+      requests, moreInfo, scheduleCalls,
       setupState(deviceState, timerState) {
         states[boiler.entity] = { state: deviceState, attributes: {} };
         states['sensor.fixture_runtime'] = {
@@ -306,6 +326,33 @@ try {
       await scheduleRows.waitFor();
       assert.equal(await stackedSchedule.getAttribute('aria-pressed'), 'true');
       assert.equal(await stackedPage.evaluate(() => window.fixture.requests.includes('call_service')), false);
+
+      await stackedPage.goto(stackedUrl + '&schedule-actions');
+      await stackedShortcut.tap();
+      const edit = scheduleRows.getByRole('button', { name: (locale === 'he' ? 'עריכה' : 'Edit') + ' · Morning', exact: true });
+      const scheduleSwitch = scheduleRows.getByRole('switch', {
+        name: (locale === 'he' ? 'מצב התזמון' : 'Schedule status') + ' · Morning', exact: true,
+      });
+      await scheduleSwitch.waitFor();
+      assert.equal(await scheduleSwitch.getAttribute('aria-checked'), 'true');
+      await stackedDialog.evaluate(node => Promise.allSettled(node.getAnimations().map(animation => animation.finished)));
+      const [editBox, switchBox] = await Promise.all([edit.boundingBox(), scheduleSwitch.boundingBox()]);
+      assert.ok(editBox.height >= 44 && switchBox.height >= 44 && switchBox.width >= 44);
+      assert.ok(Math.abs(editBox.y - switchBox.y) < 1, 'The edit and status controls share a row');
+      await edit.tap();
+      const form = stackedDialog.locator('.schedule-form');
+      await form.waitFor();
+      assert.equal(await form.locator('input[type="text"]').inputValue(), 'Morning');
+      assert.equal(await form.locator('input[type="time"]').inputValue(), '07:30');
+      await form.getByRole('button', { name: locale === 'he' ? 'ביטול' : 'Cancel', exact: true }).tap();
+      await form.waitFor({ state: 'hidden' });
+      assert.deepEqual(await stackedPage.evaluate(() => window.fixture.scheduleCalls), []);
+      await scheduleSwitch.tap();
+      await scheduleRows.getByRole('switch', { name: /Morning/, checked: false }).waitFor();
+      assert.deepEqual(await stackedPage.evaluate(() => window.fixture.scheduleCalls), [
+        { type: 'call_service', domain: 'switch', service: 'turn_off', service_data: {},
+          target: { entity_id: 'switch.schedule_fixture0' } },
+      ]);
 
       const editorWords = locale === 'he' ? {
         profiles: 'שליטה בדוד ובתנורים', edit: 'עריכה', save: 'שמירת בקר',
