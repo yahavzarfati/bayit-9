@@ -176,6 +176,11 @@ function number(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function brightnessPercent(value) {
+  const brightness = number(value);
+  return brightness === null ? null : Math.round(brightness / 255 * 100);
+}
+
 function ltr(value) {
   return '\u2066' + value + '\u2069';
 }
@@ -900,7 +905,7 @@ export class BayitDashboard extends HTMLElement {
     return 'quiet';
   }
 
-  stateLabel(model, inlineClimate = false) {
+  stateLabel(model, surface) {
     if (!model.available) return this.t('unavailable');
     const attrs = model.attributes || {};
     const state = model.state;
@@ -910,16 +915,25 @@ export class BayitDashboard extends HTMLElement {
       return (state === 'open' ? this.t('opened') : localized(state)) + (position === null ? '' : ' · ' + ltr(position + '%'));
     }
     if (model.domain === 'sensor' && attrs.unit_of_measurement) return ltr(state + ' ' + attrs.unit_of_measurement);
+    if (surface === 'overview' && model.domain === 'light' && state === 'on' &&
+        Number.isFinite(attrs.brightness) && attrs.brightness >= 0 && attrs.brightness <= 255) {
+      return localized(state) + ' · ' + ltr(brightnessPercent(attrs.brightness) + '%');
+    }
     if (model.domain === 'climate') {
       const temp = number(attrs.current_temperature);
       const unit = this._hass?.config?.unit_system?.temperature || '°';
-      if (!inlineClimate) return localized(state) + (temp === null ? '' : ' · ' + ltr(temp + ' ' + unit));
+      if (!surface) return localized(state) + (temp === null ? '' : ' · ' + ltr(temp + ' ' + unit));
       const shortUnit = unit === '°C' ? '°' : unit;
       const roundTemperature = value => Number.isInteger(value + 0.5) ? 2 * Math.round(value / 2) : Math.round(value);
       const showTemperature = value => ltr(roundTemperature(value) + shortUnit);
       const target = state === 'off' ? null : number(attrs.temperature);
+      const targetText = target === null ? '' : this.t('target_short') + ' ' + showTemperature(target);
+      if (surface === 'overview') {
+        const ambientText = temp === null ? '' : this.t('ambient_short') + ' ' + showTemperature(temp);
+        return [localized(state), targetText, ambientText].filter(Boolean).join(' · ');
+      }
       return localized(state) + (temp === null ? '' : ' · ' + showTemperature(temp)) +
-        (target === null ? '' : ' · ' + this.t('target_short') + ' ' + showTemperature(target));
+        (targetText ? ' · ' + targetText : '');
     }
     if (statusNames.has(state)) return localized(state);
     const record = this._hass?.states?.[model.entity];
@@ -1352,7 +1366,7 @@ export class BayitDashboard extends HTMLElement {
       host: content, dialog: this.nodes.modal, hass: this._hass, getHass: () => this._hass,
       locale: this.config.locale, hiddenEntities: this.config.hiddenEntities,
       make, button, icon, label, t: key => this.t(key),
-      modelFor: item => this.model(item), stateLabel: model => this.stateLabel(model),
+      modelFor: item => this.model(item), stateLabel: model => this.stateLabel(model, type === 'overview' ? 'overview' : undefined),
       moreInfo: item => this.moreInfo(item), pending: entity => this.pending.has(entity),
       request: (item, action, value, source) => this.requestAction(item, action, value, source),
       buildDevice: (item, slot, presentation) => this.buildDevice(item, slot, undefined, undefined, presentation),
@@ -1446,7 +1460,7 @@ export class BayitDashboard extends HTMLElement {
         ? model.attributes.media_title.trim().slice(0, 160) : '';
       const pending = this.pending.get(view.config.entity);
       const feedback = this.coverFeedback(model, pending);
-      setText(view.state, (feedback?.requestLabel || this.stateLabel(model, view.inlineClimate)) + (media ? ' · ' + media : ''));
+      setText(view.state, (feedback?.requestLabel || this.stateLabel(model, view.inlineClimate ? 'inline-climate' : undefined)) + (media ? ' · ' + media : ''));
       view.state.dataset.tone = feedback ? 'moving' : this.tone(model);
       if (view.tile) {
         const actionId = model.state === 'off' ? 'turn_on' : 'turn_off';
@@ -1782,10 +1796,8 @@ export class BayitDashboard extends HTMLElement {
     else if (id === 'select_option') input.value = model.state;
     else if (id === 'start_timed') input.value = String(action.min ?? 15);
     else if (id === 'set_heating_level') input.value = String(number(model.level) ?? action.min);
-    else if (id === 'set_brightness') {
-      const brightness = number(attrs.brightness);
-      input.value = String(brightness === null ? action.min ?? 0 : Math.round(brightness / 255 * 100));
-    } else if (action.color) input.value = model.state === 'on' ? lightColorHex(attrs) || '#ffffff' : '#ffffff';
+    else if (id === 'set_brightness') input.value = String(brightnessPercent(attrs.brightness) ?? action.min ?? 0);
+    else if (action.color) input.value = model.state === 'on' ? lightColorHex(attrs) || '#ffffff' : '#ffffff';
     else if (id === 'volume_set') input.value = String(Math.round((number(attrs.volume_level) ?? 0) * 100));
     else if (input.localName === 'select') input.value = attrs[stateKeys[id]] ?? input.options[0]?.value ?? '';
     else input.value = String(number(attrs[stateKeys[id]]) ?? action.min ?? 0);

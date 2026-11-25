@@ -211,6 +211,14 @@ if (query.has('overview-opt-in')) {
   }
   states['cover.demo_overview_window'] = { state: 'closing', attributes: { friendly_name: 'Overview cover', supported_features: 15 } };
   hass.entities['cover.demo_overview_window'] = {};
+  if (query.has('overview-readings')) {
+    Object.assign(states['light.demo_dining'].attributes, { supported_color_modes: ['brightness'], brightness: 128 });
+    states['climate.demo_overview_air'] = { state: 'cool', attributes: {
+      friendly_name: 'Overview AC', supported_features: 1, hvac_modes: ['cool', 'off'], temperature: 23.5, current_temperature: 22.5,
+    } };
+    hass.entities['climate.demo_overview_air'] = {};
+    hass.config = { ...hass.config, unit_system: { temperature: '°F' } };
+  }
 }
 if (query.has('room-grid')) {
   for (const [entity, name, colorMode] of [
@@ -451,7 +459,11 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
       {entity:'cover.demo_overview_window',role:'status'}]},
     {kind:'covers',title:'Default covers',filter:'active',entities:[
       {entity:'cover.demo_overview_window',role:'status'}]},
-  ]},{kind:'settings'}],
+    ...(query.has('overview-readings') ? [{kind:'status',title:'Overview AC status',
+      entities:[{entity:'climate.demo_overview_air',role:'status'}]}] : []),
+  ]}, ...(query.has('overview-readings') ? [{kind:'security',sections:[{kind:'status',entities:[
+    {entity:'light.demo_dining',role:'status'}, {entity:'climate.demo_overview_air',role:'status'},
+  ]}]}] : []), {kind:'settings'}],
 } : query.has('toolbar-panels') ? {
   ...(query.has('room-link') && { room_overrides: { studio: {
     entities:['light.demo_lamp','media_player.demo_tv','vacuum.demo_robot'],
@@ -518,6 +530,10 @@ window.bayitTest = {
   rejectNextInlineLight() { rejectInlineLight = true; },
   setRoomState(entity, state) {
     states[entity] = { ...states[entity], state };
+    card.hass = { ...hass, states: { ...states } };
+  },
+  setFixtureAttributes(entity, attributes) {
+    states[entity] = { ...states[entity], attributes: { ...states[entity].attributes, ...attributes } };
     card.hass = { ...hass, states: { ...states } };
   },
   setSunState(state, attributes) {
@@ -2312,6 +2328,53 @@ try {
       }]);
       await overviewDrawer.getByText('All quiet', { exact: true }).waitFor();
       await overviewPage.close();
+
+      const overviewReadings = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+      const overviewName = rightToLeft ? 'מבט על הבית' : 'Home overview';
+      const safetyName = rightToLeft ? 'אבטחה' : 'Security';
+      const onName = rightToLeft ? 'פועל' : 'On';
+      const coolingName = rightToLeft ? 'קירור' : 'Cooling';
+      const readingRoom = rightToLeft ? 'עכשיו' : 'Now';
+      const readingTarget = rightToLeft ? 'יעד' : 'Target';
+      const cleanReading = value => value.replace(/[\u2066\u2069]/g, '');
+      const rowWith = (dialog, title) => dialog.locator('.tile-row').filter({
+        has: overviewReadings.locator('.tile-label').getByText(title, { exact: true }),
+      });
+      const read = async tile => cleanReading(await tile.locator('.tile-state').innerText());
+      const updateReadings = (brightness, temperature, ambient) => overviewReadings.evaluate(async values => {
+        window.bayitTest.setFixtureAttributes('light.demo_dining', { brightness: values.brightness });
+        window.bayitTest.setFixtureAttributes('climate.demo_overview_air', {
+          temperature: values.temperature, current_temperature: values.ambient,
+        });
+        await new Promise(requestAnimationFrame);
+      }, { brightness, temperature, ambient });
+      await overviewReadings.goto(base + '?overview-opt-in&overview-readings&locale=' + (rightToLeft ? 'he' : 'en'));
+      await overviewReadings.getByRole('button', { name: overviewName, exact: true }).tap();
+      const readingsPanel = overviewReadings.getByRole('dialog', { name: overviewName, exact: true });
+      const readingLight = rowWith(readingsPanel, 'Dining task lamp');
+      const readingClimate = rowWith(readingsPanel, 'Overview AC');
+      await readingLight.waitFor();
+      assert.equal(await read(readingLight), onName + ' · 50%');
+      const climateText = coolingName + ' · ' + readingTarget + ' 24°F · ' + readingRoom + ' 22°F';
+      assert.equal(await read(readingClimate), climateText);
+      assert.equal(cleanReading(await readingClimate.getAttribute('aria-label')), 'Overview AC · ' + climateText);
+      assert.ok(await readingClimate.evaluate(row => row.scrollWidth <= row.clientWidth));
+      await updateReadings(242, null, 20);
+      assert.equal(await read(readingLight), onName + ' · 95%');
+      assert.equal(await read(readingClimate), coolingName + ' · ' + readingRoom + ' 20°F');
+      await updateReadings(null, null, null);
+      assert.equal(await read(readingLight), onName);
+      assert.equal(await read(readingClimate), coolingName);
+      await updateReadings(128, 24, 22.5);
+      await overviewReadings.keyboard.press('Escape');
+      await readingsPanel.waitFor({ state: 'hidden' });
+      await overviewReadings.getByRole('button', { name: safetyName, exact: true }).tap();
+      const safetyPanel = overviewReadings.getByRole('dialog', { name: safetyName, exact: true });
+      assert.equal(await read(rowWith(safetyPanel, 'Dining task lamp')), onName);
+      assert.equal(await read(rowWith(safetyPanel, 'Overview AC')), coolingName + ' · 22.5 °F');
+      assert.equal(await overviewReadings.evaluate(() => window.bayitTest.calls.filter(call => call.domain).length), 0);
+      await overviewReadings.close();
+      console.log(engine + ' 320: Overview shows live brightness, HVAC target and ambient without changing other panels');
 
       const overviewEditor = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true });
       overviewEditor.setDefaultTimeout(8000);
