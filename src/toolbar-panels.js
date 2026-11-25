@@ -421,16 +421,40 @@ export function createToolbarPanel(kind, configuration, context) {
   }
   if (forecastPages.size === 2) {
     const tabs = make('div', 'weather-tabs');
+    const buttons = new Map();
+    const pages = [...forecastPages.keys()];
+    let active = 'forecast';
+    const selectPage = key => {
+      active = key;
+      for (const [name, section] of forecastPages) section.hidden = name !== key;
+      for (const [name, tab] of buttons) tab.setAttribute('aria-pressed', String(name === key));
+    };
+    let touch;
     for (const [key, panel] of forecastPages) {
       const tab = button('control-button', t(sectionKeys[key]));
-      tab.setAttribute('aria-pressed', String(key === 'forecast'));
-      panel.hidden = key !== 'forecast';
-      tab.onclick = () => {
-        for (const section of forecastPages.values()) section.hidden = section !== panel;
-        for (const item of tabs.children) item.setAttribute('aria-pressed', String(item === tab));
-      };
+      tab.onclick = () => selectPage(key);
+      buttons.set(key, tab);
       tabs.append(tab);
+      panel.dataset.weatherSwipe = '';
+      panel.addEventListener('pointerdown', event => {
+        if (event.pointerType !== 'touch') return;
+        touch = event.isPrimary && !event.composedPath().some(node =>
+          node.matches?.('button, a, input, select, textarea, [contenteditable], [role="button"]'))
+          ? { id: event.pointerId, x: event.clientX, y: event.clientY } : undefined;
+      });
+      panel.addEventListener('pointercancel', () => { touch = undefined; });
+      panel.addEventListener('pointerup', event => {
+        if (event.pointerType !== 'touch' || touch?.id !== event.pointerId) return;
+        const dx = event.clientX - touch.x;
+        const dy = event.clientY - touch.y;
+        touch = undefined;
+        if (Math.abs(dx) < 45 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+        const step = Math.sign(context.locale === 'he' ? dx : -dx);
+        const next = pages[pages.indexOf(active) + step];
+        if (next) selectPage(next);
+      });
     }
+    selectPage(active);
     host.prepend(tabs);
   }
   if (kind === 'energy' && currentHass?.panels?.energy) {
@@ -530,6 +554,7 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
     }
   }
   .weather-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  [data-weather-swipe] { touch-action: pan-y pinch-zoom; }
   .forecast-clock { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 3px 3px 8px; }
   .forecast-clock strong { font-variant-numeric: tabular-nums; font-size: 19px; }
   .forecast-clock span { font-size: 13px; color: var(--secondary); }

@@ -2152,7 +2152,29 @@ try {
       const weatherName = rtlSun ? 'מזג אוויר' : 'Weather';
       await sunPage.getByRole('button', { name: weatherName, exact: true }).tap();
       const sunDialog = sunPage.getByRole('dialog', { name: weatherName, exact: true });
-      await sunDialog.getByRole('button', { name: rtlSun ? 'שמש' : 'Sun', exact: true }).tap();
+      const sunTab = sunDialog.getByRole('button', { name: rtlSun ? 'שמש' : 'Sun', exact: true });
+      const forecastTab = sunDialog.getByRole('button', { name: rtlSun ? 'תחזית' : 'Forecast', exact: true });
+      const swipeWeather = (kind, dx, dy, pointerType = 'touch') => sunDialog.locator('[data-section='+kind+']').evaluate(
+        (panel, gesture) => {
+          const send = (name, x, y) => panel.dispatchEvent(new PointerEvent(name, {
+            bubbles: true, pointerId: 1, pointerType: gesture.pointerType, isPrimary: true, clientX: x, clientY: y,
+          }));
+          send('pointerdown', 160, 260);
+          send('pointerup', 160 + gesture.dx, 260 + gesture.dy);
+        }, { dx, dy, pointerType });
+      const weatherSwipeStep = rtlSun ? 86 : -86;
+      await sunDialog.locator('[data-section=forecast]').waitFor();
+      await swipeWeather('forecast', weatherSwipeStep, 105);
+      await swipeWeather('forecast', weatherSwipeStep, 0, 'mouse');
+      await swipeWeather('forecast', -weatherSwipeStep, 0);
+      assert.equal(await forecastTab.getAttribute('aria-pressed'), 'true');
+      await swipeWeather('forecast', weatherSwipeStep, 14);
+      assert.equal(await sunTab.getAttribute('aria-pressed'), 'true');
+      await swipeWeather('sun', weatherSwipeStep, 0);
+      assert.equal(await sunTab.getAttribute('aria-pressed'), 'true');
+      await swipeWeather('sun', -weatherSwipeStep, 0);
+      assert.equal(await forecastTab.getAttribute('aria-pressed'), 'true');
+      await sunTab.press('Enter');
       const sunPanel = sunDialog.locator('.sun-panel');
       const sunPlot = sunPanel.locator('.sun-plot');
       const sunMarker = sunPlot.locator('ha-icon');
