@@ -1297,7 +1297,7 @@ export class BayitDashboard extends HTMLElement {
           this.roomGraphs ??= createNativeCards(content, this._hass, make);
           const fallback = content.ownerDocument.createDocumentFragment();
           this.buildDevice(config, fallback, room, key);
-          group.append(this.roomGraphs.mount(sensorGraphConfig(config), fallback.firstElementChild));
+          group.append(this.roomGraphs.mount(sensorGraphConfig(config, { moreInfo: true }), fallback.firstElementChild));
         }
         content.append(group);
       }

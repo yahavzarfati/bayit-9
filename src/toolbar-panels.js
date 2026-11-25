@@ -95,9 +95,9 @@ export function createNativeCards(host, hass, make) {
   };
 }
 
-export function sensorGraphConfig(item) {
+export function sensorGraphConfig(item, { moreInfo = false } = {}) {
   return { type:'sensor', entity:item.entity, name:item.name, graph:'line', detail:2,
-    hours_to_show:item.graph_hours || 24, tap_action:{action:'none'} };
+    hours_to_show:item.graph_hours || 24, tap_action:{action:moreInfo ? 'more-info' : 'none'} };
 }
 
 export function createToolbarPanel(kind, configuration, context) {
@@ -406,13 +406,11 @@ export function createToolbarPanel(kind, configuration, context) {
       return nativeCard({ type: 'calendar', entities: [item.entity], initial_view: 'listWeek' }, renderTile(item, 'status'));
     }
     if (domain(item) === 'sensor' && (item.graph_hours || itemKind === 'graph')) {
-      const config = sensorGraphConfig(item);
+      const moreInfo = compactStatus || kind === 'weather' && section === 'readings' ||
+        kind === 'energy' && (section === 'electricity' || section === 'water');
+      const config = sensorGraphConfig(item, { moreInfo });
       const fallback = renderTile(item, 'status');
       const destination = itemKind === 'graph' && graphDestination?.(item);
-      if (compactStatus || kind === 'weather' && section === 'readings' ||
-          kind === 'energy' && (section === 'electricity' || section === 'water')) {
-        config.tap_action = { action: 'more-info' };
-      }
       if (!destination) return nativeCard(config, fallback);
       config.tap_action = { action: 'fire-dom-event', bayit_graph_link: true };
       config.hold_action = { action: 'none' };

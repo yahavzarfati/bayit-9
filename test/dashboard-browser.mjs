@@ -2976,14 +2976,15 @@ try {
       utilityPage.setDefaultTimeout(8000);
       await utilityPage.goto(base + '/fixture-home/home?toolbar-panels&utility-graph-details&native-more-info=modern');
       const utilityDetails = utilityPage.getByRole('dialog', { name:'Native entity details', exact:true });
-      for (const [panelName, sensors] of [
-        ['Energy', [['Energy meter','sensor.demo_meter','168'],['Water meter','sensor.demo_water_meter','168']]],
-        ['Weather', [['Studio temperature','sensor.demo_studio_temperature','24']]],
+      for (const [panelName, route, sensors] of [
+        ['Energy', '#panel/', [['Energy meter','sensor.demo_meter','168'],['Water meter','sensor.demo_water_meter','168']]],
+        ['Weather', '#panel/', [['Studio temperature','sensor.demo_studio_temperature','24']]],
+        ['Studio', '#room-studio', [['Studio temperature','sensor.demo_studio_temperature','24']]],
       ]) {
         await utilityPage.getByRole('button', { name:panelName, exact:true }).tap();
         const panel = utilityPage.getByRole('dialog', { name:panelName, exact:true });
         const panelHash = new URL(utilityPage.url()).hash;
-        assert.ok(panelHash.startsWith('#panel/'));
+        assert.ok(panelHash.startsWith(route));
         for (const [caption, entity, hours] of sensors) {
           const graph = panel.getByRole('button', { name:caption, exact:true });
           await graph.waitFor();
@@ -3002,10 +3003,10 @@ try {
         await panel.waitFor({ state:'hidden' });
       }
       assert.deepEqual(await utilityPage.evaluate(() => window.bayitTest.moreInfoCalls),
-        ['sensor.demo_meter','sensor.demo_water_meter','sensor.demo_studio_temperature']);
+        ['sensor.demo_meter','sensor.demo_water_meter','sensor.demo_studio_temperature','sensor.demo_studio_temperature']);
       assert.deepEqual(await utilityPage.evaluate(() => window.bayitTest.calls),[]);
       await utilityPage.close();
-      console.log(engine + ': Energy and Weather graph details leave the Bayit popup open underneath');
+      console.log(engine + ': Energy, Weather and room graph details leave the Bayit popup open underneath');
 
       const sunPage = await browser.newPage({ viewport: { width: 320, height:844 }, hasTouch:true });
       sunPage.setDefaultTimeout(8000);
