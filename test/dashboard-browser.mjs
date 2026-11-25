@@ -4,6 +4,15 @@ import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import { chromium, webkit } from 'playwright-core';
 
+const engines = [
+  { name: 'Chromium', launcher: chromium },
+  { name: 'WebKit', launcher: webkit },
+];
+const requestedEngine = process.env.BAYIT_BROWSER_ENGINE;
+const selectedEngines = engines.filter(({ launcher }) =>
+  requestedEngine === undefined || launcher.name() === requestedEngine);
+if (!selectedEngines.length) throw new Error('BAYIT_BROWSER_ENGINE must be chromium or webkit');
+
 const bundle = await readFile(new URL('../dist/bayit-9.js', import.meta.url));
 const fixture = `<!doctype html>
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -8847,23 +8856,57 @@ async function assertHomeHeaterShortcut(browser) {
   }
 }
 
+const failures = [];
+const recordFailure = (engine, scenario, error) => {
+  failures.push({ engine, scenario, error });
+  console.error('[' + engine + '] ' + scenario + ' failed');
+};
+
 try {
-  for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
-    const browser = await launcher.launch({ headless: true });
+  for (const { name: engine, launcher } of selectedEngines) {
+    let browser;
     try {
+      browser = await launcher.launch({ headless: true });
+    } catch (error) {
+      recordFailure(engine, 'Browser launch', error);
+      continue;
+    }
+    const rightToLeft = engine === 'WebKit';
+    const run = async (name, scenario) => {
+      try {
+        await scenario();
+      } catch (error) {
+        recordFailure(engine, name, error);
+      }
+      // Each new page owns a context. Close any fixture left open by a failed assertion.
+      const cleanup = await Promise.allSettled(browser.contexts().map(context => context.close()));
+      for (const result of cleanup) {
+        if (result.status === 'rejected') recordFailure(engine, name + ' fixture cleanup', result.reason);
+      }
+    };
+
+    await run('Room cover columns and popup icons', async () => {
       await assertRoomCoverColumns(browser);
       console.log(engine + ': authored single-cover columns keep readable names and full-sized commands');
       await assertRoomPanelDeviceIcon(browser);
       console.log(engine + ': custom popup icons stay scoped to the selected room device');
+    });
 
+    await run('Home appearance settings and synchronization', async () => {
       await assertHomePreferenceAliases(browser);
       await assertSharedAppearance(browser);
       await assertAppearanceHelperEditor(browser);
+    });
+
+    await run('Popup lifecycle, origin and scroll', async () => {
       await assertPopupPageLifecycle(browser);
       console.log(engine + ': room popup motion pauses safely when leaving the phone app');
       await assertClippedRoomOrigin(browser);
       await assertPopupScrollMemory(browser);
       console.log(engine + ': popup scroll survives reload and remains scoped to the room and dashboard');
+    });
+
+    await run('Toolbar controls, lock palette and overview climate', async () => {
       await assertCompactSettings(browser);
       await assertToolbarLockPalette(browser);
       console.log(engine + ': semantic toolbar lock colors, contrast and scope');
@@ -8872,6 +8915,9 @@ try {
       console.log(engine + ': compact Automation actions and editor scope');
       await assertOverviewClimateDiscovery(browser);
       console.log(engine + ': editable active climate discovery, passive rows and live scope');
+    });
+
+    await run('Home shortcuts and compact light controls', async () => {
       await assertManualShortcutsSurviveAutomaticMode(browser);
       await assertShortcutDetailRoutes(browser);
       await assertHomeShortcutVisibility(browser);
@@ -8879,6 +8925,9 @@ try {
       await assertHomeHeaterShortcut(browser);
       await assertCompactInlineLightLayout(browser);
       await assertAuthoredCompactInlineColorLight(browser);
+    });
+
+    await run('Heater timers, controls and reported state', async () => {
       await assertTimerHistory(browser);
       await assertHeatingProfileTargetsStayDistinct(browser);
       await assertStandaloneTimedHeater(browser);
@@ -8888,17 +8937,26 @@ try {
       console.log(engine + ': compact room heater, confirmed idle and safe active controls');
       console.log(engine + ': scoped panel and native shortcut destinations, safe taps, focus return and editor persistence');
       console.log(engine + ': independent browser appearance and admin household defaults');
+    });
+
+    await run('Native room gestures and device icons', async () => {
       await assertNativeRoomCoverHeader(browser);
       console.log(engine + ': native room cover header, focus restoration, editor and device isolation');
       await assertNativeRoomLightHold(browser);
       console.log(engine + ': opt-in native room light holds, regular taps, focus and room isolation');
       await assertRoomDeviceIcons(browser);
       console.log(engine + ': per-room device icon editing, native picker, fallback and reset');
+    });
+
+    await run('Room layout and keyboard navigation', async () => {
       await assertHeaderRoomLayout(browser);
       await assertClassicRoomTitleLanes(browser);
       await assertWideHomeAlignment(browser);
       await assertWideClassicRoomControls(browser);
       console.log(engine + ': room titles, responsive shortcut lanes and keyboard focus');
+    });
+
+    await run('Setup editor layout and drafts', async () => {
       await assertSetupFooterLayout(browser);
       console.log(engine + ': setup footer stays clear of the scrollable editor');
       await assertSetupDrafts(browser);
@@ -8908,9 +8966,14 @@ try {
       await assertManualRoomOrderRestored(browser);
       await assertRoomEditorQuickPaths(browser);
       console.log(engine + ': setup drafts survive closing, preserve conflicts, and retry safely');
+    });
+
+    await run('Home glass and accessibility', async () => {
       await assertHomeMaterial(browser);
       console.log(engine + ': Home glass, accessibility material, cover states and room labels');
+    });
 
+    await run('Room and device popup routes', async () => {
       const routesPage = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
       const rtlRoutes = engine === 'WebKit';
       const routeUrl = base + '/fixture-home/home?popup-routes&locale=' + (rtlRoutes ? 'he' : 'en');
@@ -9021,7 +9084,9 @@ try {
       await studioHeading.waitFor();
       assert.equal(new URL(routesPage.url()).hash, '#legacy-lamp');
       await routesPage.close();
+    });
 
+    await run('Native details and popup return', async () => {
       const infoPage = await browser.newPage({ viewport: { width: 320, height: 640 }, hasTouch: true, reducedMotion: 'reduce' });
       infoPage.setDefaultTimeout(8000);
       const nativeDetails = infoPage.getByRole('dialog', { name: 'Native entity details', exact: true });
@@ -9094,7 +9159,9 @@ try {
       assert.equal(await interrupted.count(), 0);
       await infoPage.close();
       console.log(engine + ': native details return to the mounted Bayit popup, exact route, scroll and source focus');
+    });
 
+    await run('Mobile dashboard basics', async () => {
       for (const [locale, width] of [['en', 320], ['he', 390], ['en', 430]]) {
         const page = await browser.newPage({ viewport: { width, height: 844 }, hasTouch: true });
         const errors = [];
@@ -9130,7 +9197,9 @@ try {
         await page.close();
         console.log(engine + ' ' + locale + ' ' + width + ': strategy, room modal, light command, close');
       }
+    });
 
+    await run('Room status and availability', async () => {
       for (const locale of ['en', 'he']) {
         const statusPage = await browser.newPage({ viewport: { width: 320, height: 844 }, reducedMotion: 'reduce' });
         await statusPage.goto(base + '?room-status&locale=' + locale);
@@ -9211,7 +9280,9 @@ try {
         assert.equal(await statusPage.evaluate(() => window.bayitTest.calls.length), 0);
         await statusPage.close();
       }
+    });
 
+    await run('Delayed cover feedback and commands', async () => {
       for (const locale of ['en', 'he']) {
         const reduce = locale === 'he';
         const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true,
@@ -9276,7 +9347,9 @@ try {
         await page.close();
         console.log(engine + ' ' + locale + ' 320: delayed cover feedback, stop, reversal, reduced motion, and availability');
       }
+    });
 
+    await run('Curated media and vacuum controls', async () => {
       const mediaPage = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
       mediaPage.setDefaultTimeout(8000);
       const mediaErrors = [];
@@ -9366,6 +9439,9 @@ try {
       assert.deepEqual(mediaErrors, []);
       await mediaPage.close();
       console.log(engine + ': curated media and vacuum controls, Now Playing, and the original room shortcuts');
+    });
+
+    await run('Compact room controls for media, kitchen, lights and vacuum', async () => {
       await assertCompactRoomMedia(browser);
       await assertCompactRoomDevicePair(browser);
       await assertAuthoredKitchenDeviceGrid(browser);
@@ -9381,7 +9457,9 @@ try {
       await assertRoomVacuumPresentation(browser);
       await assertRoomVacuumSummary(browser);
       console.log(engine + ': room-specific linked vacuum tap/hold, keyboard and native focus restoration');
+    });
 
+    await run('Now Playing metadata', async () => {
       for (const locale of ['en','he']) {
         const metadataPage = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
         metadataPage.setDefaultTimeout(8000);
@@ -9426,7 +9504,9 @@ try {
         await metadataPage.close();
       }
       console.log(engine + ': Now Playing source, episode details and validated remaining time in English and Hebrew');
+    });
 
+    await run('Linked media and vacuum routes', async () => {
       for (const locale of ['en','he']) {
         const linkedPage = await browser.newPage({ viewport:{width:391,height:845}, hasTouch:true, reducedMotion:'reduce' });
         linkedPage.setDefaultTimeout(8000);
@@ -9499,7 +9579,9 @@ try {
         await linkedPage.close();
       }
       console.log(engine + ': linked Media and Vacuum routes, room Back, fallback and editor');
+    });
 
+    await run('Media remote, power and editor', async () => {
       const remotePage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
       const remoteRTL = engine === 'WebKit';
       const remoteURL = base + '?toolbar-panels&media-remote&locale=' + (remoteRTL ? 'he' : 'en');
@@ -9556,7 +9638,9 @@ try {
       console.log(engine + ': explicit media remote targets, standby, combined play/pause, and observed mute');
       await assertMediaRemotePower(browser);
       console.log(engine + ': optional media power, exact source, status, services, row order and editor');
+    });
 
+    await run('Device profile editor and curated controls', async () => {
       const editorPage = await browser.newPage({ viewport: {width: 390, height: 844} });
       await editorPage.goto(base + '?editor&heater-level');
       await editorPage.getByRole('heading', { name: 'Bayit 9' }).waitFor({ state: 'hidden' });
@@ -9635,7 +9719,9 @@ try {
       await curatedPage.keyboard.press('Escape');
       await overview.waitFor({ state: 'hidden' });
       await curatedPage.close();
+    });
 
+    await run('Room light counts and shutdown', async () => {
       const lightingPage = await browser.newPage({ viewport:{width:390,height:844}, reducedMotion:'reduce' });
       await lightingPage.goto(base + '?room-grid&lighting-count');
       const lightingRoom = lightingPage.locator('.room[data-room="studio"]');
@@ -9711,7 +9797,9 @@ try {
       assert.equal(await shutdownPage.evaluate(() => window.latest.room_overrides.studio.turn_off_entities), undefined);
       await shutdownPage.close();
       console.log(engine + ': independent room icon shutdown, native targets, failure and room editor');
+    });
 
+    await run('Room timer and device controls', async () => {
       const roomGridPage = await browser.newPage({ viewport: { width: 320, height: 690 } });
       await roomGridPage.goto(base + '?room-grid&locale=he');
       await roomGridPage.getByRole('button', { name: 'Studio', exact: true }).click();
@@ -9783,7 +9871,9 @@ try {
       assert.equal(await monitor.locator('input[type="color"]').count(), 0);
       assert.equal(await roomGridPage.evaluate(() => window.bayitTest.calls.length), 3);
       await roomGridPage.close();
+    });
 
+    await run('Timer memory and compact rail', async () => {
       const rememberedTimerPage = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
       const rememberedRoom = rememberedTimerPage.getByRole('dialog', { name: 'Studio', exact: true });
       const rememberedRoomButton = rememberedTimerPage.getByRole('button', { name: 'Studio', exact: true });
@@ -9853,7 +9943,9 @@ try {
       assert.deepEqual(await compactTimerPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
       await compactTimerPage.close();
       console.log(engine + ': compact standalone climate timer rail and full-size narrow RTL controls');
+    });
 
+    await run('Room popup geometry and motion', async () => {
       const geometryPage = await browser.newPage({
         viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce',
       });
@@ -9955,7 +10047,9 @@ try {
       assert.equal(await motionSource.evaluate(source => source.getRootNode().activeElement === source), true);
       await motionResizePage.close();
       console.log(engine + ': room popup easing survives duplicate resize, true geometry changes and close restoration');
+    });
 
+    await run('Toolbar and Entrance popup placement', async () => {
       const toolbarPlacementPage = await browser.newPage({
         viewport:{width:391,height:845}, isMobile:true, hasTouch:true, reducedMotion:'reduce',
       });
@@ -10111,7 +10205,9 @@ try {
       assert.equal(await roomPositionSetting.isChecked(), true);
       await entryPositionPage.close();
       console.log(engine + ': Entrance aligns with room geometry through Settings and direct routes');
+    });
 
+    await run('Cover controls and room details', async () => {
       for (const [locale, width] of [['he', 320], ['en', 375], ['he', 390]]) {
         const coverGridPage = await browser.newPage({ viewport: { width, height: 800 }, hasTouch: true, reducedMotion: 'reduce' });
         await coverGridPage.goto(base + '?cover-grid&locale=' + locale);
@@ -10236,7 +10332,9 @@ try {
         await coverGridPage.close();
       }
       console.log(engine + ': cover rails at 320–390 px, room detail tap/hold/keyboard, Back and zero movement');
+    });
 
+    await run('Light effects and inline timer details', async () => {
       for (const [locale, width] of [['he', 320], ['en', 390]]) {
         const effectsPage = await browser.newPage({ viewport: { width, height: 760 }, hasTouch: true });
         const many = locale === 'en' ? '&many-effect-categories' : '';
@@ -10411,9 +10509,10 @@ try {
           await page.close();
         }
       }
+    });
 
+    await run('Climate details, swing and presets', async () => {
       const detailPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
-      const rightToLeft = engine === 'WebKit';
       await detailPage.goto(base + '?device-panel&locale=' + (rightToLeft ? 'he' : 'en'));
       const quickAir = detailPage.locator('.quick-button[data-entity="climate.demo_air"]');
       await quickAir.click({ delay: 600 });
@@ -10710,7 +10809,9 @@ try {
       assert.equal(await presetPage.evaluate(() => window.latest.room_overrides.studio.climate_preset_shortcuts), undefined);
       await presetPage.close();
       console.log(engine + ' 320: room-scoped climate preset, native feedback, capability guards and editor');
+    });
 
+    await run('Timer usage and heater level', async () => {
       const usagePage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
       const usageURL = base + '?device-panel&timer-usage&locale=' + (rightToLeft ? 'he' : 'en');
       const openUsage = async flags => {
@@ -10889,7 +10990,9 @@ try {
       assert.equal(await nextPage.evaluate(() => window.bayitTest.calls.length), 2);
       await nextPage.close();
       console.log(engine + ' 320: helper-only heater preselect, observed save and independent running controls');
+    });
 
+    await run('Presence controls and editor', async () => {
       const presencePage = await browser.newPage({ viewport:{ width:390,height:844 }, hasTouch:true, reducedMotion:'reduce' });
       presencePage.setDefaultTimeout(8000);
       const presenceUrl = base + '?toolbar-panels&presence-icons';
@@ -10944,7 +11047,9 @@ try {
       assert.equal((await editedPresence()).icon, 'mdi:account-heart-outline');
       await presencePage.close();
       console.log(engine + ': native presence scope, 0/1/2+ icons, authored icon and toolbar editor');
+    });
 
+    await run('Toolbar panels', async () => {
       const panelsPage = await browser.newPage({ viewport: { width:390,height:844 } });
       panelsPage.setDefaultTimeout(8000);
       const glassSession = engine === 'Chromium' ? await panelsPage.context().newCDPSession(panelsPage) : null;
@@ -11078,7 +11183,9 @@ try {
       await panelsPage.getByRole('dialog').getByRole('button',{name:'Calendar',exact:true}).click();
       await panelsPage.getByRole('dialog',{name:'Calendar',exact:true}).getByText('2 calendars',{exact:true}).waitFor();
       await panelsPage.close();
+    });
 
+    await run('Energy, Weather, Sensors and native details', async () => {
       const utilityPage = await browser.newPage({ viewport: { width: 391, height: 845 }, hasTouch: true, reducedMotion: 'reduce' });
       utilityPage.setDefaultTimeout(8000);
       await utilityPage.goto(base + '/fixture-home/home?toolbar-panels&utility-graph-details&native-more-info=modern');
@@ -11242,7 +11349,9 @@ try {
       assert.equal((await editedGraph()).vacuum_panel_id, undefined);
       await chartEditor.close();
       console.log(engine + ': Sensors graph room and Vacuum navigation, stale targets, native fallback and editor');
+    });
 
+    await run('Automation script controls', async () => {
       const scriptPage = await browser.newPage({ viewport: { width: 320, height:844 }, hasTouch:true });
       scriptPage.setDefaultTimeout(8000);
       await scriptPage.goto(base + '?toolbar-panels&automation-toggle');
@@ -11313,7 +11422,9 @@ try {
       assert.equal((await edited()).confirmation, 'Run the arrival scene?');
       await scriptEditor.close();
       console.log(engine + ' 320: script Start/Stop, changed-state and replacement-run guards, and editor');
+    });
 
+    await run('Compact Entrance and Overview', async () => {
       for (const [width, isOverview] of [[320,false],[391,false],[320,true],[391,true]]) {
         const entryStatusPage = await browser.newPage({ viewport: { width, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
         entryStatusPage.setDefaultTimeout(8000);
@@ -11414,7 +11525,9 @@ try {
       }
       await rtlEntryStatusPage.close();
       console.log(engine + ': compact Entrance and Overview status, guarded lock commands, native graph and fallback, and visual editor');
+    });
 
+    await run('Entrance lights and security controls', async () => {
       const entrancePage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
       entrancePage.setDefaultTimeout(8000);
       const entranceUrl = base + '/fixture-home/home?toolbar-panels&entrance-light-tiles';
@@ -11581,7 +11694,9 @@ try {
       console.log(engine + ': Security cover rails at 320–390 px, exact native details, endpoint and latest confirmation');
       await assertReportedCoverMotion(browser);
       await assertCompactSecurityLocks(browser);
+    });
 
+    await run('Overview lights, covers and climate', async () => {
       const groupOffPage = await browser.newPage({ viewport:{width:320,height:845}, hasTouch:true, reducedMotion:'reduce' });
       groupOffPage.setDefaultTimeout(8000);
       const offOverviewName = rightToLeft ? 'מבט על הבית' : 'Home overview';
@@ -11823,7 +11938,9 @@ try {
       assert.equal(await overviewEditor.evaluate(() => window.latest.toolbar[0].sections[2].include_closing), true);
       await overviewEditor.close();
       console.log(engine + ' 320: live Overview discovery, exclusions, closing covers and visual editor');
+    });
 
+    await run('Light effects and toolbar section editor', async () => {
       const effectEditorPage = await browser.newPage({ viewport: { width: 320, height: 760 } });
       await effectEditorPage.addInitScript(() => {
         const key = 'bayit9-browser-fixture';
@@ -11949,7 +12066,9 @@ try {
       await deviceMode.selectOption('auto');
       assert.equal(await currentHeading.inputValue(),'My fixtures');
       await sectionDiscoveryPage.close();
+    });
 
+    await run('Dashboard setup and visibility', async () => {
       const setupPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
       await setupPage.goto(base + '/fixture-home/home?configuration&large-setup');
       await setupPage.getByRole('button', { name: 'Appearance', exact: true }).click();
@@ -12018,7 +12137,9 @@ try {
       assert.equal(persisted.strategy.profiles, undefined);
       assert.equal(await setupPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain).length), 0);
       await setupPage.close();
+    });
 
+    await run('Room configuration, device placement and inline lights', async () => {
       const roomConfigUrl = base + '/fixture-home/home?configuration&room-selection';
       const openRoomEditor = async page => {
         await page.getByRole('button', { name: 'Appearance', exact: true }).tap();
@@ -12616,6 +12737,9 @@ try {
         await placementPage.close();
       }
       console.log(engine + ' 320: device placement preview reflects automatic moves and stays local until saved');
+    });
+
+    await run('Room placement, links and clean installation', async () => {
       await assertRoomMirrorPlacement(browser);
       await assertRetiredRoomLinks(browser);
       await assertToolbarLinksKeepTheirScreenIdentity(browser);
@@ -12630,11 +12754,19 @@ try {
 
       await assertEmptyRoomSetup(browser);
       console.log(engine + ': no-device installation and administrator room setup in English and Hebrew');
-    } finally {
-      await browser.close();
-    }
+    });
+
+    await run('Browser close', () => browser.close());
   }
 } finally {
   server.close();
   await once(server, 'close');
+}
+
+if (failures.length) {
+  console.error('\nDashboard browser tests reported ' + failures.length + ' failure(s).');
+  for (const { engine, scenario, error } of failures) {
+    console.error('\n[' + engine + '] ' + scenario + '\n' + (error?.stack ?? String(error)));
+  }
+  process.exitCode = 1;
 }
