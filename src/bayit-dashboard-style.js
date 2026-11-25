@@ -914,6 +914,63 @@ export const styles = `
       translate: 0 3px;
     }
   }
+  .shell[data-page=true][data-layout=header] .room {
+    --header-heading-height: 29px;
+    --header-symbol-size: 21px;
+    --shortcut-width: clamp(29px,10cqi,42px);
+    --shortcut-height: clamp(24px,calc((var(--room-block) - 75px) / 2),34px);
+    grid-template-rows: var(--header-heading-height) minmax(20px,1fr) auto;
+  }
+  .shell[data-page=true][data-layout=header] .room:is([data-appliance-status],[data-concurrent-activities]) {
+    grid-template-rows: var(--header-heading-height) minmax(20px,auto) auto;
+  }
+  .shell[data-page=true][data-layout=header] .room-title {
+    align-self: start;
+    grid-template-areas: "icon count label";
+    grid-template-columns: var(--header-symbol-size) auto minmax(0,1fr);
+    grid-template-rows: var(--header-heading-height);
+    align-content: start;
+    padding: 0;
+    font-size: 14px;
+  }
+  .shell[data-page=true][data-layout=header] .room-title > :is(.room-name,span:first-of-type:not(.room-count)) { text-align: right; }
+  .shell[data-page=true][data-layout=header] :is(.room-title > ha-icon:first-child,.room-turn-off > ha-icon) {
+    width: var(--header-symbol-size); height: var(--header-symbol-size); --mdc-icon-size: var(--header-symbol-size);
+  }
+  .shell[data-page=true][data-layout=header] .room-turn-off {
+    align-self: start;
+    min-block-size: var(--header-heading-height);
+  }
+  .shell[data-page=true][data-layout=header] .quick {
+    grid-template-columns: repeat(3,minmax(0,1fr));
+    grid-template-rows: repeat(2,var(--shortcut-height));
+    justify-items: center;
+    align-self: end;
+  }
+  @container (max-width: 420px) {
+    .shell[data-page=true][data-layout=header] { --edge: 16px; }
+  }
+  @container (max-width: 360px) {
+    .shell[data-page=true][data-layout=header] .room {
+      --header-heading-height: 38px;
+      --header-symbol-size: 16px;
+      --header-count-lane: 29px;
+      --shortcut-height: clamp(24px,calc((var(--room-block) - 84px) / 2),34px);
+    }
+    .shell[data-page=true][data-layout=header] .room-title {
+      grid-template-areas: "label label label label" ". icon count .";
+      grid-template-columns: minmax(0,1fr) var(--header-symbol-size) var(--header-count-lane) minmax(0,1fr);
+      grid-template-rows: 17px 18px;
+      font-size: 13px;
+    }
+    .shell[data-page=true][data-layout=header] .room-title > :is(.room-name,span:first-of-type:not(.room-count)) { text-align: center; }
+    .shell[data-page=true][data-layout=header] .room-turn-off {
+      align-self: end;
+      margin-inline-start: calc((100% - var(--header-symbol-size) - var(--header-count-lane) - 4px) / 2);
+      align-items: end;
+      padding-block-end: 1px;
+    }
+  }
   @container (max-width: 275px) {
     .rooms { grid-template-columns: 1fr; }
     .room { --shortcut-width: 44px; --shortcut-height: 38px; padding: 8px; }

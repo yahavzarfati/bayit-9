@@ -858,7 +858,15 @@ window.bayitTest = {
     states[entity] = { ...states[entity], attributes: { ...states[entity].attributes, supported_color_modes: modes } };
     card.hass = { ...hass, states: { ...states } };
   },
-  setRoomLayout(layout) { card.setConfig({ ...cardConfig, layout }); },
+  setRoomLayout(layout, shortcutCount) {
+    const rooms = shortcutCount === undefined ? cardConfig.rooms : cardConfig.rooms.map(room =>
+      room.id === 'bayit_room_status' ? { ...room,
+        shortcuts: room.entities.filter(device => device.entity !== 'sensor.demo_temperature')
+          .map(device => device.entity).slice(0, shortcutCount),
+        turn_off_entities: ['light.demo_side1'],
+      } : room);
+    card.setConfig({ ...cardConfig, layout, rooms });
+  },
   setMediaArt(entity_picture) {
     states['media_player.demo_speaker'].attributes.entity_picture = entity_picture;
     card.hass = { ...hass, states: { ...states } };
@@ -1363,6 +1371,102 @@ async function assertShortcutDetailRoutes(browser) {
   }
 }
 
+async function assertHeaderRoomLayout(browser) {
+  const page = await browser.newPage({
+    viewport: { width: 391, height: 845 }, hasTouch: true, reducedMotion: 'reduce',
+  });
+  try {
+    await page.goto(base + '?room-status&locale=he');
+    const room = page.locator('.room[data-room="bayit_room_status"]');
+    const title = room.getByRole('button', { name: 'חדר הפנאי', exact: true });
+    const shortcuts = room.locator('.quick-button');
+    await title.waitFor();
+    const geometry = () => room.evaluate(card => ['.room-title', '.room-status-strip', '.quick']
+      .map(selector => card.querySelector(selector).getBoundingClientRect())
+      .map(({ x, y, width, height }) => [x, y, width, height]));
+    const classic = await geometry();
+    for (const width of [320, 360, 391, 430]) {
+      await page.setViewportSize({ width, height: 845 });
+      for (const count of [2, 3, 4, 6]) {
+        await page.evaluate(size => window.bayitTest.setRoomLayout('header', size), count);
+        const layout = await room.evaluate(card => {
+          const rect = selector => card.querySelector(selector).getBoundingClientRect();
+          const style = getComputedStyle(card);
+          const grid = rect('.quick');
+          const label = card.querySelector('.room-name');
+          const heading = rect('.room-title');
+          const symbol = rect('.room-title > ha-icon:first-child');
+          const status = rect('.room-count');
+          const shutdown = rect('.room-turn-off > ha-icon');
+          const controls = [...card.querySelectorAll('.quick-button')].map(button => {
+            const box = button.getBoundingClientRect();
+            return { x: box.left + box.width / 2, top: box.top, bottom: box.bottom };
+          });
+          const rows = [...new Set(controls.map(control => control.top))];
+          return {
+            headingHeight: parseInt(style.gridTemplateRows),
+            headingTargetHeight: heading.height,
+            labelAlign: getComputedStyle(label).textAlign,
+            labelWrap: getComputedStyle(label).whiteSpace,
+            symbolLeftOfCount: symbol.right <= status.left,
+            titleAboveSymbol: rect('.room-name').bottom <= symbol.top,
+            shutdownDifference: [shutdown.left - symbol.left, shutdown.top - symbol.top],
+            statusBottom: rect('.room-status-strip').bottom,
+            gridStart: grid.left,
+            gridWidth: grid.width,
+            gridBottom: grid.bottom,
+            cardBottom: card.getBoundingClientRect().bottom,
+            controls,
+            rows: rows.map(top => controls.filter(control => control.top === top).length),
+          };
+        });
+        const narrow = width <= 360;
+        assert.equal(layout.headingHeight, narrow ? 38 : 29);
+        assert.ok(layout.headingTargetHeight >= 44);
+        assert.equal(layout.labelAlign, narrow ? 'center' : 'right');
+        assert.equal(layout.labelWrap, 'nowrap');
+        assert.equal(layout.symbolLeftOfCount, true);
+        assert.equal(layout.titleAboveSymbol, narrow);
+        assert.ok(layout.shutdownDifference.every(delta => Math.abs(delta) <= 2));
+        assert.deepEqual(layout.rows, count <= 3 ? [count] : [3, count - 3]);
+        assert.ok(layout.gridBottom < layout.cardBottom && layout.cardBottom - layout.gridBottom <= 9);
+        assert.ok(layout.controls[0].top >= layout.statusBottom);
+        for (const [index, control] of layout.controls.entries()) {
+          const middle = layout.gridStart + layout.gridWidth * (index % 3 + .5) / 3;
+          assert.ok(Math.abs(control.x - middle) <= 2);
+          assert.ok(control.bottom <= layout.gridBottom);
+        }
+      }
+    }
+    const close = page.getByRole('dialog').locator('[data-role=close]');
+    await title.press('Enter');
+    await close.waitFor();
+    await close.press('Enter');
+    await close.waitFor({ state: 'hidden' });
+    assert.equal(await title.evaluate(element => element.getRootNode().activeElement === element), true);
+    await shortcuts.first().press('Shift+Enter');
+    await close.waitFor();
+    await close.press('Enter');
+    await close.waitFor({ state: 'hidden' });
+    assert.equal(await shortcuts.first().evaluate(element => element.getRootNode().activeElement === element), true);
+    await title.tap();
+    await close.waitFor();
+    assert.equal(await page.evaluate(() => window.bayitTest.calls.length), 0);
+    await close.press('Enter');
+    await close.waitFor({ state: 'hidden' });
+    await room.locator('.quick-button[data-entity="light.demo_side1"]').tap();
+    const commands = await page.evaluate(() => window.bayitTest.calls);
+    assert.deepEqual(commands.map(call => [call.domain, call.service, call.target.entity_id]), [
+      ['light', 'turn_on', 'light.demo_side1'],
+    ]);
+    await page.setViewportSize({ width: 391, height: 845 });
+    await page.evaluate(() => window.bayitTest.setRoomLayout('classic'));
+    assert.deepEqual(await geometry(), classic);
+  } finally {
+    await page.close();
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
@@ -1375,6 +1479,8 @@ try {
       console.log(engine + ': independent browser appearance and admin household defaults');
       await assertNativeRoomCoverHeader(browser);
       console.log(engine + ': native room cover header, focus restoration, editor and device isolation');
+      await assertHeaderRoomLayout(browser);
+      console.log(engine + ': top-title room layout, shortcut lanes and keyboard focus');
       await assertSetupDrafts(browser);
       console.log(engine + ': setup drafts survive closing, preserve conflicts, and retry safely');
       const quietPage = await browser.newPage({
