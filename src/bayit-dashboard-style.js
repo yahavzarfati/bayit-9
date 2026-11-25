@@ -570,6 +570,9 @@ export const styles = `
     --primary-text-color: var(--ink);
     --secondary-text-color: var(--secondary);
     --card-background-color: var(--surface);
+    --setup-divider: var(--soft-line);
+    --setup-control-line: var(--line);
+    --setup-focus: #d3f1ff;
   }
   .modal > .setup-footer {
     flex: 0 0 auto;
@@ -582,7 +585,6 @@ export const styles = `
     padding: 8px;
     border: 1px solid var(--soft-line);
     border-radius: 12px;
-    background: var(--surface);
   }
   .setup-footer [role=status] {
     flex: 1 1 160px;

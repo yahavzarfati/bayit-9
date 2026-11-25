@@ -1703,6 +1703,9 @@ async function assertSetupFooterLayout(browser) {
     const save = editor.getByRole('button', { name: 'Save dashboard', exact: true });
     const body = editor.locator('.modal-body');
     const footer = editor.locator('.setup-footer');
+    const roomPicker = editor.getByRole('combobox', { name: 'Room to customize', exact: true });
+    assert.equal(await roomPicker.evaluate(field => getComputedStyle(field).backgroundColor), 'rgba(0, 0, 0, 0)');
+    assert.equal(await footer.evaluate(element => getComputedStyle(element).backgroundColor), 'rgba(0, 0, 0, 0)');
     for (const [width, height] of [[391, 845], [320, 667]]) {
       await page.setViewportSize({ width, height });
       await name.evaluate(field => field.scrollIntoView({ block: 'center' }));

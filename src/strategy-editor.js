@@ -302,6 +302,28 @@ const ROOM_CSS = `
 }
 `;
 
+const GLASS_EDITOR_CSS = `
+:host(.setup-editor) :is(input:not([type=checkbox]), select, textarea, button) {
+  background-color: transparent;
+  border-color: var(--setup-control-line);
+  border-radius: 12px;
+}
+:host(.setup-editor) :is(details, fieldset, .room-icon-preview) {
+  border-color: var(--setup-divider);
+  border-radius: 14px;
+}
+:host(.setup-editor) :is(.room-entry, .record) { border-color: var(--setup-divider); }
+:host(.setup-editor) :is(input, select, button, summary) { accent-color: currentColor; }
+:host(.setup-editor) :focus-visible { outline-color: var(--setup-focus); outline-offset: 2px; }
+:host(.setup-editor) .room-danger { border-color: currentColor; }
+:host(.setup-editor) button:not(:disabled):hover { background-color: rgb(255 255 255 / 12%); }
+@media (prefers-contrast: more) {
+  :host(.setup-editor) :is(input:not([type=checkbox]), select, textarea, button) {
+    border-color: currentColor;
+  }
+}
+`;
+
 function hasStates(states) {
   for (const id in states ?? {}) {
     if (Object.hasOwn(states, id)) return true;
@@ -2148,7 +2170,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       pane(words.profiles, 'profiles', () => this.#profilePane(words)),
     ]);
     form.addEventListener('submit', event => event.preventDefault());
-    this.shadowRoot.replaceChildren(node('style', { textContent: CSS + ROOM_CSS }), form);
+    this.shadowRoot.replaceChildren(node('style', { textContent: CSS + ROOM_CSS + GLASS_EDITOR_CSS }), form);
     if (focused && this.shadowRoot.contains(focused)) focused.focus({ preventScroll: true });
   }
 }
