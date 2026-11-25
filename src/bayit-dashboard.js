@@ -1828,7 +1828,10 @@ export class BayitDashboard extends HTMLElement {
           view.lightPower = power;
         }
         if ((room || showRoomPreset) && config.room_climate_power === true) {
-          const power = button('round-action room-climate-power', this.t('climate_power'), 'mdi:power', true);
+          const compact = view.compactClimateControls;
+          const power = button('round-action room-climate-power', this.t('climate_power'),
+            compact ? config.icon || 'mdi:air-conditioner' : 'mdi:power', true);
+          power.toggleAttribute('data-compact', compact);
           glyph.hidden = true;
           head.append(power);
           const visible = () => isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities);

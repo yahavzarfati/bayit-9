@@ -4538,7 +4538,9 @@ async function assertCompactClimateRail(browser) {
               onTop:field.querySelector('.climate-selector-chevron').getBoundingClientRect().left >= el.getBoundingClientRect().right };
           });
           assert.ok(caption.matches && caption.fits && caption.height >= 44 && caption.onTop, JSON.stringify({locale,width,surface,...caption}));
-          assert.equal(await page.locator('dialog[open] .room-climate-power:enabled').count(),1);
+          const power = page.locator('dialog[open] .room-climate-power:enabled');
+          assert.equal(await power.count(),1);
+          assert.equal(await power.locator('ha-icon').getAttribute('icon'),'mdi:air-conditioner');
           await rail.locator('select[data-action=set_fan_mode]').focus();
           assert.deepEqual(await calls(),[]);
 

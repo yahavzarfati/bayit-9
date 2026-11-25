@@ -627,6 +627,8 @@ export const styles = `
   .device .device-head:has(> .room-climate-power):has(> .climate-preset-shortcut:not([hidden])) {
     grid-template-columns: 44px minmax(0,1fr) 44px 44px;
   }
+  .room-climate-power[data-compact] { border-color: transparent; background: var(--room-icon-fill); }
+  .room-climate-power[data-compact] > ha-icon { width: 24px; height: 24px; --mdc-icon-size: 24px; }
   .room-climate-power[aria-pressed=true] { color: var(--moving); }
   .climate-preset-shortcut {
     width: 44px; height: 44px; grid-template-rows: 16px 11px; align-content: center; gap: 2px;
