@@ -363,6 +363,13 @@ export const styles = `
     }
   }
   @media (prefers-contrast: more) {
+    .shell[data-page=true] {
+      --line: rgba(255,255,255,.58);
+      --soft-line: rgba(255,255,255,.31);
+      --home-room-outline: 58%;
+      --home-toolbar-outline: 58%;
+      --home-badge-outline: 31%;
+    }
     .shell[data-page=true] .quick-button[data-tone=quiet]:not(:disabled) { border-color: var(--soft-line); }
   }
   .shell[data-layout=header] .quick {
@@ -846,7 +853,25 @@ export const styles = `
       background: color-mix(in srgb,var(--ink) 10%,var(--surface));
     }
     .room-status[data-badge=temperature] ha-icon { color: #a4c8ff; }
-    .shell, .modal { --line: rgba(255,255,255,.58); --soft-line: rgba(255,255,255,.31); }
+    .shell:not([data-page=true]), .modal { --line: rgba(255,255,255,.58); --soft-line: rgba(255,255,255,.31); }
+
+    .shell[data-page=true] .room {
+      border-color: color-mix(in srgb,var(--ink) var(--home-room-outline,30%),transparent);
+    }
+    .shell[data-page=true] .chrome-button {
+      border-color: color-mix(in srgb,var(--ink) var(--home-toolbar-outline,24%),transparent);
+    }
+    .shell[data-page=true] :is(.room-status[data-badge=temperature],.room-count[data-tone=quiet]) {
+      background: color-mix(in srgb,var(--ink) 11%,var(--surface));
+      border-color: color-mix(in srgb,var(--ink) var(--home-badge-outline,10%),transparent);
+    }
+    .shell[data-page=true][data-wallpaper-ink=dark] .room:not([data-wallpaper-ink=light]),
+    .shell[data-page=true] .room[data-wallpaper-ink=dark] { --home-cover-ink: var(--moving); }
+    .shell[data-page=true] .quick-button[data-entity^="cover."][data-tone=moving] {
+      color: var(--home-cover-ink,#7aa7ff);
+      background: rgba(122,167,255,.18);
+      border-color: rgba(122,167,255,.38);
+    }
   }
   @media (prefers-reduced-motion: reduce) {
     .modal[open]:not([data-kind]), .quick-button[aria-busy=true]::after,

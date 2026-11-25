@@ -2653,6 +2653,147 @@ async function assertRoomVacuumSummary(browser) {
   }
 }
 
+async function assertHomeMaterial(browser) {
+  const engine = browser.browserType().name();
+  const quietPage = await browser.newPage({
+    viewport: { width: 391, height: 845 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce',
+  });
+  try {
+    const quietLocale = engine === 'webkit' ? 'he' : 'en';
+    await quietPage.goto(base + '?room-status&classic-quiet&locale=' + quietLocale);
+    const homeRoom = quietPage.locator('.room[data-room="bayit_room_status"]');
+    await homeRoom.waitFor();
+    const quietShortcut = homeRoom.locator('.quick-button[data-entity="light.demo_side1"]');
+    const cover = homeRoom.locator('.quick-button[data-entity="cover.demo_window"]');
+    const appearance = ink => quietShortcut.evaluate((control, inkMode) => {
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      const pixel = color => {
+        context.clearRect(0, 0, 1, 1);
+        context.fillStyle = color;
+        context.fillRect(0, 0, 1, 1);
+        return Array.from(context.getImageData(0, 0, 1, 1).data);
+      };
+      const root = control.getRootNode();
+      const room = control.closest('.room');
+      const chrome = root.querySelector('.chrome-button:not([hidden])');
+      room.dataset.wallpaperInk = chrome.dataset.wallpaperInk = inkMode;
+      const style = getComputedStyle(control);
+      const coverStyle = getComputedStyle(room.querySelector('[data-entity="cover.demo_window"]'));
+      const climate = getComputedStyle(room.querySelector('[data-entity="climate.demo_room"]'));
+      const badge = [room.querySelector('[data-badge=temperature]'), room.querySelector('.room-count')];
+      const [toolbarStyle, chromeStyle, roomStyle] = [root.querySelector('.toolbar'), chrome, room]
+        .map(node => getComputedStyle(node));
+      return {
+        reduced: matchMedia('(prefers-reduced-transparency: reduce)').matches,
+        stronger: matchMedia('(prefers-contrast: more)').matches,
+        background: pixel(style.backgroundColor),
+        rim: pixel(style.borderColor)[3],
+        strongRim: pixel(style.getPropertyValue('--soft-line'))[3],
+        toolbarAlpha: pixel(toolbarStyle.backgroundColor)[3],
+        chromeAlpha: pixel(chromeStyle.backgroundColor)[3],
+        chromeRim: pixel(chromeStyle.borderColor)[3],
+        roomAlpha: pixel(roomStyle.backgroundColor)[3],
+        roomRim: pixel(roomStyle.borderColor)[3],
+        badges: badge.map(element => {
+          const style = getComputedStyle(element);
+          return { fill: pixel(style.backgroundColor), rim: pixel(style.borderColor)[3] };
+        }),
+        coverInk: pixel(coverStyle.color),
+        coverFill: pixel(coverStyle.backgroundColor),
+        coverRim: pixel(coverStyle.borderColor)[3],
+        climateFill: pixel(climate.backgroundColor),
+      };
+    }, ink);
+    assert.equal(await quietShortcut.locator('ha-icon').evaluate(glyph => glyph.offsetWidth), 24);
+    assert.equal(await cover.locator('ha-icon').evaluate(glyph => glyph.offsetWidth), 24);
+    const near = (actual, expected) => assert.ok(Math.abs(actual - expected) <= 1, actual + ' should be near ' + expected);
+    const assertAppearance = async ink => {
+      const current = await appearance(ink);
+      const fallback = current.reduced || current.stronger;
+      const dark = ink === 'dark';
+      assert.equal(current.toolbarAlpha, 0);
+      assert.equal(current.chromeAlpha, fallback ? 255 : 0);
+      assert.equal(current.roomAlpha, fallback ? 255 : 0);
+      near(current.roomRim, (current.stronger ? .58 : current.reduced ? .30 : dark ? .35 : .28) * 255);
+      near(current.chromeRim, (current.stronger ? .58 : current.reduced ? .24 : dark ? .35 : .28) * 255);
+      if (current.reduced) {
+        if (dark) assert.ok(current.background.slice(0, 3).every(value => value > 190));
+        else for (const value of current.background.slice(0, 3)) near(value, 62);
+        assert.equal(current.background[3], 255);
+      } else assert.equal(current.background[3], 0);
+      near(current.rim, current.stronger ? current.strongRim : 41);
+      for (const { fill, rim } of current.badges) {
+        assert.equal(fill[3], fallback ? 255 : 0);
+        if (fallback && dark) assert.ok(fill.slice(0, 3).every(value => value > 190));
+        else if (fallback) for (const value of fill.slice(0, 3)) near(value, 64);
+        near(rim, (current.stronger ? .31 : current.reduced ? .10 : dark ? .22 : .18) * 255);
+      }
+      assert.deepEqual(current.coverInk, dark ? [0, 63, 104, 255]
+        : fallback ? [122, 167, 255, 255] : [158, 220, 255, 255]);
+      near(current.coverFill[3], (fallback ? .18 : .14) * 255);
+      near(current.coverRim, (fallback ? .38 : .41) * 255);
+      near(current.climateFill[3], .14 * 255);
+    };
+    const cdp = engine === 'chromium' ? await quietPage.context().newCDPSession(quietPage) : undefined;
+    const setMedia = (transparency, contrast) => cdp
+      ? cdp.send('Emulation.setEmulatedMedia', { features: [
+        { name: 'prefers-reduced-transparency', value: transparency }, { name: 'prefers-contrast', value: contrast },
+      ] })
+      : quietPage.emulateMedia({ contrast });
+    const modes = cdp
+      ? [['no-preference', 'no-preference'], ['reduce', 'no-preference'], ['no-preference', 'more'], ['reduce', 'more']]
+      : [['no-preference', 'no-preference'], ['no-preference', 'more']];
+    for (const [transparency, contrast] of modes) {
+      await setMedia(transparency, contrast);
+      const mode = await appearance('light');
+      if (cdp) assert.equal(mode.reduced, transparency === 'reduce');
+      assert.equal(mode.stronger, contrast === 'more');
+      await assertAppearance('light');
+      await assertAppearance('dark');
+    }
+
+    await setMedia('reduce', 'more');
+    const he = quietLocale === 'he';
+    for (const [state, tone, direction, label] of [
+      ['open', 'moving', '', he ? 'פתוח' : 'Open'],
+      ['opening', 'moving', 'opening', he ? 'נפתח' : 'Opening'],
+      ['unavailable', 'quiet', '', he ? 'לא זמין' : 'Unavailable'],
+    ]) {
+      await quietPage.evaluate(async state => {
+        window.bayitTest.setRoomState('cover.demo_window', state);
+        await new Promise(requestAnimationFrame);
+      }, state);
+      assert.equal(await cover.getAttribute('data-tone'), tone);
+      assert.equal(await cover.getAttribute('data-transition'), direction);
+      assert.ok((await cover.getAttribute('aria-label')).includes(label));
+    }
+    const inactive = await appearance('light');
+    near(inactive.coverRim, inactive.stronger ? inactive.strongRim : 41);
+    const quietRoomName = homeRoom.locator('.room-name');
+    const nameLines = () => quietRoomName.evaluate(name => {
+      const range = document.createRange();
+      range.selectNodeContents(name);
+      return new Set([...range.getClientRects()].filter(box => box.width > 0).map(box => box.top)).size;
+    });
+    const rawName = quietLocale === 'he' ? 'חדר\nהפנאי' : 'Family\nroom';
+    assert.equal(await quietRoomName.textContent(), rawName);
+    assert.equal(await nameLines(), 2);
+    const labelFits = await quietRoomName.evaluate(name => {
+      const box = name.getBoundingClientRect();
+      const tile = name.closest('.room').getBoundingClientRect();
+      return box.top >= tile.top && box.bottom <= tile.bottom;
+    });
+    assert.equal(labelFits, true);
+    await quietPage.evaluate(() => window.bayitTest.setRoomLayout('header'));
+    assert.equal(await quietRoomName.textContent(), rawName);
+    assert.equal(await nameLines(), 1);
+    assert.equal(await quietPage.evaluate(() => window.bayitTest.calls.length), 0);
+  } finally {
+    await quietPage.close();
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
@@ -2682,83 +2823,8 @@ try {
       console.log(engine + ': setup footer stays clear of the scrollable editor');
       await assertSetupDrafts(browser);
       console.log(engine + ': setup drafts survive closing, preserve conflicts, and retry safely');
-      const quietPage = await browser.newPage({
-        viewport: { width: 391, height: 845 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce',
-      });
-      const quietLocale = engine === 'WebKit' ? 'he' : 'en';
-      await quietPage.goto(base + '?room-status&classic-quiet&locale=' + quietLocale);
-      const homeRoom = quietPage.locator('.room[data-room="bayit_room_status"]');
-      await homeRoom.waitFor();
-      const quietShortcut = homeRoom.locator('.quick-button[data-entity="light.demo_side1"]');
-      const movingShortcut = homeRoom.locator('.quick-button[data-tone="moving"]').first();
-      const appearance = () => quietShortcut.evaluate(control => {
-        const style = getComputedStyle(control);
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        const pixel = color => {
-          context.clearRect(0, 0, 1, 1);
-          context.fillStyle = color;
-          context.fillRect(0, 0, 1, 1);
-          return Array.from(context.getImageData(0, 0, 1, 1).data);
-        };
-        const root = control.getRootNode();
-        const toolbar = getComputedStyle(root.querySelector('.toolbar'));
-        const chrome = getComputedStyle(root.querySelector('.chrome-button:not([hidden])'));
-        return {
-          reduced: matchMedia('(prefers-reduced-transparency: reduce)').matches,
-          stronger: matchMedia('(prefers-contrast: more)').matches,
-          background: pixel(style.backgroundColor),
-          rimAlpha: pixel(style.borderColor)[3],
-          strongRimAlpha: pixel(style.getPropertyValue('--soft-line'))[3],
-          toolbarAlpha: pixel(toolbar.backgroundColor)[3],
-          chromeAlpha: pixel(chrome.backgroundColor)[3],
-        };
-      });
-      assert.equal(await quietShortcut.locator('ha-icon').evaluate(glyph => glyph.offsetWidth), 24);
-      assert.equal(await movingShortcut.locator('ha-icon').evaluate(glyph => glyph.offsetWidth), 24);
-      const assertAppearance = async () => {
-        const current = await appearance();
-        assert.equal(current.toolbarAlpha, 0, 'The space between toolbar buttons should show the wallpaper');
-        assert.equal(current.chromeAlpha, current.reduced || current.stronger ? 255 : 0);
-        if (current.reduced) {
-          assert.ok(current.background.slice(0, 3).every(value => Math.abs(value - 62) <= 1));
-          assert.equal(current.background[3], 255);
-        } else assert.equal(current.background[3], 0);
-        assert.ok(Math.abs(current.rimAlpha - (current.stronger ? current.strongRimAlpha : 41)) <= 1);
-      };
-      await assertAppearance();
-      if (engine === 'Chromium') {
-        const cdp = await quietPage.context().newCDPSession(quietPage);
-        for (const [value, contrast] of [['no-preference', 'no-preference'], ['reduce', 'no-preference'], ['reduce', 'more']]) {
-          await cdp.send('Emulation.setEmulatedMedia', { features: [
-            { name: 'prefers-reduced-transparency', value }, { name: 'prefers-contrast', value: contrast },
-          ] });
-          assert.equal((await appearance()).reduced, value === 'reduce');
-          await assertAppearance();
-        }
-        await homeRoom.evaluate(room => { room.dataset.wallpaperInk = 'dark'; });
-        assert.ok((await appearance()).background.slice(0, 3).every(value => value > 190));
-      }
-      const quietRoomName = homeRoom.locator('.room-name');
-      const nameLines = () => quietRoomName.evaluate(name => {
-        const range = document.createRange();
-        range.selectNodeContents(name);
-        return new Set([...range.getClientRects()].filter(box => box.width > 0).map(box => box.top)).size;
-      });
-      const rawName = quietLocale === 'he' ? 'חדר\nהפנאי' : 'Family\nroom';
-      assert.equal(await quietRoomName.textContent(), rawName);
-      assert.equal(await nameLines(), 2);
-      const labelFits = await quietRoomName.evaluate(name => {
-        const box = name.getBoundingClientRect();
-        const tile = name.closest('.room').getBoundingClientRect();
-        return box.top >= tile.top && box.bottom <= tile.bottom;
-      });
-      assert.equal(labelFits, true);
-      await quietPage.evaluate(() => window.bayitTest.setRoomLayout('header'));
-      assert.equal(await quietRoomName.textContent(), rawName);
-      assert.equal(await nameLines(), 1);
-      assert.equal(await quietPage.evaluate(() => window.bayitTest.calls.length), 0);
-      await quietPage.close();
+      await assertHomeMaterial(browser);
+      console.log(engine + ': Home glass, accessibility material, cover states and room labels');
 
       const routesPage = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
       const rtlRoutes = engine === 'WebKit';
