@@ -45,6 +45,8 @@ In **Room shortcuts**, choose a **Long-press destination** for each shortcut. Ch
 
 Enable **Show brightness and temperature in this room** to add a light's supported sliders to its room tile. Adjustments apply when the slider is released. The same light keeps its default presentation in other rooms. The YAML field `inline_light_entities` lists the lights with inline controls.
 
+Use **Open Home Assistant details from the cover header** in **Room device display** to open the selected cover's native details with a tap or hold. The room remains open underneath. The YAML field `native_cover_header_entities` lists the covers with this behavior.
+
 Use **Devices turned off by the room icon** to give the icon a quick room shutdown action. Pick the exact room members to turn off. The room name still opens the room. The YAML field `turn_off_entities` accepts room lights, switches, fans, climate devices, water heaters, and media players. A device receives the action while it is available and offers a standard direct turn-off command. The selection is independent from the room's lighting count.
 
 On a standalone Bayit 9 dashboard, opening a room, device or screen updates the URL. Use the browser's Back and Forward buttons to return to those views. To keep an old bookmark, add a fragment under `popup_aliases`, such as `"#old-lamp": "#device/studio/light.desk"`. Room links use `#room-<room-id>` and screen links use `#panel/<toolbar-id>`. Links open the viewer with the dashboard's usual device permissions.

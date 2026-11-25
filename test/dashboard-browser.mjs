@@ -1035,6 +1035,58 @@ async function assertSharedAppearance(browser, engine) {
   }
 }
 
+async function assertNativeRoomCoverHeader(browser) {
+  const page = await browser.newPage({ viewport: { width: 320, height: 780 }, hasTouch: true, reducedMotion: 'reduce' });
+  try {
+    await page.goto(base + '/fixture-home/home?configuration&cover-grid&native-more-info=modern');
+    await page.getByRole('button', { name: 'Appearance', exact: true }).tap();
+    await page.getByRole('button', { name: 'Customize home', exact: true }).tap();
+    const editor = page.getByRole('dialog', { name: 'Customize home', exact: true });
+    await editor.getByText('Rooms', { exact: true }).tap();
+    await editor.getByText('Device display', { exact: true }).tap();
+    await editor.getByLabel('Device to customize', { exact: true }).selectOption('cover.demo_curtain');
+    await editor.getByRole('checkbox', { name: 'Open Home Assistant details from the cover header' }).check();
+    await editor.getByRole('button', { name: 'Save dashboard', exact: true }).tap();
+    await page.waitForURL(url => url.hash === '');
+    await editor.waitFor({ state: 'hidden' });
+
+    await page.getByRole('button', { name: 'Studio', exact: true }).tap();
+    const room = page.getByRole('dialog', { name: 'Studio', exact: true });
+    const header = room.getByRole('button', { name: 'Long living room curtain · More info', exact: true });
+    const other = room.getByRole('button', { name: 'Window shade · Device controls', exact: true });
+    await header.waitFor();
+    await other.waitFor();
+    assert.ok((await header.boundingBox()).height >= 44);
+    const native = page.getByRole('dialog', { name: 'Native entity details', exact: true });
+    const triggers = [
+      () => header.tap(),
+      () => header.press('Shift+Enter'),
+      () => header.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 19, button: 0, isPrimary: true }),
+    ];
+    for (const trigger of triggers) {
+      await trigger();
+      await native.waitFor();
+      if (trigger === triggers[2]) await page.evaluate(() => document.dispatchEvent(
+        new PointerEvent('pointerup', { pointerType: 'touch', pointerId: 19 })));
+      assert.equal(new URL(page.url()).hash, '#room-studio');
+      assert.equal(new URL(page.url()).searchParams.get('more-info-entity-id'), 'cover.demo_curtain');
+      await native.getByRole('button', { name: 'Close native details', exact: true }).tap();
+      await native.waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => {
+        const root = document.querySelector('bayit-dashboard').shadowRoot;
+        return root.activeElement?.getAttribute('aria-label') === 'Long living room curtain · More info' &&
+          location.hash === '#room-studio' && !new URL(location.href).searchParams.has('more-info-entity-id');
+      });
+    }
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), Array(3).fill('cover.demo_curtain'));
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+    await other.tap();
+    await page.getByRole('dialog', { name: 'Window shade', exact: true }).waitFor();
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertSetupDrafts(browser) {
   const page = await browser.newPage({
     viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce',
@@ -1321,6 +1373,8 @@ try {
       await assertShortcutDetailRoutes(browser);
       console.log(engine + ': scoped panel and native shortcut destinations, safe taps, focus return and editor persistence');
       console.log(engine + ': independent browser appearance and admin household defaults');
+      await assertNativeRoomCoverHeader(browser);
+      console.log(engine + ': native room cover header, focus restoration, editor and device isolation');
       await assertSetupDrafts(browser);
       console.log(engine + ': setup drafts survive closing, preserve conflicts, and retry safely');
       const quietPage = await browser.newPage({

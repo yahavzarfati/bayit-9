@@ -1275,3 +1275,26 @@ test('an optional lighting count selection changes only the scope of the room ba
   assert.deepEqual(build(scope, ['light.fixture_detail','light.fixture_hidden','light.fixture_elsewhere','switch.demo_boiler']),
     { ...automatic, lighting_count_entities:['light.demo_lamp'], turn_off_entities:['light.fixture_detail','switch.demo_boiler'] });
 });
+
+test('native cover details are scoped to visible controls in the opted-in room', () => {
+  const hass = home();
+  const shade = 'cover.reading_shade';
+  const readOnly = 'cover.entrance_shade';
+  const hidden = 'cover.maintenance_shade';
+  const foreign = 'cover.other_shade';
+  for (const entity of [shade, readOnly, hidden, foreign]) {
+    hass.entities[entity] = { area_id: 'studio' };
+    hass.states[entity] = { state: 'closed', attributes: {} };
+  }
+  const [studio, lounge] = discoverRooms({
+    area_ids: ['studio', 'lounge'],
+    room_overrides: {
+      studio: { entities: [shade, readOnly, hidden, 'light.demo_lamp'],
+        read_only_entities: [readOnly], panel_hidden_entities: [hidden],
+        native_cover_header_entities: [shade, shade, readOnly, hidden, foreign, 'light.demo_lamp'] },
+      lounge: { entities: [shade, foreign] },
+    },
+  }, hass, 'en');
+  assert.deepEqual(studio.entities.filter(item => item.room_cover_native_details).map(item => item.entity), [shade]);
+  assert.ok(lounge.entities.every(item => !item.room_cover_native_details));
+});

@@ -3,7 +3,7 @@ import { languages } from './bayit-dashboard-i18n.js';
 import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isVacuumProgramAction,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
   normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions, ROOM_PANEL_KINDS, roomShortcutDevices,
-  shortcutDetailPanels, STRATEGY_NAME, supportsShortcutWithoutDetails,
+  shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { allowsCoverRailAction, createDeviceController, getDeviceModel, roomShutdownTargets,
@@ -236,6 +236,9 @@ function normalizeEntity(item) {
   }
   if (typeof item.role === 'string') entry.role = item.role;
   const domain = domainFor(entry);
+  if (domain === 'cover' && item.room_cover_native_details === true && supportsNativeShortcutDetails(entry)) {
+    entry.room_cover_native_details = true;
+  }
   if (domain === 'climate' && entry.role !== 'status' && !['heater', 'boiler'].includes(entry.kind)) {
     const shortcut = normalizeClimatePresetShortcut(item.room_climate_preset);
     if (shortcut) entry.room_climate_preset = shortcut;
@@ -1406,13 +1409,18 @@ export class BayitDashboard extends HTMLElement {
     } else {
       const details = make(launchFromHeader ? 'span' : 'div', 'device-detail');
       details.append(name, state);
-      const hasPanel = (cover && !!room) || boilerPanel;
+      const nativeRoomCover = coverPanel && !!room && config.room_cover_native_details === true;
+      const hasPanel = (cover && !!room && !nativeRoomCover) || boilerPanel;
       if (cover) item.dataset.compact = 'cover';
       const more = launchFromHeader ? button('device-head device-panel-launch')
         : button('round-action', this.t(hasPanel ? 'device_controls' : 'more_info'),
           cover ? config.icon || deviceIcons.cover : 'mdi:information-outline', true);
-      if (hasPanel) more.setAttribute('aria-haspopup', 'dialog');
-      more.onclick = () => hasPanel ? this.openPanel('device', more, room, config.entity) : this.moreInfo(config, more);
+      if (hasPanel || nativeRoomCover) more.setAttribute('aria-haspopup', 'dialog');
+      more.onclick = () => {
+        if (hasPanel) this.openPanel('device', more, room, config.entity);
+        else if (!nativeRoomCover || isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities,
+          this.config.hiddenEntities)) this.moreInfo(config, more);
+      };
       const head = launchFromHeader ? more : make('header', 'device-head');
       if (titleInDialog) {
         head.classList.add('device-state-head');
@@ -1435,7 +1443,8 @@ export class BayitDashboard extends HTMLElement {
         bindDeviceDetails(more, more.onclick);
         head.append(glyph, details);
         if (boilerPanel) head.append(icon('mdi:arrow-top-right'));
-        view.panelLaunch = { action: this.t(toolbarCoverRail ? 'more_info' : 'device_controls'), native: toolbarCoverRail };
+        const native = toolbarCoverRail || nativeRoomCover;
+        view.panelLaunch = { action: this.t(native ? 'more_info' : 'device_controls'), native };
       } else {
         if (titleInDialog && domain === 'light' && config.room_light_controls === true && config.role !== 'status') {
           const power = button('round-action compact-light-power', this.t('turn_on'), 'mdi:power', true);

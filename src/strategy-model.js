@@ -284,6 +284,7 @@ function dashboardAreas(config, hass) {
       shortcutDetailEntities: override.shortcut_detail_entities,
       shortcutDetailRoutes: override.shortcut_detail_routes,
       inlineLights: new Set(idList(override.inline_light_entities)),
+      nativeCoverHeaders: new Set(idList(override.native_cover_header_entities)),
       lightingCount: idList(override.lighting_count_entities),
       shutdown: idList(override.turn_off_entities).filter(supportsRoomShutdown),
       activities: override.activities,
@@ -539,6 +540,10 @@ export function discoverRooms(config, hass, locale) {
       if (links && Object.hasOwn(links, device.entity)) {
         const target = links[device.entity];
         if (panelKinds.get(target) === panelKind) device[panelKind + '_panel_id'] = target;
+      }
+      if (domainOf(device.entity) === 'cover' && area.nativeCoverHeaders?.has(device.entity) &&
+          supportsNativeShortcutDetails(device) && !room.panel_hidden_entities?.includes(device.entity)) {
+        device.room_cover_native_details = true;
       }
       if (device.role === 'status' || domainOf(device.entity) !== 'light') continue;
       if (area.inlineLights?.has(device.entity)) device.room_light_controls = true;
