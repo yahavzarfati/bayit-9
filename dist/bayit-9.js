@@ -2329,7 +2329,7 @@ var qr=`
   .tile-row[data-vacuum-compact-program] > .tile-mark {
     grid-area: icon; width: 24px; height: 24px; background: transparent;
   }
-  .tile-row[data-vacuum-compact-program] > .tile-label { grid-area: label; font-size: 12px; line-height: 1.15; }
+  .tile-row[data-vacuum-compact-program] > .tile-label { grid-area: label; font-size: 12px; line-height: 1.4; }
   .tile-row[data-vacuum-compact-program] > .tile-state { grid-area: state; font-size: 11px; line-height: 1.15; }
   .shell[dir=rtl] .tile-row[data-vacuum-compact-program] > :is(.tile-label,.tile-state) { direction: rtl; text-align: end; }
   .tile-row[data-automation-unlocked] {
