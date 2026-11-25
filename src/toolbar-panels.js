@@ -327,7 +327,7 @@ export function createToolbarPanel(kind, configuration, context) {
     return panel;
   }
 
-  function renderScriptToggle(item) {
+  function renderScriptToggle(item, compactActions) {
     const host = make('div', 'script-toggle');
     const controls = ['start_script', 'stop_script'].map(id => {
       const tile = button('tile-row');
@@ -364,6 +364,7 @@ export function createToolbarPanel(kind, configuration, context) {
         tile.setAttribute('aria-busy', String(busy));
         name.textContent = model.name;
         caption.textContent = revision ? t(id) : state;
+        caption.hidden = compactActions && !stopping && !busy && Boolean(revision);
         label(tile, model.name + ' · ' + caption.textContent);
       };
     });
@@ -603,10 +604,10 @@ export function createToolbarPanel(kind, configuration, context) {
     return region;
   }
 
-  function render(item, section, compactStatus, energyReadingCards) {
+  function render(item, section, { compactStatus, energyReadingCards, compactActions }) {
     const itemKind = item.role ?? ({ people: 'person', actions: 'action', forecast: 'forecast', sun: 'sun' }[section]);
     if (itemKind === 'person' && domain(item) === 'person') return renderTile(item, 'person');
-    if (item.command === 'toggle_script') return renderScriptToggle(item);
+    if (item.command === 'toggle_script') return renderScriptToggle(item, compactActions);
     if (itemKind === 'action' || (section === 'actions' && itemKind === 'lock')) return renderTile(item, 'action');
     if (compactStatus && itemKind === 'lock' && domain(item) === 'lock') return renderCompactLock(item);
     if (itemKind === 'forecast' && domain(item) === 'weather') return renderForecast(item);
@@ -695,7 +696,8 @@ export function createToolbarPanel(kind, configuration, context) {
     const readouts = isToolbarReadouts(kind, section);
     const weatherReadings = isWeatherReadingsList(kind, section);
     const energyReadingCards = isEnergyReadingCards(kind, section);
-    if (compactStatus || readouts || weatherReadings || energyReadingCards || isCompactAutomationActions(kind, section)) {
+    const compactActions = isCompactAutomationActions(kind, section);
+    if (compactStatus || readouts || weatherReadings || energyReadingCards || compactActions) {
       panel.dataset.layout = section.layout;
     }
     if (kind === 'overview' && !compactStatus && section.filter === 'active' &&
@@ -729,7 +731,7 @@ export function createToolbarPanel(kind, configuration, context) {
         .map(item => {
           if (weatherReadings && isPassiveWeatherReading(item)) return { item, node: renderWeatherReading(item) };
           if (readouts && isToolbarReadoutEntity(kind, item)) return { item, node: renderReadout(item) };
-          return { item, node: render(item, section.kind, compactStatus, energyReadingCards) };
+          return { item, node: render(item, section.kind, { compactStatus, energyReadingCards, compactActions }) };
         });
       items.append(...pairs.map(pair=>pair.node));
       if (section.filter === 'active') handlers.push(() => {
@@ -880,9 +882,12 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
     direction: ltr;
     grid-template-columns: repeat(auto-fit,minmax(min(100%,max(110px,calc((100% - 8px) / 2))),1fr));
   }
-  .toolbar-section[data-layout=compact-actions] { padding-inline: 3px; }
+  .shell[dir=rtl] .toolbar-section[data-layout=compact] > .toolbar-section-items > * { direction: rtl; }
+  .toolbar-section[data-layout=compact-actions] { border: 0; padding: 8px 4px 2px; }
+  .toolbar-section[data-layout=compact-actions]:has(> .toolbar-section-title) { padding-block-start: 18px; }
+  .toolbar-section[data-layout=compact-actions] > .toolbar-section-title { margin-block-end: 14px; }
   .toolbar-section[data-layout=compact-actions] > .toolbar-section-items { direction: ltr; }
-  .shell[dir=rtl] .toolbar-section:is([data-layout=compact],[data-layout=compact-actions]) > .toolbar-section-items > * { direction: rtl; }
+  .shell[dir=rtl] .toolbar-section[data-layout=compact-actions] :is(.tile-label,.tile-state) { direction: rtl; text-align: end; }
   .toolbar-section[data-layout=readings-list] > .toolbar-section-items { row-gap: 0; }
   .toolbar-section[data-layout=readings-list] > .toolbar-section-items > :not(.weather-reading) {
     margin-block: 4px;
@@ -920,14 +925,15 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .tile-row { display: grid; justify-items: center; align-content: center; gap: 5px; min-height: 80px; width: 100%;
     padding: 8px 6px; border: 1px solid var(--soft-line); border-radius: 12px; background: var(--control); text-align: center; }
   .toolbar-section[data-layout=compact-actions] :is(.toolbar-section-items,.script-toggle) > .tile-row {
-    grid-template-columns: 22px minmax(0,1fr); grid-template-areas: "icon label" "icon state";
-    justify-items: start; align-items: center; gap: 1px 7px; min-height: 56px; padding: 5px 8px;
+    grid-template-columns: 25px minmax(0,1fr); grid-template-areas: "icon label" "icon state";
+    justify-items: start; align-items: center; gap: 1px 9px; min-height: 56px; padding: 5px 12px;
     text-align: start;
   }
   .toolbar-section[data-layout=compact-actions] .tile-row:has(.tile-state[hidden]) { grid-template-areas: "icon label"; }
   .toolbar-section[data-layout=compact-actions] .tile-mark {
-    grid-area: icon; width: 22px; height: 22px; background: transparent;
+    grid-area: icon; width: 25px; height: 21px; background: transparent;
   }
+  .toolbar-section[data-layout=compact-actions] .tile-mark > ha-icon { --mdc-icon-size: 21px; width: 21px; height: 21px; }
   .toolbar-section[data-layout=compact-actions] .tile-label { grid-area: label; line-height: 1.15; }
   .toolbar-section[data-layout=compact-actions] .tile-state { grid-area: state; line-height: 1.15; font-size: 11px; }
   .tile-row[data-automation-unlocked] {

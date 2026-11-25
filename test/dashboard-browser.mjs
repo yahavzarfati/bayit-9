@@ -2390,7 +2390,7 @@ async function assertCompactAutomationActions(browser) {
       assert.equal(await buttons.count(), 2);
       const measure = labelType => buttons.evaluateAll((tiles, labelType) => {
         const lockLabel = tiles[0].querySelector('.tile-label');
-        const isHebrew = getComputedStyle(tiles[0]).direction === 'rtl';
+        const isHebrew = getComputedStyle(lockLabel).direction === 'rtl';
         if (labelType === 'two lines') {
           const [first, second] = isHebrew ? ['מנעול', 'כניסה'] : ['Fixture', 'lock'];
           lockLabel.replaceChildren(first + ' ', document.createElement('br'), second);
@@ -2399,27 +2399,34 @@ async function assertCompactAutomationActions(browser) {
         }
         const section = tiles[0].closest('[data-layout=compact-actions]');
         const sectionBox = section.getBoundingClientRect();
+        const title = section.querySelector('.toolbar-section-title').getBoundingClientRect();
         const entries = tiles.map(tile => {
           const label = tile.querySelector('.tile-label');
           const caption = tile.querySelector('.tile-state');
           const mark = tile.querySelector('.tile-mark').getBoundingClientRect();
           const text = label.getBoundingClientRect();
           const font = getComputedStyle(label);
-          const rtl = getComputedStyle(tile).direction === 'rtl';
+          const rtl = font.direction === 'rtl';
           const bounds = tile.getBoundingClientRect();
           return { name:label.textContent, caption:caption.textContent, rtl, font:font.fontFamily,
-            left:bounds.left, right:bounds.right, top:bounds.top, offsetHeight:tile.offsetHeight, height:bounds.height,
+            left:bounds.left, right:bounds.right, top:bounds.top, bottom:bounds.bottom,
+            offsetHeight:tile.offsetHeight, height:bounds.height,
             scrollWidth:tile.scrollWidth, clientWidth:tile.clientWidth,
             scrollHeight:tile.scrollHeight, clientHeight:tile.clientHeight,
             lines:Math.round(text.height / parseFloat(font.lineHeight)),
-            iconClearance:rtl ? mark.left - text.right : text.left - mark.right };
+            iconClearance:text.left - mark.right };
         });
-        return { entries, sectionLeft:sectionBox.left, sectionRight:sectionBox.right };
+        return { entries, sectionLeft:sectionBox.left, sectionRight:sectionBox.right,
+          rim:getComputedStyle(section).borderTopWidth, titleInset:title.top - sectionBox.top,
+          titleGap:entries[0].top - title.bottom, bottomInset:sectionBox.bottom - Math.max(...entries.map(tile => tile.bottom)) };
       }, labelType);
       for (const labelType of ['configured', 'two lines', 'long']) {
-        const { entries, sectionLeft, sectionRight } = await measure(labelType);
+        const layout = await measure(labelType);
+        const { entries, sectionLeft, sectionRight, rim, titleInset, titleGap, bottomInset } = layout;
         const [first, second] = entries;
-        const metrics = JSON.stringify({ locale, labelType, sectionLeft, sectionRight, entries });
+        const metrics = JSON.stringify({ locale, labelType, ...layout });
+        assert.equal(rim, '0px', metrics);
+        assert.ok(Math.abs(titleInset - 18) < .5 && Math.abs(titleGap - 14) < .5 && Math.abs(bottomInset - 2) < .5, metrics);
         assert.ok(Math.abs(first.left - sectionLeft - 4) < .5 && Math.abs(sectionRight - second.right - 4) < .5, metrics);
         assert.ok(Math.abs(second.left - first.right - 8) < .5 && Math.abs(first.top - second.top) < .5, metrics);
         if (labelType === 'two lines') assert.equal(first.lines, 2, metrics);
@@ -2434,6 +2441,27 @@ async function assertCompactAutomationActions(browser) {
       await buttons.first().focus();
       await page.keyboard.press('Tab');
       assert.equal(await buttons.nth(1).evaluate(button => button.getRootNode().activeElement === button), true);
+      const toggle = section.locator('.script-toggle .tile-row:not([hidden])');
+      const caption = toggle.locator('.tile-state');
+      const he = locale === 'he';
+      const start = he ? 'הפעלת תרחיש' : 'Start script';
+      assert.equal(await caption.isVisible(), false);
+      assert.equal(await toggle.getAttribute('aria-label'), 'Demo start · ' + start);
+      assert.ok(await buttons.first().locator('.tile-state').isVisible());
+      const makePending = busy => page.locator('bayit-dashboard').evaluate((card, busy) => {
+        if (busy) card.pending.set('script.demo_start', { id:'start_script' });
+        else card.pending.delete('script.demo_start');
+        card.update();
+      }, busy);
+      await makePending(true);
+      await caption.filter({ hasText:start }).waitFor();
+      await makePending(false);
+      await caption.waitFor({ state:'hidden' });
+      const scriptState = value => page.evaluate(value => window.bayitTest.setRoomState('script.demo_start', value), value);
+      await scriptState('on');
+      await caption.filter({ hasText:he ? 'עצירת תרחיש' : 'Stop script' }).waitFor();
+      await scriptState('unavailable');
+      await caption.filter({ hasText:he ? 'לא זמין' : 'Unavailable' }).waitFor();
       await page.keyboard.press('Escape');
       await panel.waitFor({ state:'hidden' });
     }
