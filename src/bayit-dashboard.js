@@ -156,6 +156,10 @@ function updateRoomBadge(badge, value) {
   if (value.tone) badge.element.dataset.tone = value.tone;
 }
 
+function isHeatDevice(model) {
+  return model.kind === 'heater' || model.kind === 'boiler' || model.domain === 'water_heater';
+}
+
 function activityDeviceIcon(model) {
   if (model.kind === 'boiler' || model.domain === 'water_heater') return 'mdi:water-boiler';
   if (model.kind === 'heater') return 'mdi:radiator';
@@ -1358,10 +1362,10 @@ export class BayitDashboard extends HTMLElement {
   }
 
   roomClimateBadge(model, tone) {
-    const heating = ['heater', 'boiler'].includes(model.kind) || model.domain === 'water_heater';
+    const heating = isHeatDevice(model);
     if (heating && tone === 'warm') return {
       text: this.t('on'), label: model.name + ' · ' + this.stateLabel(model),
-      glyph: activityDeviceIcon(model), tone,
+      glyph: activityDeviceIcon(model), tone: 'heat',
     };
     if (model.domain !== 'climate' || heating || tone !== 'moving') return undefined;
     const mode = statusNames.has(model.state) ? this.t(model.state) : model.state;
@@ -1388,11 +1392,12 @@ export class BayitDashboard extends HTMLElement {
   applianceBadge(kind, status, name = this.t('activity_' + kind)) {
     const { type, minutes } = status;
     const state = this.t('activity_' + type);
+    const tone = kind === 'boiler' ? 'heat' : 'warm';
     if (minutes === undefined) return { text: state, label: name + ' · ' + state,
-      tone: type === 'finished' ? 'finished' : 'warm' };
+      tone: type === 'finished' ? 'finished' : tone };
     const clock = ltr(String(Math.floor(minutes / 60)).padStart(2, '0') + ':' + String(minutes % 60).padStart(2, '0'));
     const text = type === 'elapsed' && kind !== 'boiler' && minutes < 60 ? ltr(minutes) + ' ' + this.t('activity_short_minutes') : clock;
-    return { text, label: name + ' · ' + state + ' · ' + text, tone: 'warm' };
+    return { text, label: name + ' · ' + state + ' · ' + text, tone };
   }
 
   update() {
@@ -1455,7 +1460,7 @@ export class BayitDashboard extends HTMLElement {
             label: model.name + ' · ' + this.t('remaining_time') + ' · ' + this.timerLabel(model.timer),
             glyph: model.domain === 'climate' ? 'mdi:timer-outline' : deviceGlyph,
             concurrentGlyph: deviceGlyph,
-            tone: 'warm',
+            tone: isHeatDevice(model) ? 'heat' : 'warm',
           });
         } else if (model.available) {
           const activity = this.roomClimateBadge(model, tone);
@@ -1479,7 +1484,7 @@ export class BayitDashboard extends HTMLElement {
         const savingPreselection = levelPending && pending.id === 'preselect_heating_level' && !model.levelActivity;
         const updateLabel = heatingLevel ? this.t(savingPreselection ? 'heating_preselect_saving' : 'heating_level_changing') : '';
         label(shortcut, [model.name, status, updateLabel, actionLabel].filter(Boolean).join(' · '));
-        shortcut.dataset.tone = feedback ? 'moving' : tone;
+        shortcut.dataset.tone = feedback ? 'moving' : tone === 'warm' && isHeatDevice(model) ? 'heat' : tone;
         shortcut.dataset.transition = feedback?.direction || (heatingLevel ? 'heating-level' : '');
         shortcut.toggleAttribute('data-unavailable', this.config.page && haveStates && !model.available);
         const busy = heatingLevel || (!!pending && (model.available || (model.domain !== 'cover' && !levelPending)));

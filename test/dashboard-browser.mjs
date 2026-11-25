@@ -3367,6 +3367,19 @@ async function assertHeaterHomeFeedback(browser) {
       await waitForMarker(false);
 
       await page.evaluate(() => window.bayitTest.setHeaterPower('on'));
+      await page.locator(shortcutSelector + '[data-tone=heat]').waitFor({ state: 'attached' });
+      const heaterRoom = page.locator('article.room').filter({ has: shortcut });
+      await heaterRoom.locator('.room-status[data-badge=activity][data-tone=heat]').waitFor();
+      const heatColors = ['rgb(255, 209, 184)', 'rgb(121, 46, 7)'];
+      const heatColor = await shortcut.evaluate(async button => {
+        getComputedStyle(button).color;
+        const transition = button.getAnimations().find(animation => animation.transitionProperty === 'color');
+        await transition?.finished;
+        return getComputedStyle(button).color;
+      });
+      assert.ok(heatColors.includes(heatColor), `Unexpected heating shortcut color: ${heatColor}`);
+      await state('light.demo_lamp', 'on');
+      await page.locator('.quick-button[data-entity="light.demo_lamp"][data-tone=warm]').waitFor({ state: 'attached' });
       await panel.locator('button[data-action=set_heating_level]').getByText('8', { exact: true }).tap();
       await waitForMarker(true);
       assert.ok((await shortcut.getAttribute('aria-label')).includes(changing));

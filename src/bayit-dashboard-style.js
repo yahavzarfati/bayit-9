@@ -399,8 +399,14 @@ export const styles = `
   .quick-button[data-tone=warm] { background: rgba(255,197,83,.14); border-color: rgba(255,215,147,.39); }
   .quick-button[data-tone=moving] { background: rgba(98,202,255,.14); border-color: rgba(164,225,255,.41); }
   .quick-button[data-tone=critical] { background: rgba(255,146,151,.16); border-color: rgba(255,187,187,.42); }
+  .room-status[data-tone=heat], .quick-button[data-tone=heat] {
+    color: var(--home-heat-ink,#ffd1b8);
+    background: rgba(255,155,105,.16);
+    border-color: rgba(255,155,105,.38);
+  }
   .shell[data-page=true] .room {
     --home-cover-ink: #a4c8ff;
+    --home-heat-ink: #ffd1b8;
     --home-cover-ink-on-light: #001e4d;
     --home-heating-update-ink: #ffb278;
   }
@@ -408,6 +414,7 @@ export const styles = `
   .shell[data-page=true] .room[data-wallpaper-ink=dark] {
     --home-cover-ink: var(--home-cover-ink-on-light);
     --home-heating-update-ink: #7e3600;
+    --home-heat-ink: #792e07;
   }
   .shell[data-page=true] .quick-button[data-entity^="cover."][data-tone=moving] {
     color: var(--home-cover-ink);
