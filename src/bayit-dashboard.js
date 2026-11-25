@@ -1,6 +1,6 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
-import { MAX_ROOM_SHORTCUTS, overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
+import { MAX_ROOM_SHORTCUTS, normalizeRoomControlName, overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { createDeviceController, getDeviceModel } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
@@ -166,6 +166,8 @@ function normalizeEntity(item) {
   if (!entityPattern.test(entity)) throw new Error('Invalid Home Assistant entity in Bayit 9.');
   const entry = { entity };
   if (text(item.name)) entry.name = text(item.name);
+  const roomName = normalizeRoomControlName(item.room_name);
+  if (roomName !== undefined) entry.room_name = roomName;
   if (iconPattern.test(text(item.icon))) entry.icon = item.icon;
   if (['heater', 'boiler'].includes(item.kind)) entry.kind = item.kind;
   if (entityPattern.test(text(item.level_entity)) && item.level_entity.startsWith('number.')) {
@@ -1225,7 +1227,10 @@ export class BayitDashboard extends HTMLElement {
     let countdown = false;
     for (const view of this.deviceViews.values()) {
       const model = this.model(view.config);
-      setText(view.name, model.name);
+      const roomName = view.room ? view.config.room_name : undefined;
+      const labelName = roomName || model.name;
+      setText(view.name, labelName);
+      view.name.toggleAttribute('data-room-name-hidden', roomName === '');
       setIcon(view.glyph, model.icon);
       if (model.timer?.state === 'active') countdown = true;
       const media = model.domain === 'media_player' && view.config.role !== 'now_playing' &&
@@ -1238,14 +1243,14 @@ export class BayitDashboard extends HTMLElement {
       if (view.tile) {
         const actionId = model.state === 'off' ? 'turn_on' : 'turn_off';
         const toggles = !!model.actions[actionId];
-        label(view.tile, model.name + ' · ' + this.t(toggles ? actionId : 'more_info'));
+        label(view.tile, labelName + ' · ' + this.t(toggles ? actionId : 'more_info'));
         if (toggles) view.tile.setAttribute('aria-pressed', String(model.state === 'on'));
         else view.tile.removeAttribute('aria-pressed');
         view.tile.setAttribute('aria-busy', String(!!pending));
         continue;
       }
       if (view.panelLaunch) {
-        label(view.more, model.name + ' · ' + view.panelLaunch.action);
+        label(view.more, labelName + ' · ' + view.panelLaunch.action);
         if (view.more.title !== view.panelLaunch.hint) view.more.title = view.panelLaunch.hint;
       } else view.more.hidden = !model.actions.more_info;
       const timerLayout = model.timer ? [model.timer.state, Number.isFinite(model.timer.usedSeconds), model.state === 'on'] : null;

@@ -421,6 +421,39 @@ test('supports additional dashboard-only rooms in the room order and retains emp
   assert.ok(automatic.some(room => room.id === custom));
 });
 
+test('projects explicit names and blank captions only onto visible members of the configured room', () => {
+  const hass = home();
+  const thermostat = 'climate.room_fixture';
+  const lamp = 'light.demo_lamp';
+  const fan = 'fan.demo_fan';
+  hass.states[thermostat] = { state: 'off', attributes: { friendly_name: 'Native thermostat' } };
+  hass.entities[thermostat] = { area_id: 'studio' };
+  const room = 'bayit_room_extra';
+  const cfg = {
+    room_selection: 'manual', area_ids: ['studio', room], show_unassigned: false,
+    profiles: [{ entity: thermostat, kind: 'climate', name: 'Dedicated thermostat' }],
+    room_shortcuts: { studio: [lamp] },
+    room_overrides: {
+      studio: {
+        entities: [lamp, thermostat, fan],
+        entity_names: { [lamp]: '  Workshop light  ', [thermostat]: '', [fan]: '  ', 'switch.demo_missing': 'Hidden member' },
+        sections: [{ kind: 'lights', entities: [lamp] }, { kind: 'climate', entities: [thermostat] }],
+      },
+      [room]: { name: 'Spare', entities: [lamp], entity_names: { [lamp]: 'Spare light' } },
+    },
+  };
+  const original = structuredClone({ cfg, hass });
+  const [studio, spare] = discoverRooms(cfg, hass, 'en');
+  assert.deepEqual(studio.entities.map(item => [item.entity, item.room_name]),
+    [[lamp, 'Workshop light'], [thermostat, ''], [fan, undefined]]);
+  assert.deepEqual(studio.sections.flatMap(section => section.entities.map(item => item.room_name)), ['Workshop light', '']);
+  assert.deepEqual(studio.shortcuts, [lamp]);
+  assert.equal(spare.entities[0].room_name, 'Spare light');
+  assert.equal(getDeviceModel(studio.entities[1], hass.states).name, 'Dedicated thermostat');
+  assert.equal(studio.entities[0].name, spare.entities[0].name);
+  assert.deepEqual({ cfg, hass }, original);
+});
+
 test('keeps existing discovery behavior and limits explicit controls mode to directly controllable devices', () => {
   const hass = home();
   for (const entity of ['camera.demo', 'vacuum.demo', 'sensor.demo_temperature', 'water_heater.demo']) {

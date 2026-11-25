@@ -35,6 +35,15 @@ const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection'
   ...(query.has('cross-area-room-device') && { room_overrides: { lounge: { entities: ['light.demo_lamp'] } } }),
   ...(query.has('sole-room') && { area_ids: ['bayit_room_only'],
     room_overrides: { bayit_room_only: { name: 'Reading nook', entities: [] } } }),
+  ...(query.has('room-control-names') && {
+    show_unassigned: false, area_ids: ['studio', 'bayit_room_den'],
+    profiles: [{ entity: 'climate.demo_air', kind: 'climate', name: 'Dedicated thermostat' }],
+    room_overrides: {
+      studio: { entities: ['light.demo_lamp', 'climate.demo_air'],
+        entity_names: { 'light.demo_lamp': 'Workshop light', 'climate.demo_air': '' } },
+      bayit_room_den: { name: 'Den', entities: ['light.demo_lamp'] },
+    },
+  }),
 };
 const stored = () => JSON.parse(sessionStorage.getItem(storedKey) ||
   JSON.stringify({ strategy: initialStrategy }));
@@ -1789,6 +1798,56 @@ try {
       assert.equal(await selectedRoomsPage.getByRole('button', { name: 'Customize home', exact: true }).count(), 0);
       assert.equal(await selectedRoomsPage.evaluate(() => window.bayitTest.calls.length), 0);
       await selectedRoomsPage.close();
+
+      const namesPage = await newRoomConfigPage();
+      namesPage.setDefaultTimeout(8000);
+      await namesPage.goto(base + '/fixture-home/home?configuration&room-control-names&device-panel');
+      await namesPage.getByRole('button', { name: 'Studio', exact: true }).tap();
+      let namedRoom = namesPage.getByRole('dialog', { name: 'Studio', exact: true });
+      const namedLamp = namedRoom.getByRole('button', { name: 'Workshop light · Turn on', exact: true });
+      await namedLamp.waitFor();
+      const hiddenCaption = namedRoom.getByRole('heading', { name: 'Dedicated thermostat', exact: true });
+      await hiddenCaption.waitFor();
+      assert.equal(await hiddenCaption.getAttribute('data-room-name-hidden'), '');
+      assert.match(await hiddenCaption.evaluate(element => getComputedStyle(element).clipPath), /^inset\(50%/);
+      await namedLamp.press('Shift+Enter');
+      const lampDetails = namesPage.getByRole('dialog', { name: 'Desk lamp', exact: true });
+      await lampDetails.waitFor();
+      await namesPage.keyboard.press('Escape');
+      await lampDetails.waitFor({ state: 'hidden' });
+
+      await namesPage.getByRole('button', { name: 'Den', exact: true }).tap();
+      const den = namesPage.getByRole('dialog', { name: 'Den', exact: true });
+      await den.getByRole('button', { name: 'Desk lamp · Turn on', exact: true }).waitFor();
+      await namesPage.keyboard.press('Escape');
+      await den.waitFor({ state: 'hidden' });
+
+      const nameSetup = await openRoomEditor(namesPage);
+      await nameSetup.getByLabel('Room to customize', { exact: true }).selectOption('studio');
+      await nameSetup.getByText('Device names', { exact: true }).tap();
+      const which = nameSetup.getByLabel('Device to name', { exact: true });
+      const caption = nameSetup.getByLabel('Name in this room', { exact: true });
+      const showCaption = nameSetup.getByLabel('Show name in this room', { exact: true });
+      await which.selectOption('climate.demo_air');
+      assert.equal(await showCaption.isChecked(), false);
+      assert.equal(await caption.isDisabled(), true);
+      await showCaption.check();
+      assert.equal(await caption.getAttribute('placeholder'), 'Dedicated thermostat');
+      await showCaption.uncheck();
+      await which.selectOption('light.demo_lamp');
+      await caption.fill('Reading table light');
+      await caption.press('Enter');
+      await saveRoomConfig(nameSetup);
+      assert.deepEqual(await namesPage.evaluate(() => {
+        const { room_overrides, profiles } = JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy;
+        return { names: room_overrides.studio.entity_names, den: room_overrides.bayit_room_den.entity_names, profileName: profiles[0].name };
+      }), { names: { 'light.demo_lamp': 'Reading table light', 'climate.demo_air': '' }, den: undefined, profileName: 'Dedicated thermostat' });
+      await namesPage.getByRole('button', { name: 'Studio', exact: true }).tap();
+      namedRoom = namesPage.getByRole('dialog', { name: 'Studio', exact: true });
+      await namedRoom.getByRole('button', { name: 'Reading table light · Turn on', exact: true }).waitFor();
+      assert.equal(await namesPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain).length), 0);
+      await namesPage.close();
+      console.log(engine + ' 320: scoped room names, accessible blank captions and editor persistence');
 
       const lastRoomPage = await newRoomConfigPage();
       await lastRoomPage.goto(roomConfigUrl + '&sole-room');

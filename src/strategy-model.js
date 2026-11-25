@@ -160,6 +160,12 @@ export function roomSections(value) {
   });
 }
 
+export function normalizeRoomControlName(value) {
+  if (typeof value !== 'string') return undefined;
+  if (value === '') return '';
+  return value.trim().slice(0, 80) || undefined;
+}
+
 function dashboardAreas(config, hass) {
   const areas = new Map(Object.entries(hass.areas ?? {}).map(([id, area]) => [
     area.area_id ?? id,
@@ -172,6 +178,7 @@ function dashboardAreas(config, hass) {
     if (!area && (!CUSTOM_ROOM_ID.test(id) || !name)) continue;
     const icon = typeof override.icon === 'string' ? override.icon.trim() : '';
     const entityIcons = override.entity_icons;
+    const entityNames = override.entity_names;
     const sections = roomSections(override.sections);
     const entityIds = Array.isArray(override.entities) ? idList(override.entities)
       : sections?.length ? idList(sections.flatMap(section => section.entities)) : area ? undefined : [];
@@ -188,6 +195,7 @@ function dashboardAreas(config, hass) {
         return links && typeof links === 'object' && !Array.isArray(links) ? [[kind, links]] : [];
       })),
       entityIcons: entityIcons && typeof entityIcons === 'object' && !Array.isArray(entityIcons) ? entityIcons : null,
+      entityNames: entityNames && typeof entityNames === 'object' && !Array.isArray(entityNames) ? entityNames : null,
       custom: !area,
     });
   }
@@ -374,6 +382,10 @@ export function discoverRooms(config, hass, locale) {
     const activities = normalizeRoomActivities(area.activities, visible);
     if (activities.length) room.activities = activities;
     for (const device of entities) {
+      if (area.entityNames && Object.hasOwn(area.entityNames, device.entity)) {
+        const name = normalizeRoomControlName(area.entityNames[device.entity]);
+        if (name !== undefined) device.room_name = name;
+      }
       if (area.readOnly?.has(device.entity)) device.role = 'status';
       const panelKind = ROOM_PANEL_KINDS.get(domainOf(device.entity));
       const links = area.panelLinks?.[panelKind];

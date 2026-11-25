@@ -498,6 +498,10 @@ export const styles = `
   .device-panel-launch > ha-icon:last-child { place-self:center; color:var(--secondary); }
   .device-icon { color: var(--secondary); place-self: center; }
   .device-name { margin: 0; font-size: 14px; line-height: 1.2; overflow-wrap: anywhere; }
+  .device-name[data-room-name-hidden] {
+    position: absolute; inline-size: 1px; block-size: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
   .current { display: block; margin-block-start: 3px; color: var(--secondary); font-weight: 680; font-size: 12px; }
   .device-detail { min-width: 0; white-space: normal; }
   .device[data-compact=cover] .device-head {
