@@ -100,7 +100,7 @@ export function sensorGraphConfig(item) {
 
 export function createToolbarPanel(kind, configuration, context) {
   const { make, icon, button, label, t, modelFor, stateLabel, moreInfo, buildDevice,
-    request, pending, host, dialog, vacuumForGraph, openGraphVacuum } = context;
+    request, pending, host, dialog, graphDestination, openGraphDestination } = context;
   const handlers = [];
   const mediaViews = [];
   let live = true;
@@ -251,16 +251,16 @@ export function createToolbarPanel(kind, configuration, context) {
     if (domain(item) === 'sensor' && (item.graph_hours || itemKind === 'graph')) {
       const config = sensorGraphConfig(item);
       const fallback = renderTile(item, 'status');
-      const destination = itemKind === 'graph' && item.vacuum_panel_id && vacuumForGraph?.(item.vacuum_panel_id);
+      const destination = itemKind === 'graph' && graphDestination?.(item);
       if (!destination) return nativeCard(config, fallback);
-      config.tap_action = { action: 'fire-dom-event', bayit_vacuum_graph: true };
+      config.tap_action = { action: 'fire-dom-event', bayit_graph_link: true };
       config.hold_action = { action: 'none' };
       config.double_tap_action = { action: 'none' };
       const chart = nativeCard(config, fallback);
-      const open = () => openGraphVacuum(destination, chart);
+      const open = () => openGraphDestination(destination, chart);
       fallback.onclick = open;
       chart.addEventListener('ll-custom', event => {
-        if (event.target !== chart.firstElementChild || event.detail?.bayit_vacuum_graph !== true) return;
+        if (event.target !== chart.firstElementChild || event.detail?.bayit_graph_link !== true) return;
         event.stopPropagation();
         open();
       });

@@ -459,7 +459,7 @@ function dashboardContext(config, hass, locale) {
   return context;
 }
 
-function toolbarSections(value, describe, kind, vacuumPanels) {
+function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
   if (!Array.isArray(value)) return undefined;
   const seenSections = new Set();
   return value.flatMap((section, index) => {
@@ -488,20 +488,22 @@ function toolbarSections(value, describe, kind, vacuumPanels) {
         : item?.confirmation === true || (item?.confirmation === false && command) ? item.confirmation : undefined;
       const graphHours = item?.graph_hours;
       const hasGraphHours = role === 'graph' && Number.isInteger(graphHours) && graphHours >= 1 && graphHours <= 336;
-      const vacuumPanel = kind === 'sensors' && role === 'graph' && domain === 'sensor' && section.kind !== 'series' &&
-        vacuumPanels?.has(item.vacuum_panel_id) ? item.vacuum_panel_id : undefined;
+      const linkedGraph = kind === 'sensors' && role === 'graph' && domain === 'sensor' && section.kind !== 'series';
+      const graphRoom = linkedGraph && roomIds?.has(item.graph_room_id) ? item.graph_room_id : undefined;
+      const vacuumPanel = linkedGraph && !graphRoom && vacuumPanels.has(item.vacuum_panel_id) ? item.vacuum_panel_id : undefined;
       const accent = kind === 'calendar' && domain === 'calendar' ? calendarAccent(item.accent_color) : undefined;
       return [{ ...descriptor, ...(name && { name }), ...(ROOM_ICON.test(icon) && { icon }),
         ...(role && { role }), ...(command && { command }),
         ...(confirmation !== undefined && { confirmation }), ...(hasGraphHours && { graph_hours: graphHours }),
-        ...(vacuumPanel && { vacuum_panel_id: vacuumPanel }), ...(accent && { accent_color: accent }) }];
+        ...(graphRoom && { graph_room_id: graphRoom }), ...(vacuumPanel && { vacuum_panel_id: vacuumPanel }),
+        ...(accent && { accent_color: accent }) }];
     });
     return [{ id, kind: section.kind, ...(title !== undefined && { title }),
       ...(section.filter === 'active' && { filter:'active' }), ...overview, entities }];
   });
 }
 
-function dashboardToolbar(config, hass) {
+function dashboardToolbar(config, hass, roomIds) {
   if (!Array.isArray(config.toolbar)) return undefined;
   const states = hass.states ?? {};
   const registry = hass.entities;
@@ -523,7 +525,7 @@ function dashboardToolbar(config, hass) {
     const icon = typeof entry.icon === 'string' ? entry.icon.trim() : '';
     const entities = Array.isArray(entry.entities) ? idList(entry.entities).map(describe).filter(Boolean) : undefined;
     const sections = entry.kind !== 'link'
-      ? toolbarSections(entry.sections, describe, entry.kind, vacuumPanels) : undefined;
+      ? toolbarSections(entry.sections, describe, entry.kind, { vacuumPanels, roomIds }) : undefined;
     const orefMap = entry.kind === 'security' ? normalizeOrefMap(entry.oref_map) : undefined;
     const vacuumMap = entry.kind === 'vacuum'
       ? normalizeVacuumMap(entry.vacuum_map, entity => isVisibleEntity(entity, states, registry, hidden), registry) : undefined;
@@ -567,7 +569,7 @@ export function generateDashboard(config = {}, hass = {}) {
   if (overview.length) card.overview = overview;
   const context = dashboardContext(config, hass, locale);
   if (Object.keys(context).length) card.context = context;
-  const toolbar = dashboardToolbar(config, hass);
+  const toolbar = dashboardToolbar(config, hass, new Set(card.rooms.map(room => room.id)));
   if (toolbar !== undefined) {
     card.toolbar = toolbar;
     const hidden = idList(config.hidden_entities);

@@ -282,8 +282,14 @@ export function normalizeDashboardConfig(config = {}) {
         const overview = overviewSectionOptions(item.kind, section);
         const selected = Array.isArray(section.entities) ? section.entities : overview.discover ? [] : null;
         if (!selected) return [];
+        const members = selected.map(raw => {
+          const entity = normalizeEntity(raw);
+          if (item.kind === 'sensors' && section.kind !== 'series' && entity.role === 'graph' &&
+              domainFor(entity) === 'sensor' && known.has(raw.graph_room_id)) entity.graph_room_id = raw.graph_room_id;
+          return entity;
+        });
         return [{ id: text(section.id), kind: text(section.kind), title: typeof section.title === 'string' ? section.title : undefined,
-          ...(section.filter === 'active' && {filter:'active'}), ...overview, entities: selected.map(normalizeEntity) }];
+          ...(section.filter === 'active' && {filter:'active'}), ...overview, entities: members }];
       }) }) }];
   }) : null;
   return {
@@ -1175,12 +1181,18 @@ export class BayitDashboard extends HTMLElement {
       moreInfo: item => this.moreInfo(item), pending: entity => this.pending.has(entity),
       request: (item, action, value, source) => this.requestAction(item, action, value, source),
       buildDevice: (item, slot) => this.buildDevice(item, slot),
-      vacuumForGraph: id => type === 'sensors' && this.config.toolbar?.find(
-        entry => entry.kind === 'vacuum' && entry.id === id),
-      openGraphVacuum: (target, source) => {
-        if (this.panel?.type === 'sensors' && content.contains(source)) {
-          this.openPanel('vacuum', source, undefined, undefined, { ...target, name: target.label || this.t('vacuum') });
-        }
+      graphDestination: item => {
+        if (type !== 'sensors') return;
+        const room = this.roomViews.get(item.graph_room_id)?.room;
+        if (room) return { kind: 'room', room };
+        const vacuum = item.vacuum_panel_id && this.config.toolbar?.find(
+          entry => entry.kind === 'vacuum' && entry.id === item.vacuum_panel_id);
+        if (vacuum) return { kind: 'vacuum', vacuum };
+      },
+      openGraphDestination: ({ kind, room, vacuum }, source) => {
+        if (this.panel?.type !== 'sensors' || !content.contains(source)) return;
+        if (kind === 'room') this.openPanel('room', source, room);
+        else this.openPanel('vacuum', source, undefined, undefined, { ...vacuum, name: vacuum.label || this.t('vacuum') });
       },
     });
   }

@@ -856,6 +856,41 @@ test('only an individual Sensors history graph can link to an existing Vacuum pa
   assert.equal(makeToolbar()[0].sections[0].entities[0].vacuum_panel_id, undefined);
 });
 
+test('only an individual Sensors history graph can link to a room projected by this dashboard', () => {
+  const hass = home();
+  const sensor = 'sensor.fixture';
+  hass.states[sensor] = { state: '25', attributes: {} };
+  hass.entities[sensor] = {};
+  const graph = { entity: sensor, role: 'graph', graph_hours: 24 };
+  const section = (kind, item) => ({ kind, entities: [item] });
+  const linked = { ...graph, graph_room_id: 'studio' };
+  const robot = { ...graph, vacuum_panel_id: 'robot' };
+  const config = {
+    area_ids: ['studio'], show_unassigned: false,
+    toolbar: [
+      { kind: 'sensors', sections: [
+        section('readings', linked), section('readings', graph), section('series', linked),
+        section('readings', { ...linked, role: 'status' }),
+        section('readings', { ...linked, entity: 'light.demo_lamp' }),
+        section('readings', { ...robot, graph_room_id: 'lounge' }),
+        section('readings', { ...robot, graph_room_id: 'studio' }),
+        section('readings', { ...graph, graph_room_id: 'https://example.test/room' }),
+      ] },
+      { kind: 'weather', sections: [section('readings', linked)] },
+      { kind: 'vacuum', id: 'robot' },
+    ],
+  };
+  const [sensors, weather] = generateDashboard(config, hass).views[0].cards[0].toolbar;
+  assert.deepEqual(sensors.sections.map(({ entities: [item] }) => [item.graph_room_id, item.vacuum_panel_id]), [
+    ['studio', undefined], [undefined, undefined], [undefined, undefined], [undefined, undefined],
+    [undefined, undefined], [undefined, 'robot'], ['studio', undefined], [undefined, undefined],
+  ]);
+  assert.deepEqual(sensors.sections[1].entities[0], graph);
+  assert.deepEqual(weather.sections[0].entities[0], graph);
+  config.area_ids = ['lounge'];
+  assert.deepEqual(generateDashboard(config, hass).views[0].cards[0].toolbar[0].sections[0].entities[0], graph);
+});
+
 test('an optional lighting count selection changes only the scope of the room badge', () => {
   const hass = home();
   for (const entity of ['light.fixture_detail','light.fixture_hidden','light.fixture_elsewhere']) {

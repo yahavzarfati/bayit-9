@@ -1,5 +1,5 @@
 import {
-  generateDashboard, LOCAL_ROUTE, normalizeOverviewDiscovery, overviewSectionOptions, roomPanelOptions, selectableRoomEntities,
+  discoverRooms, generateDashboard, LOCAL_ROUTE, normalizeOverviewDiscovery, overviewSectionOptions, roomPanelOptions, selectableRoomEntities,
   TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
 } from './strategy-model.js';
 import { normalizeOrefMap, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
@@ -26,7 +26,7 @@ const WORDS = {
     deviceLabel: 'Device label', deviceRole: 'Display as', editDevice: 'Edit device display',
     ask: 'Ask before running', skip: 'Run immediately', askCustom: 'Custom confirmation',
     confirmation: 'Confirmation', confirmationText: 'Confirmation message', graphHours: 'History hours',
-    graphVacuum: 'Open Vacuum on graph tap', noGraphLink: 'No shortcut',
+    graphDestination: 'Open on graph tap', noGraphLink: 'No shortcut', graphLinkUnavailable: 'Destination unavailable', graphRoom: 'Room',
     runScript: 'Run script from this button',
     orefMapTitle: 'Regional alerts',
     orefMap: 'Show the Oref alert map',
@@ -70,7 +70,7 @@ const WORDS = {
     deviceLabel: 'תווית המכשיר', deviceRole: 'אופן התצוגה', editDevice: 'עריכת תצוגת המכשיר',
     ask: 'בקשת אישור לפני ההפעלה', skip: 'הפעלה מיידית', askCustom: 'הודעת אישור מותאמת',
     confirmation: 'אישור פעולה', confirmationText: 'הודעת אישור', graphHours: 'שעות היסטוריה',
-    graphVacuum: 'פתיחת חלונית השואב בלחיצה על הגרף', noGraphLink: 'ללא קיצור דרך',
+    graphDestination: 'פתיחה בלחיצה על הגרף', noGraphLink: 'ללא קיצור דרך', graphLinkUnavailable: 'היעד אינו זמין', graphRoom: 'חדר',
     runScript: 'הפעלת התסריט מהכפתור',
     orefMapTitle: 'התראות אזוריות',
     orefMap: 'הצגת מפת התרעות פיקוד העורף',
@@ -337,7 +337,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     role.dataset.toolbarFocus = 'device-role';
     role.addEventListener('change', () => save({
       role: role.value || undefined,
-      ...(role.value !== 'graph' && { graph_hours: undefined, vacuum_panel_id: undefined }),
+      ...(role.value !== 'graph' && { graph_hours: undefined, graph_room_id: undefined, vacuum_panel_id: undefined }),
       ...(role.value !== 'action' && { command: undefined,
         ...(toolbar[entryIndex].sections[sectionIndex].entities[index]?.confirmation === false && { confirmation: undefined }) }),
     }, true));
@@ -359,11 +359,24 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       fields.push(field(words.graphHours, hours));
       if (domain === 'sensor' && toolbar[entryIndex].kind === 'sensors' && section.kind !== 'series') {
         const vacuumPanels = roomPanelOptions({ ...config, toolbar }, hass).filter(panel => panel.kind === 'vacuum');
-        if (vacuumPanels.length) {
-          const destination = select([['', words.noGraphLink], ...vacuumPanels.map(panel =>
-            [panel.id, panel.label || (vacuumPanels.length === 1 ? words.vacuum : panel.id)])], record.vacuum_panel_id ?? '');
-          destination.addEventListener('change', () => save({ vacuum_panel_id: destination.value || undefined }));
-          fields.push(field(words.graphVacuum, destination));
+        const rooms = discoverRooms(config, hass, locale);
+        const links = new Map([
+          ...rooms.map(room => ['room:' + room.id, words.graphRoom + ' · ' + room.name]),
+          ...vacuumPanels.map(panel => ['vacuum:' + panel.id, panel.label || (vacuumPanels.length === 1 ? words.vacuum : panel.id)]),
+        ]);
+        const roomLink = record.graph_room_id ? 'room:' + record.graph_room_id : '';
+        const vacuumLink = record.vacuum_panel_id ? 'vacuum:' + record.vacuum_panel_id : '';
+        const chosen = [roomLink, vacuumLink].find(id => links.has(id)) || roomLink || vacuumLink;
+        if (links.size || chosen) {
+          const stale = chosen && !links.has(chosen);
+          if (stale) links.set(chosen, words.graphLinkUnavailable);
+          const destination = select([['', words.noGraphLink], ...links], chosen);
+          if (stale) destination.selectedOptions[0].disabled = true;
+          destination.addEventListener('change', () => {
+            const [kind, id] = destination.value.split(':');
+            save({ graph_room_id: kind === 'room' ? id : undefined, vacuum_panel_id: kind === 'vacuum' ? id : undefined });
+          });
+          fields.push(field(words.graphDestination, destination));
         }
       }
     }

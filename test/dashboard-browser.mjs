@@ -282,13 +282,14 @@ if (query.has('toolbar-panels')) {
     'calendar.demo_birthdays': {state:'off',attributes:{friendly_name:'Birthdays'}},
   });
   hass.entities['sensor.demo_studio_temperature'] = { area_id: 'studio' };
-  window.loadCardHelpers = async () => ({createCardElement(configuration) {
+  if (!query.has('no-native-charts')) window.loadCardHelpers = async () => ({createCardElement(configuration) {
     const graphAction = configuration.tap_action?.action === 'fire-dom-event' && configuration.tap_action;
     const card = document.createElement(graphAction ? 'button' : 'div');
     const dialog = document.querySelector('bayit-dashboard')?.shadowRoot.querySelector('.modal[open]');
     card.dataset.duringOpening = String(!!dialog?.getAnimations().some(animation =>
       animation.playState === 'running' || animation.pending));
     card.dataset.nativeType = configuration.type;
+    card.dataset.tapAction = configuration.tap_action?.action;
     if (configuration.graph) card.dataset.graphHours = configuration.hours_to_show;
     card.textContent = configuration.type === 'calendar' ? configuration.entities.length + ' calendars' : configuration.name || configuration.entity;
     if (graphAction) {
@@ -403,7 +404,9 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     {id:'vacuum-panel',kind:'vacuum',placement:'settings',sections:[{kind:'vacuum',entities:[{entity:'vacuum.demo_robot',role:'device'}]},
       {kind:'actions',entities:[{entity:'button.demo_filter',role:'action',confirmation:'Reset the filter?'}]}]},
     {id:'sensors-panel',kind:'sensors',placement:'settings',sections:[{kind:'readings',entities:[
-      {entity:'sensor.demo_progress',role:'graph',graph_hours:168,vacuum_panel_id:'vacuum-panel'}]}]},
+      {entity:'sensor.demo_progress',role:'graph',graph_hours:168,vacuum_panel_id:'vacuum-panel'},
+      {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24,graph_room_id:'studio'},
+      {entity:'sensor.demo_meter',role:'graph',graph_hours:24,graph_room_id:'removed-room'}]}]},
     {kind:'calendar',placement:'settings',entities:['calendar.demo_household','calendar.demo_birthdays']},
   ],
 } : {};
@@ -1588,6 +1591,7 @@ try {
       console.log(engine + ' 320: helper-only heater preselect, observed save and independent running controls');
 
       const panelsPage = await browser.newPage({ viewport: { width:390,height:844 } });
+      panelsPage.setDefaultTimeout(8000);
       if (engine === 'Chromium') {
         const session = await panelsPage.context().newCDPSession(panelsPage);
         await session.send('Emulation.setEmulatedMedia', { features: [
@@ -1668,6 +1672,25 @@ try {
       await panelsPage.getByRole('dialog').getByRole('button',{name:'Sensors',exact:true}).click();
       const sensors = panelsPage.getByRole('dialog',{name:'Sensors',exact:true});
       const progressGraph = sensors.locator('[data-native-type="sensor"][data-graph-hours="168"]');
+      const temperatureGraph = sensors.getByRole('button', { name: /^Studio temperature/ });
+      const staleGraph = sensors.locator('[data-native-type="sensor"]').filter({ hasText: 'Energy meter' });
+      await temperatureGraph.waitFor();
+      await staleGraph.waitFor();
+      assert.equal(await staleGraph.getAttribute('data-tap-action'), 'none');
+      await staleGraph.click();
+      assert.equal(await sensors.isVisible(), true);
+      await temperatureGraph.getByText('Plot', { exact: true }).click();
+      assert.equal(await sensors.isVisible(), true);
+      await temperatureGraph.press('Enter');
+      await graphRoom.waitFor();
+      await panelsPage.waitForURL(url => url.hash === '#room-studio');
+      await panelsPage.evaluate(() => history.back());
+      await sensors.waitFor();
+      await panelsPage.waitForURL(url => url.hash === '#panel/sensors-panel');
+      await panelsPage.evaluate(() => history.forward());
+      await graphRoom.waitFor();
+      await panelsPage.evaluate(() => history.back());
+      await sensors.waitFor();
       await progressGraph.waitFor();
       assert.equal(await progressGraph.getAttribute('data-hold-action'), 'none');
       assert.equal(await progressGraph.getAttribute('data-double-tap-action'), 'none');
@@ -1685,6 +1708,36 @@ try {
       await panelsPage.getByRole('dialog').getByRole('button',{name:'Calendar',exact:true}).click();
       await panelsPage.getByRole('dialog',{name:'Calendar',exact:true}).getByText('2 calendars',{exact:true}).waitFor();
       await panelsPage.close();
+
+      const chartFallback = await browser.newPage({ viewport: { width:320, height:844 }, hasTouch:true });
+      chartFallback.setDefaultTimeout(8000);
+      await chartFallback.goto(base + '?toolbar-panels&no-native-charts#panel/sensors-panel');
+      const fallbackReadings = chartFallback.getByRole('dialog', { name: 'Sensors', exact: true });
+      await fallbackReadings.getByText('Studio temperature', { exact: true }).tap();
+      await chartFallback.getByRole('dialog', { name: 'Studio', exact: true }).waitFor();
+      assert.equal(await chartFallback.evaluate(() => window.bayitTest.calls.length), 0);
+      await chartFallback.close();
+
+      const chartEditor = await browser.newPage({ viewport: { width:320, height:844 }, hasTouch:true });
+      chartEditor.setDefaultTimeout(8000);
+      await chartEditor.goto(base + '?toolbar-panels&editor');
+      await chartEditor.getByText('Toolbar and extra screens', { exact: true }).tap();
+      await chartEditor.getByRole('button', { name: 'Sensors', exact: true }).tap();
+      await chartEditor.getByRole('button', { name: 'Readings', exact: true }).tap();
+      await chartEditor.getByRole('button', { name: 'Energy meter', exact: true }).tap();
+      const destination = chartEditor.getByLabel('Open on graph tap', { exact: true });
+      assert.equal(await destination.locator('option:checked').textContent(), 'Destination unavailable');
+      await destination.selectOption('room:studio');
+      const editedGraph = () => chartEditor.evaluate(() =>
+        window.latest.toolbar.find(panel => panel.kind === 'sensors').sections[0].entities[2]);
+      assert.equal((await editedGraph()).graph_room_id, 'studio');
+      await destination.selectOption('vacuum:vacuum-panel');
+      assert.equal((await editedGraph()).vacuum_panel_id, 'vacuum-panel');
+      assert.equal((await editedGraph()).graph_room_id, undefined);
+      await destination.selectOption('');
+      assert.equal((await editedGraph()).vacuum_panel_id, undefined);
+      await chartEditor.close();
+      console.log(engine + ': Sensors graph room and Vacuum navigation, stale targets, native fallback and editor');
 
       const overviewPage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
       overviewPage.setDefaultTimeout(8000);
