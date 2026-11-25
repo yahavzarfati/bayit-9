@@ -891,6 +891,7 @@ export function createToolbarPanel(kind, configuration, context) {
     const panel = make('section', 'toolbar-section');
     panel.dataset.section = section.kind;
     panel.toggleAttribute('data-security-section', kind === 'security');
+    panel.toggleAttribute('data-overview-people', kind === 'overview' && section.kind === 'people');
     const compactStatus = isCompactToolbarStatus(kind, section);
     const readouts = isToolbarReadouts(kind, section);
     const weatherReadings = isWeatherReadingsList(kind, section);
@@ -1095,7 +1096,8 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
     direction: ltr;
     grid-template-columns: repeat(auto-fit,minmax(min(100%,max(110px,calc((100% - 8px) / 2))),1fr));
   }
-  .shell[dir=rtl] .toolbar-section[data-layout=compact] > .toolbar-section-items > * { direction: rtl; }
+  .toolbar-section[data-overview-people] > .toolbar-section-items { direction: ltr; }
+  .shell[dir=rtl] .toolbar-section:is([data-layout=compact],[data-overview-people]) > .toolbar-section-items > * { direction: rtl; }
   .toolbar-section[data-security-section][data-section=actions]:has(> .toolbar-section-items > .tile-row:only-child) {
     border: 0; padding: 0;
   }

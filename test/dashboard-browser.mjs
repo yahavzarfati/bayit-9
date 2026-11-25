@@ -536,6 +536,20 @@ if (query.has('overview-opt-in')) {
   }
   states['cover.demo_overview_window'] = { state: 'closing', attributes: { friendly_name: 'Overview cover', supported_features: 15 } };
   hass.entities['cover.demo_overview_window'] = {};
+  if (query.has('overview-device-identities')) {
+    for (const [id, friendly_name, device_class] of [
+      ['cover.fixture_blind', 'Window blind', 'blind'],
+      ['cover.fixture_curtain', 'Patio curtain', 'curtain'],
+      ['cover.fixture_generic', 'Unnamed cover class', 'other'],
+    ]) {
+      states[id] = { state:'open', attributes:{ friendly_name, device_class, current_position:100 } };
+      hass.entities[id] = {};
+    }
+    states['person.fixture_first'] = { state:'home', attributes:{ friendly_name:'First resident' } };
+    states['person.fixture_second'] = { state:'not_home', attributes:{ friendly_name:'Second resident' } };
+    hass.entities['person.fixture_first'] = {};
+    hass.entities['person.fixture_second'] = {};
+  }
   if (query.has('overview-lights-off-selected')) {
     for (const id of ['selected','read_only','protected','unrelated']) {
       states['light.demo_' + id] = { state:'on', attributes:{ friendly_name:id, supported_color_modes:['onoff'] } };
@@ -1028,6 +1042,9 @@ const selected = query.has('configuration') ? rendererStrategy(stored().strategy
 } : query.has('overview-opt-in') ? {
   hidden_entities: ['light.demo_dashboard_hidden'],
   toolbar: [{kind:'overview',sections:[
+    ...(query.has('overview-device-identities') ? [{
+      kind:'people', entities:['person.fixture_first','person.fixture_second'],
+    }] : []),
     {kind:'status',title:'Discovered lighting',turn_off_active_lights:query.has('overview-lights-off'),discover:{domain:'light',
       exclude_entities:['light.demo_excluded'],exclude_id_contains:['helper']},entities:['light.demo_lamp']},
     ...(query.has('overview-lights-off-selected') ? [{kind:'status',title:'Selected lighting',filter:'active',
@@ -6129,6 +6146,59 @@ async function assertCompactAutomationActions(browser) {
     assert.equal(await page.evaluate(() => window.bayitTest.calls.length), 0);
   } finally {
     await page.close();
+  }
+}
+
+async function assertOverviewDeviceIdentities(browser) {
+  for (const locale of ['en', 'he']) {
+    for (const width of [320, 391]) {
+      const page = await browser.newPage({ viewport:{ width, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+      page.setDefaultTimeout(8000);
+      try {
+        await page.goto(base + '/fixture-home/home?overview-opt-in&overview-cover-discovery&overview-device-identities&locale=' + locale);
+        const overview = locale === 'he' ? '\u05de\u05d1\u05d8 \u05e2\u05dc \u05d4\u05d1\u05d9\u05ea' : 'Home overview';
+        await page.getByRole('button', { name:overview, exact:true }).tap();
+        const panel = page.getByRole('dialog', { name:overview, exact:true });
+        const people = panel.locator('[data-section=people] .tile-row');
+        await people.last().waitFor();
+        const arrangement = await people.evaluateAll(rows => rows.map(row => {
+          const { x, y, width, height } = row.getBoundingClientRect();
+          return { x, y, width, height, direction:getComputedStyle(row).direction };
+        }));
+        assert.deepEqual(await people.locator('.tile-label').allTextContents(), ['First resident', 'Second resident']);
+        assert.equal(arrangement.length, 2);
+        assert.ok(arrangement[0].x < arrangement[1].x && arrangement[0].y === arrangement[1].y);
+        assert.ok(arrangement.every(({ width, height, direction }) => width >= 44 && height >= 44 &&
+          direction === (locale === 'he' ? 'rtl' : 'ltr')));
+
+        const covers = panel.locator('.toolbar-section').filter({
+          has: page.getByRole('heading', { name:'Discovered covers', exact:true }),
+        });
+        const row = name => covers.getByRole('button', { name:new RegExp('^' + name + ' \u00b7') });
+        const blind = row('Window blind');
+        const curtain = row('Patio curtain');
+        const glyph = tile => tile.locator('ha-icon').getAttribute('icon');
+        await blind.waitFor();
+        assert.equal(await glyph(blind), 'mdi:blinds-horizontal');
+        assert.equal(await glyph(curtain), 'mdi:curtains');
+        assert.equal(await glyph(row('Unnamed cover class')), 'mdi:blinds');
+        assert.match(await curtain.innerText(), /100%/);
+        await page.evaluate(() => {
+          window.bayitTest.setFixtureAttributes('cover.fixture_curtain', { icon:'mdi:shimmer', current_position:67 });
+          window.bayitTest.setRoomState('cover.fixture_curtain', 'closing');
+        });
+        await curtain.locator('ha-icon[icon="mdi:shimmer"]').waitFor({ state:'attached' });
+        assert.match(await curtain.innerText(), /67%/);
+        await page.evaluate(() => window.bayitTest.setFixtureRegistry('cover.fixture_curtain', { icon:'mdi:star' }));
+        await curtain.locator('ha-icon[icon="mdi:star"]').waitFor({ state:'attached' });
+        assert.equal(await curtain.locator('[data-action], input, select').count(), 0);
+        await curtain.tap();
+        assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), ['cover.fixture_curtain']);
+        assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service')), []);
+      } finally {
+        await page.close();
+      }
+    }
   }
 }
 
@@ -12394,6 +12464,7 @@ try {
     });
 
     await run('Overview lights, covers and climate', async () => {
+      await assertOverviewDeviceIdentities(browser);
       const groupOffPage = await browser.newPage({ viewport:{width:320,height:845}, hasTouch:true, reducedMotion:'reduce' });
       groupOffPage.setDefaultTimeout(8000);
       const offOverviewName = rightToLeft ? 'מבט על הבית' : 'Home overview';

@@ -84,6 +84,18 @@ export const DEVICE_ICONS = {
   alarm_control_panel:'mdi:shield-home-outline', weather:'mdi:weather-partly-cloudy',
   person:'mdi:account-outline', vacuum:'mdi:robot-vacuum', camera:'mdi:cctv', media_player:'mdi:speaker',
 };
+const OVERVIEW_COVER_ICONS = new Map([
+  ['awning', 'mdi:storefront-outline'],
+  ['blind', 'mdi:blinds-horizontal'],
+  ['curtain', 'mdi:curtains'],
+  ['damper', 'mdi:circle'],
+  ['door', 'mdi:door-open'],
+  ['garage', 'mdi:garage-open'],
+  ['gate', 'mdi:gate-open'],
+  ['shade', 'mdi:roller-shade'],
+  ['shutter', 'mdi:window-shutter-open'],
+  ['window', 'mdi:window-open'],
+]);
 const ROOM_ICON = /^mdi:[a-z0-9-]+$/;
 const SHORTCUT_DOMAINS = new Set(['light', 'switch', 'fan', 'cover', 'lock', 'climate', 'water_heater']);
 const CONTROL_DOMAINS = new Set(['light', 'switch', 'cover', 'climate', 'fan', 'lock', 'water_heater']);
@@ -576,7 +588,13 @@ export function discoverOverviewEntities(source, hass, hidden, locale, includeCl
   const states = hass?.states ?? {};
   const role = source.domain === 'light' ? 'action' : 'status';
   return Object.keys(states).filter(entity => isActiveOverviewEntity(entity, source, hass, hidden, includeClosing))
-    .map(entity => ({ ...presentEntity(entity, states[entity], hass?.entities?.[entity]), role }))
+    .map(entity => {
+      const state = states[entity];
+      const item = presentEntity(entity, state, hass.entities[entity]);
+      const coverIcon = source.domain === 'cover' && !normalizeRoomIcon(item.icon)
+        ? OVERVIEW_COVER_ICONS.get(state.attributes?.device_class) : undefined;
+      return { ...item, ...(coverIcon && { icon:coverIcon }), role };
+    })
     .sort((a, b) => compareText(a.name ?? a.entity, b.name ?? b.entity, locale) || compareText(a.entity, b.entity, locale));
 }
 
