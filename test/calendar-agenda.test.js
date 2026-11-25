@@ -33,6 +33,24 @@ test('uses seven local calendar dates over daylight saving and handles half-open
   assert.equal(agenda.nextChange, +new Date('2026-03-07T14:00:00-05:00'));
 });
 
+test('uses the server calendar day and offset across daylight saving independently of browser time', () => {
+  const now = new Date('2026-03-08T07:15:00Z');
+  const range = agendaWindow(now, 'America/Los_Angeles');
+  assert.equal(range.firstDay, '2026-03-07');
+  assert.equal(range.start.toISOString(), '2026-03-07T08:00:00.000Z');
+  assert.equal(range.tomorrow.toISOString(), '2026-03-08T08:00:00.000Z');
+  assert.equal(range.end.toISOString(), '2026-03-14T07:00:00.000Z');
+  const appointment = timed('Before server midnight', '2026-03-08T07:30:00Z', '2026-03-08T07:45:00Z');
+  assert.equal(buildCalendarAgenda([source('demo', [appointment])], now, range).full[0].day, '2026-03-07');
+  assert.equal(buildCalendarAgenda([source('demo', [appointment])], now).full[0].day, '2026-03-08');
+  assert.equal(agendaWindow(now, 'Invalid/Zone').firstDay, '2026-03-08');
+
+  const skippedMidnight = agendaWindow(new Date('2026-03-08T05:30:00Z'), 'America/Havana');
+  assert.equal(skippedMidnight.firstDay, '2026-03-08');
+  assert.equal(skippedMidnight.start.toISOString(), '2026-03-08T05:00:00.000Z');
+  assert.equal(skippedMidnight.tomorrow.toISOString(), '2026-03-09T04:00:00.000Z');
+});
+
 test('merges exact overlapping copies by original time and location with the configured source order', () => {
   const now = new Date('2026-03-07T12:00:00-05:00');
   const primary = timed('Shared plan', '2026-03-08T12:00:00-04:00', '2026-03-08T12:30:00-04:00', 'Hall A');

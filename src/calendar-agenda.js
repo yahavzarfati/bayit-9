@@ -26,17 +26,75 @@ export function supportsDailyForecast(state) {
   return Number.isInteger(features) && (features & 1) === 1;
 }
 
-function dayKey(value) {
+function browserDayKey(value) {
   return [value.getFullYear(), value.getMonth() + 1, value.getDate()]
     .map((part, index) => String(part).padStart(index ? 2 : 4, '0')).join('-');
 }
 
-export function agendaWindow(now) {
-  const [year, month, day] = [now.getFullYear(), now.getMonth(), now.getDate()];
-  const start = new Date(year, month, day);
-  const tomorrow = new Date(year, month, day + 1);
-  const end = new Date(year, month, day + 7);
-  return { start, tomorrow, end, firstDay: dayKey(start), afterLastDay: dayKey(end) };
+const civilDate = day => new Date(day + 'T00:00:00Z');
+const shiftDay = (day, amount) => {
+  const date = civilDate(day);
+  date.setUTCDate(date.getUTCDate() + amount);
+  return date.toISOString().slice(0, 10);
+};
+
+const browserCalendar = {
+  dayKey: browserDayKey,
+  opening: day => new Date(day + 'T00:00:00'),
+};
+
+function agendaCalendar(timeZone) {
+  if (!timeZone) return browserCalendar;
+  let format;
+  try {
+    format = new Intl.DateTimeFormat('en-US', {
+      timeZone, calendar:'iso8601', numberingSystem:'latn',
+      year:'numeric', month:'2-digit', day:'2-digit', timeZoneName:'longOffset',
+    });
+  } catch { return browserCalendar; }
+  const fields = value => Object.fromEntries(format.formatToParts(value).map(({ type, value }) => [type, value]));
+  const dayKey = value => {
+    const { year, month, day } = fields(value);
+    return year.padStart(4, '0') + '-' + month + '-' + day;
+  };
+  const offset = value => {
+    const match = /^GMT([+-])(\d\d):(\d\d)(?::(\d\d))?$/.exec(fields(value).timeZoneName);
+    if (!match) return 0;
+    return (Number(match[2]) * 3600 + Number(match[3]) * 60 + Number(match[4] ?? 0)) * (match[1] === '-' ? -1000 : 1000);
+  };
+  const margin = 36 * 3600000;
+  function opening(day) {
+    const midnight = +civilDate(day);
+    const offsets = new Set([offset(midnight - margin), offset(midnight + margin)]);
+    const candidates = [...offsets].flatMap(zoneOffset => {
+      const instant = midnight - zoneOffset;
+      return offset(instant) === zoneOffset ? [instant] : [];
+    });
+    if (candidates.length) return new Date(Math.min(...candidates));
+    // A forward clock change can skip midnight. Find the first instant of the local date.
+    let low = midnight - margin;
+    let high = midnight + margin;
+    while (low < high) {
+      const middle = low + Math.floor((high - low) / 2);
+      if (dayKey(middle) < day) low = middle + 1;
+      else high = middle;
+    }
+    return new Date(low);
+  }
+  return { timeZone, dayKey, opening };
+}
+
+function calendarWindow(firstDay, calendar) {
+  const afterLastDay = shiftDay(firstDay, 7);
+  return {
+    start:calendar.opening(firstDay), tomorrow:calendar.opening(shiftDay(firstDay, 1)),
+    end:calendar.opening(afterLastDay), firstDay, afterLastDay, calendar,
+  };
+}
+
+export function agendaWindow(now, timeZone) {
+  const calendar = agendaCalendar(timeZone);
+  return calendarWindow(calendar.dayKey(now), calendar);
 }
 
 function calendarDay(value) {
@@ -66,7 +124,7 @@ function normalizedEvent(event, now, range) {
   const suppliedEnd = eventTime(event.end);
   const end = suppliedEnd >= start ? suppliedEnd : start;
   if (end <= +now) return undefined;
-  return { summary: event.summary, day: dayKey(new Date(Math.max(start, +range.start))),
+  return { summary: event.summary, day: range.calendar.dayKey(new Date(Math.max(start, +range.start))),
     start, end, signature: JSON.stringify([event.summary, start, end, location]) };
 }
 
@@ -213,13 +271,16 @@ export function createCalendarAgenda({ host, context, items, settings }) {
   }
   content.tabIndex = -1;
   host.append(panel);
-  const dayFormat = new Intl.DateTimeFormat(locale, { weekday:'long', month:'long', day:'numeric' });
-  const weekdayFormat = new Intl.DateTimeFormat(locale, { weekday:'short' });
-  const monthFormat = new Intl.DateTimeFormat(locale, { month:'short' });
-  const fullDateFormat = new Intl.DateTimeFormat(locale, { weekday:'long', month:'long', day:'numeric', year:'numeric' });
+  const dateOptions = { weekday:'long', month:'long', day:'numeric' };
+  const dayFormat = new Intl.DateTimeFormat(locale, { ...dateOptions, timeZone:'UTC' });
+  const weekdayFormat = new Intl.DateTimeFormat(locale, { weekday:'short', timeZone:'UTC' });
+  const monthFormat = new Intl.DateTimeFormat(locale, { month:'short', timeZone:'UTC' });
+  const fullDateFormat = new Intl.DateTimeFormat(locale, { ...dateOptions, year:'numeric', timeZone:'UTC' });
   const dateNumber = new Intl.NumberFormat(locale, { useGrouping:false });
   const subscriptions = new Map();
   let range;
+  let calendar = browserCalendar;
+  let requestedTimeZone;
   let hass;
   let stopWeather;
   let forecasts;
@@ -296,7 +357,7 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     function retry() {
       retryTimer = undefined;
       if (!current() || (dialog && (!dialog.open || dialog.hasAttribute('data-closing')))) return;
-      if (dayKey(new Date()) !== range.firstDay || !available(hass, source.entity)) {
+      if (calendar.dayKey(new Date()) !== range.firstDay || !available(hass, source.entity)) {
         update(hass);
         return;
       }
@@ -394,25 +455,21 @@ export function createCalendarAgenda({ host, context, items, settings }) {
   }
 
   const sourceName = source => source.name || hass?.states?.[source.entity]?.attributes?.friendly_name;
-  function lastAllDayDate(row) {
-    const last = new Date(row.endDay + 'T12:00:00');
-    last.setDate(last.getDate() - 1);
-    return last;
-  }
-
   function paintEventDetails(row, timeFormat) {
     const detail = row.detail;
     let when;
     if (row.start === undefined) {
-      const start = new Date(row.startDay + 'T12:00:00');
-      const last = lastAllDayDate(row);
+      const start = civilDate(row.startDay);
+      const lastDay = shiftDay(row.endDay, -1);
       when = labels.allDay + ' · ' + fullDateFormat.format(start);
-      if (dayKey(last) !== row.startDay) when += ' – ' + fullDateFormat.format(last);
+      if (lastDay !== row.startDay) when += ' – ' + fullDateFormat.format(civilDate(lastDay));
     } else {
       const start = new Date(row.start);
       const end = new Date(row.end);
-      when = fullDateFormat.format(start) + ' · ' + timeFormat.format(start);
-      if (dayKey(end) !== dayKey(start)) when += ' – ' + fullDateFormat.format(end) + ' · ' + timeFormat.format(end);
+      const startDay = calendar.dayKey(start);
+      const endDay = calendar.dayKey(end);
+      when = fullDateFormat.format(civilDate(startDay)) + ' · ' + timeFormat.format(start);
+      if (startDay !== endDay) when += ' – ' + fullDateFormat.format(civilDate(endDay)) + ' · ' + timeFormat.format(end);
       else if (row.end !== row.start) when += ' – ' + timeFormat.format(end);
     }
     const names = [...new Set(row.sources.map(sourceName).filter(Boolean))].join(', ');
@@ -429,7 +486,7 @@ export function createCalendarAgenda({ host, context, items, settings }) {
   function renderDay({ day, rows }, timeFormat, forecastByDay, unit, showYear) {
     const group = make('section', 'calendar-agenda-day');
     const title = make('div', 'calendar-agenda-day-head');
-    const date = new Date(day + 'T12:00:00');
+    const date = civilDate(day);
     const heading = make('h3');
     if (settings.show_month) {
       const rail = make('time', 'calendar-agenda-date');
@@ -437,9 +494,9 @@ export function createCalendarAgenda({ host, context, items, settings }) {
       rail.setAttribute('aria-hidden', 'true');
       heading.setAttribute('aria-label', fullDateFormat.format(date));
       rail.append(make('span', 'calendar-agenda-weekday', weekdayFormat.format(date)),
-        make('bdi', 'calendar-agenda-day-number', dateNumber.format(date.getDate())),
+        make('bdi', 'calendar-agenda-day-number', dateNumber.format(date.getUTCDate())),
         make('span', 'calendar-agenda-month', monthFormat.format(date)));
-      if (showYear) rail.append(make('bdi', 'calendar-agenda-year', dateNumber.format(date.getFullYear())));
+      if (showYear) rail.append(make('bdi', 'calendar-agenda-year', dateNumber.format(date.getUTCFullYear())));
       heading.append(rail);
     } else heading.textContent = dayFormat.format(date);
     title.append(heading);
@@ -479,12 +536,13 @@ export function createCalendarAgenda({ host, context, items, settings }) {
       if (row.start !== undefined) {
         const start = new Date(row.start);
         const end = new Date(row.end);
+        const endDay = calendar.dayKey(end);
         time = timeFormat.format(start);
-        if (dayKey(end) !== dayKey(start)) time += ' · ' + labels.until + ' ' + dayFormat.format(end) + ', ' + timeFormat.format(end);
+        if (endDay !== calendar.dayKey(start)) time += ' · ' + labels.until + ' ' + dayFormat.format(civilDate(endDay)) + ', ' + timeFormat.format(end);
         else if (row.end !== row.start) time += ' – ' + timeFormat.format(end);
       } else {
-        const last = lastAllDayDate(row);
-        if (dayKey(last) !== row.startDay) time += ' · ' + labels.until + ' ' + dayFormat.format(last);
+        const lastDay = shiftDay(row.endDay, -1);
+        if (lastDay !== row.startDay) time += ' · ' + labels.until + ' ' + dayFormat.format(civilDate(lastDay));
       }
       const slot = make('bdi', 'calendar-agenda-time', time);
       if (row.detail) {
@@ -534,13 +592,13 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     const forecastByDay = new Map();
     for (const forecast of forecasts ?? []) {
       const time = eventTime(forecast?.datetime);
-      if (Number.isFinite(time)) forecastByDay.set(dayKey(new Date(time)), forecast);
+      if (Number.isFinite(time)) forecastByDay.set(calendar.dayKey(new Date(time)), forecast);
     }
     const unitValue = hass?.states?.[weather]?.attributes?.temperature_unit;
     const unit = ['°C','°F','K'].includes(unitValue) ? unitValue : '°';
     const timePreference = hass?.locale?.time_format;
     const hourCycle = timePreference === '24' ? 'h23' : timePreference === '12' ? 'h12' : undefined;
-    const order = JSON.stringify([text, detail, shown, selected, [...forecastByDay], expanded, model.canExpand, unit, hourCycle]);
+    const order = JSON.stringify([text, detail, shown, selected, [...forecastByDay], expanded, model.canExpand, unit, hourCycle, calendar.timeZone]);
     if (alarmAt !== model.nextChange) {
       view.clearTimeout(alarm);
       alarmAt = model.nextChange;
@@ -563,7 +621,9 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     expand.textContent = expanded ? labels.hide : labels.show;
     expand.setAttribute('aria-expanded', String(expanded));
     content.dataset.expandable = String(model.canExpand);
-    const timeFormat = new Intl.DateTimeFormat(locale, { hour:'numeric', minute:'2-digit', hourCycle });
+    const timeFormat = new Intl.DateTimeFormat(locale, {
+      hour:'numeric', minute:'2-digit', hourCycle, timeZone:calendar.timeZone,
+    });
     const showYear = shown[0]?.day.slice(0, 4) !== shown.at(-1)?.day.slice(0, 4);
     eventButtons.clear();
     content.replaceChildren(...shown.map(group => renderDay(group, timeFormat, forecastByDay, unit, showYear)));
@@ -585,10 +645,15 @@ export function createCalendarAgenda({ host, context, items, settings }) {
       clearWeather();
     }
     hass = next;
-    const window = agendaWindow(new Date());
-    if (range?.firstDay !== window.firstDay || +range?.start !== +window.start) {
+    const timeZone = hass.locale?.time_zone === 'server' ? hass.config?.time_zone : undefined;
+    if (timeZone !== requestedTimeZone) {
+      requestedTimeZone = timeZone;
+      calendar = agendaCalendar(timeZone);
+    }
+    const firstDay = calendar.dayKey(new Date());
+    if (range?.firstDay !== firstDay || range?.calendar !== calendar) {
       clearSources();
-      range = window;
+      range = calendarWindow(firstDay, calendar);
     }
     for (const source of sources) {
       const current = subscriptions.get(source.entity);

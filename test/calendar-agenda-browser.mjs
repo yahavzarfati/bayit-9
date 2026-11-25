@@ -55,7 +55,8 @@ const fixture = function () {
     recurrence_id:'fixture-occurrence', rrule:'FREQ=WEEKLY',
   });
   const hass = {
-    states, locale:{language,time_format:'24'}, user:{is_admin:true,id:'synthetic'},
+    states, locale:{language,time_format:'24', ...(query.has('server-zone') && {time_zone:'server'})},
+    ...(query.has('server-zone') && {config:{time_zone:'America/Los_Angeles'}}), user:{is_admin:true,id:'synthetic'},
     callService(...args) { mutations.push(args); },
     callWS(...args) { mutations.push(args); },
     callApi(method, path) {
@@ -111,6 +112,10 @@ const fixture = function () {
     rejectRest: status => rejectRest?.({ status }),
     mutations,
     send(index, payload) { loadRequests[index].callback(payload); },
+    useBrowserTimeZone() {
+      hass.locale = { ...hass.locale, time_zone:'local' };
+      card.hass = { ...hass };
+    },
     populate() {
       loadRequests.find(request => request.message.entity_id === primary).callback({events:planned});
       loadRequests.find(request => request.message.entity_id === secondary).callback({events:[shared]});
@@ -460,7 +465,50 @@ try {
       assert.deepEqual(errors,[]);
       await retryPage.close();
 
-      console.log(label + ': compact/expanded agenda, localized event details, availability, retry and cleanup');
+      const zonePage = await browser.newPage({ viewport:{width,height:844}, hasTouch:true, reducedMotion:'reduce',
+        timezoneId:'America/New_York' });
+      await zonePage.clock.install({ time:new Date('2026-03-08T07:15:00Z') });
+      await zonePage.goto(base + '?server-zone&month&details&locale=' + locale + '#panel/demo-calendar');
+      const zoneDialog = zonePage.getByRole('dialog',{name:names.calendar,exact:true});
+      await zoneDialog.waitFor();
+      const primaryRequests = () => zonePage.evaluate(() => window.fixture.requests().filter(request =>
+        request.entity_id === 'calendar.demo_primary'));
+      const emitAppointment = async () => zonePage.evaluate(() => {
+        const requests = window.fixture.requests();
+        const primary = requests.findLastIndex(request => request.entity_id === 'calendar.demo_primary');
+        const daily = requests.findLastIndex(request => request.entity_id === 'weather.demo_daily');
+        window.fixture.send(primary, {events:[{
+          summary:'Appointment near midnight',start:{dateTime:'2026-03-08T07:30:00Z'},end:{dateTime:'2026-03-08T07:45:00Z'},
+        }]});
+        window.fixture.send(daily, {type:'daily',forecast:[{datetime:'2026-03-08T07:00:00Z',temperature:26,condition:'sunny'}]});
+      });
+      await zonePage.waitForFunction(() => window.fixture.requests().some(request => request.entity_id === 'weather.demo_daily'));
+      let requestsWithZone = await primaryRequests();
+      assert.equal(requestsWithZone[0].start,'2026-03-07T08:00:00.000Z');
+      assert.equal(requestsWithZone[0].end,'2026-03-14T07:00:00.000Z');
+      await emitAppointment();
+      const appointment = zoneDialog.getByRole('button',{name:'Appointment near midnight',exact:true});
+      await appointment.waitFor();
+      assert.equal(await zoneDialog.locator('.calendar-agenda-date').getAttribute('datetime'),'2026-03-07');
+      assert.match(await zoneDialog.locator('.calendar-agenda-time').innerText(),/23:30/);
+      assert.match(await zoneDialog.locator('.calendar-agenda-forecast').innerText(),/26°C/);
+      await appointment.click();
+      assert.match(await zoneDialog.locator('.calendar-agenda-detail dd').first().innerText(),/23:30/);
+      await zonePage.keyboard.press('Escape');
+      await appointment.waitFor();
+      await zonePage.evaluate(() => window.fixture.useBrowserTimeZone());
+      await zonePage.waitForFunction(() => window.fixture.requests().filter(request => request.entity_id === 'calendar.demo_primary').length === 2);
+      requestsWithZone = await primaryRequests();
+      assert.equal(requestsWithZone[0].closed,1);
+      assert.equal(requestsWithZone[1].start,'2026-03-08T05:00:00.000Z');
+      await emitAppointment();
+      await appointment.waitFor();
+      assert.equal(await zoneDialog.locator('.calendar-agenda-date').getAttribute('datetime'),'2026-03-08');
+      assert.match(await zoneDialog.locator('.calendar-agenda-time').innerText(),/0?3:30/);
+      assert.equal(await zonePage.evaluate(() => window.fixture.mutations.length),0);
+      await zonePage.close();
+
+      console.log(label + ': compact/expanded agenda, localized event details, availability, retry, cleanup, and Home Assistant time zone');
     } finally { await browser.close(); }
   }
 } finally { await new Promise(resolve => server.close(resolve)); }

@@ -207,6 +207,8 @@ In **Rooms**, choose **Lights in the room count** to count only selected room li
 
 To use the read-only **Compact agenda**, enable it on the Calendar panel and choose the calendars to include. Its short view shows up to six events across four listed dates. Tap the agenda or use **Show the full week** to see the next seven days. Under **Sections**, each calendar can have its own icon and accent color. Select a daily forecast to show the condition and high beside dates.
 
+The agenda follows the time zone selected in your Home Assistant profile. Timed events, forecast dates, and the seven-day window use the same time zone. All-day events keep the dates reported by the calendar.
+
 Enable **Show month in the date column** for a compact weekday, day and month beside each day's events. In YAML, set `show_month: true` under `calendar_agenda`.
 
 Enable **Open event details when tapped** to see an event's date and time, calendars, and any location, notes or recurrence information returned by Home Assistant. Use **Back to agenda** to return to the same view. In YAML, set `event_details: true` under `calendar_agenda`.
