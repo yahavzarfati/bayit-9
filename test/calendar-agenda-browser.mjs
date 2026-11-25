@@ -13,6 +13,7 @@ const fixture = function () {
   const offline = 'calendar.demo_offline';
   const denied = 'calendar.demo_denied';
   const weather = 'weather.demo_daily';
+  let rejectRest;
   const loadRequests = [];
   const restRequests = [];
   const mutations = [];
@@ -29,7 +30,7 @@ const fixture = function () {
   if (query.has('automatic')) delete selected.toolbar[1].sections;
   const state = (name, status = 'off', attributes = {}) => ({state:status, attributes:{friendly_name:name,...attributes}});
   const states = {
-    [primary]:state('Primary'), [secondary]:state('Secondary'), [offline]:state('Offline','unavailable'),
+    [primary]:state('Primary'), [secondary]:state('Secondary'), [offline]:state('Offline',query.has('missing') ? 'off' : 'unavailable'),
     [denied]:state('Denied'), 'calendar.demo_unselected':state('Unselected'),
     [weather]:state('Daily weather','sunny',{ supported_features:1, temperature_unit:'°C' }),
     'weather.demo_hourly':state('Hourly weather','sunny',{ supported_features:2 }),
@@ -50,12 +51,32 @@ const fixture = function () {
     states, locale:{language,time_format:'24'}, user:{is_admin:true,id:'synthetic'},
     callService(...args) { mutations.push(args); },
     callWS(...args) { mutations.push(args); },
-    callApi(method, path) { restRequests.push({method,path}); return Promise.resolve([]); },
+    callApi(method, path) {
+      restRequests.push({method,path});
+      if (query.has('rest-retry')) {
+        if (path.startsWith('calendars/' + denied + '?')) return Promise.reject({status:403});
+        if (path.startsWith('calendars/' + offline + '?')) return Promise.reject({status:404});
+        if (path.startsWith('calendars/' + primary + '?')) {
+          const attempts = restRequests.filter(request => request.path.startsWith('calendars/' + primary + '?'));
+          if (attempts.length === 1) {
+            if (query.has('rest-inflight')) return new Promise((_, reject) => { rejectRest = reject; });
+            return Promise.reject({status:503});
+          }
+          return Promise.resolve([event('Recovered appointment',0)]);
+        }
+      }
+      return Promise.resolve([]);
+    },
     connection: query.has('rest') ? undefined : {
       subscribeMessage(callback, message) {
         const request = {message,callback,closed:0};
         loadRequests.push(request);
         if (message.entity_id === denied) return Promise.reject({code:'unauthorized'});
+        if (message.entity_id === offline) return Promise.reject({code:'not_found'});
+        if (message.entity_id === primary && query.has('recover')) {
+          const attempts = loadRequests.filter(entry => entry.message.entity_id === primary).length;
+          if (attempts <= Number(query.get('recover'))) return Promise.reject({code:'connection_lost'});
+        }
         if (query.has('delayed') && message.entity_id === secondary) {
           return new Promise(resolve => { request.ack = () => resolve(() => { request.closed++; }); });
         }
@@ -79,6 +100,7 @@ const fixture = function () {
   window.fixture = {
     requests: () => loadRequests.map(({message,closed}) => ({...message,closed})),
     restRequests,
+    rejectRest: status => rejectRest?.({ status }),
     mutations,
     send(index, payload) { loadRequests[index].callback(payload); },
     populate() {
@@ -88,6 +110,17 @@ const fixture = function () {
         {type:'daily',forecast:[{datetime:date(0).toISOString(),temperature:26,templow:12,condition:'sunny'}]});
     },
     acknowledge() { loadRequests.find(request => request.message.entity_id === secondary)?.ack?.(); },
+    emitSecondary() {
+      loadRequests.findLast(request => request.message.entity_id === secondary)?.callback({events:[shared]});
+    },
+    emitPrimary(previous = false) {
+      const attempts = loadRequests.filter(request => request.message.entity_id === primary);
+      attempts[previous ? 0 : attempts.length - 1]?.callback({events:[event('Recovered appointment',0)]});
+    },
+    dropPrimary() {
+      states[primary] = state('Primary','unavailable');
+      card.hass = { ...hass, states:{ ...states } };
+    },
     loseWeather() {
       delete states[weather];
       card.hass = {...hass,states:{...states}};
@@ -244,7 +277,100 @@ try {
         await accent.press('Tab');
         assert.equal(await page.evaluate(() => window.draft.toolbar[1].sections[0].entities[0].accent_color),'#4755aa');
       }
-      console.log(label + ': scoped calendars with compact/expanded agenda, date columns, availability, weather, and cleanup');
+      const retryPage = await browser.newPage({ viewport:{width,height:844}, hasTouch:true, reducedMotion:'reduce',
+        timezoneId:'America/New_York' });
+      retryPage.setDefaultTimeout(8000);
+      retryPage.on('pageerror', error => errors.push(error.message));
+      const clock = retryPage.clock;
+      await clock.install({ time:new Date('2026-12-30T17:00:00Z') });
+      const retryDialog = retryPage.getByRole('dialog',{name:names.calendar,exact:true});
+      let fixtureOpen = 0;
+      const retryOpen = async (options, restOnly = false) => {
+        await retryPage.goto(base + '?' + options + '&open=' + ++fixtureOpen + '&locale=' + locale + '#panel/demo-calendar');
+        await retryDialog.waitFor();
+        if (!restOnly) {
+          await retryPage.waitForFunction(() => window.fixture.requests().some(request => request.entity_id === 'calendar.demo_secondary'));
+          await retryPage.evaluate(() => window.fixture.emitSecondary());
+        }
+      };
+      const attempts = (entity = 'primary') => retryPage.evaluate(name => window.fixture.requests()
+        .filter(request => request.entity_id === 'calendar.demo_' + name), entity);
+      const restAttempts = entity => retryPage.evaluate(name => window.fixture.restRequests
+        .filter(request => request.path.startsWith('calendars/calendar.demo_' + name + '?')).length, entity);
+      await retryOpen('recover=2&missing');
+      assert.equal((await attempts()).length,1);
+      await clock.fastForward(58000);
+      assert.equal((await attempts()).length,1);
+      await clock.fastForward(4000);
+      assert.equal((await attempts()).length,2);
+      await clock.fastForward(117000);
+      assert.equal((await attempts()).length,2);
+      await clock.fastForward(5000);
+      assert.equal((await attempts()).length,3);
+      await retryPage.evaluate(() => window.fixture.emitPrimary());
+      await retryDialog.getByText('Recovered appointment',{exact:true}).waitFor();
+      await clock.fastForward(121000);
+      assert.equal((await attempts()).length,3);
+      assert.equal((await attempts('denied')).length,1);
+      assert.equal((await attempts('offline')).length,1);
+
+      await retryOpen('timeout');
+      await clock.fastForward(9000);
+      await clock.fastForward(61000);
+      assert.deepEqual((await attempts()).map(request => request.closed),[1,0]);
+      await retryPage.evaluate(() => window.fixture.emitPrimary(true));
+      assert.equal(await retryDialog.getByText('Recovered appointment',{exact:true}).count(),0);
+      await retryPage.evaluate(() => window.fixture.emitPrimary());
+      await retryDialog.getByText('Recovered appointment',{exact:true}).waitFor();
+
+      await retryOpen('timeout');
+      await clock.fastForward(9000);
+      await retryPage.evaluate(() => window.fixture.emitPrimary());
+      await retryDialog.getByText('Recovered appointment',{exact:true}).waitFor();
+      await clock.fastForward(61000);
+      assert.equal((await attempts()).length,1);
+      assert.equal((await attempts())[0].closed,0);
+
+      await retryOpen('recover=1');
+      await retryPage.evaluate(() => window.fixture.dropPrimary());
+      await clock.fastForward(61000);
+      assert.equal((await attempts()).length,1);
+      await retryOpen('recover=1');
+      await retryPage.keyboard.press('Escape');
+      await retryDialog.waitFor({state:'hidden'});
+      await clock.fastForward(61000);
+      assert.equal((await attempts()).length,1);
+
+      await retryOpen('rest&rest-retry&missing', true);
+      await retryPage.waitForFunction(() => window.fixture.restRequests.length === 4);
+      await clock.fastForward(61000);
+      await retryDialog.getByText('Recovered appointment',{exact:true}).waitFor();
+      assert.equal(await restAttempts('primary'),2);
+      assert.equal(await restAttempts('denied'),1);
+      assert.equal(await restAttempts('offline'),1);
+      assert.deepEqual(await retryPage.evaluate(() => window.fixture.mutations),[]);
+
+      await retryOpen('rest&rest-retry&rest-inflight&missing', true);
+      await retryPage.waitForFunction(() => window.fixture.restRequests.length === 4);
+      await clock.fastForward(9000);
+      await clock.fastForward(61000);
+      assert.equal(await restAttempts('primary'),1);
+      await retryPage.evaluate(() => window.fixture.rejectRest(503));
+      await retryDialog.getByText('Recovered appointment',{exact:true}).waitFor();
+      assert.equal(await restAttempts('primary'),2);
+
+      await clock.setSystemTime(new Date('2026-12-31T04:59:30Z'));
+      await retryOpen('recover=2');
+      await clock.fastForward(42000);
+      const startAfterMidnight = await attempts();
+      assert.equal(startAfterMidnight.length,2);
+      assert.notEqual(startAfterMidnight[0].start,startAfterMidnight[1].start);
+      await clock.fastForward(24000);
+      assert.equal((await attempts()).length,2);
+      assert.deepEqual(errors,[]);
+      await retryPage.close();
+
+      console.log(label + ': scoped calendars with compact/expanded agenda, date columns, availability, retry and cleanup');
     } finally { await browser.close(); }
   }
 } finally { await new Promise(resolve => server.close(resolve)); }

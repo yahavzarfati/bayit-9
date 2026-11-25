@@ -2,6 +2,10 @@ const calendarId = /^calendar\.[a-z0-9_]+$/;
 const weatherId = /^weather\.[a-z0-9_]+$/;
 const isoDay = /^\d{4}-\d{2}-\d{2}$/;
 const notReady = new Set(['unknown', 'unavailable']);
+const calendarRetryMin = 60000;
+const calendarRetryMax = 30 * calendarRetryMin;
+const permanentCalendarErrors = new Set(['unauthorized', 'unauthenticated', 'auth_invalid', 'forbidden',
+  'permission_denied', 'not_found', 'entity_not_found', 'invalid_entity_id', 'invalid_format']);
 let nextAgendaId = 0;
 
 export function calendarAccent(value) {
@@ -135,6 +139,14 @@ function available(hass, entity) {
     typeof state === 'string' && !notReady.has(state);
 }
 
+function canRetryCalendar(error) {
+  const code = error?.code ?? error?.body?.code;
+  if (permanentCalendarErrors.has(code)) return false;
+  const asStatus = typeof error === 'number' || typeof error === 'string' ? error : undefined;
+  const status = Number(error?.status ?? error?.status_code ?? error?.response?.status ?? code ?? asStatus);
+  return !(status >= 400 && status < 500) || [408, 425, 429].includes(status);
+}
+
 function calendarSourceConfig(items) {
   const exact = new Map();
   for (const item of items) {
@@ -217,36 +229,86 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     };
   }
 
-  function loadSource(source) {
+  function loadSource(source, priorFailures = 0) {
     const requestHass = hass;
     const entry = { status: 'pending', events: [], close: undefined };
     subscriptions.set(source.entity, entry);
+    const dialog = context.dialog;
     const current = () => !disposed && subscriptions.get(source.entity) === entry;
-    const receive = data => {
-      if (!current()) return;
-      const valid = Array.isArray(data);
-      entry.status = valid ? 'ready' : 'failed';
-      entry.events = valid ? data : [];
-      view.clearTimeout(timeout);
+    let failures = priorFailures;
+    let retryTimer;
+    let restInFlight = false;
+    let retryAfterRest = false;
+
+    function retry() {
+      retryTimer = undefined;
+      if (!current() || (dialog && (!dialog.open || dialog.hasAttribute('data-closing')))) return;
+      if (dayKey(new Date()) !== range.firstDay || !available(hass, source.entity)) {
+        update(hass);
+        return;
+      }
+      // The HA REST helper has no abort handle. Let this attempt settle before sending another.
+      if (restInFlight) { retryAfterRest = true; return; }
+      subscriptions.delete(source.entity);
+      entry.stop();
+      loadSource(source, failures);
       draw();
+    }
+
+    function failed(retryable) {
+      if (!current() || (retryable && retryTimer !== undefined)) return;
+      view.clearTimeout(timeout);
+      view.clearTimeout(retryTimer);
+      retryTimer = undefined;
+      entry.status = 'failed';
+      entry.events = [];
+      if (retryable) {
+        const delay = Math.min(calendarRetryMin * 2 ** failures, calendarRetryMax);
+        failures = Math.min(failures + 1, 5);
+        retryTimer = view.setTimeout(retry, delay);
+      }
+      draw();
+    }
+
+    function receive(data) {
+      if (!current()) return;
+      if (!Array.isArray(data)) { failed(true); return; }
+      view.clearTimeout(timeout);
+      view.clearTimeout(retryTimer);
+      retryTimer = undefined;
+      failures = 0;
+      entry.status = 'ready';
+      entry.events = data;
+      draw();
+    }
+
+    const timeout = view.setTimeout(() => failed(true), 8000);
+    entry.stop = () => {
+      view.clearTimeout(timeout);
+      view.clearTimeout(retryTimer);
+      entry.close?.();
     };
-    const timeout = view.setTimeout(() => receive(null), 8000);
     const params = { entity_id: source.entity, start: range.start.toISOString(), end: range.end.toISOString() };
     const rest = () => {
-      if (!current() || typeof requestHass.callApi !== 'function') return receive(null);
+      if (!current() || restInFlight) return;
+      if (typeof requestHass.callApi !== 'function') { failed(false); return; }
+      restInFlight = true;
+      const done = (data, error) => {
+        restInFlight = false;
+        if (!current()) return;
+        if (Array.isArray(data)) receive(data);
+        else if (retryAfterRest && canRetryCalendar(error)) retry();
+        else failed(canRetryCalendar(error));
+      };
       const query = new URLSearchParams({ start: params.start, end: params.end });
       void Promise.resolve().then(() => {
         if (current()) return requestHass.callApi('GET', 'calendars/' + source.entity + '?' + query);
-      }).then(receive, () => receive(null));
+      }).then(done, error => done(null, error));
     };
     if (typeof requestHass.connection?.subscribeMessage === 'function') {
       entry.close = subscribe({ type:'calendar/event/subscribe', ...params }, data => receive(data?.events),
-        error => error?.code === 'unknown_command' ? rest() : receive(null));
+        error => error?.code === 'unknown_command' ? rest() : failed(canRetryCalendar(error)));
     } else rest();
-    entry.stop = () => {
-      view.clearTimeout(timeout);
-      entry.close?.();
-    };
   }
 
   function clearSources() {
