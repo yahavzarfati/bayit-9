@@ -703,6 +703,8 @@ export function createToolbarPanel(kind, configuration, context) {
     host.append(nativeCard({type:'calendar', entities:[...new Set(calendarItems.map(item=>item.entity))], initial_view:'listWeek'},fallback));
   }
   const forecastPages = new Map();
+  const detailedForecast = kind === 'weather' && sections.some(section =>
+    section.kind === 'forecast' && section.entities.some(item => item.hourly_forecast));
   const beforeMap = configuration.vacuumMap?.before_section;
   let vacuumMapAnchor;
   let forecastClock;
@@ -781,7 +783,7 @@ export function createToolbarPanel(kind, configuration, context) {
     if (beforeMap && beforeMap === section.id) vacuumMapAnchor = panel;
     if (kind === 'weather' && ['forecast', 'sun'].includes(section.kind)) forecastPages.set(section.kind, panel);
     if (kind === 'weather' && section.kind === 'forecast' && !clockTimer) {
-      if (!section.entities.some(item => item.hourly_forecast)) {
+      if (!detailedForecast) {
         forecastClock = make('div','forecast-clock');
         forecastClock.append(make('strong'),make('span'));
         panel.insertBefore(forecastClock, items);
@@ -791,7 +793,9 @@ export function createToolbarPanel(kind, configuration, context) {
     }
   }
   if (forecastPages.size === 2) {
-    const tabs = make('div', 'weather-tabs');
+    const tabs = make('div', detailedForecast ? 'weather-page-dots' : 'weather-tabs');
+    tabs.setAttribute('role', 'group');
+    tabs.setAttribute('aria-label', t('weather'));
     const buttons = new Map();
     const pages = [...forecastPages.keys()];
     let active = 'forecast';
@@ -802,7 +806,7 @@ export function createToolbarPanel(kind, configuration, context) {
     };
     let touch;
     for (const [key, panel] of forecastPages) {
-      const tab = button('control-button', t(sectionKeys[key]));
+      const tab = button(detailedForecast ? 'weather-page-dot' : 'control-button', t(sectionKeys[key]), null, detailedForecast);
       tab.onclick = () => selectPage(key);
       buttons.set(key, tab);
       tabs.append(tab);
@@ -826,7 +830,12 @@ export function createToolbarPanel(kind, configuration, context) {
       });
     }
     selectPage(active);
-    host.prepend(tabs);
+    if (detailedForecast) {
+      const pager = make('div', 'toolbar-section weather-pager');
+      const panels = [...forecastPages.values()];
+      panels[0].before(pager);
+      pager.append(...panels, tabs);
+    } else host.prepend(tabs);
   }
   if (kind === 'energy' && currentHass?.panels?.energy) {
     const energy = make('a', 'control-button toolbar-link', t('open_energy'));
@@ -1026,6 +1035,21 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
     }
   }
   .weather-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .weather-pager { padding-block-end: 5px; }
+  .weather-pager > .toolbar-section { border: 0; padding: 0; }
+  .weather-pager .weather-current-summary { border: 0; background: transparent; padding-block: 7px; }
+  .weather-pager .daily-weather-row { min-height: 26px; }
+  .weather-page-dots { display: flex; justify-content: center; direction: ltr; }
+  .weather-page-dot {
+    display: grid; place-items: center; min-inline-size: 44px; min-block-size: 28px;
+    padding: 0; border: 0; border-radius: 999px; background: transparent;
+  }
+  .weather-page-dot::before {
+    content: ''; inline-size: 7px; block-size: 7px; border: 1px solid var(--line);
+    border-radius: 50%; background: transparent;
+  }
+  .weather-page-dot[aria-pressed=true]::before { background: currentColor; }
+  .weather-page-dot:focus-visible { outline-offset: -2px; }
   [data-weather-swipe] { touch-action: pan-y pinch-zoom; }
   [data-weather-swipe]:has([data-weather-forecast-scroll]) { touch-action: auto; }
   [data-weather-swipe] .daily-weather { touch-action: pan-y pinch-zoom; }

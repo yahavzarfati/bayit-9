@@ -173,6 +173,20 @@ try {
       assert.equal(await list.locator('.hourly-weather-time').nth(3).textContent(), '13:30');
       await daily.waitFor();
       assert.equal(await daily.locator('li').count(), 5);
+      const dots = modal.locator('.weather-page-dots');
+      const forecastChoice = dots.getByRole('button', { name:rtl ? 'תחזית' : 'Forecast', exact:true });
+      const sunChoice = dots.getByRole('button', { name:rtl ? 'שמש' : 'Sun', exact:true });
+      assert.equal(await forecastChoice.getAttribute('aria-pressed'), 'true');
+      assert.equal(await sunChoice.getAttribute('aria-pressed'), 'false');
+      assert.ok(await dots.evaluate(node => {
+        const container = node.closest('.weather-pager');
+        const forecast = container.querySelector('[data-section=forecast]');
+        const sun = container.querySelector('[data-section=sun]');
+        const buttons = [...node.querySelectorAll('button')].map(button => button.getBoundingClientRect());
+        return node.getBoundingClientRect().top >= forecast.getBoundingClientRect().bottom &&
+          sun.hidden && container.scrollWidth <= container.clientWidth && buttons.every(box => box.width >= 44 && box.height >= 28);
+      }));
+      assert.equal(await modal.locator('.weather-tabs').count(), 0);
       assert.equal(await daily.locator('.daily-weather-day').first().textContent(), rtl ? 'היום' : 'Today');
       assert.deepEqual(await daily.locator('.daily-weather-low').allTextContents(), ['14°C', '10°C', '14°C', '14°C', '15°C']);
       assert.deepEqual(await daily.locator('.daily-weather-high').allTextContents(), ['24°C', '26°C', '28°C', '27°C', '24°C']);
@@ -211,6 +225,8 @@ try {
       assert.equal(await sun.isHidden(), true, 'Vertical weather scrolling does not switch pages');
       await swipe(daily.locator('.daily-weather-range').first(), direction * 110);
       await sun.waitFor();
+      assert.equal(await sunChoice.getAttribute('aria-pressed'), 'true');
+      assert.equal(await forecastChoice.getAttribute('aria-pressed'), 'false');
       await swipe(sun.locator('.sun-panel'), -direction * 110);
       await forecastPanel.waitFor();
       assert.equal(new URL(page.url()).hash, originalRoute);
@@ -307,6 +323,8 @@ try {
       await show('daily:5');
       assert.equal(await forecasts.count(), 1);
       assert.equal(await hourly.count(), 0);
+      assert.equal(await dots.count(), 0);
+      assert.equal(await modal.locator('.weather-tabs').count(), 1);
       await swipe(forecastPanel, direction * 110);
       await sun.waitFor();
       await swipe(sun.locator('.sun-panel'), -direction * 110);
