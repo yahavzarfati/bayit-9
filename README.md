@@ -17,7 +17,7 @@ The **Community dashboards** picker requires Home Assistant 2026.5 or newer. Ass
 
 Reload Home Assistant after the download. In the Companion app, close and reopen the dashboard view. Then open **Settings → Dashboards → Add dashboard → Community dashboards → Bayit 9**.
 
-Open the gear in Bayit 9, choose **Customize home**, then open **Rooms**. A Home Assistant administrator can pick and reorder rooms, rename them, and choose their devices. Create a dashboard-only room to group devices from different areas. Select **Save dashboard** to apply the layout on every device that opens it.
+Open the gear in Bayit 9, choose **Customize home**, then open **Rooms**. A Home Assistant administrator can pick and reorder rooms, rename them, and choose their devices. Create a dashboard-only room to group devices from different areas. For automatically discovered rooms, use **Additional devices** to show a device from elsewhere while keeping automatic discovery. Select **Save dashboard** to apply the layout on every device that opens it.
 
 Use **Room shortcuts** to choose up to six controls for a room’s home-screen card. For YAML-managed dashboards, use the [strategy options](docs/configuration.md). Bayit 9 starts in the Home Assistant language and supports English and Hebrew.
 
