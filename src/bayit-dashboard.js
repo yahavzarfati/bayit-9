@@ -1244,7 +1244,7 @@ export class BayitDashboard extends HTMLElement {
             : domainFor(config) === 'climate' ? 'room_climate_power' : 'room_boiler_quick_power';
           powerConfig = { ...config, [flag]: true };
         }
-        const shortcutCurrent = () => this.isConnected && el.isConnected && !this.panel &&
+        const shortcutCurrent = () => this.isConnected && el.isConnected && !this.nodes.modal.open &&
           this.roomViews.get(room.id)?.shortcut.get(config.entity)?.el === el && this.shortcutEntityVisible(config.entity);
         const showDetails = () => {
           if (shortcutCurrent()) this.openShortcutDetails(config, el, room);

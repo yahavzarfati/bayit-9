@@ -1891,10 +1891,25 @@ async function assertNativeRoomLightHold(browser) {
     await studio.locator('[data-entity="light.demo_lamp"] .device-tile[aria-pressed="true"]').waitFor();
     assert.deepEqual((await commands()).map(({ domain, service, target }) => [domain, service, target.entity_id]),
       [['light', 'turn_on', 'light.demo_lamp']]);
-    await studio.getByRole('button', { name: 'Close', exact: true }).tap();
-    await studio.waitFor({ state: 'hidden' });
-
     const quick = page.locator('.room[data-room="studio"] .quick-button[data-entity="light.demo_lamp"]');
+    const dismissed = await quick.evaluate(button => {
+      const card = button.getRootNode().host;
+      card.nodes.close.click();
+      const dismissed = { modalOpen:card.nodes.modal.open, panel:card.panel?.type };
+      const key = { key:'Enter', code:'Enter', shiftKey:true, bubbles:true, composed:true, cancelable:true };
+      button.focus();
+      button.dispatchEvent(new KeyboardEvent('keydown', key));
+      button.dispatchEvent(new KeyboardEvent('keyup', key));
+      return dismissed;
+    });
+    assert.deepEqual(dismissed, {modalOpen:false,panel:'room'}, 'The browser has not run the queued close event yet');
+    await page.waitForURL(url => url.hash === '#device/studio/light.demo_lamp', { timeout:8000 });
+    await page.keyboard.press('Escape');
+    await page.waitForURL(url => url.hash === '');
+    await page.getByRole('button', { name:'Studio',exact:true }).tap();
+    await studio.getByRole('button', { name:'Close',exact:true }).tap();
+    await studio.waitFor({state:'hidden'});
+
     await quick.press('Shift+Enter');
     await page.waitForURL(url => url.hash === '#device/studio/light.demo_lamp');
     assert.equal(await native.count(), 0);
