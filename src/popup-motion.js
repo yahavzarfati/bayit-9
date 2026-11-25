@@ -103,7 +103,7 @@ export function bindDeviceDetails(button, openDetails) {
     event.stopPropagation();
     if (event.repeat) return;
     // Suppress the paired key release even when dialog focus has moved.
-    const guardClick = !openDetails && isActivationKey(event);
+    const guardClick = isActivationKey(event);
     if (guardClick) suppressKeyClickUntil = Infinity;
     const key = event.code || event.key;
     const listeners = new AbortController();

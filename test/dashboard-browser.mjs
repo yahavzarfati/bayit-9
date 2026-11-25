@@ -82,6 +82,12 @@ if (query.has('entrance-popup-position')) {
   states['sensor.demo_entry_temperature'] = { state: '24', attributes: { friendly_name: 'טמפרטורה', unit_of_measurement: '°C' } };
   states['lock.demo_entry_position'] = { state: 'locked', attributes: { friendly_name: 'מנעול' } };
 }
+if (query.has('shortcut-detail-routes')) {
+  states['lock.demo_route_lock'] = { state: 'locked', attributes: { friendly_name: 'Demo lock' } };
+  states['cover.demo_route_shade'] = { state: 'closed', attributes: {
+    friendly_name: 'Demo shade', supported_features: 15, current_position: 0,
+  } };
+}
 const storedKey = 'bayit9-browser-fixture';
 const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection') && { show_unassigned: false }),
   ...(query.has('compact-settings') && { fullscreen: true, toolbar: [
@@ -116,6 +122,28 @@ const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection'
         read_only_entities: ['light.demo_room_read_only'] },
       bayit_room_den: { name: 'Den', entities: ['light.demo_lamp'] },
     },
+  }),
+  ...(query.has('shortcut-detail-routes') && {
+    show_unassigned: false, area_ids: ['studio', 'bayit_room_den'],
+    room_shortcuts: { studio: ['lock.demo_route_lock', 'cover.demo_route_shade', 'switch.demo_heater'] },
+    room_overrides: {
+      studio: { entities: ['lock.demo_route_lock', 'cover.demo_route_shade', 'switch.demo_heater'],
+        shortcut_no_details: ['switch.demo_heater'],
+        shortcut_detail_entities: { 'lock.demo_route_lock': 'switch.demo_heater' },
+        shortcut_detail_routes: {
+          'lock.demo_route_lock': 'panel:shared-security', 'cover.demo_route_shade': 'native',
+          'switch.demo_heater': 'panel:shared-security',
+        } },
+      bayit_room_den: { name: 'Den', entities: ['cover.demo_route_shade'] },
+    },
+    toolbar: [
+      { id: 'home-settings', kind: 'settings' },
+      { id: 'shared-security', kind: 'security', label: 'Room Security', sections: [
+        { kind: 'locks', entities: ['lock.demo_route_lock'] },
+      ] },
+      { id: 'status-extra', kind: 'devices', label: 'Extras', placement: 'settings' },
+      { id: 'elsewhere', kind: 'link', path: '/other/home', label: 'Elsewhere' },
+    ],
   }),
   ...(query.has('shortcut-no-details') && {
     show_unassigned: false, area_ids: ['studio', 'bayit_room_den'],
@@ -782,6 +810,10 @@ window.bayitTest = {
   observeScript,
   finishCover: (index, failed = false) => coverRequests[index](failed),
   rejectNextInlineLight() { rejectInlineLight = true; },
+  setFixtureRegistry(entity, metadata) {
+    hass.entities = { ...hass.entities, [entity]: metadata };
+    card.hass = { ...hass, entities: hass.entities };
+  },
   setRoomState(entity, state) {
     states[entity] = { ...states[entity], state };
     card.hass = { ...hass, states: { ...states } };
@@ -1035,6 +1067,113 @@ async function assertDeviceHeading(dialog, name) {
   assert.equal(await status.locator('.device-name, .device-icon').filter({ visible: true }).count(), 0);
 }
 
+async function assertShortcutDetailRoutes(browser) {
+  const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true });
+  try {
+    const url = base + '/fixture-home/home?configuration&shortcut-detail-routes&native-more-info=modern';
+    await page.goto(url);
+    const shortcut = entity => page.locator('.room[data-room="studio"] .quick-button[data-entity="' + entity + '"]');
+    const lock = shortcut('lock.demo_route_lock');
+    const cover = shortcut('cover.demo_route_shade');
+    const washer = shortcut('switch.demo_heater');
+    const commands = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.domain));
+    const security = page.getByRole('dialog', { name: 'Room Security', exact: true });
+    const native = page.getByRole('dialog', { name: 'Native entity details', exact: true });
+    const shadeDetail = page.getByRole('dialog', { name: 'Demo shade', exact: true });
+    const lockPrompt = page.locator('dialog.confirm[open]');
+    const isFocused = control => control.getRootNode().activeElement === control;
+    await lock.waitFor();
+
+    await lock.press('Shift+Enter');
+    await security.waitFor();
+    assert.equal(new URL(page.url()).hash, '#panel/shared-security');
+    await lock.evaluate(button => button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+    assert.equal(await lockPrompt.count(), 0);
+    assert.deepEqual(await commands(), []);
+    await page.keyboard.press('Escape');
+    await security.waitFor({ state: 'hidden' });
+    await page.waitForURL(url);
+    assert.equal(await lock.evaluate(isFocused), true);
+    await lock.tap();
+    await lockPrompt.getByRole('button', { name: 'Cancel', exact: true }).tap();
+    await lockPrompt.waitFor({ state: 'hidden' });
+    assert.deepEqual(await commands(), []);
+
+    await cover.evaluate(async button => {
+      button.dispatchEvent(new PointerEvent('pointerdown', {
+        button: 0, pointerId: 13, pointerType: 'touch', isPrimary: true, bubbles: true, composed: true,
+      }));
+      await new Promise(resolve => setTimeout(resolve, 535));
+      button.dispatchEvent(new PointerEvent('pointerup', {
+        pointerId: 13, pointerType: 'touch', isPrimary: true, bubbles: true, composed: true,
+      }));
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+    });
+    await native.waitFor();
+    assert.equal(new URL(page.url()).searchParams.get('more-info-entity-id'), 'cover.demo_route_shade');
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), ['cover.demo_route_shade']);
+    assert.deepEqual(await commands(), []);
+    await native.getByRole('button', { name: 'Close native details', exact: true }).tap();
+    await native.waitFor({ state: 'hidden' });
+    await page.waitForURL(url);
+    await page.waitForFunction(() => document.querySelector('bayit-dashboard')
+      .shadowRoot.activeElement?.dataset.entity === 'cover.demo_route_shade');
+
+    const otherCover = page.locator('.room[data-room="bayit_room_den"] .quick-button[data-entity="cover.demo_route_shade"]');
+    await otherCover.press('Shift+Enter');
+    await shadeDetail.waitFor();
+    assert.equal(new URL(page.url()).hash, '#device/bayit_room_den/cover.demo_route_shade');
+    await page.keyboard.press('Escape');
+    await shadeDetail.waitFor({ state: 'hidden' });
+    await washer.press('Shift+Enter');
+    assert.equal(await security.count(), 0);
+    assert.deepEqual(await commands(), []);
+
+    await cover.tap();
+    await page.waitForFunction(() => window.bayitTest.calls.some(call => call.domain === 'cover'));
+    assert.deepEqual(await commands(), [{ type: 'call_service', domain: 'cover', service: 'open_cover', service_data: {},
+      target: { entity_id: 'cover.demo_route_shade' } }]);
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), ['cover.demo_route_shade']);
+    await page.evaluate(() => window.bayitTest.setFixtureRegistry('cover.demo_route_shade', { hidden: true }));
+    await cover.press('Shift+Enter');
+    assert.equal(await native.count(), 0);
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), ['cover.demo_route_shade']);
+    await page.evaluate(() => window.bayitTest.setFixtureRegistry('cover.demo_route_shade', {}));
+
+    await page.getByRole('button', { name: 'Appearance', exact: true }).tap();
+    await page.getByRole('button', { name: 'Customize home', exact: true }).tap();
+    const setup = page.getByRole('dialog', { name: 'Customize home', exact: true });
+    await setup.getByText('Room shortcuts', { exact: true }).tap();
+    await setup.locator('[data-shortcut-room]').selectOption('studio');
+    const destination = name => setup.getByLabel('Long-press destination · ' + name, { exact: true });
+    const shadePicker = destination('Demo shade');
+    assert.equal(await shadePicker.inputValue(), 'native');
+    const lockPicker = destination('Demo lock');
+    assert.equal(await lockPicker.inputValue(), 'panel:shared-security');
+    await lockPicker.selectOption('native');
+    await lockPicker.selectOption('panel:shared-security');
+    assert.equal(await destination('Room heater').isDisabled(), true);
+    assert.deepEqual(await shadePicker.locator('option').evaluateAll(options => options.map(option => option.value)),
+      ['', 'native', 'panel:shared-security', 'lock.demo_route_lock', 'switch.demo_heater']);
+    await shadePicker.selectOption('panel:shared-security');
+    await Promise.all([page.waitForEvent('load'), setup.getByRole('button', { name: 'Save dashboard', exact: true }).tap()]);
+    await page.waitForFunction(() => Boolean(window.bayitTest));
+    assert.deepEqual(await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture'))
+      .strategy.room_overrides.studio.shortcut_detail_routes), {
+      'lock.demo_route_lock': 'panel:shared-security',
+      'cover.demo_route_shade': 'panel:shared-security',
+      'switch.demo_heater': 'panel:shared-security',
+    });
+    assert.equal(await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture'))
+      .strategy.room_overrides.studio.shortcut_detail_entities), undefined);
+    await cover.press('Shift+Enter');
+    await security.waitFor();
+    assert.deepEqual(await commands(), []);
+  } finally {
+    await page.close();
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
@@ -1042,6 +1181,8 @@ try {
       await assertHomePreferenceAliases(browser);
       await assertSharedAppearance(browser, engine);
       await assertCompactSettings(browser);
+      await assertShortcutDetailRoutes(browser);
+      console.log(engine + ': scoped panel and native shortcut destinations, safe taps, focus return and editor persistence');
       console.log(engine + ': independent browser appearance and admin household defaults');
       const quietPage = await browser.newPage({
         viewport: { width: 391, height: 845 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce',
@@ -4405,10 +4546,10 @@ try {
       const detailSetup = await openRoomEditor(detailTargetPage);
       await detailSetup.getByText('Room shortcuts', { exact: true }).tap();
       await detailSetup.locator('[data-shortcut-room]').selectOption('studio');
-      const picker = detailSetup.getByLabel('Long-press details · Desk lamp', { exact: true });
+      const picker = detailSetup.getByLabel('Long-press destination · Desk lamp', { exact: true });
       assert.equal(await picker.inputValue(), 'light.demo_dimmer');
       assert.deepEqual(await picker.locator('option').evaluateAll(options => options.map(option => option.value)),
-        ['', 'light.demo_dimmer', 'switch.demo_heater']);
+        ['', 'native', 'light.demo_dimmer', 'switch.demo_heater']);
       await picker.selectOption('switch.demo_heater');
       await Promise.all([detailTargetPage.waitForEvent('load'), saveRoomConfig(detailSetup)]);
       await detailTargetPage.waitForFunction(() => Boolean(window.bayitTest));

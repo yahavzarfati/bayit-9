@@ -1,5 +1,5 @@
 import { normalizeRoomActivities } from './room-appliance.mjs';
-import { HEATING_DOMAINS, supportsRoomShutdown } from './device-control.mjs';
+import { HEATING_DOMAINS, isReadOnlyRole, supportsRoomShutdown } from './device-control.mjs';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
 import { normalizeMediaRemote } from './media-device-support.mjs';
@@ -228,6 +228,33 @@ export function normalizeShortcutDetailEntities(room, value, excluded = []) {
   return Object.fromEntries(targets);
 }
 
+export function shortcutDetailPanels(toolbar) {
+  if (!Array.isArray(toolbar)) return [];
+  const ids = new Map();
+  for (const { id } of toolbar) ids.set(id, (ids.get(id) ?? 0) + 1);
+  return toolbar.filter(({ id, kind, placement }) => typeof id === 'string' && LAYOUT_ID.test(id) &&
+    ids.get(id) === 1 && kind !== 'settings' && kind !== 'link' && placement !== 'settings');
+}
+
+export function supportsNativeShortcutDetails(device) {
+  return !isReadOnlyRole(device.role);
+}
+
+export function normalizeShortcutDetailRoutes(room, raw, panels, excluded = []) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const allowedPanels = new Set(panels.map(panel => 'panel:' + panel.id));
+  const ignored = new Set(excluded);
+  const routes = [];
+  for (const device of roomShortcutDevices(room)) {
+    if (!Object.hasOwn(raw, device.entity) || ignored.has(device.entity)) continue;
+    const route = raw[device.entity];
+    if (route === 'native' ? supportsNativeShortcutDetails(device) : allowedPanels.has(route)) {
+      routes.push([device.entity, route]);
+    }
+  }
+  return Object.fromEntries(routes);
+}
+
 function dashboardAreas(config, hass) {
   const areas = new Map(Object.entries(hass.areas ?? {}).map(([id, area]) => [
     area.area_id ?? id,
@@ -255,6 +282,7 @@ function dashboardAreas(config, hass) {
       panelHidden: idList(override.panel_hidden_entities),
       shortcutNoDetails: new Set(idList(override.shortcut_no_details)),
       shortcutDetailEntities: override.shortcut_detail_entities,
+      shortcutDetailRoutes: override.shortcut_detail_routes,
       inlineLights: new Set(idList(override.inline_light_entities)),
       lightingCount: idList(override.lighting_count_entities),
       shutdown: idList(override.turn_off_entities).filter(supportsRoomShutdown),
@@ -394,6 +422,8 @@ export function discoverRooms(config, hass, locale) {
   const areas = dashboardAreas(config, hass);
   const panelKinds = new Map([...areas.values()].some(area => Object.keys(area.panelLinks ?? {}).length)
     ? roomPanelOptions(config, hass).map(panel => [panel.id, panel.kind]) : []);
+  const detailPanels = [...areas.values()].some(area => area.shortcutDetailRoutes)
+    ? shortcutPanelOptions(config) : [];
   const unassigned = pickUnassignedId(areas);
   const selection = selectedRoomIds(config);
   const explicitOrder = new Map((selection ?? []).map((id, index) => [id, index]));
@@ -523,6 +553,8 @@ export function discoverRooms(config, hass, locale) {
     }
     const detailEntities = normalizeShortcutDetailEntities(room, area.shortcutDetailEntities, room.shortcut_no_details);
     if (Object.keys(detailEntities).length) room.shortcut_detail_entities = detailEntities;
+    const routes = normalizeShortcutDetailRoutes(room, area.shortcutDetailRoutes, detailPanels, room.shortcut_no_details);
+    if (Object.keys(routes).length) room.shortcut_detail_routes = routes;
     return room;
   });
 }
@@ -642,25 +674,34 @@ export function toolbarPlacement(kind, value) {
   return undefined;
 }
 
-function dashboardToolbar(config, hass, roomIds) {
+function dashboardToolbarEntries(config) {
   if (!Array.isArray(config.toolbar)) return undefined;
-  const states = hass.states ?? {};
-  const registry = hass.entities;
-  const hidden = new Set(idList(config.hidden_entities));
-  const profiles = profilesOf(config.profiles);
   const seen = new Set();
-  const describe = entity => isVisibleEntity(entity, states, registry, hidden)
-    ? presentEntity(entity, states[entity], registry?.[entity], profiles.get(entity)) : null;
-  const entries = config.toolbar.flatMap((entry, index) => {
+  return config.toolbar.flatMap((entry, index) => {
     if (!TOOLBAR_KINDS.has(entry?.kind)) return [];
     const path = entry.kind === 'link' && typeof entry.path === 'string' ? entry.path.trim() : '';
     if (entry.kind === 'link' && !LOCAL_ROUTE.test(path)) return [];
     const id = layoutId(entry.id, 'toolbar-' + (index + 1), seen);
     return [{ entry, id, path }];
   });
+}
+
+function toolbarEntryLabel(entry) {
+  return typeof entry.label === 'string' ? entry.label.trim().slice(0, 80) : '';
+}
+
+function dashboardToolbar(config, hass, roomIds) {
+  const entries = dashboardToolbarEntries(config);
+  if (!entries) return undefined;
+  const states = hass.states ?? {};
+  const registry = hass.entities;
+  const hidden = new Set(idList(config.hidden_entities));
+  const profiles = profilesOf(config.profiles);
+  const describe = entity => isVisibleEntity(entity, states, registry, hidden)
+    ? presentEntity(entity, states[entity], registry?.[entity], profiles.get(entity)) : null;
   const vacuumPanels = new Set(entries.filter(({ entry }) => entry.kind === 'vacuum').map(({ id }) => id));
   return entries.map(({ entry, id, path }) => {
-    const label = typeof entry.label === 'string' ? entry.label.trim().slice(0, 80) : '';
+    const label = toolbarEntryLabel(entry);
     const icon = typeof entry.icon === 'string' ? entry.icon.trim() : '';
     const placement = toolbarPlacement(entry.kind, entry.placement);
     const entities = Array.isArray(entry.entities) ? idList(entry.entities).map(describe).filter(Boolean) : undefined;
@@ -683,6 +724,13 @@ function dashboardToolbar(config, hass, roomIds) {
       ...(agenda && { calendar_agenda: agenda }), ...(mediaRemote && { media_remote: mediaRemote }),
       ...(orefMap && { oref_map: orefMap }), ...(vacuumMap && { vacuum_map: vacuumMap }) };
   });
+}
+
+export function shortcutPanelOptions(config) {
+  const toolbar = dashboardToolbarEntries(config) ?? [];
+  return shortcutDetailPanels(toolbar.map(({ entry, id }) => ({
+    id, kind: entry.kind, label: toolbarEntryLabel(entry), placement: toolbarPlacement(entry.kind, entry.placement),
+  })));
 }
 
 export function roomPanelOptions(config, hass) {

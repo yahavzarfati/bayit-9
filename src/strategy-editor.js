@@ -1,8 +1,9 @@
 import {
   BACKGROUNDS, classicRoomTitle, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
-  normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities, normalizeUnreportedSwingMode,
+  normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities, normalizeShortcutDetailRoutes,
+  normalizeUnreportedSwingMode,
   PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomPanelOptions, roomSections, roomShortcutDevices, selectableRoomEntities, selectedRoomIds,
-  STRATEGY_NAME, supportsShortcutWithoutDetails,
+  shortcutPanelOptions, STRATEGY_NAME, supportsNativeShortcutDetails, supportsShortcutWithoutDetails,
   usesAutomaticRoomDevices,
 } from './strategy-model.js';
 import { languages } from './bayit-dashboard-i18n.js';
@@ -70,7 +71,8 @@ const WORDS = {
     shortcuts: 'Room shortcuts', shortcutRoom: 'Room', automaticShortcuts: 'Choose shortcuts automatically',
     shortcut: 'Shortcut', shortcutHint: 'Pick up to six devices in display order.',
     shortcutDetails: 'Long-press gesture', shortcutDetailsDevice: 'Open details with a long press · {name}',
-    shortcutDetailTarget: 'Long-press details · {name}', shortcutDefaultDetails: 'Shortcut device',
+    shortcutDestination: 'Long-press destination · {name}', shortcutBayitDetails: 'Device details in Bayit 9',
+    shortcutNativeDetails: 'Device details in Home Assistant', shortcutPanel: 'Screen · {name}',
     noShortcutRooms: 'Add a device to a visible room to set its shortcuts.',
     profiles: 'Boiler and heater controls', entity: 'Heating device', kind: 'Control profile',
     heater: 'Room heater', boiler: 'Water heater or boiler', displayName: 'Display name',
@@ -148,7 +150,8 @@ const WORDS = {
     shortcuts: 'קיצורים בחדרים', shortcutRoom: 'חדר', automaticShortcuts: 'בחירת קיצורים אוטומטית',
     shortcut: 'קיצור', shortcutHint: 'אפשר לבחור עד שישה מכשירים לפי סדר התצוגה.',
     shortcutDetails: 'פעולה בלחיצה ארוכה', shortcutDetailsDevice: 'פתיחת פרטי מכשיר בלחיצה ארוכה · {name}',
-    shortcutDetailTarget: 'פרטים בלחיצה ארוכה · {name}', shortcutDefaultDetails: 'מכשיר הקיצור',
+    shortcutDestination: 'יעד לחיצה ארוכה · {name}', shortcutBayitDetails: 'פרטי המכשיר בבית 9',
+    shortcutNativeDetails: 'פרטי המכשיר ב־Home Assistant', shortcutPanel: 'מסך · {name}',
     noShortcutRooms: 'הוסיפו מכשיר לחדר שמוצג בדשבורד כדי לבחור קיצורים.',
     profiles: 'שליטה בדוד ובתנורים', entity: 'מכשיר חימום', kind: 'סוג בקר',
     heater: 'תנור חימום', boiler: 'דוד או מחמם מים', displayName: 'שם לתצוגה',
@@ -371,6 +374,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #profileEditing;
   #profileDraftBody;
   #shortcutRoom;
+  #refreshShortcutRoutes;
   #roomEditing;
   #roomControlEditing = new Map();
   #sectionEditing;
@@ -414,6 +418,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       detail: { config: this.#config }, bubbles: true, composed: true,
     }));
     if (Object.hasOwn(change, 'hidden_entities')) this.#refreshLightEffects?.(true);
+    if (Object.hasOwn(change, 'toolbar')) this.#refreshShortcutRoutes?.();
   }
 
   #commitRooms(change, focusKey) {
@@ -845,7 +850,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
         next[key] = next[key].filter(id => entities.includes(id));
         if (!next[key].length) delete next[key];
       }
-      for (const key of ['climate_preset_shortcuts', ...[...ROOM_PANEL_KINDS.values()].map(kind => kind + '_panel_links')]) {
+      for (const key of ['climate_preset_shortcuts', 'shortcut_detail_routes',
+        ...[...ROOM_PANEL_KINDS.values()].map(kind => kind + '_panel_links')]) {
         if (!next[key]) continue;
         next[key] = Object.fromEntries(Object.entries(next[key]).filter(([id]) => entities.includes(id)));
         if (!Object.keys(next[key]).length) delete next[key];
@@ -1153,6 +1159,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
   }
 
   #shortcutPanel(words, language) {
+    this.#refreshShortcutRoutes = undefined;
     const rooms = discoverRooms(this.#config, this.#hass, language);
     if (!rooms.length) return [node('p', { textContent: words.noShortcutRooms })];
     const room = rooms.find(item => item.id === this.#shortcutRoom) ?? rooms[0];
@@ -1179,6 +1186,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const override = this.#roomOverride(room.id);
       const excluded = new Set(configuredIds(override.shortcut_no_details));
       const targets = normalizeShortcutDetailEntities(scope, override.shortcut_detail_entities);
+      const panels = shortcutPanelOptions(this.#config);
+      const routes = normalizeShortcutDetailRoutes(scope, override.shortcut_detail_routes, panels);
+      const panelChoices = panels.map(({ id, label, kind }) =>
+        ['panel:' + id, words.shortcutPanel.replace('{name}', label || languages[language][kind] || id)]);
       const controls = [];
       const commit = next => {
         const overrides = { ...this.#config.room_overrides };
@@ -1188,12 +1199,16 @@ export class Bayit9StrategyEditor extends HTMLElement {
       };
       for (const device of roomShortcutDevices(scope)) {
         const id = device.entity;
+        const name = deviceName(device);
         const suppressible = supportsShortcutWithoutDetails(device);
-        const others = room.entities.filter(item => item.entity !== id);
-        const input = others.length ? select([['', words.shortcutDefaultDetails],
-          ...others.map(item => [item.entity, deviceName(item)])], targets[id] ?? '') : undefined;
+        const options = [['', words.shortcutBayitDetails],
+          ...(supportsNativeShortcutDetails(device) ? [['native', words.shortcutNativeDetails]] : []),
+          ...panelChoices,
+          ...room.entities.filter(item => item.entity !== id).map(item => [item.entity, deviceName(item)]),
+        ];
+        const input = options.length > 1 ? select(options, routes[id] ?? targets[id] ?? '') : undefined;
         if (suppressible) {
-          controls.push(checkbox(words.shortcutDetailsDevice.replace('{name}', deviceName(device)), !excluded.has(id), enabled => {
+          controls.push(checkbox(words.shortcutDetailsDevice.replace('{name}', name), !excluded.has(id), enabled => {
             const next = { ...this.#roomOverride(room.id) };
             const ignored = new Set(configuredIds(next.shortcut_no_details));
             if (enabled) ignored.delete(id);
@@ -1208,18 +1223,24 @@ export class Bayit9StrategyEditor extends HTMLElement {
         input.disabled = suppressible && excluded.has(id);
         input.addEventListener('change', () => {
           const next = { ...this.#roomOverride(room.id) };
+          const routeMap = { ...next.shortcut_detail_routes };
           const targetMap = { ...next.shortcut_detail_entities };
-          if (others.some(item => item.entity === input.value)) targetMap[id] = input.value;
-          else delete targetMap[id];
+          delete routeMap[id];
+          delete targetMap[id];
+          if (input.value === 'native' || panelChoices.some(([value]) => value === input.value)) routeMap[id] = input.value;
+          else if (room.entities.some(item => item.entity === input.value && item.entity !== id)) targetMap[id] = input.value;
+          if (Object.keys(routeMap).length) next.shortcut_detail_routes = routeMap;
+          else delete next.shortcut_detail_routes;
           if (Object.keys(targetMap).length) next.shortcut_detail_entities = targetMap;
           else delete next.shortcut_detail_entities;
           commit(next);
         });
-        controls.push(field(words.shortcutDetailTarget.replace('{name}', deviceName(device)), input));
+        controls.push(field(words.shortcutDestination.replace('{name}', name), input));
       }
       details.hidden = !controls.length;
       details.replaceChildren(node('legend', { textContent: words.shortcutDetails }), ...controls);
     };
+    this.#refreshShortcutRoutes = renderDetails;
     const refresh = () => {
       const selected = new Set(inputs.map(input => input.value).filter(Boolean));
       for (const input of inputs) {

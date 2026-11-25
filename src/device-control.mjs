@@ -44,6 +44,10 @@ const PARAMETER = {
 };
 
 const READ_ONLY_ROLES = new Set(["status", "forecast", "sun", "graph", "person"]);
+
+export function isReadOnlyRole(role) {
+  return READ_ONLY_ROLES.has(role);
+}
 const REQUEST_TIMED_OUT = Symbol("request-timed-out");
 
 export class DeviceControlError extends Error {
@@ -216,7 +220,7 @@ function supportedActions(config, states, record, timer, nowMs) {
   const timing = config.timed;
   if (record) add("more_info");
   const readyButton = ["button","input_button"].includes(config.domain) && record?.state === "unknown";
-  if ((!isAvailable(record) && !readyButton) || READ_ONLY_ROLES.has(config.role)) return actions;
+  if ((!isAvailable(record) && !readyButton) || isReadOnlyRole(config.role)) return actions;
   const attributes = record.attributes ?? {};
   const flags = Number.isSafeInteger(attributes.supported_features) && attributes.supported_features >= 0
     ? attributes.supported_features : 0;
@@ -407,7 +411,7 @@ function deviceModel(config, states, nowMs) {
     level: preselect ? verifiedLevel(states?.[config.level_preselect_entity], config.level_steps)
       : config.level_select_script ? verifiedLevel(level, config.level_steps)
       : Number.isFinite(explicitLevel) ? explicitLevel : percentageLevel,
-    ...(config.level_steps && !READ_ONLY_ROLES.has(config.role) && {
+    ...(config.level_steps && !isReadOnlyRole(config.role) && {
       levelRange: { min: 1, max: config.level_steps, step: 1 },
       levelAction: preselect ? "preselect_heating_level" : "set_heating_level",
       levelChanging: !!config.level_select_script && states?.[config.level_select_script]?.state === "on",

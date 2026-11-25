@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverOverviewEntities, discoverRooms, generateDashboard,
-  normalizeOverviewDiscovery, normalizeProfile, roomPanelOptions, selectableRoomEntities, suggestedDashboard,
+  normalizeOverviewDiscovery, normalizeProfile, normalizeShortcutDetailRoutes, roomPanelOptions,
+  selectableRoomEntities, shortcutDetailPanels, suggestedDashboard,
 } from '../src/strategy-model.js';
 import { getDeviceModel } from '../src/device-control.mjs';
 
@@ -260,6 +261,54 @@ test('maps effect categories to visible controllable lights and preserves native
     { entity: 'light.demo_read_only', role: 'status' }, { entity: 'switch.demo_switch' },
   ]);
   assert.equal(effects[0].title, ' Nature ');
+});
+
+test('projects a scoped hold destination only to an active shortcut and an admitted screen', () => {
+  const hass = home();
+  const lock = 'lock.example_lock';
+  const cover = 'cover.example_cover';
+  const hidden = 'cover.example_hidden';
+  const sensor = 'sensor.example_status';
+  const washer = 'switch.example_washer';
+  for (const entity of [lock, cover, hidden, sensor, washer]) {
+    hass.states[entity] = { state: 'unavailable', attributes: {} };
+    hass.entities[entity] = { area_id: 'studio' };
+  }
+  const excluded = 'bayit_room_den';
+  const config = { area_ids: ['studio', excluded], show_unassigned: false, hidden_entities: [hidden],
+    room_shortcuts: { studio: [lock, cover, hidden, sensor, washer, 'light.demo_lamp'] },
+    room_overrides: {
+      studio: { entities: [lock, cover, hidden, sensor, washer, 'light.demo_lamp'], read_only_entities: [sensor],
+        shortcut_no_details: [washer], shortcut_detail_routes: {
+          [lock]: 'panel:security-panel', [cover]: 'native', [hidden]: 'native', [sensor]: 'native',
+          [washer]: 'panel:security-panel', 'light.demo_lamp': 'panel:settings-only', 'fan.not_a_member': 'native',
+        } },
+      [excluded]: { name: 'Den', entities: [cover] },
+    },
+    toolbar: [
+      { id: 'security-panel', kind: 'security' },
+      { id: 'settings-only', kind: 'devices', placement: 'settings' },
+      { id: 'settings', kind: 'settings' },
+      { id: 'linked-media', kind: 'media', placement: 'linked' },
+      { id: 'external', kind: 'link', path: '/elsewhere/screen' },
+    ],
+  };
+  const project = () => generateDashboard(config, hass).views[0].cards[0];
+  const configBefore = structuredClone(config);
+  const card = project();
+  assert.deepEqual(card.rooms[0].shortcut_detail_routes, { [lock]: 'panel:security-panel', [cover]: 'native' });
+  assert.deepEqual(card.rooms[0].shortcut_no_details, [washer]);
+  assert.equal(card.rooms[1].shortcut_detail_routes, undefined);
+  assert.deepEqual(config, configBefore);
+  assert.deepEqual(shortcutDetailPanels(card.toolbar).map(panel => panel.id), ['security-panel', 'linked-media']);
+  assert.deepEqual(shortcutDetailPanels([...card.toolbar, { id: 'security-panel', kind: 'settings' }])
+    .map(panel => panel.id), ['linked-media']);
+
+  config.toolbar.shift();
+  assert.deepEqual(project().rooms[0].shortcut_detail_routes, { [cover]: 'native' });
+  config.room_shortcuts.studio = [lock];
+  assert.equal(project().rooms[0].shortcut_detail_routes, undefined);
+  assert.deepEqual(normalizeShortcutDetailRoutes(card.rooms[0], [cover, 'native'], []), {});
 });
 
 test('scopes the details opt-out to an active ordinary switch shortcut', () => {

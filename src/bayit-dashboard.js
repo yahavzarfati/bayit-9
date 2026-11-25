@@ -2,8 +2,8 @@ import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isVacuumProgramAction,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
-  normalizeUnreportedSwingMode,
-  overviewSectionOptions, ROOM_PANEL_KINDS, roomShortcutDevices, STRATEGY_NAME, supportsShortcutWithoutDetails,
+  normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions, ROOM_PANEL_KINDS, roomShortcutDevices,
+  shortcutDetailPanels, STRATEGY_NAME, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { allowsCoverRailAction, createDeviceController, getDeviceModel, roomShutdownTargets,
@@ -358,6 +358,11 @@ export function normalizeDashboardConfig(config = {}) {
           ...(section.filter === 'active' && {filter:'active'}), ...overview, entities: members }];
       }) }) }];
   }) : null;
+  const detailPanels = shortcutDetailPanels(toolbar);
+  for (const [index, room] of rooms.entries()) {
+    const routes = normalizeShortcutDetailRoutes(room, rawRooms[index].shortcut_detail_routes, detailPanels, room.shortcutNoDetails);
+    if (Object.keys(routes).length) room.shortcutDetailRoutes = routes;
+  }
   const preferenceKey = text(config.preference_key);
   const preferencePaths = preferenceKey ? [preferenceKey]
     : config.page === true ? homePreferencePaths(location.pathname) : [location.pathname];
@@ -831,13 +836,25 @@ export class BayitDashboard extends HTMLElement {
   }
 
   openShortcutDetails(config, source, room) {
+    const route = room.shortcutDetailRoutes?.[config.entity];
     const alternate = room.shortcutDetailEntities[config.entity];
-    if (alternate) {
+    if (route || alternate) {
       const states = this._hass?.states ?? {};
       const registry = this._hass?.entities;
       const hidden = this.config.hiddenEntities;
-      if (!isVisibleEntity(config.entity, states, registry, hidden)) return;
-      if (isVisibleEntity(alternate, states, registry, hidden)) {
+      const visible = entity => isVisibleEntity(entity, states, registry, hidden);
+      const active = () => this.isConnected && source.isConnected && this.roomViews.get(room.id)?.room === room;
+      if (!active() || !visible(config.entity)) return;
+      if (route === 'native') {
+        this.moreInfo(config, source, active);
+        return;
+      }
+      const panel = route && this.popupToolbar(route.slice('panel:'.length));
+      if (panel && panel.kind !== 'settings' && panel.placement !== 'settings') {
+        this.openPanel(panel.kind, source, undefined, undefined, panel);
+        return;
+      }
+      if (alternate && visible(alternate)) {
         this.openPanel('device', source, room, alternate);
         return;
       }
@@ -1549,7 +1566,7 @@ export class BayitDashboard extends HTMLElement {
       isVisibleEntity(config.entity, hass?.states ?? {}, hass?.entities, this.config.hiddenEntities);
   }
 
-  moreInfo(config, source) {
+  moreInfo(config, source, shortcutActive) {
     if (!this.model(config).actions.more_info) return;
     this.nativeMoreInfoReturn?.();
     const view = this.ownerDocument.defaultView;
@@ -1558,10 +1575,13 @@ export class BayitDashboard extends HTMLElement {
     });
     const panel = this.panel;
     const { modal, modalBody } = this.nodes;
-    if (panel && modal.open && !modal.hasAttribute('data-closing') && source && modal.contains(source)) {
+    const fromPanel = panel && modal.open && !modal.hasAttribute('data-closing') && source && modal.contains(source);
+    if (fromPanel || shortcutActive) {
       this.nativeMoreInfoReturn = preserveMoreInfoReturn(view, {
-        event, source, body: modalBody,
-        active: () => this.isConnected && this.panel === panel && modal.open && !modal.hasAttribute('data-closing'),
+        event, source, body: fromPanel ? modalBody : undefined,
+        active: fromPanel
+          ? () => this.isConnected && this.panel === panel && modal.open && !modal.hasAttribute('data-closing')
+          : () => !this.panel && shortcutActive(),
         stopped: () => { this.nativeMoreInfoReturn = undefined; },
       });
     }

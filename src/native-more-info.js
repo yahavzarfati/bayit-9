@@ -16,7 +16,7 @@ export function sameMoreInfoPage(left, right) {
 // Home Assistant shows its own modal above the already open dashboard dialog.
 export function preserveMoreInfoReturn(view, { event, source, body, active, stopped }) {
   const href = view.location.href;
-  const scroll = body.scrollTop;
+  const scroll = body?.scrollTop;
   const abort = new view.AbortController();
   const marked = !Object.hasOwn(source, focusTarget);
   if (marked) source[focusTarget] = true;
@@ -56,7 +56,7 @@ export function preserveMoreInfoReturn(view, { event, source, body, active, stop
       afterRender = view.setTimeout(() => {
         if (stillOnPage()) {
           if (source.isConnected && !source.disabled && !source.closest('[hidden]')) source.focus({ preventScroll: true });
-          body.scrollTop = scroll;
+          if (body) body.scrollTop = scroll;
         }
         stop();
       }, 0);
