@@ -842,7 +842,7 @@ export const styles = `
   .device-tile .current { margin: 0; font-weight: 600; }
   .device-tile[aria-pressed]:not([data-attention-status]) .current { display: none; }
   .device-tile .device-name { font-size: 13px; font-weight: 700; }
-  .devices[data-room=true] .device[data-treatment=light] .device-tile .device-name {
+  .devices[data-room=true] .device[data-treatment=light]:not([data-inline-light]) .device-tile .device-name {
     font-family: var(--primary-font-family, Roboto, Noto, sans-serif);
     font-size: 14px;
     font-weight: 500;
