@@ -1786,7 +1786,7 @@ export class BayitDashboard extends HTMLElement {
 
   buildDevice(config, parent, room, groupKey, {
     titleInDialog = false, inlineClimate = false, toolbarLightTile = false, toolbarCoverRail = false, showRoomPreset = false,
-    tileStatus, compactDeviceHeading = false,
+    tileStatus, compactDeviceHeading = false, toolbarVacuumCompact = false,
   } = {}) {
     const item = make('section', 'device');
     const domain = domainFor(config);
@@ -1810,6 +1810,7 @@ export class BayitDashboard extends HTMLElement {
     item.dataset.treatment = config.kind || domain;
     item.toggleAttribute('data-inline-climate', inlineClimate);
     item.toggleAttribute('data-room-appliance-tile', applianceTile);
+    item.toggleAttribute('data-toolbar-vacuum-compact', toolbarVacuumCompact);
     item.toggleAttribute('data-room-boiler-quick', boilerQuick);
     if (compactDevice) item.dataset.roomCompactDevice = domain;
     const roomIcon = room && config.room_icon;
@@ -1824,7 +1825,7 @@ export class BayitDashboard extends HTMLElement {
     const vacuumSummary = panelTarget && panelKind === 'vacuum' && vacuumDisplay !== 'tile' ? config.room_vacuum_summary : undefined;
     const vacuumStatusLabels = vacuumSummary?.status_entity && panelTarget.sections?.flatMap(section => section.entities)
       .find(entry => entry.entity === vacuumSummary.status_entity && entry.readout?.state_labels)?.readout.state_labels;
-    const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactHeater,
+    const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactHeater, toolbarVacuumCompact,
       compactClimateControls: Boolean(room || showRoomPreset) && config.room_climate_controls_compact === true,
       standaloneBoiler, compactCover: cover, vacuumCleaningControls: vacuumDisplay === 'cleaning-controls',
       vacuumSummary, vacuumStatusLabels, roomPowerTile, compactDevice,
@@ -2713,6 +2714,7 @@ export class BayitDashboard extends HTMLElement {
     const complex = new Map();
     const standaloneClimate = this.panel?.type === 'device' && model.kind === 'climate';
     const advancedClimate = standaloneClimate ? make('details', 'climate-extra-controls') : undefined;
+    const advancedVacuum = view.toolbarVacuumCompact ? make('details', 'vacuum-extra-controls') : undefined;
     const { actions } = model;
     view.compactLight = !!((view.lightPower || view.inlineLight) && actions.set_brightness && actions.set_color_temp_kelvin &&
       actions.turn_on && actions.turn_off && !actions.set_light_color && !actions.set_effect);
@@ -2790,13 +2792,14 @@ export class BayitDashboard extends HTMLElement {
           ['set_temperature_range','start_timed'].includes(id)) {
         const field = this.buildField(view, action, id, model);
         if (advancedClimate && id === 'set_preset_mode') advancedClimate.append(field);
+        else if (advancedVacuum) advancedVacuum.append(field);
         else complex.set(id, field);
         continue;
       }
       const name = this.actionLabel(id);
       const compactIcon = view.compactDevice && ({ turn_on:'mdi:power', turn_off:'mdi:power', mute:'mdi:volume-high',
         unmute:'mdi:volume-off' })[id];
-      const control = button('control-button', view.compactDevice ? undefined : name,
+      const control = button('control-button', view.compactDevice || view.toolbarVacuumCompact ? undefined : name,
         compactIcon || (curtain && curtainControlIcons[id]) || controlIcons[id]);
       label(control, name);
       control.dataset.action = id;
@@ -2826,8 +2829,19 @@ export class BayitDashboard extends HTMLElement {
       advancedClimate.prepend(make('summary', '', this.t('climate_extra_controls')));
     }
     view.climateExtraControls = hasAdvanced ? advancedClimate : undefined;
+    const hasAdvancedVacuum = !!advancedVacuum?.childElementCount;
+    const vacuumSummaryFocused = active?.localName === 'summary' && active.parentElement === view.vacuumExtraControls;
+    if (hasAdvancedVacuum) {
+      advancedVacuum.open = view.vacuumExtraControls?.open ?? false;
+      const summary = make('summary');
+      label(summary, this.t('vacuum_more_controls'));
+      summary.append(icon('mdi:tune-variant'));
+      advancedVacuum.prepend(summary);
+    }
+    view.vacuumExtraControls = hasAdvancedVacuum ? advancedVacuum : undefined;
     view.group.replaceChildren(...(basic.childElementCount ? [basic] : []), ...view.special.content, ...complex.values(),
-      ...(hasAdvanced ? [advancedClimate] : []));
+      ...(hasAdvanced ? [advancedClimate] : []), ...(hasAdvancedVacuum ? [advancedVacuum] : []));
+    if (vacuumSummaryFocused) (advancedVacuum?.querySelector('summary') || view.more)?.focus({ preventScroll: true });
     if (focused?.action || focused?.lightMode || focused?.effectFavoriteControl) {
       const successor = [...view.group.querySelectorAll('[data-action], [data-light-mode], [data-effect-favorite-control]')].find(el =>
         !el.closest('[hidden]') && (focused.action && el.dataset.action === focused.action ||

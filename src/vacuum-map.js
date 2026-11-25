@@ -33,7 +33,8 @@ export function normalizeVacuumMap(value, visible = () => true, registry) {
   });
   const beforeSection = typeof value.before_section === 'string' && SECTION_ID.test(value.before_section);
   return floors.length ? { enabled: true, vacuum: value.vacuum, selector: value.selector, floors,
-    ...(beforeSection && { before_section: value.before_section }) } : undefined;
+    ...(beforeSection && { before_section: value.before_section }),
+    ...(value.compact_controls === true && { compact_controls: true }) } : undefined;
 }
 
 function localMapPicture(entity, value, origin) {

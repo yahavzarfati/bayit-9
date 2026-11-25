@@ -57,6 +57,7 @@ const WORDS = {
     vacuumMapTitle: 'Roborock floor maps', vacuumMap: 'Show calibrated floor maps',
     vacuumMapHint: 'Requires the Xiaomi Vacuum Map Card and calibrated Roborock image entities.',
     vacuumMapPosition: 'Show map before section', vacuumMapEnd: 'End of the screen',
+    vacuumMapCompact: 'Use compact robot and program controls',
     vacuumDevice: 'Roborock vacuum', vacuumSelector: 'Selected-map entity',
     floorOption: 'Map option', floorImage: 'Calibrated map image', floorName: 'Display name',
     addFloor: 'Add floor', removeFloor: 'Remove floor',
@@ -131,6 +132,7 @@ const WORDS = {
     vacuumMapTitle: 'מפות קומות של Roborock', vacuumMap: 'הצגת מפות קומות מכוילות',
     vacuumMapHint: 'נדרשים כרטיס Xiaomi Vacuum Map וישויות מפה מכוילות של Roborock.',
     vacuumMapPosition: 'הצגת המפה לפני הקבוצה', vacuumMapEnd: 'בסוף המסך',
+    vacuumMapCompact: 'פקדים קומפקטיים לשואב ולתוכניות הניקוי',
     vacuumDevice: 'שואב Roborock', vacuumSelector: 'ישות לבחירת מפה',
     floorOption: 'אפשרות מפה', floorImage: 'תמונת מפה מכוילת', floorName: 'שם לתצוגה',
     addFloor: 'הוספת קומה', removeFloor: 'הסרת קומה',
@@ -788,6 +790,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       vacuum: typeof current.vacuum === 'string' ? current.vacuum : '',
       selector: typeof current.selector === 'string' ? current.selector : '',
       ...(typeof current.before_section === 'string' && { before_section: current.before_section }),
+      ...(current.compact_controls === true && { compact_controls: true }),
       floors: Array.isArray(current.floors) ? current.floors.filter(floor => typeof floor?.option === 'string')
         .map(floor => ({ option: floor.option, image: floor.image, name: floor.name })) : [],
     };
@@ -805,6 +808,9 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     ];
     if (!settings.enabled) return node('fieldset', { className: 'toolbar-editor-detail' }, output);
 
+    const compact = node('input', { type: 'checkbox', checked: settings.compact_controls === true });
+    compact.addEventListener('change', () => save({ compact_controls: compact.checked || undefined }));
+    output.push(node('label', { className: 'check' }, [compact, words.vacuumMapCompact]));
     const mapPositions = (entry.sections ?? []).map(section => [section.id, sectionName(section)]);
     if (settings.before_section && !mapPositions.some(([id]) => id === settings.before_section)) {
       mapPositions.push([settings.before_section, settings.before_section + ' · ' + words.unavailable]);

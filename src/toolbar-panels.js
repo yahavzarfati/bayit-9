@@ -658,11 +658,15 @@ export function createToolbarPanel(kind, configuration, context) {
     return region;
   }
 
-  function render(item, section, { compactStatus, readingCards, compactActions }) {
+  function render(item, section, { compactStatus, readingCards, compactActions, compactVacuum }) {
     const itemKind = item.role ?? ({ people: 'person', actions: 'action', forecast: 'forecast', sun: 'sun' }[section]);
     if (itemKind === 'person' && domain(item) === 'person') return renderTile(item, 'person');
     if (item.command === 'toggle_script') return renderScriptToggle(item, compactActions);
-    if (itemKind === 'action' || (section === 'actions' && itemKind === 'lock')) return renderTile(item, 'action');
+    if (itemKind === 'action' || (section === 'actions' && itemKind === 'lock')) {
+      const tile = renderTile(item, 'action');
+      tile.toggleAttribute('data-vacuum-compact-program', compactVacuum && item.command === 'vacuum_program');
+      return tile;
+    }
     if (compactStatus && itemKind === 'lock' && domain(item) === 'lock') return renderCompactLock(item);
     if (itemKind === 'forecast' && domain(item) === 'weather') return renderForecast(item);
     if (itemKind === 'sun' && domain(item) === 'sun') return renderSun(item);
@@ -707,7 +711,9 @@ export function createToolbarPanel(kind, configuration, context) {
         mediaViews.push(player);
         handlers.push(() => player.update(modelFor(item)));
       }
-      buildDevice(item, row, { toolbarLightTile, toolbarCoverRail });
+      const toolbarVacuumCompact = compactVacuum && section === 'vacuum' && item.entity === configuration.vacuumMap.vacuum;
+      row.toggleAttribute('data-vacuum-compact-device', toolbarVacuumCompact);
+      buildDevice(item, row, { toolbarLightTile, toolbarCoverRail, toolbarVacuumCompact });
       if (useLockPalette && domain(item) === 'lock') handlers.push(() => paintLockStatus(row, modelFor(item)));
       return row;
     }
@@ -738,6 +744,7 @@ export function createToolbarPanel(kind, configuration, context) {
   const detailedForecast = kind === 'weather' && sections.some(section =>
     section.kind === 'forecast' && section.entities.some(item => item.hourly_forecast));
   const beforeMap = configuration.vacuumMap?.before_section;
+  const compactVacuum = kind === 'vacuum' && configuration.vacuumMap?.compact_controls === true;
   let vacuumMapAnchor;
   let forecastClock;
   let clockTimer;
@@ -794,7 +801,7 @@ export function createToolbarPanel(kind, configuration, context) {
         .map(item => {
           if (weatherReadings && isPassiveWeatherReading(item)) return { item, node: renderWeatherReading(item) };
           if (readouts && isToolbarReadoutEntity(kind, item)) return { item, node: renderReadout(item) };
-          return { item, node: render(item, section.kind, { compactStatus, readingCards, compactActions }) };
+          return { item, node: render(item, section.kind, { compactStatus, readingCards, compactActions, compactVacuum }) };
         });
       items.append(...pairs.map(pair=>pair.node));
       if (section.filter === 'active') handlers.push(() => {
@@ -894,6 +901,7 @@ export function createToolbarPanel(kind, configuration, context) {
   if (kind === 'vacuum' && dialog && configuration.vacuumMap) {
     const panel = make('section', 'toolbar-section');
     panel.dataset.section = 'vacuum-map';
+    panel.toggleAttribute('data-vacuum-compact-map', compactVacuum);
     panel.append(make('h3', 'toolbar-section-title', t('vacuum_map')));
     const body = make('div', 'toolbar-section-items');
     panel.append(body);
@@ -1047,6 +1055,27 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .toolbar-section[data-layout=compact-actions] .tile-mark > ha-icon { --mdc-icon-size: 21px; width: 21px; height: 21px; }
   .toolbar-section[data-layout=compact-actions] .tile-label { grid-area: label; line-height: 1.15; }
   .toolbar-section[data-layout=compact-actions] .tile-state { grid-area: state; line-height: 1.15; font-size: 11px; }
+  .toolbar-section[data-vacuum-compact-map] { --map-card-zoomer-background: transparent; }
+  .toolbar-section[data-section=vacuum]:has(> .toolbar-section-items > [data-vacuum-compact-device]:only-child) {
+    border: 0; padding: 0;
+  }
+  .toolbar-section:has(> .toolbar-section-items > [data-vacuum-compact-program]) { padding: 3px 0 0; border: 0; }
+  .toolbar-section:has(> .toolbar-section-items > [data-vacuum-compact-program]) > .toolbar-section-title {
+    color: var(--secondary); margin-block-end: 4px; font-size: 13px;
+  }
+  .toolbar-section > .toolbar-section-items:has(> [data-vacuum-compact-program]) { direction: ltr; gap: 6px; }
+  .tile-row[data-vacuum-compact-program] {
+    grid-template-columns: 24px minmax(0,1fr); grid-template-areas: "icon label" "icon state";
+    justify-items: stretch; align-items: center; gap: 1px 7px; min-height: 52px; padding: 4px 8px;
+    text-align: start; overflow-wrap: anywhere;
+  }
+  .tile-row[data-vacuum-compact-program]:has(.tile-state[hidden]) { grid-template-areas: "icon label"; }
+  .tile-row[data-vacuum-compact-program] > .tile-mark {
+    grid-area: icon; width: 24px; height: 24px; background: transparent;
+  }
+  .tile-row[data-vacuum-compact-program] > .tile-label { grid-area: label; font-size: 12px; line-height: 1.15; }
+  .tile-row[data-vacuum-compact-program] > .tile-state { grid-area: state; font-size: 11px; line-height: 1.15; }
+  .shell[dir=rtl] .tile-row[data-vacuum-compact-program] > :is(.tile-label,.tile-state) { direction: rtl; text-align: end; }
   .tile-row[data-automation-unlocked] {
     background: rgba(255,133,133,.22); border-color: rgba(255,133,133,.38);
   }

@@ -10,6 +10,8 @@ const fixture = `<!doctype html><meta charset="utf-8"><meta name="viewport" cont
 import '/bayit-9.js';
 const options = new URL(location.href).searchParams;
 const tracker = { factories: 0, calls: [], configs: [], hass: [], closed: 0 };
+const compactFixture = options.has('layout-proof');
+const he = options.get('locale') === 'he';
 const vacuum = 'vacuum.fixture';
 const selector = 'select.fixture';
 const downstairs = 'image.lower';
@@ -26,15 +28,18 @@ const image = (entity, id) => ({ state: '2026-11-25T10:00:00Z', attributes: {
   rooms: { [id]: { name: 'Room ' + id, outline: [[1000,3000],[2000,3000],[1000,4000]] } },
 } });
 const hass = {
-  locale: { language: 'en' }, themes: {},
+  locale: { language: he ? 'he' : 'en' }, themes: {},
   states: {
-    [vacuum]: { state: 'docked', attributes: { friendly_name: 'Robot', supported_features: 30524 } },
+    [vacuum]: { state: 'docked', attributes: { friendly_name: 'Robot', supported_features: 30524,
+      ...(compactFixture && { fan_speed: 'Balanced', fan_speed_list: ['Quiet', 'Balanced', 'Max'] }) } },
     [selector]: { state: 'Upper', attributes: { friendly_name: 'Map selector', options: ['Lower','Upper'] } },
     'select.wrong': { state: 'Lower', attributes: { friendly_name: 'Other robot selector', options: ['Lower','Upper'] } },
     [downstairs]: image(downstairs, 2), [upstairs]: image(upstairs, 8),
     'image.hidden': image('image.hidden', 6),
-    'button.fixture_daily': { state:'unknown', attributes:{ friendly_name:'Daily cleaning' } },
-    'button.fixture_night': { state:'unknown', attributes:{ friendly_name:'Night cleaning' } },
+    'button.fixture_daily': { state:'unknown', attributes:{ friendly_name:he ? 'תוכנית יומית' : 'Daily cleaning' } },
+    'button.fixture_night': { state:'unknown', attributes:{ friendly_name:he ? 'ניקוי לילה' : 'Night cleaning' } },
+    'button.fixture_upper': { state:'unknown', attributes:{ friendly_name:he ? 'שאיבת הקומה העליונה' : 'Vacuum the upper floor' } },
+    'button.fixture_mop': { state:'unknown', attributes:{ friendly_name:he ? 'שטיפת הקומה העליונה' : 'Mop the upper floor' } },
     'button.fixture_reset': { state:'unknown', attributes:{ friendly_name:'Reset counter' } },
     'button.fixture_other': { state:'unknown', attributes:{ friendly_name:'Other button' } },
     'sensor.fixture_reading': { state:'47', attributes:{ friendly_name:'Vacuum battery', unit_of_measurement:'%' } },
@@ -52,7 +57,14 @@ const hass = {
 };
 const tag = 'xiaomi-vacuum-map-card';
 if (!options.has('missing')) customElements.define(tag, class extends HTMLElement {
-  connectedCallback() { this.textContent = 'Synthetic map'; }
+  connectedCallback() {
+    this.textContent = 'Synthetic map';
+    if (compactFixture) {
+      this.tabIndex = 0;
+      this.style.minHeight = '250px';
+      this.style.display = 'block';
+    }
+  }
   disconnectedCallback() { tracker.closed++; }
   setConfig(config) { tracker.configs.push(config); }
   set hass(value) { tracker.hass.push(value); }
@@ -74,7 +86,10 @@ const config = { type: 'custom:bayit-9', toolbar: [
       {id:'programs',kind:'actions',title:'Programs',entities:[
         {entity:'button.fixture_daily',role:'action',command:'vacuum_program'},
         {entity:'button.fixture_night',role:'action',command:'vacuum_program',confirmation:'Start night cleaning?'},
-        {entity:'button.fixture_other',role:'action'},
+        ...(compactFixture ? [
+          {entity:'button.fixture_upper',role:'action',command:'vacuum_program'},
+          {entity:'button.fixture_mop',role:'action',command:'vacuum_program'},
+        ] : [{entity:'button.fixture_other',role:'action'}]),
       ]},
       {id:'status',kind:'readings',title:'Status and maintenance',...(options.has('readouts') && { layout:'readouts' }),entities:[
         {entity:'sensor.fixture_reading',role:'status'},
@@ -90,6 +105,7 @@ const config = { type: 'custom:bayit-9', toolbar: [
     ] : [])],
     vacuum_map: { enabled: !options.has('disabled'), vacuum, selector,
       ...(before && { before_section: before }),
+      ...(options.has('compact') && { compact_controls: true }),
       ...(options.has('editor') ? { floors: [] } : { floors: [
         { option: 'Lower', name: 'Lower floor', image: downstairs },
         { option: 'Upper', name: 'Upper floor', image: upstairs },
@@ -125,6 +141,106 @@ const server = http.createServer((request, response) => {
 });
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
+
+async function assertCompactVacuumMap(browser) {
+  for (const locale of ['en', 'he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+    page.setDefaultTimeout(8000);
+    const url = `http://127.0.0.1:${server.address().port}/fixture-home/home?programs&before=status&layout-proof&locale=${locale}`;
+    const dialog = page.getByRole('dialog', { name: he ? 'שואב' : 'Robot vacuum', exact: true });
+    const map = dialog.locator('xiaomi-vacuum-map-card');
+    const robot = dialog.locator('[data-toolbar-vacuum-compact]');
+    const programs = dialog.locator('[data-vacuum-compact-program]');
+    const details = robot.locator('.vacuum-extra-controls');
+    const summary = details.locator('summary');
+    const read = () => page.evaluate(() => tracker.calls);
+    const open = async flags => {
+      await page.goto(url + flags);
+      await page.getByRole('button', { name: he ? 'שואב' : 'Robot vacuum', exact: true }).tap();
+      await dialog.waitFor();
+    };
+    const geometry = () => dialog.evaluate(panel => {
+      const bounds = panel.getBoundingClientRect();
+      const map = panel.querySelector('xiaomi-vacuum-map-card')?.getBoundingClientRect();
+      const sections = [...panel.querySelectorAll('.toolbar-panes > .toolbar-section')].map(node => node.dataset.section);
+      const programs = [...panel.querySelectorAll('[data-vacuum-compact-program]')].map(button => {
+        const box = button.getBoundingClientRect();
+        const text = button.querySelector('.tile-label');
+        return { x: box.x, y: box.y, w: box.width, h: box.height,
+          fullLabel: text.scrollHeight <= text.clientHeight && text.scrollWidth <= text.clientWidth + 1 };
+      });
+      const touch = [...panel.querySelectorAll('[data-toolbar-vacuum-compact] .basic-actions button, .vacuum-extra-controls > summary, [data-section=vacuum-map] .weather-tabs button')].map(button => {
+        const box = button.getBoundingClientRect();
+        return [box.width, box.height];
+      });
+      const body = panel.querySelector('.modal-body');
+      return { mapTop: map?.y, mapVisible: map && Math.min(bounds.bottom, map.bottom) - map.y,
+        sections, programs, touch, fits: body.scrollWidth <= body.clientWidth + 1 };
+    });
+    try {
+      for (const width of [320, 391]) {
+        await page.setViewportSize({ width, height: 844 });
+        await open('');
+        await map.waitFor();
+        assert.equal(await robot.count(), 0);
+        assert.equal(await programs.count(), 0);
+        const standard = await geometry();
+        await open('&compact');
+        await map.waitFor();
+        await summary.waitFor();
+        const compact = await geometry();
+        assert.equal(await map.evaluate(element => getComputedStyle(element).getPropertyValue('--map-card-zoomer-background').trim()), 'transparent');
+        assert.deepEqual(compact.sections, standard.sections);
+        assert.ok(compact.mapTop <= standard.mapTop - 100, JSON.stringify({ width, compact, standard }));
+        assert.ok(compact.mapVisible >= 240, JSON.stringify({ width, compact }));
+        assert.ok(compact.fits && compact.touch.every(([w, h]) => w >= 43.9 && h >= 43.9), JSON.stringify({ width, compact }));
+        assert.equal(compact.programs.length, 4);
+        assert.ok(compact.programs.every(({ w, h, fullLabel }) => w >= 44 && h >= 44 && fullLabel));
+        const [first, second, third, fourth] = compact.programs;
+        assert.ok(first.x < second.x && third.x < fourth.x && first.y === second.y && third.y === fourth.y && third.y > first.y);
+        assert.equal(await summary.getAttribute('aria-label'), he ? 'פקדי שואב נוספים' : 'More vacuum controls');
+        assert.equal(await details.locator('select:visible').count(), 0);
+        assert.deepEqual(await read(), []);
+      }
+      await summary.press('Enter');
+      const fan = details.getByRole('combobox');
+      await fan.waitFor();
+      assert.equal(await fan.inputValue(), 'Balanced');
+      await fan.selectOption('Max');
+      assert.deepEqual(await read(), []);
+      await details.locator('button[data-action=set_fan_speed]').tap();
+      await page.waitForFunction(() => tracker.calls.some(call => call.service === 'set_fan_speed'));
+      assert.deepEqual((await read())[0], { type: 'call_service', domain: 'vacuum', service: 'set_fan_speed',
+        service_data: { fan_speed: 'Max' }, target: { entity_id: 'vacuum.fixture' } });
+      await summary.press('Enter');
+      await fan.waitFor({ state: 'hidden' });
+      await map.focus();
+      await page.evaluate(() => tracker.setState('vacuum.fixture', 'cleaning'));
+      await robot.getByRole('button', { name: he ? 'השהיית ניקוי' : 'Pause cleaning', exact: true }).waitFor();
+      assert.ok(await map.evaluate(node => node.getRootNode().activeElement === node));
+      assert.equal(await page.evaluate(() => tracker.factories), 1);
+
+      await programs.nth(1).tap();
+      const confirm = page.locator('dialog.confirm[open]');
+      await confirm.getByText('Start night cleaning?', { exact: true }).waitFor();
+      assert.equal((await read()).length, 1);
+      await confirm.getByRole('button', { name: he ? 'ביטול' : 'Cancel', exact: true }).tap();
+      await programs.first().tap();
+      await page.waitForFunction(() => tracker.calls.length === 2);
+      assert.deepEqual((await read())[1], { type: 'call_service', domain: 'button', service: 'press',
+        service_data: {}, target: { entity_id: 'button.fixture_daily' } });
+
+      await open('&compact&disabled');
+      assert.equal(await robot.count(), 0);
+      assert.equal(await programs.count(), 0);
+      assert.equal(await map.count(), 0);
+      assert.deepEqual(await read(), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
 
 try {
   for (const [name, engine] of [['Chromium', chromium], ['WebKit', webkit]]) {
@@ -295,12 +411,19 @@ try {
 
       await openFixture('?editor&programs&before=status');
       await page.getByText('Toolbar and extra screens', { exact:true }).click();
+      const compact = page.getByLabel('Use compact robot and program controls', { exact:true });
+      assert.ok(!await compact.isChecked());
+      await compact.check();
+      assert.equal(await page.evaluate(() => tracker.draft.toolbar[0].vacuum_map.compact_controls), true);
       const placement = page.getByLabel('Show map before section', { exact:true });
       assert.equal(await placement.inputValue(), 'status');
       await placement.selectOption({ label:'End of the screen' });
       assert.equal(await page.evaluate(() => tracker.draft.toolbar[0].vacuum_map.before_section), undefined);
       await placement.selectOption('programs');
       assert.equal(await page.evaluate(() => tracker.draft.toolbar[0].vacuum_map.before_section), 'programs');
+      assert.equal(await page.evaluate(() => tracker.draft.toolbar[0].vacuum_map.compact_controls), true);
+      await compact.uncheck();
+      assert.equal(await page.evaluate(() => tracker.draft.toolbar[0].vacuum_map.compact_controls), undefined);
       await page.getByRole('button', { name:'Programs', exact:true }).click();
       await page.locator('#editor').getByRole('button', { name:'Other button', exact:true }).click();
       const programConfirm = page.getByLabel('Confirmation', { exact:true });
@@ -333,7 +456,8 @@ try {
       assert.equal(await labels.getAttribute('aria-invalid'), 'true');
       assert.deepEqual(await readoutDraft(), saved);
       assert.deepEqual(errors, []);
-      console.log(name + ': calibrated map placement, explicit selection, and scoped program commands');
+      await assertCompactVacuumMap(browser);
+      console.log(name + ': calibrated map placement, compact mobile layout, explicit selection, and scoped program commands');
     } finally {
       await browser.close();
     }

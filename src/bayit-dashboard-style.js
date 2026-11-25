@@ -644,6 +644,25 @@ export const styles = `
     background: transparent;
     border-radius: 16px;
   }
+  .device[data-toolbar-vacuum-compact] { padding: 5px 7px 7px; }
+  .device[data-toolbar-vacuum-compact] .action-list {
+    direction: ltr; grid-template-columns: minmax(0,1fr) auto; gap: 4px; margin-block-start: 4px;
+  }
+  .device[data-toolbar-vacuum-compact] .basic-actions {
+    grid-column: 1 / -1; grid-template-columns: repeat(auto-fit,minmax(44px,1fr)); gap: 4px;
+  }
+  .device[data-toolbar-vacuum-compact] .action-list:has(> .vacuum-extra-controls:not([open])) > .basic-actions { grid-column: 1; }
+  .device[data-toolbar-vacuum-compact] .basic-actions > .control-button { padding: 0; }
+  .vacuum-extra-controls { min-width: 0; grid-column: 2; }
+  .vacuum-extra-controls[open] { grid-column: 1 / -1; }
+  .vacuum-extra-controls > summary {
+    box-sizing: border-box; width: 44px; min-height: 44px; margin-inline-start: auto; list-style: none;
+    display: grid; place-items: center; cursor: pointer; border: 1px solid var(--soft-line);
+    border-radius: 999px; background: var(--control);
+  }
+  .vacuum-extra-controls > summary::-webkit-details-marker { display: none; }
+  .vacuum-extra-controls[open] > summary { margin-block-end: 4px; color: var(--moving); }
+  .shell[dir=rtl] .vacuum-extra-controls > .field-row { direction: rtl; }
   .device-head { display: grid; grid-template-columns: 32px minmax(0,1fr) 44px; align-items: center; gap: 8px; }
   .device-head.device-state-head { grid-template-columns: minmax(0,1fr) 44px; }
   .device-state-head .current { margin-block-start: 0; }
