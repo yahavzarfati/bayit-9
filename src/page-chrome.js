@@ -76,6 +76,19 @@ function canControl(targets, id) {
   return Boolean(targets && id && targets.panel.panel?.url_path === id);
 }
 
+export function isActiveDashboardPage(card) {
+  if (!card.isConnected) return false;
+  const doc = card.ownerDocument;
+  const view = doc.defaultView;
+  const url = new URL(view.location.href);
+  const target = locate(doc, card);
+  return canControl(target, routeId(url.pathname)) &&
+    !url.searchParams.has('edit') && !url.searchParams.has('disable_km') &&
+    !target.wrapper?.classList.contains('edit-mode') && !target.root?.lovelace?.editMode &&
+    !target.panel.lovelace?.editMode && !target.drawer.open && !target.drawer.hasAttribute('open') &&
+    !view.history.state?.dialog;
+}
+
 function release(host, owner) {
   const record = elements.get(host);
   if (!record) return;

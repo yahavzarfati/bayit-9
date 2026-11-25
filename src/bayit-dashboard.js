@@ -28,7 +28,7 @@ import { compactMediaMutePlaceholder, compactRoomMediaCommands, normalizeMediaRe
 import { calendarAccent, normalizeCalendarAgenda } from './calendar-agenda.js';
 import { createWallpaperController, createWallpaperGallery, personalWallpaperId, wallpaperChoices, wallpaperStyles } from './wallpapers.js';
 import { normalizeSharedWallpapers } from './shared-wallpapers.js';
-import { createPageChrome, homePreferencePaths } from './page-chrome.js';
+import { createPageChrome, homePreferencePaths, isActiveDashboardPage } from './page-chrome.js';
 import { openBoilerHistory, boilerHistoryStyles } from './boiler-history.js';
 import { canOpenBoilerSchedule, createBoilerSchedulePanel, isBoilerScheduleProfile } from './boiler-schedule.js';
 
@@ -1055,7 +1055,8 @@ export class BayitDashboard extends HTMLElement {
       if (kind !== 'link') {
         element.setAttribute('aria-haspopup', 'dialog');
         if (settings.page) preserveToolbarPopupPress(element, kind, panel.id || kind,
-          () => this.isConnected && !this.nodes.modal.open);
+          () => this.isConnected && !this.nodes.modal.open,
+          () => this.popupHistoryPath === this.ownerDocument.defaultView.location.pathname && isActiveDashboardPage(this));
       }
       const badge = ['presence', 'activity'].includes(kind) ? make('span', 'badge') : null;
       if (badge) {
