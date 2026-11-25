@@ -165,7 +165,12 @@ try {
       await range.waitFor();
       assert.equal(await reading('Inside').innerText(), '22');
 
-      for (const [query, hours] of [['?legacy',48], ['?mixed',24], ['?dense',72]]) {
+      await open('?dense');
+      await range.waitFor();
+      const denseRequest = await page.evaluate(() => tracker.requests[0]);
+      assert.equal(Date.parse(denseRequest.end_time) - Date.parse(denseRequest.start_time), (24 * 60 + 5) * 60000);
+
+      for (const [query, hours] of [['?legacy',48], ['?mixed',24]]) {
         await open(query);
         await modal.getByText('Native history fixture', { exact:true }).waitFor();
         assert.equal(await comparison.count(), 0);

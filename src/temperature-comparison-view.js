@@ -1,4 +1,5 @@
 import { buildComparisonSeries } from './temperature-comparison.js';
+import { SENSOR_COMPARISON_MAX_BUCKETS } from './strategy-model.js';
 
 const colors = ['#78A9FF', '#FF91AF', '#C8ACFF', '#78DCA0', '#FFA264', '#F5CC65',
   '#55D7D2', '#B6CD72', '#B2B7FA', '#FFADD5', '#A4C8CA', '#E9A779'];
@@ -15,7 +16,7 @@ function readingUnit(record) {
 }
 
 export function comparisonSources(items, hass, visible, settings) {
-  if (!settings?.enabled || Math.ceil(settings.hours * 60 / settings.bucket_minutes) > 288) return;
+  if (!settings?.enabled || Math.ceil(settings.hours * 60 / settings.bucket_minutes) > SENSOR_COMPARISON_MAX_BUCKETS) return;
   const sources = items.flatMap(item => {
     if (item.role !== 'graph' || !item.entity.startsWith('sensor.') || !visible(item.entity, hass)) return [];
     const record = hass?.states?.[item.entity];
