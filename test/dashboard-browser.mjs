@@ -119,11 +119,14 @@ if (query.has('entrance-popup-position')) {
   states['sensor.demo_entry_temperature'] = { state: '24', attributes: { friendly_name: 'טמפרטורה', unit_of_measurement: '°C' } };
   states['lock.demo_entry_position'] = { state: 'locked', attributes: { friendly_name: 'מנעול' } };
 }
-if (query.has('shortcut-detail-routes')) {
+if (query.has('shortcut-detail-routes') || query.has('home-shortcut-visibility')) {
   states['lock.demo_route_lock'] = { state: 'locked', attributes: { friendly_name: 'Demo lock' } };
   states['cover.demo_route_shade'] = { state: 'closed', attributes: {
     friendly_name: 'Demo shade', supported_features: 15, current_position: 0,
   } };
+}
+if (query.has('home-shortcut-visibility')) {
+  states['light.demo_readonly_visibility'] = { state:'off', attributes:{ friendly_name:'Read-only lamp' } };
 }
 const storedKey = 'bayit9-browser-fixture';
 const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection') && { show_unassigned: false }),
@@ -203,6 +206,16 @@ const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection'
         read_only_entities: ['light.demo_room_read_only'] },
       bayit_room_den: { name: 'Den', entities: ['light.demo_lamp'] },
     },
+  }),
+  ...(query.has('home-shortcut-visibility') && {
+    show_unassigned:false, area_ids:['studio'],
+    room_shortcuts:{ studio:['lock.demo_route_lock','light.demo_lamp','switch.demo_heater','cover.demo_route_shade','light.demo_readonly_visibility'] },
+    room_overrides:{ studio:{
+      entities:['lock.demo_route_lock','light.demo_lamp','switch.demo_heater','cover.demo_route_shade','light.demo_readonly_visibility'],
+      read_only_entities:['light.demo_readonly_visibility'],
+      shortcut_no_details:['switch.demo_heater'],
+      shortcut_detail_routes:{ 'cover.demo_route_shade':'native' },
+    } },
   }),
   ...(query.has('shortcut-detail-routes') && {
     show_unassigned: false, area_ids: ['studio', 'bayit_room_den'],
@@ -2898,6 +2911,98 @@ async function assertShortcutDetailRoutes(browser) {
     assert.deepEqual(await commands(), []);
   } finally {
     await page.close();
+  }
+}
+
+async function assertHomeShortcutVisibility(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({ viewport:{width:391,height:844}, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    try {
+      await page.goto(base + '/fixture-home/home?configuration&home-shortcut-visibility&native-more-info=modern&locale=' + locale);
+      const ids = ['lock.demo_route_lock','light.demo_lamp','switch.demo_heater','cover.demo_route_shade','light.demo_readonly_visibility'];
+      const [lock,light,washer,cover,readOnly] = ids.map(id => page.locator('.quick-button[data-entity="' + id + '"]'));
+      const summary = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service'));
+      const registry = (id, metadata) => page.evaluate(([id,metadata]) => window.bayitTest.setFixtureRegistry(id,metadata), [id,metadata]);
+      const state = (id, value) => page.evaluate(([id,value]) => window.bayitTest.setRoomState(id,value), [id,value]);
+      const hidden = control => control.and(page.locator('[aria-disabled=true][data-unavailable]')).waitFor();
+      const visible = control => control.and(page.locator(':not([aria-disabled])')).waitFor();
+      const invoke = control => control.evaluate(button => button.click());
+      const confirmation = page.locator('.confirm[open]');
+
+      await lock.tap();
+      await confirmation.waitFor();
+      await registry(ids[0],{hidden_by:'user'});
+      await confirmation.locator('[data-role=accept]').tap();
+      await confirmation.waitFor({state:'hidden'});
+      await hidden(lock);
+      assert.deepEqual(await summary(),[]);
+
+      await registry(ids[1],{hidden_by:'user'});
+      await registry(ids[2],{disabled_by:'integration'});
+      await Promise.all([hidden(light),hidden(washer)]);
+      assert.match(await light.getAttribute('aria-label'),he ? /לא זמין/ : /Unavailable/);
+      await invoke(light);
+      await invoke(washer);
+      assert.deepEqual(await summary(),[]);
+
+      await registry(ids[2],{});
+      await visible(washer);
+      await page.locator('bayit-dashboard').evaluate((card, id) => {
+        const states = { ...card._hass.states };
+        delete states[id];
+        card.hass = { ...card._hass, states };
+      },ids[2]);
+      await hidden(washer);
+      await invoke(washer);
+      assert.deepEqual(await summary(),[]);
+
+      await registry(ids[1],{});
+      await visible(light);
+      // A registry update can arrive during the pending-paint step before the actual send.
+      await light.evaluate((button, id) => {
+        const card = button.getRootNode().host;
+        const update = card.update;
+        card.update = function () {
+          this.update = update;
+          window.bayitTest.setFixtureRegistry(id,{hidden_by:'user'});
+          return update.call(this);
+        };
+        button.click();
+      },ids[1]);
+      await hidden(light);
+      assert.equal(await light.getAttribute('aria-busy'),'false');
+      assert.deepEqual(await summary(),[]);
+
+      // Unavailable but visible records can still use their configured native details.
+      await state(ids[3],'unavailable');
+      await cover.press('Shift+Enter');
+      const native = page.getByRole('dialog',{name:'Native entity details',exact:true});
+      await native.waitFor();
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls),[ids[3]]);
+      await native.getByRole('button',{name:'Close native details',exact:true}).tap();
+      await native.waitFor({state:'hidden'});
+
+      await readOnly.tap();
+      const readout = page.getByRole('dialog',{name:'Read-only lamp',exact:true});
+      await readout.waitFor();
+      await readout.locator('[data-role=close]').tap();
+      await readout.waitFor({state:'hidden'});
+      assert.deepEqual(await summary(),[]);
+
+      await registry(ids[0],{});
+      await registry(ids[1],{});
+      await state(ids[2],'off');
+      await Promise.all([visible(lock),visible(light),visible(washer)]);
+      await lock.tap();
+      await confirmation.locator('[data-role=accept]').tap();
+      await confirmation.waitFor({state:'hidden'});
+      await light.tap();
+      await washer.tap();
+      assert.deepEqual((await summary()).map(({domain,service,target}) => [domain,service,target.entity_id]),
+        [['lock','unlock',ids[0]],['light','turn_on',ids[1]],['switch','turn_on',ids[2]]]);
+    } finally { await page.close(); }
   }
 }
 
@@ -8075,6 +8180,7 @@ try {
       console.log(engine + ': editable active climate discovery, passive rows and live scope');
       await assertManualShortcutsSurviveAutomaticMode(browser);
       await assertShortcutDetailRoutes(browser);
+      await assertHomeShortcutVisibility(browser);
       await assertHomeShortcutPower(browser);
       await assertHomeHeaterShortcut(browser);
       await assertCompactInlineLightLayout(browser);
