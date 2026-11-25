@@ -457,6 +457,16 @@ const hass = {
         };
       });
     }
+    if (query.has('heater-popup-power') && request.domain === 'fan' &&
+        request.target?.entity_id === heaterFan && ['turn_on', 'turn_off'].includes(request.service)) {
+      const powered = request.service === 'turn_on';
+      states[heaterFan].state = states[heaterRelay].state = powered ? 'on' : 'off';
+      Object.assign(states[heaterTimer].attributes, {
+        timer_state: powered ? 'active' : 'idle', device_active: powered,
+        timer_finishes_at: powered ? new Date(Date.now() + 30 * 60000).toISOString() : null,
+      });
+      card.hass = { ...hass, states: { ...states } };
+    }
     if (request.domain === 'simple_timer' && request.service === 'start_timer') {
       const id = request.service_data.entity_id;
       const attrs = states[id].attributes;
@@ -701,6 +711,7 @@ const heaterFan = 'fan.demo_step_heater';
 const helper = 'input_number.demo_heat_step';
 const heaterTimer = 'sensor.demo_step_runtime';
 const heaterRelay = 'switch.demo_step_power';
+const heaterCutoff = 'automation.demo_step_cutoff';
 const heaterScript = 'script.demo_select_heat_step';
 const heaterActivityScript = 'script.demo_apply_heat_step';
 const nextLevel = query.has('shared-heater-level') ? helper : 'input_number.demo_next_step';
@@ -715,6 +726,13 @@ if (query.has('heater-level')) {
     [heaterActivityScript]: { state: 'off', attributes: {} },
   });
   hass.entities[heaterFan] = { area_id: 'studio' };
+  if (query.has('heater-popup-power')) {
+    hass.entities[heaterFan].platform = 'template';
+    hass.entities[heaterTimer] = { platform: 'simple_timer' };
+    hass.services = { ...hass.services, fan: { turn_on: {}, turn_off: {} }, simple_timer: { start_timer: {}, cancel_timer: {} } };
+    states[heaterCutoff] = { state: 'on', attributes: {} };
+    states[heaterTimer].attributes.device_active = false;
+  }
 }
 if (query.has('security-compact-locks')) Object.assign(states, {
   'lock.fixture_security': { state:'locked', attributes:{ friendly_name:'Fixture lock' } },
@@ -992,8 +1010,11 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     ] },
   } }),
   room_shortcuts: { studio: query.has('heater-level-feedback') ? [heaterFan, 'light.demo_lamp'] : [heaterFan] },
+  ...(query.has('heater-popup-power') && { popup_aliases: { '#fixture-heater': '#device/studio/' + heaterFan } }),
   profiles: [{ entity: heaterFan, kind: 'heater', level_steps: 9,
     level_read_entity: helper, level_select_script: heaterScript,
+    ...(query.has('heater-popup-power') && { home_heater_cutoff_automation: heaterCutoff,
+      heater_popup_quick_power: !query.has('omit-heater-popup-power') }),
     ...(query.has('heater-level-feedback') && { level_activity_script: heaterActivityScript }),
     ...(query.has('preselect') && { level_preselect_entity: nextLevel }),
     timed: { simple_timer_entity: heaterTimer, simple_timer_target: heaterRelay } }],
@@ -4099,6 +4120,83 @@ async function assertStandaloneTimedHeater(browser) {
     } finally {
       await page.close();
     }
+  }
+}
+
+async function assertStandaloneHeaterQuickPower(browser) {
+  for (const locale of ['en', 'he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({ viewport: { width: 320, height: 845 }, hasTouch: true, reducedMotion: 'reduce' });
+    page.setDefaultTimeout(8000);
+    const entity = 'fan.demo_step_heater';
+    const cutoff = 'automation.demo_step_cutoff';
+    const name = 'Fixture step heater';
+    const route = '#fixture-heater';
+    const url = base + '/fixture-home/home?heater-level&preselect&embedded-heater&heater-popup-power' +
+      '&native-more-info=modern&native-focus-anchor&locale=' + locale;
+    const dialog = page.getByRole('dialog', { name, exact: true });
+    const header = dialog.locator('.compact-device-heading-info');
+    const native = page.getByRole('dialog', { name: 'Native entity details', exact: true });
+    const state = value => page.evaluate(([id, next]) => window.bayitTest.setRoomState(id, next), [cutoff, value]);
+    const calls = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service'));
+    const details = () => page.evaluate(() => window.bayitTest.moreInfoCalls);
+    const waitForAction = action => header.and(dialog.locator('[data-action="' + action + '"]')).waitFor();
+    const closeDetails = async () => {
+      await native.waitFor();
+      await page.waitForURL(current => current.hash === route && current.searchParams.get('more-info-entity-id') === entity);
+      await native.getByRole('button', { name: 'Close native details', exact: true }).tap();
+      await page.waitForFunction(() => document.querySelector('bayit-dashboard').shadowRoot.activeElement?.classList.contains('compact-device-heading-info'));
+    };
+    try {
+      await page.goto(url + route);
+      await waitForAction('turn_on');
+      assert.equal(await header.getAttribute('aria-label'), (he ? 'הפעלה וכיבוי של התנור' : 'Heater power') + ' · ' + name);
+      assert.equal(await header.getAttribute('aria-pressed'), 'false');
+      assert.ok((await header.boundingBox()).height >= 44);
+      await header.evaluate(button => button.click());
+      assert.deepEqual(await calls(), []);
+      await header.press('Shift+Enter');
+      await closeDetails();
+      await header.click({ delay: 580 });
+      await closeDetails();
+      assert.deepEqual(await details(), [entity, entity]);
+      assert.deepEqual(await calls(), []);
+
+      const { x, y, width, height } = await header.boundingBox();
+      await page.mouse.move(x + width / 2, y + height / 2);
+      await page.mouse.down();
+      await state('off');
+      await page.mouse.up();
+      await waitForAction('');
+      assert.equal(await header.getAttribute('aria-pressed'), null);
+      assert.deepEqual(await calls(), []);
+      assert.deepEqual(await details(), [entity, entity]);
+      await header.tap();
+      await closeDetails();
+
+      await state('on');
+      await waitForAction('turn_on');
+      await header.tap();
+      await waitForAction('turn_off');
+      assert.equal(await header.getAttribute('aria-pressed'), 'true');
+      await state('off');
+      await header.press('Enter');
+      await waitForAction('');
+      assert.deepEqual((await calls()).map(call => [call.domain, call.service, call.target?.entity_id]),
+        [['fan', 'turn_on', entity], ['fan', 'turn_off', entity]]);
+      await dialog.locator('.timer-command[data-action=start_timed]').tap();
+      await waitForAction('turn_off');
+      assert.deepEqual((await calls())[2], { type: 'call_service', domain: 'simple_timer', service: 'start_timer',
+        service_data: { entity_id: 'sensor.demo_step_runtime', duration: 60, unit: 'min', reverse_mode: false } });
+
+      await page.goto(url + '&omit-heater-popup-power' + route);
+      await dialog.getByRole('button', { name: he ? 'מידע נוסף' : 'More info', exact: true }).waitFor();
+      assert.equal(await header.getAttribute('data-heater-power'), null);
+      await header.tap();
+      await closeDetails();
+      assert.deepEqual(await details(), [entity]);
+      assert.deepEqual(await calls(), []);
+    } finally { await page.close(); }
   }
 }
 
@@ -8947,9 +9045,18 @@ async function assertHomeHeaterShortcut(browser) {
       await profile.getByRole('button', { name: he ? 'עריכה' : 'Edit', exact: true }).click();
       const cutoff = page.getByLabel(he ? 'כיבוי אוטומטי של התנור' : 'Automatic heater cutoff', { exact: true });
       assert.equal(await cutoff.inputValue(), 'automation.fixture_cutoff');
+      const headerPower = page.getByLabel(he ? 'הפעלה וכיבוי דרך סמל התנור בחלונית' : 'Switch power with the heater icon in its popup', { exact: true });
+      assert.equal(await headerPower.isChecked(), false);
+      await headerPower.check();
+      await page.getByRole('button', { name: he ? 'שמירת בקר' : 'Save profile', exact: true }).click();
+      assert.equal(await page.evaluate(() => window.latest.profiles.find(item => item.entity === 'fan.fixture_heater').heater_popup_quick_power), true);
+      await profile.getByRole('button', { name: he ? 'עריכה' : 'Edit', exact: true }).click();
+      assert.equal(await headerPower.isChecked(), true);
       await cutoff.selectOption('');
+      await headerPower.waitFor({ state: 'hidden' });
       await page.getByRole('button', { name: he ? 'שמירת בקר' : 'Save profile', exact: true }).click();
       assert.equal(await page.evaluate(() => window.latest.profiles.find(item => item.entity === 'fan.fixture_heater').home_heater_cutoff_automation), undefined);
+      assert.equal(await page.evaluate(() => window.latest.profiles.find(item => item.entity === 'fan.fixture_heater').heater_popup_quick_power), undefined);
       assert.deepEqual(await calls(), []);
     } finally {
       await page.close();
@@ -9038,6 +9145,10 @@ try {
       console.log(engine + ': compact room heater, confirmed idle and safe active controls');
       console.log(engine + ': scoped panel and native shortcut destinations, safe taps, focus return and editor persistence');
       console.log(engine + ': independent browser appearance and admin household defaults');
+    });
+
+    await run('Standalone heater icon power and native details', async () => {
+      await assertStandaloneHeaterQuickPower(browser);
     });
 
     await run('Native room gestures and device icons', async () => {

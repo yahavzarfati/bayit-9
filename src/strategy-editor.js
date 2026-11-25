@@ -141,6 +141,7 @@ const WORDS = {
     shortcuts: 'Room shortcuts', shortcutRoom: 'Room', automaticShortcuts: 'Choose shortcuts automatically',
     shortcut: 'Shortcut', shortcutHint: 'Pick up to six devices in display order.',
     homeHeaterCutoff: 'Automatic heater cutoff', homeHeaterCutoffHint: 'Select the automation that starts this heater’s Simple Timer when its relay turns on from outside the timer.',
+    heaterPopupQuickPower: 'Switch power with the heater icon in its popup',
     shortcutPower: 'Short tap', shortcutPowerDevice: 'Switch power with a short tap · {name}',
     shortcutDetails: 'Long-press gesture', shortcutDetailsDevice: 'Open details with a long press · {name}',
     shortcutDestination: 'Long-press destination · {name}', shortcutBayitDetails: 'Device details in Bayit 9',
@@ -290,6 +291,7 @@ const WORDS = {
     shortcuts: 'קיצורים בחדרים', shortcutRoom: 'חדר', automaticShortcuts: 'בחירת קיצורים אוטומטית',
     shortcut: 'קיצור', shortcutHint: 'אפשר לבחור עד שישה מכשירים לפי סדר התצוגה.',
     homeHeaterCutoff: 'כיבוי אוטומטי של התנור', homeHeaterCutoffHint: 'בחרו באוטומציה שמתחילה את הטיימר של התנור כשהממסר מופעל מחוץ לטיימר.',
+    heaterPopupQuickPower: 'הפעלה וכיבוי דרך סמל התנור בחלונית',
     shortcutPower: 'לחיצה קצרה', shortcutPowerDevice: 'הפעלה וכיבוי בלחיצה קצרה · {name}',
     shortcutDetails: 'פעולה בלחיצה ארוכה', shortcutDetailsDevice: 'פתיחת פרטי מכשיר בלחיצה ארוכה · {name}',
     shortcutDestination: 'יעד לחיצה ארוכה · {name}', shortcutBayitDetails: 'פרטי המכשיר בבית 9',
@@ -2230,9 +2232,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
     });
     cutoffField.append(cutoffHint);
     cutoff.setAttribute('aria-describedby', cutoffHint.id);
+    const popupPower = node('input', { type: 'checkbox', checked: current.heater_popup_quick_power === true });
+    const popupPowerField = node('label', { className: 'check' }, [popupPower, words.heaterPopupQuickPower]);
     const resetUsageInput = node('input', { type: 'checkbox', checked: timed.allow_daily_usage_reset === true });
     const resetUsage = node('label', { className: 'check' }, [resetUsageInput, words.allowDailyUsageReset]);
-    const simpleFields = node('div', { className: 'stack' }, [field(words.simpleTimerDevice, simple), targetField, cutoffField, resetUsage]);
+    const simpleFields = node('div', { className: 'stack' },
+      [field(words.simpleTimerDevice, simple), targetField, cutoffField, popupPowerField, resetUsage]);
     const boilerDetailsInput = node('input', { type: 'checkbox', checked: current.boiler_timer_with_details === true });
     const boilerDetails = node('label', { className: 'check' }, [boilerDetailsInput, words.boilerTimerWithDetails]);
     const availableViewHelper = id => /^input_boolean\.[a-z0-9_]+$/.test(id) &&
@@ -2297,8 +2302,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
       targetField.hidden = !compatible;
       cutoffField.hidden = !usingSimple || !fanHeater || !compatible;
       const binding = JSON.stringify([entity.value, simple.value, linked]);
-      if (cutoffBinding !== binding) cutoff.value = '';
+      if (cutoffBinding !== binding) {
+        cutoff.value = '';
+        popupPower.checked = false;
+      }
       cutoffBinding = binding;
+      popupPowerField.hidden = cutoffField.hidden || !cutoff.value;
       if (compatible) target.value = linked;
     };
     entity.addEventListener('change', () => {
@@ -2307,6 +2316,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
       sync();
     });
     for (const control of [kind, level, timerSource, simple, timer, usage, boilerDetailsInput]) control.addEventListener('change', sync);
+    cutoff.addEventListener('change', () => {
+      popupPower.checked = false;
+      sync();
+    });
 
     const saveProfile = () => {
       const latest = Array.isArray(this.#config.profiles) ? this.#config.profiles : [];
@@ -2341,6 +2354,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         level_steps: levelSteps.valueAsNumber, level_read_entity: levelRead.value, level_select_script: levelSelectId,
         level_activity_script: levelActivityId, level_preselect_entity: nextLevelId, unreported_swing_mode: swingMode,
         home_heater_cutoff_automation: cutoffField.hidden ? undefined : cutoff.value,
+        heater_popup_quick_power: !popupPowerField.hidden && popupPower.checked,
         boiler_timer_with_details: !boilerDetails.hidden && boilerDetailsInput.checked,
         boiler_detail_preference_entity: viewPreference,
         schedule: {save_script:scheduleSave.value,delete_script:scheduleDelete.value},

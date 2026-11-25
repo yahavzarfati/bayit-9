@@ -10,7 +10,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   toolbarPlacement, toolbarPopupPosition, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { allowsCoverRailAction, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
-  simpleTimerStatusEntity, simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
+  simpleTimerStatusEntity, simpleTimerUsageResetAvailable, supportsHomeHeaterPower, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupScrollMemory } from './popup-scroll.js';
 import { createPopupHistory, normalizePopupAliases, popupRouteFragment, resolvePopupRoute } from './popup-routes.js';
@@ -249,6 +249,7 @@ function normalizeEntity(item) {
   if (entry.kind === 'heater' && entity.startsWith('fan.') && /^automation\.[a-z0-9_]+$/.test(item.home_heater_cutoff_automation ?? '')) {
     entry.home_heater_cutoff_automation = item.home_heater_cutoff_automation;
   }
+  if (item.heater_popup_quick_power === true && supportsHomeHeaterPower(entry)) entry.heater_popup_quick_power = true;
   if (entry.kind === 'heater' && entity.startsWith('fan.') && entry.level_read_entity &&
       /^sensor\.[a-z0-9_]+$/.test(entry.timed?.simple_timer_entity ?? '')) {
     for (const key of ['level_select_script', 'level_activity_script']) {
@@ -2125,6 +2126,7 @@ export class BayitDashboard extends HTMLElement {
       if (compactDeviceHeading) {
         more.classList.add('compact-device-heading-info');
         more.setAttribute('aria-haspopup', 'dialog');
+        if (config.heater_popup_quick_power) this.bindHeaterHeadingPower(view, more);
         glyph.hidden = false;
         more.replaceChildren(glyph);
         this.nodes.modalHeading.append(more, state);
@@ -2138,6 +2140,31 @@ export class BayitDashboard extends HTMLElement {
     }
     parent.append(item);
     this.deviceViews.add(view);
+  }
+
+  bindHeaterHeadingPower(view, control) {
+    const config = { ...view.config, home_heater_shortcut: true };
+    const { modal, modalHeading } = this.nodes;
+    const current = () => this.isConnected && this.deviceViews.has(view) && this.panel?.type === 'device' &&
+      modal.open && !modal.hasAttribute('data-closing') && modalHeading.contains(control) && this.shortcutEntityVisible(config.entity);
+    const showDetails = () => { if (current()) this.moreInfo(view.config, control); };
+    let armedAction;
+    bindDeviceDetails(control, () => {
+      armedAction = undefined;
+      showDetails();
+    }, { requireShortTap: true, activationStart: () => { armedAction = control.dataset.action; } });
+    control.setAttribute('data-heater-power', '');
+    control.setAttribute('aria-description', this.t('heater_popup_hold'));
+    control.onclick = () => {
+      const armed = armedAction ?? control.dataset.action;
+      armedAction = undefined;
+      if (!current() || this.pending.has(config.entity)) return;
+      const action = homeHeaterPowerAction(this._hass, config) ?? '';
+      if (action !== armed || action !== control.dataset.action) return;
+      if (action) this.requestAction(config, action, undefined, control, { shortcutCurrent: current });
+      else showDetails();
+    };
+    view.heaterHeadingPower = config;
   }
 
   openToolbarPanel(type, toolbar) {
@@ -2468,6 +2495,15 @@ export class BayitDashboard extends HTMLElement {
         const powered = roomClimatePowerState(model);
         label(power, this.t('climate_power') + ' · ' + labelName);
         if (powered !== undefined) power.setAttribute('aria-pressed', String(powered));
+        else power.removeAttribute('aria-pressed');
+        power.setAttribute('aria-busy', String(!!pending));
+      }
+      if (view.heaterHeadingPower) {
+        const power = view.more;
+        const action = homeHeaterPowerAction(this._hass, view.heaterHeadingPower);
+        power.dataset.action = action ?? '';
+        label(power, action ? this.t('heater_power') + ' · ' + labelName : this.t('more_info'));
+        if (action) power.setAttribute('aria-pressed', String(model.state === 'on'));
         else power.removeAttribute('aria-pressed');
         power.setAttribute('aria-busy', String(!!pending));
       }

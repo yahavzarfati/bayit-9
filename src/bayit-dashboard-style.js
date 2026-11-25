@@ -577,6 +577,7 @@ export const styles = `
   }
   .compact-device-heading-info { grid-area: info; place-self: center; }
   .compact-device-heading-info > .device-icon { color: inherit; }
+  .compact-device-heading-info[data-heater-power][aria-pressed=true] { color: var(--boiler-heat); }
   .modal:is([data-standalone-heater],[data-standalone-climate]) .modal-heading .current {
     grid-area: state; align-self: start; margin: 2px 0 0; direction: inherit;
     text-align: left; unicode-bidi: plaintext;

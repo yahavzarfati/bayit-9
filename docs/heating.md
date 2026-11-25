@@ -68,6 +68,8 @@ For a heater fan whose Simple Timer monitors a separate linked switch, **Next-st
 
 The dashboard offers **Level for next start** when both the fan and linked switch report off and the matching timer is idle. Selection updates only that helper and confirms its reported value. The running heater keeps its existing level action and feedback. If the heater starts at the same moment through another control, the start uses the value available when the startup automation reads the helper.
 
+With **Automatic heater cutoff** configured, enable **Switch power with the heater icon in its popup** to use the same guarded power action as the Home shortcut. Tap the radiator or press Enter to switch power. Press and hold, or press Shift+Enter, for Home Assistant details. When the power action is unavailable, the icon opens details. The timer and its duration presets remain available through the existing controls. In YAML, set `heater_popup_quick_power: true` on the heater profile.
+
 ## Optional weekly schedule
 
 Requires Home Assistant 2026.11.2 or newer.

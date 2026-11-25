@@ -885,6 +885,20 @@ test('only an opted-in timed boiler projects the combined timer and detail layou
   assert.equal(normalizeProfile({ ...profile, boiler_timer_with_details: 'true' }).boiler_timer_with_details, undefined);
 });
 
+test('standalone heater icon power stays opt-in and requires the guarded fan profile', () => {
+  const profile = {
+    entity: 'fan.demo_heat', kind: 'heater', heater_popup_quick_power: true,
+    home_heater_cutoff_automation: 'automation.demo_cutoff',
+    timed: { simple_timer_entity: 'sensor.demo_heat_timer', simple_timer_target: 'switch.demo_heat_relay' },
+  };
+  assert.equal(normalizeProfile(profile).heater_popup_quick_power, true);
+  assert.equal(normalizeProfile({ ...profile, heater_popup_quick_power: 'true' }).heater_popup_quick_power, undefined);
+  assert.equal(normalizeProfile({ ...profile, home_heater_cutoff_automation: undefined }).heater_popup_quick_power, undefined);
+  assert.equal(normalizeProfile({ ...profile, kind: 'boiler' }).heater_popup_quick_power, undefined);
+  assert.equal(normalizeProfile({ ...profile, timed: { ...profile.timed, stop_script: 'script.demo_stop' } }).heater_popup_quick_power,
+    undefined);
+});
+
 test('shared boiler detail preferences use a dedicated input boolean on a combined Simple Timer profile', () => {
   const helper = 'input_boolean.demo_boiler_view';
   const profile = {

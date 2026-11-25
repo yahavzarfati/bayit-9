@@ -220,6 +220,7 @@ export function normalizeProfile(value) {
     max_minutes: max,
     step_minutes: step,
   };
+  if (value.heater_popup_quick_power === true && supportsHomeHeaterPower(profile)) profile.heater_popup_quick_power = true;
   return profile;
 }
 
@@ -495,6 +496,7 @@ function presentEntity(entity, state, registry, profile) {
     ...(profile?.level_preselect_entity && { level_preselect_entity: profile.level_preselect_entity }),
     ...(profile?.timed && { timed: profile.timed }),
     ...(profile?.home_heater_cutoff_automation && { home_heater_cutoff_automation: profile.home_heater_cutoff_automation }),
+    ...(profile?.heater_popup_quick_power && { heater_popup_quick_power: true }),
     ...(profile?.schedule && { schedule: profile.schedule }),
     ...(profile?.boiler_timer_with_details && { boiler_timer_with_details: true }),
     ...(profile?.boiler_detail_preference_entity && { boiler_detail_preference_entity: profile.boiler_detail_preference_entity }),
