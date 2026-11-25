@@ -195,6 +195,10 @@ if (query.has('device-panel')) {
   } };
   hass.entities['climate.demo_air'] = { area_id: 'studio' };
   const attributes = states['climate.demo_air'].attributes;
+  if (query.has('compact-climate-summary')) {
+    hass.config = { unit_system: { temperature: '°C' } };
+    Object.assign(attributes, { current_temperature: 22.5, temperature: 23.5 });
+  }
   if (query.get('climate-labels') === 'positioned') Object.assign(attributes, {
     fan_modes: ['auto', 'low', 'medium low', 'medium', 'medium high', 'high'], fan_mode: 'medium low',
     swing_modes: ['default', 'full_swing', 'fixed_upper', 'fixed_upper_middle', 'fixed_middle', 'fixed_lower_middle',
@@ -1174,6 +1178,31 @@ try {
         const dialog = coverGridPage.getByRole('dialog', { name: 'Studio', exact: true });
         const covers = dialog.locator('[data-group="room_covers"] > [data-compact="cover"]');
         await covers.nth(1).waitFor();
+        if (width === 390) {
+          const transparent = 'rgba(0, 0, 0, 0)';
+          const material = () => covers.first().evaluate(tile => {
+            const icon = tile.querySelector('.device-head .round-action');
+            const command = tile.querySelector('[data-action="open"]');
+            return {
+              fallback: matchMedia('(prefers-reduced-transparency: reduce), (prefers-contrast: more)').matches ||
+                !(CSS.supports('backdrop-filter', 'blur(1px)') || CSS.supports('-webkit-backdrop-filter', 'blur(1px)')),
+              tile: getComputedStyle(tile).backgroundColor,
+              icon: getComputedStyle(icon).backgroundColor,
+              command: getComputedStyle(command).backgroundColor,
+              commandEdge: getComputedStyle(command).borderTopColor,
+            };
+          });
+          for (const contrast of ['no-preference', 'more']) {
+            await coverGridPage.emulateMedia({ contrast });
+            const appearance = await material();
+            if (contrast === 'more') assert.equal(appearance.fallback, true);
+            for (const fill of [appearance.tile, appearance.icon, appearance.command]) {
+              assert.equal(fill === transparent, !appearance.fallback);
+            }
+            assert.equal(appearance.commandEdge === transparent, appearance.fallback);
+          }
+          await coverGridPage.emulateMedia({ contrast: 'no-preference' });
+        }
         const geometry = await covers.evaluateAll(tiles => tiles.map(tile => ({
           top: tile.getBoundingClientRect().top,
           left: tile.getBoundingClientRect().left,
@@ -1304,7 +1333,7 @@ try {
           const fullUnit = rtl ? 'דקות' : 'Minutes';
           const shortUnit = rtl ? 'דק׳' : 'min';
           const start = rtl ? 'הפעלת טיימר' : 'Start timer';
-          await page.goto(base + '?device-panel&locale=' + locale + caption);
+          await page.goto(base + '?device-panel&compact-climate-summary&locale=' + locale + caption);
           await page.getByRole('button', { name: 'Studio', exact: true }).tap();
           const room = page.getByRole('dialog', { name: 'Studio', exact: true });
           const inline = room.locator('[data-inline-climate]');
@@ -1328,6 +1357,18 @@ try {
           const title = inline.getByRole('heading', { name, exact: true });
           assert.equal(await title.getAttribute('data-room-name-hidden'), caption ? null : '');
           const info = inline.getByRole('button', { name: (rtl ? 'מידע נוסף' : 'More info') + ' · ' + name, exact: true });
+
+          const summary = inline.locator('.device-head .current');
+          const off = rtl ? 'כבוי' : 'Off';
+          const cool = rtl ? 'קירור' : 'Cooling';
+          const target = rtl ? 'יעד' : 'Target';
+          const readSummary = async () => (await summary.innerText()).replace(/[⁦⁩]/g, '');
+          assert.equal(await readSummary(), off + ' · 22°');
+          await page.evaluate(() => window.bayitTest.setRoomState('climate.demo_air', 'cool'));
+          await summary.filter({ hasText: cool }).waitFor();
+          assert.equal(await readSummary(), cool + ' · 22° · ' + target + ' 24°');
+          await page.evaluate(() => window.bayitTest.setRoomState('climate.demo_air', 'off'));
+          await summary.filter({ hasText: off }).waitFor();
 
           const duration = inline.getByRole('slider', { name: fullUnit, exact: true });
           assert.equal(await duration.inputValue(), '120');

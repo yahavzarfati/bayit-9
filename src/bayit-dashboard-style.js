@@ -360,6 +360,11 @@ export const styles = `
     --panel-top: max(54px,9dvh);
     --panel-bottom: var(--bayit-popup-view-bottom,100dvh);
     --control: transparent;
+    --room-tile-fill: transparent;
+    --room-icon-fill: transparent;
+    --room-icon-line: var(--soft-line);
+    --room-command-fill: transparent;
+    --room-command-line: var(--line);
     position: fixed;
     inset: var(--panel-top) 0 auto;
     width: min(550px,calc(100% - 2 * var(--edge)));
@@ -502,7 +507,8 @@ export const styles = `
     --mdc-icon-size: 24px;
     place-items: center;
     color: var(--ink);
-    background: color-mix(in srgb,var(--ink) 12%,transparent);
+    background: var(--room-icon-fill);
+    border: 1px solid var(--room-icon-line);
     border-radius: 50%;
   }
   .shell[dir=rtl] .device[data-inline-climate] .device-detail { direction: rtl; text-align: left; }
@@ -525,7 +531,7 @@ export const styles = `
     grid-template-columns: 36px minmax(0,1fr);
     gap: 5px;
   }
-  .device:is([data-compact=tile],[data-compact=cover]) { background: rgba(255,255,255,.08); }
+  .device:is([data-compact=tile],[data-compact=cover]) { background: var(--room-tile-fill); }
   .device[data-compact=cover] .device-head:has(> .round-action:not([hidden])) > .device-icon { display: none; }
   .device[data-compact=cover] .device-head > .round-action {
     grid-area: 1 / 1;
@@ -533,9 +539,9 @@ export const styles = `
     height: 36px;
     min-width: 36px;
     min-height: 36px;
-    border-color: transparent;
+    border-color: var(--room-icon-line);
     border-radius: 999px;
-    background: rgba(255,255,255,.095);
+    background: var(--room-icon-fill);
   }
   .device[data-compact=cover] .device-detail { grid-column: 2; }
   .device[data-compact=cover] .device-name { font-size: 13px; font-weight: 650; }
@@ -564,13 +570,13 @@ export const styles = `
     height: 36px;
     align-self: center;
     place-items: center;
-    border: 1px solid transparent;
+    border: 1px solid var(--room-icon-line);
     border-radius: 999px;
-    background: rgba(255,255,255,.095);
+    background: var(--room-icon-fill);
     color: var(--ink);
   }
-  .device-tile:where(:hover,[aria-pressed=true]) > ha-icon {
-    background: rgba(255,255,255,.08);
+  .device-tile:hover > ha-icon {
+    border-color: var(--line);
   }
   .device-tile:is([aria-pressed=true],[data-tone=warm]) > ha-icon {
     color: var(--warm);
@@ -611,9 +617,9 @@ export const styles = `
     min-width: 28px;
     padding: 4px;
     gap: 0;
-    border-color: transparent;
+    border-color: var(--room-command-line);
     border-radius: 12px;
-    background: rgba(255,255,255,.055);
+    background: var(--room-command-fill);
     font-size: 0;
   }
   .device[data-compact=cover] .basic-actions .control-button:not(:disabled):hover {
@@ -678,10 +684,24 @@ export const styles = `
     }
   }
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .modal { background: var(--surface); }
+    .modal {
+      background: var(--surface);
+      --room-tile-fill: rgba(255,255,255,.08);
+      --room-icon-fill: rgba(255,255,255,.095);
+      --room-icon-line: transparent;
+      --room-command-fill: rgba(255,255,255,.055);
+      --room-command-line: transparent;
+    }
   }
   @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
     .modal, .notice { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--surface); }
+    .modal {
+      --room-tile-fill: rgba(255,255,255,.08);
+      --room-icon-fill: rgba(255,255,255,.095);
+      --room-icon-line: transparent;
+      --room-command-fill: rgba(255,255,255,.055);
+      --room-command-line: transparent;
+    }
     .shell[data-page=true] .modal::backdrop { background: rgba(0,0,0,.34); }
     .toolbar, .room { -webkit-backdrop-filter: none; backdrop-filter: none; }
     .toolbar, .room { background: var(--surface); }

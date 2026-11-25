@@ -752,7 +752,7 @@ export class BayitDashboard extends HTMLElement {
     return 'quiet';
   }
 
-  stateLabel(model) {
+  stateLabel(model, inlineClimate = false) {
     if (!model.available) return this.t('unavailable');
     const attrs = model.attributes || {};
     const state = model.state;
@@ -765,7 +765,13 @@ export class BayitDashboard extends HTMLElement {
     if (model.domain === 'climate') {
       const temp = number(attrs.current_temperature);
       const unit = this._hass?.config?.unit_system?.temperature || '°';
-      return localized(state) + (temp === null ? '' : ' · ' + ltr(temp + ' ' + unit));
+      if (!inlineClimate) return localized(state) + (temp === null ? '' : ' · ' + ltr(temp + ' ' + unit));
+      const shortUnit = unit === '°C' ? '°' : unit;
+      const roundTemperature = value => Number.isInteger(value + 0.5) ? 2 * Math.round(value / 2) : Math.round(value);
+      const showTemperature = value => ltr(roundTemperature(value) + shortUnit);
+      const target = state === 'off' ? null : number(attrs.temperature);
+      return localized(state) + (temp === null ? '' : ' · ' + showTemperature(temp)) +
+        (target === null ? '' : ' · ' + this.t('target_short') + ' ' + showTemperature(target));
     }
     if (statusNames.has(state)) return localized(state);
     const record = this._hass?.states?.[model.entity];
@@ -1253,7 +1259,7 @@ export class BayitDashboard extends HTMLElement {
         ? model.attributes.media_title.trim().slice(0, 160) : '';
       const pending = this.pending.get(view.config.entity);
       const feedback = this.coverFeedback(model, pending);
-      setText(view.state, (feedback?.requestLabel || this.stateLabel(model)) + (media ? ' · ' + media : ''));
+      setText(view.state, (feedback?.requestLabel || this.stateLabel(model, view.inlineClimate)) + (media ? ' · ' + media : ''));
       view.state.dataset.tone = feedback ? 'moving' : this.tone(model);
       if (view.tile) {
         const actionId = model.state === 'off' ? 'turn_on' : 'turn_off';
