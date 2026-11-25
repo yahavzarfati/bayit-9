@@ -31,6 +31,8 @@ Entity-level room assignment takes precedence over device-level assignment. Home
 
 Each room section has a `kind`, optional `id` and `title`, and an ordered list of `entities`. Available kinds are `lights`, `covers`, `climate`, `heating`, `sensors`, `devices`, `garage`, `weather`, `security`, `media`, `vacuum` and `laundry`. Use an empty title to hide the heading. Devices without an assigned section follow the default grouping.
 
+In **Rooms**, use **Room name line break in classic layout** to choose where a multiword room name breaks on its Home card. In YAML, set `classic_title_break: 1` in that room's `room_overrides` to break after the first word. The top-title layout and the room panel use the full room name.
+
 You can arrange sections manually while **Devices in this room** stays **Automatic**. Devices later added to the room's Home Assistant area follow the default grouping until you move them to a custom section. A room override with `device_selection: auto` uses this arrangement. Existing sections-only overrides continue to select their listed entities unless this option is set.
 
 In **Rooms**, open **Device display** and select a device. Clear **Name in this room** to display its default name, or turn off **Show name in this room** to keep the caption available to assistive technology while hiding it visually. The YAML `entity_names` maps IDs to room captions. An explicit empty string hides the visual caption.
