@@ -1059,6 +1059,20 @@ if (query.has('editor')) {
 window.bayitTest = {
   registrations: window.customStrategies, calls, moreInfoCalls, moreInfoHashes, config,
   loadPopupHass() { card.hass = hass; },
+  reviseStrategy(change, { title } = {}) {
+    const visible = document.querySelector('bayit-dashboard');
+    const previous = visible._hass;
+    const next = { ...previous, ...change };
+    const regenerate = title || Strategy.shouldRegenerate(selected, previous, next);
+    if (regenerate) {
+      const nextConfig = title ? { ...selected, title } : selected;
+      const nextCard = document.createElement('bayit-dashboard');
+      nextCard.setConfig(Strategy.generate(nextConfig, next).views[0].cards[0]);
+      nextCard.hass = next;
+      visible.replaceWith(nextCard);
+    } else visible.hass = next;
+    return Boolean(regenerate);
+  },
   observeScript,
   finishCover: (index, failed = false) => coverRequests[index](failed),
   rejectNextInlineLight() { rejectInlineLight = true; },
@@ -2577,6 +2591,69 @@ async function assertPopupAliasEditing(browser) {
     } finally {
       await page.close();
     }
+  }
+}
+
+async function assertWeatherSurvivesRegistryReplay(browser) {
+  const page = await browser.newPage({ viewport:{ width:392, height:846 }, hasTouch:true });
+  try {
+    await page.goto(base + '/fixture-home/home?toolbar-panels&locale=en', { waitUntil:'commit' });
+    const weather = page.getByRole('button', { name:'Weather', exact:true });
+    const button = await weather.boundingBox();
+    await page.mouse.move(button.x + button.width / 2, button.y + button.height / 2);
+    await page.mouse.down();
+    const stable = await page.evaluate(() => {
+      const card = document.querySelector('bayit-dashboard');
+      const { _hass:hass } = card;
+      const regenerated = window.bayitTest.reviseStrategy({ areas:structuredClone(hass.areas),
+        entities:structuredClone(hass.entities), devices:structuredClone(hass.devices) });
+      return { regenerated, retained:card.isConnected };
+    });
+    await page.mouse.up();
+    assert.deepEqual(stable, { regenerated:false, retained:true });
+    const dialog = page.getByRole('dialog', { name:'Weather', exact:true });
+    await dialog.waitFor();
+    const popupHash = new URL(page.url()).hash;
+    assert.match(popupHash, /^#panel\//);
+
+    const renamed = await page.evaluate(() => {
+      const card = document.querySelector('bayit-dashboard');
+      const { _hass:hass } = card;
+      const regenerated = window.bayitTest.reviseStrategy({ areas:{ ...hass.areas,
+        studio:{ ...hass.areas.studio, name:'Revised studio' } } });
+      return { regenerated, retained:card.isConnected };
+    });
+    assert.deepEqual(renamed, { regenerated:true, retained:false });
+    await dialog.waitFor();
+    assert.equal(new URL(page.url()).hash, popupHash);
+    await dialog.getByRole('button', { name:'Close', exact:true }).click();
+    await dialog.waitFor({ state:'hidden' });
+    await page.getByRole('button', { name:'Revised studio', exact:true }).waitFor();
+
+    const changed = await page.evaluate(() => {
+      const card = () => document.querySelector('bayit-dashboard');
+      const entity = 'light.demo_lamp';
+      const original = card();
+      const hadDevice = original.config.rooms.some(room => room.entities.some(item => item.entity === entity));
+      const hidden = window.bayitTest.reviseStrategy({ entities:{ ...original._hass.entities,
+        [entity]:{ ...original._hass.entities[entity], hidden:true } } });
+      const retainsDevice = card().config.rooms.some(room => room.entities.some(item => item.entity === entity));
+      const states = { ...card()._hass.states };
+      delete states['switch.demo_heater'];
+      const stateOnly = window.bayitTest.reviseStrategy({ states });
+      const registryAfterState = window.bayitTest.reviseStrategy({ devices:{ ...card()._hass.devices } });
+      const saved = window.bayitTest.reviseStrategy({}, { title:'Revised dashboard' });
+      const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
+      const hass = card()._hass;
+      const legacy = Strategy.shouldRegenerate({ type:'custom:bayit-9', options:{ area_ids:['studio'] } },
+        hass, { ...hass, areas:{ ...hass.areas } });
+      return { hadDevice, hidden, retainsDevice, stateOnly, registryAfterState, legacy, saved, title:card().config.title,
+        serviceCalls:window.bayitTest.calls.filter(call => call.type === 'call_service').length };
+    });
+    assert.deepEqual(changed, { hadDevice:true, hidden:true, retainsDevice:false, stateOnly:false,
+      registryAfterState:true, legacy:true, saved:true, title:'Revised dashboard', serviceCalls:0 });
+  } finally {
+    await page.close();
   }
 }
 
@@ -7767,6 +7844,7 @@ try {
       await assertRoomMirrorPlacement(browser);
       console.log(engine + ' 320: optional mirrored room placement, saved reload and native registry unchanged');
       await assertPopupAliasEditing(browser);
+      await assertWeatherSurvivesRegistryReplay(browser);
       console.log(engine + ' 320: editable popup links, preserved legacy routes and same-dashboard URL reopen');
 
       const emptyPage = await browser.newPage();

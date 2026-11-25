@@ -4,13 +4,26 @@ import { preparePageChrome } from './page-chrome.js';
 
 const TAG = 'll-strategy-dashboard-' + STRATEGY_NAME;
 const EDITOR = 'bayit-9-strategy-editor';
+const registryDependencies = ['areas', 'devices', 'entities'];
+const generatedDashboards = new WeakMap();
 
 export class Bayit9DashboardStrategy extends HTMLElement {
-  static registryDependencies = ['areas', 'devices', 'entities'];
+  static registryDependencies = registryDependencies;
 
   static generate(config, hass) {
     preparePageChrome({ enabled: config?.fullscreen === true, hass });
-    return generateDashboard(config, hass);
+    const dashboard = generateDashboard(config, hass);
+    if (config && typeof config === 'object') generatedDashboards.set(config, JSON.stringify(dashboard));
+    return dashboard;
+  }
+
+  static shouldRegenerate(config, previous, current) {
+    if (!registryDependencies.some(key => previous[key] !== current[key])) return false;
+    // HA flattens legacy options only when it invokes generate().
+    if (Object.keys(config).length === 2 && 'options' in config && typeof config.options === 'object') return true;
+    // Ordinary hass updates can change the input since this dashboard was mounted.
+    const rendered = generatedDashboards.get(config) ?? JSON.stringify(generateDashboard(config, previous));
+    return rendered !== JSON.stringify(generateDashboard(config, current));
   }
 
   static getCreateSuggestions(hass) {
