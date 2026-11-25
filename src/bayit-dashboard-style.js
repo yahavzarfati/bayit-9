@@ -907,11 +907,15 @@ export const styles = `
     .devices[data-room=true] .device-group[data-group=room_devices]:has(> [data-room-compact-device] + [data-room-compact-device]) {
       direction: ltr;
     }
-    .devices[data-room=true] .device-group[data-group=room_devices]:has(
+    .devices[data-room=true] .device-group[data-group=room_devices]:not([data-columns="2"]):has(
       > :is([data-room-appliance-tile],[data-room-compact-device]) + :is([data-room-appliance-tile],[data-room-compact-device])
     ) {
       grid-template-columns: repeat(2,minmax(0,1fr));
       > .device:not([data-room-appliance-tile],[data-room-compact-device]) { grid-column: 1 / -1; }
+    }
+    .devices[data-room=true] .device-group[data-group=room_devices][data-columns="2"]:has(> .device:is([data-compact=tile],[data-room-compact-device])) {
+      grid-template-columns: repeat(auto-fill,minmax(min(100%,max(112px,calc((100% - 7px) / 2))),1fr));
+      > .device:not([data-compact=tile],[data-room-compact-device]) { grid-column: 1 / -1; }
     }
     .devices[data-room=true] .device-group[data-group=room_lights]:has(> .device[data-compact=tile]) {
       grid-template-columns: repeat(2,minmax(0,1fr));

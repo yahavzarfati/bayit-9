@@ -5163,6 +5163,101 @@ async function assertKitchenBoilerQuickPower(browser) {
   }
 }
 
+async function assertAuthoredKitchenDeviceGrid(browser) {
+  const members = ['vacuum.demo_robot','switch.demo_oven','switch.demo_cooktop','switch.demo_quick_boiler','switch.demo_heater'];
+  for (const locale of ['en','he']) {
+    const he = locale === 'he';
+    const title = he ? 'מכשירים' : 'Appliances';
+    const page = await browser.newPage({viewport:{width:391,height:844},hasTouch:true,reducedMotion:'reduce'});
+    const url = base + '/fixture-home/home?configuration&toolbar-panels&appliance-tile-test&boiler-quick-test&native-more-info=modern&locale=' + locale;
+    const room = page.getByRole('dialog',{name:'Studio',exact:true});
+    const group = room.locator('[data-group=room_devices]');
+    await page.addInitScript(({members,title}) => {
+      const key = 'bayit9-browser-fixture';
+      if (sessionStorage.getItem(key)) return;
+      const [robot,oven,hob,boiler] = members;
+      sessionStorage.setItem(key,JSON.stringify({strategy:{type:'custom:bayit-9',area_ids:['studio'],show_unassigned:false,
+        profiles:[{entity:boiler,kind:'boiler',timed:{simple_timer_entity:'sensor.demo_boiler_runtime'}}],
+        toolbar:[{kind:'vacuum',id:'vacuum-panel',label:'Robot vacuum',placement:'settings',entities:[robot]},{kind:'settings'}],
+        room_overrides:{studio:{entities:members,sections:[{kind:'devices',title,columns:2,entities:members}],
+          vacuum_panel_links:{[robot]:'vacuum-panel'},vacuum_panel_presentation:{[robot]:'tile'},
+          appliance_tile_entities:[oven,hob],boiler_quick_power_entities:[boiler],read_only_entities:[hob],
+        }},
+      }}));
+    }, {members,title});
+    const open = async () => {
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+      await group.getByRole('heading',{name:title,exact:true}).waitFor();
+    };
+    const close = async () => {
+      await room.getByRole('button',{name:he?'סגירה':'Close',exact:true}).tap();
+      await room.waitFor({state:'hidden'});
+    };
+    const geometry = () => group.locator('> .device').evaluateAll(cards=>cards.map(card=>{
+      const {x,y,width,height} = card.getBoundingClientRect();
+      return {id:card.dataset.entity,tile:card.dataset.compact === 'tile',x,y,width,height};
+    }));
+    const tile = entity => group.locator('[data-entity="' + entity + '"] .device-tile');
+    const calls = () => page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service'));
+    try {
+      await page.goto(url);
+      for (const width of [391,320,290]) {
+        await page.setViewportSize({width,height:844});
+        await open();
+        const items = await geometry();
+        assert.deepEqual(items.map(item=>item.id),members);
+        const [vacuum,oven,hob,boiler,regular] = items;
+        assert.ok(items.slice(0,4).every(item=>item.tile && item.width>=44 && item.height>=44));
+        if (width > 300) {
+          assert.equal(vacuum.y,oven.y);
+          assert.equal(hob.y,boiler.y);
+          assert.ok(vacuum.y<hob.y && vacuum.x<oven.x && hob.x<boiler.x,JSON.stringify(items));
+          assert.equal(vacuum.x,regular.x);
+          assert.ok(regular.width>=vacuum.width+oven.width);
+        } else {
+          assert.equal(new Set(items.map(item=>item.x)).size,1);
+          assert.equal(new Set(items.map(item=>item.y)).size,5);
+        }
+        await close();
+      }
+      await page.setViewportSize({width:391,height:844});
+      await open();
+      await tile(members[2]).tap();
+      assert.equal(await tile(members[2]).getAttribute('data-action'),null);
+      await page.evaluate(()=>window.bayitTest.setRoomState('switch.demo_oven','on'));
+      await tile(members[1]).and(page.locator('[aria-pressed=true][data-action=turn_off]')).waitFor();
+      await tile(members[0]).tap();
+      const robot = page.getByRole('dialog',{name:'Robot vacuum',exact:true});
+      await robot.getByRole('button',{name:he?'חזרה לחדר':'Back to room',exact:true}).tap();
+      await group.waitFor();
+      await tile(members[3]).press('Shift+Enter');
+      const boilerDetails = page.getByRole('dialog',{name:'Quick boiler',exact:true});
+      await boilerDetails.getByRole('button',{name:he?'חזרה לחדר':'Back to room',exact:true}).tap();
+      await group.waitFor();
+      assert.deepEqual(await calls(),[]);
+      await close();
+
+      await page.getByRole('button',{name:he?'מראה':'Appearance',exact:true}).tap();
+      const setupName = he ? 'התאמת הבית' : 'Customize home';
+      await page.getByRole('button',{name:setupName,exact:true}).tap();
+      const setup = page.getByRole('dialog',{name:setupName,exact:true});
+      await setup.getByText(he?'חדרים':'Rooms',{exact:true}).tap();
+      await setup.getByText(he?'קבוצות בחדר':'Room sections',{exact:true}).tap();
+      const columns = setup.getByLabel(he?'פריסת כרטיסי המכשירים':'Device card layout',{exact:true});
+      assert.equal(await columns.inputValue(),'2');
+      await columns.selectOption('auto');
+      await setup.getByRole('button',{name:he?'שמירת הדשבורד':'Save dashboard',exact:true}).tap();
+      await setup.waitFor({state:'hidden'});
+      await open();
+      const [vacuum,oven,hob,boiler] = await geometry();
+      assert.ok(vacuum.y<oven.y && oven.y===hob.y && hob.y<boiler.y);
+      assert.ok(vacuum.width>oven.width && boiler.width>hob.width);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertKitchenApplianceTiles(browser) {
   for (const locale of ['en','he']) {
     const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
@@ -6334,6 +6429,7 @@ try {
       console.log(engine + ': curated media and vacuum controls, Now Playing, and the original room shortcuts');
       await assertCompactRoomMedia(browser);
       await assertCompactRoomDevicePair(browser);
+      await assertAuthoredKitchenDeviceGrid(browser);
       await assertKitchenApplianceTiles(browser);
       await assertKitchenBoilerQuickPower(browser);
       await assertRoomVacuumGestures(browser);

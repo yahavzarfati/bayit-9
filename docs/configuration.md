@@ -39,6 +39,8 @@ Each room section has a `kind`, optional `id` and `title`, and an ordered list o
 
 For a manually arranged covers section, choose **Cover card layout → Two columns when there is room** to keep the second column even when the section has one cover. In YAML, set `columns: 2` on that section. On narrow screens the covers use one column so the open, stop and close buttons have room.
 
+Use **Device card layout → Two columns when there is room** in a manually arranged devices section to place compact device cards and tiles together. Standard device cards occupy a full row. In YAML, set `columns: 2` on the `devices` section.
+
 In **Rooms → Device display**, a temperature sensor can use **Compact temperature graph** and a custom line color. The tile shows the reported temperature and the last 24 hours. Select it to open the sensor's Home Assistant details. In YAML, map each sensor to a six-digit hex color under `room_temperature_graph_colors` in its room override.
 
 In **Customize home → Appearance**, **Align dashboard to the left on wide screens** places the toolbar and room grid together on the left on tablets and desktop. In YAML, set `wide_alignment: left`.

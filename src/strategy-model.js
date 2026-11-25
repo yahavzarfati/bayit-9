@@ -243,6 +243,10 @@ function layoutId(value, fallback, seen) {
   return id;
 }
 
+export function supportsRoomSectionColumns(kind) {
+  return kind === 'covers' || kind === 'devices';
+}
+
 export function roomSections(value) {
   if (!Array.isArray(value)) return undefined;
   const seen = new Set();
@@ -251,7 +255,7 @@ export function roomSections(value) {
     const id = layoutId(section.id, 'section-' + (index + 1), seen);
     const title = typeof section.title === 'string' ? section.title.trim().slice(0, 80) : undefined;
     return [{ id, kind: section.kind, ...(title !== undefined && { title }),
-      ...(section.kind === 'covers' && section.columns === 2 && { columns: 2 }), entities: idList(section.entities) }];
+      ...(supportsRoomSectionColumns(section.kind) && section.columns === 2 && { columns: 2 }), entities: idList(section.entities) }];
   });
 }
 

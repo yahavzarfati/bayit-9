@@ -4,7 +4,7 @@ import {
   isVisibleEntity, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
   normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeRoomIcon, normalizeRoomTemperatureGraphColor, normalizeShortcutDetailEntities, normalizeShortcutDetailRoutes,
   normalizeRoomVacuumSummary, normalizeUnreportedSwingMode,
-  popupAliasDestinations, PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, roomShortcutDevices, roomVacuumPresentation, ROOM_VACUUM_SUMMARY_DOMAINS,
+  popupAliasDestinations, PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, supportsRoomSectionColumns, roomShortcutDevices, roomVacuumPresentation, ROOM_VACUUM_SUMMARY_DOMAINS,
   selectableRoomEntities, selectedRoomIds,
   shortcutPanelOptions, STRATEGY_NAME, supportsHomeShortcutPower, supportsNativeShortcutDetails, supportsShortcutWithoutDetails,
   supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomCompactDevice, usesAutomaticRoomDevices,
@@ -91,7 +91,8 @@ const WORDS = {
     manualSections: 'Arrange sections manually',
     editSection: 'Section to customize', addSection: 'Add section', removeSection: 'Delete section',
     sectionType: 'Section type', sectionTitle: 'Section heading', sectionDevice: 'Room device',
-    coverSectionLayout: 'Cover card layout', coverColumnsAuto: 'Automatic', coverColumnsTwo: 'Two columns when there is room',
+    coverSectionLayout: 'Cover card layout', deviceSectionLayout: 'Device card layout',
+    sectionColumnsAuto: 'Automatic', sectionColumnsTwo: 'Two columns when there is room',
     addToSection: 'Move to this section', removeFromSection: 'Remove from section', sectionEmpty: 'No devices in this section.',
     noDevices: 'No devices selected.', noMatches: 'No matching devices', missing: 'Unavailable',
     discovery: 'Automatic device selection', controls: 'Controls only', allDevices: 'All supported devices',
@@ -217,7 +218,8 @@ const WORDS = {
     manualSections: 'סידור ידני של הקבוצות',
     editSection: 'קבוצה לעריכה', addSection: 'הוספת קבוצה', removeSection: 'מחיקת קבוצה',
     sectionType: 'סוג הקבוצה', sectionTitle: 'כותרת הקבוצה', sectionDevice: 'מכשיר בחדר',
-    coverSectionLayout: 'פריסת כרטיסי התריסים', coverColumnsAuto: 'אוטומטית', coverColumnsTwo: 'שני טורים כשיש מקום',
+    coverSectionLayout: 'פריסת כרטיסי התריסים', deviceSectionLayout: 'פריסת כרטיסי המכשירים',
+    sectionColumnsAuto: 'אוטומטית', sectionColumnsTwo: 'שני טורים כשיש מקום',
     addToSection: 'העברה לקבוצה זו', removeFromSection: 'הסרה מהקבוצה', sectionEmpty: 'אין מכשירים בקבוצה זו.',
     noDevices: 'לא נבחרו מכשירים.', noMatches: 'לא נמצאו מכשירים מתאימים', missing: 'לא זמין',
     discovery: 'בחירת מכשירים אוטומטית', controls: 'מכשירים נשלטים בלבד', allDevices: 'כל המכשירים הנתמכים',
@@ -693,7 +695,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     kind.dataset.roomFocus = 'room-section-kind';
     kind.addEventListener('change', () => {
       const next = { ...active, kind: kind.value };
-      if (next.kind !== 'covers') delete next.columns;
+      if (!supportsRoomSectionColumns(next.kind)) delete next.columns;
       update(next, 'room-section-kind');
     });
     const title = node('input', { value: active.title ?? '', placeholder: typeTitle(active.kind), maxLength: 80 });
@@ -713,8 +715,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
       saveTitle();
     });
     children.push(field(words.editSection, sectionPicker), field(words.sectionType, kind), field(words.sectionTitle, title));
-    if (active.kind === 'covers') {
-      const columns = select([['auto', words.coverColumnsAuto], ['2', words.coverColumnsTwo]], active.columns === 2 ? '2' : 'auto');
+    if (supportsRoomSectionColumns(active.kind)) {
+      const columns = select([['auto', words.sectionColumnsAuto], ['2', words.sectionColumnsTwo]], active.columns === 2 ? '2' : 'auto');
       columns.dataset.roomFocus = 'room-section-columns';
       columns.addEventListener('change', () => {
         const next = { ...active };
@@ -722,7 +724,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         else delete next.columns;
         update(next, 'room-section-columns');
       });
-      children.push(field(words.coverSectionLayout, columns));
+      children.push(field(active.kind === 'covers' ? words.coverSectionLayout : words.deviceSectionLayout, columns));
     }
 
     const entityName = entity => this.#hass.states?.[entity]?.attributes?.friendly_name || entity;
