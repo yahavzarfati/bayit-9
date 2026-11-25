@@ -410,7 +410,7 @@ export function normalizeDashboardConfig(config = {}) {
       ? config.hidden_entities.filter(id => typeof id === 'string' && entityPattern.test(id)) : []),
     popupAliases: new Map(Object.entries(normalizePopupAliases(config.popup_aliases))),
     title: text(config.title) || languages[locale].home,
-    background, sharedWallpapers,
+    background, sharedWallpapers, appearanceSync: config.appearance_sync === true,
     layout: options.layout.includes(config.layout) ? config.layout : 'classic',
     shape: options.shape.includes(config.shape) ? config.shape : 'soft',
     storageKey, fallbackStorageKeys,
@@ -718,8 +718,16 @@ export class BayitDashboard extends HTMLElement {
     this.wallpaper?.refresh();
     if (this.panel?.type !== 'settings') return;
     this.wallpaperGallery?.select(this.activeWallpaper || this.config.background);
+    const synced = this.canSyncAppearance();
+    const busy = synced && Boolean(this.appearanceSave);
+    this.wallpaperGallery?.setHouseholdBusy(busy);
     for (const item of this.nodes.content.querySelectorAll('[data-preference]')) {
       item.setAttribute('aria-pressed', String(item.value === this.nodes.shell.dataset[item.dataset.preference]));
+      if (synced) item.setAttribute('aria-disabled', String(busy));
+    }
+    for (const item of this.nodes.content.querySelectorAll('.setup-entry, .appearance-actions button')) {
+      if (busy) item.setAttribute('aria-disabled', 'true');
+      else item.removeAttribute('aria-disabled');
     }
     const appearance = this.appearanceActions;
     if (appearance?.panel === this.panel) {
@@ -783,6 +791,18 @@ export class BayitDashboard extends HTMLElement {
     this.persistPreferences();
   }
 
+  canSyncAppearance() {
+    return this.config?.appearanceSync && this.config.page && this._hass?.user?.is_admin === true;
+  }
+
+  chooseAppearance(key, value) {
+    if (this.canSyncAppearance() && value !== personalWallpaperId) {
+      return this.saveAppearance(this.appearanceActions, { [key]:value });
+    }
+    if (key === 'background') return this.selectWallpaper(value);
+    this.setPreference(key, value);
+  }
+
   appearanceChanges() {
     return Object.fromEntries(Object.entries(this.preferences)
       .filter(([key, value]) => value !== this.config[key] && value !== personalWallpaperId));
@@ -792,35 +812,64 @@ export class BayitDashboard extends HTMLElement {
     return this.t(['setup_storage', 'setup_conflict'].includes(error.code) ? error.code : 'setup_error');
   }
 
-  async saveAppearance(actions) {
-    if (this.appearanceSave) return;
-    const changes = this.appearanceChanges();
-    if (!Object.keys(changes).length) return;
+  async saveAppearance(actions, direct) {
+    const throughGallery = direct?.background !== undefined;
+    const result = (applied, feedback = '') => {
+      if (!throughGallery && actions) actions.status.textContent = feedback;
+      return { applied, feedback };
+    };
+    if (!actions || this.appearanceSave) return { applied:false, feedback:'' };
+    const changes = direct ?? this.appearanceChanges();
     const config = this.config;
+    const previousPreferences = { ...this.preferences };
+    const entries = Object.entries(changes);
+    if (!entries.length || direct && entries.every(([key, value]) =>
+      config[key] === value && !Object.hasOwn(previousPreferences, key))) return result(true);
+
+    const pathname = location.pathname;
+    const userId = this._hass?.user?.id;
+    const currentView = () => this.isConnected && this.config === config && this.panel === actions.panel &&
+      pathname === location.pathname && (!direct || this.canSyncAppearance() && this._hass?.user?.id === userId);
     this.appearanceSave = actions;
-    actions.share.disabled = true;
-    actions.status.textContent = this.t('setup_saving');
+    actions.status.textContent = throughGallery ? '' : this.t('setup_saving');
+    this.applyPreferences();
+    let prepared;
+    const wallpaper = this.wallpaper;
     try {
-      const current = await loadConfiguration(this._hass, location.pathname);
-      if (this.config !== config || this.panel !== actions.panel) return;
+      const current = await loadConfiguration(this._hass, pathname);
+      if (!currentView()) return result(false);
       const shared = config.sharedWallpapers.find(item => item.id === changes.background);
-      if (shared && !normalizeSharedWallpapers(current.strategy.shared_wallpapers)
-          .some(item => item.id === shared.id && item.path === shared.path)) {
-        throw Object.assign(new Error('Shared photo changed'), { code: 'setup_conflict' });
+      if (direct && current.strategy.appearance_sync !== true ||
+          shared && !normalizeSharedWallpapers(current.strategy.shared_wallpapers)
+            .some(item => item.id === shared.id && item.path === shared.path)) {
+        throw Object.assign(new Error('Household appearance changed'), { code:'setup_conflict' });
       }
-      await saveConfiguration(this._hass, current, { ...current.strategy, ...changes });
-      if (this.config.storageKey !== config.storageKey) return;
+      const draftKey = JSON.stringify([userId, current.urlPath]);
+      if (direct && setupDrafts.has(draftKey)) return result(false, this.t('appearance_finish_draft'));
+      if (direct && shared && this.activeWallpaper !== shared.id) {
+        try { prepared = await wallpaper?.prepareSharedPhoto(shared.id); } catch {}
+        if (!prepared) return result(false, this.t('appearance_photo_unavailable'));
+        if (!currentView()) return result(false);
+        if (setupDrafts.has(draftKey)) return result(false, this.t('appearance_finish_draft'));
+      }
+      if (entries.some(([key, value]) => current.strategy[key] !== value)) {
+        await saveConfiguration(this._hass, current, { ...current.strategy, ...changes });
+      }
+      if (!this.isConnected || this.config?.storageKey !== config.storageKey || pathname !== location.pathname) return result(true);
       if (this.config === config) Object.assign(config, changes);
-      for (const [key, value] of Object.entries(changes)) {
-        if (this.preferences[key] === value) delete this.preferences[key];
+      for (const [key, value] of entries) {
+        if (this.preferences[key] === (direct ? previousPreferences[key] : value)) delete this.preferences[key];
       }
+      if (prepared && this.wallpaper === wallpaper && !this.preferences.background &&
+          this.config.background === changes.background && prepared.apply()) this.activeWallpaper = changes.background;
       this.persistPreferences();
-      actions.status.textContent = this.t('appearance_saved');
+      return result(true, this.t('appearance_saved'));
     } catch (error) {
-      actions.status.textContent = this.configurationErrorText(error);
+      return result(false, this.configurationErrorText(error));
     } finally {
+      prepared?.dispose();
       this.appearanceSave = undefined;
-      if (this.panel?.type === 'settings') this.applyPreferences();
+      if (this.isConnected && this.panel?.type === 'settings') this.applyPreferences();
     }
   }
 
@@ -1850,10 +1899,12 @@ export class BayitDashboard extends HTMLElement {
     content.className = 'settings';
     content.replaceChildren();
     const deviceAppearance = make('section', 'appearance-preferences');
-    deviceAppearance.setAttribute('aria-label', this.t('appearance_browser'));
+    deviceAppearance.setAttribute('aria-label', this.t(this.canSyncAppearance() ? 'appearance_household' : 'appearance_browser'));
     this.wallpaperGallery = createWallpaperGallery({ locale: this.config.locale, controller: this.wallpaper,
       selected: this.activeWallpaper || this.config.background, sharedWallpapers: this.config.sharedWallpapers,
-      onSelect: id => this.selectWallpaper(id), onUpload: file => this.selectWallpaper(personalWallpaperId, { file }) });
+      householdSaving: this.canSyncAppearance(),
+      onSelect: id => this.chooseAppearance('background', id),
+      onUpload: file => this.selectWallpaper(personalWallpaperId, { file }) });
     deviceAppearance.append(this.wallpaperGallery.element);
     const arrange = make('details', 'appearance-disclosure appearance-layout');
     const layoutSummary = make('summary', '', this.t('appearance_layout'));
@@ -1868,7 +1919,7 @@ export class BayitDashboard extends HTMLElement {
         const el = button('control-button', this.t(value));
         el.value = value;
         el.dataset.preference = key;
-        el.onclick = () => this.setPreference(key, value);
+        el.onclick = () => this.chooseAppearance(key, value);
         choices.append(el);
       }
       group.append(choices);
@@ -1884,6 +1935,7 @@ export class BayitDashboard extends HTMLElement {
     status.setAttribute('role', 'status');
     const reset = button('control-button', this.t('appearance_reset'));
     reset.onclick = () => {
+      if (this.canSyncAppearance() && this.appearanceSave) return;
       focusSummary(reset, Object.hasOwn(this.preferences, 'background'));
       status.textContent = '';
       this.preferences = {};
@@ -1892,7 +1944,7 @@ export class BayitDashboard extends HTMLElement {
     const actions = { element: appearanceActions, panel: this.panel, reset, status };
     this.appearanceActions = actions;
     appearanceActions.append(reset);
-    if (this.config.page && this._hass?.user?.is_admin) {
+    if (this.config.page && this._hass?.user?.is_admin && !this.canSyncAppearance()) {
       actions.share = button('control-button', this.t('appearance_share'), 'mdi:content-save-outline');
       actions.share.onclick = () => {
         focusSummary(actions.share, Object.hasOwn(this.appearanceChanges(), 'background'));
@@ -1929,7 +1981,9 @@ export class BayitDashboard extends HTMLElement {
     }
     if (this._hass?.user?.is_admin) {
       const setup = button('control-button setup-entry', this.t('setup'), 'mdi:tune-variant');
-      setup.onclick = () => this.openPanel('setup', setup);
+      setup.onclick = () => {
+        if (!this.canSyncAppearance() || !this.appearanceSave) this.openPanel('setup', setup);
+      };
       system.append(setup);
     }
     if (system.childElementCount) content.append(system);

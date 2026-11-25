@@ -283,18 +283,39 @@ export function createWallpaperController(shell, {
     }, () => {});
   }
 
+  function publishSharedPhoto(id, { image, url }) {
+    let raster;
+    try { raster = rasterFor(document, image); } catch {}
+    const box = shell.getBoundingClientRect();
+    publish(id, sharedPhotoBackground(url), !!raster && darkInkOn(raster, box, box), url, raster);
+  }
+
   async function showSharedPhoto(ticket, { id, path }) {
-    const { image, url } = await loadSharedPhoto(view, path);
+    const photo = await loadSharedPhoto(view, path);
     try {
       if (disposed || ticket !== generation) return false;
-      let raster;
-      try { raster = rasterFor(document, image); } catch {}
-      const box = shell.getBoundingClientRect();
-      publish(id, sharedPhotoBackground(url), !!raster && darkInkOn(raster, box, box), url, raster);
+      publishSharedPhoto(id, photo);
       return true;
     } finally {
-      if (output.url !== url) view.URL.revokeObjectURL(url);
+      if (output.url !== photo.url) view.URL.revokeObjectURL(photo.url);
     }
+  }
+
+  async function prepareSharedPhoto(id) {
+    const shared = sharedWallpapers.find(item => item.id === id);
+    if (disposed || !shared) return null;
+    const photo = await loadSharedPhoto(view, shared.path);
+    return {
+      apply() {
+        if (disposed) return false;
+        generation++;
+        publishSharedPhoto(id, photo);
+        return true;
+      },
+      dispose() {
+        if (output.url !== photo.url) view.URL.revokeObjectURL(photo.url);
+      },
+    };
   }
 
   function apply(id) {
@@ -343,7 +364,7 @@ export function createWallpaperController(shell, {
   shell.addEventListener('scroll', scheduleRefresh, { capture: true, passive: true });
 
   return {
-    apply, upload, preview, refresh,
+    apply, upload, preview, refresh, prepareSharedPhoto,
     destroy() {
       disposed = true;
       generation++;
@@ -366,18 +387,18 @@ const labels = {
     photos: 'Photos', light: 'Color and light', shared: 'Shared photos', personal: 'My photo', more: 'More wallpapers',
     upload: 'Choose a photo', saved: 'Use my saved photo', preparing: 'Preparing photo…',
     failed: 'Could not load this wallpaper.', uploadFailed: 'Could not save the photo. Choose an image up to 20 MB.',
-    noPhoto: 'Choose a photo from this device.',
+    noPhoto: 'Choose a photo from this device.', saving: 'Saving household appearance…',
   },
   he: {
     legend: 'רקע הבית', all: 'הכל', new: 'חדשים', basic: 'בסיס', nature: 'טבע ונוף', materials: 'חומרים וצורות',
     photos: 'תמונות', shared: 'תמונות משותפות', light: 'אור וצבע', personal: 'תמונה שלי', more: 'עוד רקעים',
     upload: 'בחירת תמונה', saved: 'שימוש בתמונה השמורה', preparing: 'מכין את התמונה…',
     failed: 'לא ניתן לטעון את הרקע.', uploadFailed: 'לא ניתן לשמור את התמונה. בחרו תמונה בגודל של עד 20 מ״ב.',
-    noPhoto: 'בחרו תמונה מהמכשיר הזה.',
+    noPhoto: 'בחרו תמונה מהמכשיר הזה.', saving: 'שומר את מראה הבית…',
   },
 };
 
-export function createWallpaperGallery({ locale, controller, selected, onSelect, onUpload, sharedWallpapers = [] }) {
+export function createWallpaperGallery({ locale, controller, selected, onSelect, onUpload, sharedWallpapers = [], householdSaving = false }) {
   const words = labels[locale] ?? labels.en;
   const element = document.createElement('details');
   element.className = 'wallpaper-gallery appearance-disclosure';
@@ -409,6 +430,7 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
   let request = 0;
   let expandedAll = false;
   let disposed = false;
+  let householdBusy = false;
   const view = element.ownerDocument.defaultView;
   const previewObserver = typeof view.IntersectionObserver === 'function'
     ? new view.IntersectionObserver(entries => {
@@ -465,14 +487,17 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
   }
 
   async function choose(id, file) {
+    const personal = file || id === personalWallpaperId;
+    if (householdBusy && !personal) return;
     const serial = ++request;
-    status.textContent = file || id === personalWallpaperId || sharedById.has(id) ? words.preparing : '';
+    status.textContent = !personal && householdSaving ? words.saving : personal || sharedById.has(id) ? words.preparing : '';
     element.setAttribute('aria-busy', 'true');
-    let applied;
-    try { applied = await (file ? onUpload(file) : onSelect(id)); } catch { applied = false; }
-    if (serial !== request) return;
+    let result;
+    try { result = await (file ? onUpload(file) : onSelect(id)); } catch { result = false; }
+    if (serial !== request || disposed) return;
     element.removeAttribute('aria-busy');
-    status.textContent = applied ? '' : (file ? words.uploadFailed : words.failed);
+    const applied = result?.applied ?? result;
+    status.textContent = result?.feedback ?? (applied ? '' : file ? words.uploadFailed : words.failed);
     if (!applied) return;
     select(id);
     if (file && category === 'personal') fillPersonalPreview();
@@ -481,6 +506,7 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
   function wallpaperButton(id, name, wallpaper) {
     const item = button('', 'wallpaper-option');
     item.dataset.wallpaperChoice = id;
+    if (householdSaving && id !== personalWallpaperId) item.setAttribute('aria-disabled', String(householdBusy));
     const sample = document.createElement('span');
     sample.className = 'wallpaper-sample';
     sample.setAttribute('aria-hidden', 'true');
@@ -576,6 +602,13 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
   return {
     element,
     select,
+    setHouseholdBusy(busy) {
+      if (!householdSaving) return;
+      householdBusy = busy;
+      for (const choice of content.querySelectorAll('[data-wallpaper-choice]')) {
+        if (choice.dataset.wallpaperChoice !== personalWallpaperId) choice.setAttribute('aria-disabled', String(busy));
+      }
+    },
     dispose() {
       disposed = true;
       request++;

@@ -992,6 +992,7 @@ export function generateDashboard(config = {}, hass = {}) {
     type: CARD_TYPE,
     page: true,
     ...(config.fullscreen === true && { fullscreen: true }),
+    ...(config.appearance_sync === true && { appearance_sync: true }),
     locale,
     title,
     rooms: discoverRooms(config, hass, locale),
