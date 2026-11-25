@@ -1204,12 +1204,14 @@ export class BayitDashboard extends HTMLElement {
     const panelId = config[panelKind + '_panel_id'];
     const panelTarget = room && panelId && this.config.toolbar?.find(
       entry => entry.kind === panelKind && entry.id === panelId);
+    const boilerPanel = !!room && config.kind === 'boiler' && config.role !== 'status';
+    const launchFromHeader = !!panelTarget || boilerPanel;
     item.dataset.entity = config.entity;
     item.dataset.treatment = config.kind || domain;
     item.toggleAttribute('data-inline-climate', inlineClimate);
     const glyph = icon(config.icon || 'mdi:information-outline');
     glyph.className = 'device-icon';
-    const name = make(tileMode || panelTarget ? 'span' : room ? 'h4' : 'h3', 'device-name');
+    const name = make(tileMode || launchFromHeader ? 'span' : room ? 'h4' : 'h3', 'device-name');
     const state = make('span', 'current');
     const inlineLight = tileMode && domain === 'light' && config.role !== 'status' && config.room_light_controls === true;
     const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight };
@@ -1228,17 +1230,17 @@ export class BayitDashboard extends HTMLElement {
         item.append(view.group);
       }
     } else {
-      const details = make(panelTarget ? 'span' : 'div', 'device-detail');
+      const details = make(launchFromHeader ? 'span' : 'div', 'device-detail');
       details.append(name, state);
       const cover = !!room && domain === 'cover';
-      const hasPanel = !!room && (cover || (config.kind === 'boiler' && config.role !== 'status'));
+      const hasPanel = cover || boilerPanel;
       if (cover) item.dataset.compact = 'cover';
-      const more = panelTarget ? button('device-head device-panel-launch')
+      const more = launchFromHeader ? button('device-head device-panel-launch')
         : button('round-action', this.t(hasPanel ? 'device_controls' : 'more_info'),
           cover ? config.icon || deviceIcons.cover : 'mdi:information-outline', true);
       if (hasPanel) more.setAttribute('aria-haspopup', 'dialog');
       more.onclick = () => hasPanel ? this.openPanel('device', more, room, config.entity) : this.moreInfo(config);
-      const head = panelTarget ? more : make('header', 'device-head');
+      const head = launchFromHeader ? more : make('header', 'device-head');
       if (titleInDialog) {
         head.classList.add('device-state-head');
         glyph.hidden = true;
@@ -1256,6 +1258,10 @@ export class BayitDashboard extends HTMLElement {
         bindDeviceDetails(more, vacuum ? () => this.moreInfo(config) : open);
         view.panelLaunch = { action: vacuum ? this.t('vacuum_room_open').replace('{name}', targetName)
           : this.t('more_info'), hint };
+      } else if (boilerPanel) {
+        bindDeviceDetails(more, more.onclick);
+        head.append(glyph, details, icon('mdi:arrow-top-right'));
+        view.panelLaunch = { action: this.t('device_controls') };
       } else head.append(glyph, details, more);
       const group = make('div', 'action-list');
       item.append(head, group);
@@ -1387,7 +1393,7 @@ export class BayitDashboard extends HTMLElement {
       }
       if (view.panelLaunch) {
         label(view.more, labelName + ' · ' + view.panelLaunch.action);
-        if (view.more.title !== view.panelLaunch.hint) view.more.title = view.panelLaunch.hint;
+        if (view.panelLaunch.hint && view.more.title !== view.panelLaunch.hint) view.more.title = view.panelLaunch.hint;
       } else if (view.more) {
         view.more.hidden = !model.actions.more_info;
         if (view.inlineClimate) label(view.more, this.t('more_info') + ' · ' + labelName);

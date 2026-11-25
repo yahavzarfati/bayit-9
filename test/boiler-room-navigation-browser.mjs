@@ -58,7 +58,7 @@ try {
       const routed = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true });
       await routed.goto('http://127.0.0.1:' + server.address().port + '?routed&locale=' + locale);
       const routedRoom = routed.getByRole('dialog', { name: 'Kitchen', exact: true });
-      const routedDetails = routedRoom.locator('[data-entity="switch.fixture_boiler"] .round-action');
+      const routedDetails = routedRoom.locator('[data-entity="switch.fixture_boiler"] .device-panel-launch');
       const routedBody = routedRoom.locator('.modal-body');
       await routed.getByRole('button', { name: 'Kitchen', exact: true }).tap();
       await routedDetails.scrollIntoViewIfNeeded();
@@ -98,7 +98,8 @@ try {
       };
       const kitchen = page.getByRole('button', { name: 'Kitchen', exact: true });
       const dialog = page.getByRole('dialog');
-      const details = dialog.locator('[data-entity="switch.fixture_boiler"]').getByRole('button', { name: words.details });
+      const boilerRow = dialog.locator('[data-entity="switch.fixture_boiler"]');
+      const details = boilerRow.getByRole('button', { name: 'Fixture boiler · ' + words.details, exact: true });
       const back = dialog.getByRole('button', { name: words.back });
       const body = dialog.locator('.modal-body');
       await kitchen.tap();
@@ -106,8 +107,14 @@ try {
       await details.scrollIntoViewIfNeeded();
       const before = await body.evaluate(element => element.scrollTop);
       assert.ok(before > 0, 'The kitchen fixture must start scrolled');
-      await details.tap();
+      assert.ok((await details.boundingBox()).height >= 44);
+      const powerControls = boilerRow.locator('.action-list');
+      assert.ok(await powerControls.locator('button').count() > 0);
+      assert.equal(await details.locator('button').count(), 0);
+      const titleArea = details.locator('.device-name');
+      await titleArea.dispatchEvent('pointerdown', { pointerType: 'touch', button: 0, pointerId: 7, isPrimary: true });
       await page.getByRole('dialog', { name: 'Fixture boiler', exact: true }).waitFor();
+      await page.evaluate(() => document.dispatchEvent(new PointerEvent('pointerup', { pointerType:'touch', pointerId:7 })));
       const title = dialog.getByRole('heading', { name: 'Fixture boiler', exact: true });
       await title.waitFor();
       assert.equal(await title.count(), 1);
@@ -125,7 +132,8 @@ try {
       assert.equal(await details.evaluate(button => button.getRootNode().activeElement === button), true);
       await back.waitFor({ state: 'hidden' });
 
-      await details.tap();
+      await details.press('Shift+Enter');
+      await dialog.getByRole('button', { name: words.schedule, exact: true }).waitFor();
       await dialog.getByRole('button', { name: words.close, exact: true }).tap();
       await dialog.waitFor({ state: 'hidden' });
       await page.waitForFunction(() =>
@@ -154,7 +162,7 @@ try {
       assert.equal(requests.includes('call_service'), false);
       assert.deepEqual(moreInfo, []);
       assert.deepEqual(errors, []);
-      console.log(launcher.name() + ' at 375 px: kitchen boiler tabs, Back restores scroll and focus, Close and home shortcut unchanged, status-only stays read-only');
+      console.log(launcher.name() + ' at 375 px: boiler row tap, hold and keyboard, Back, schedule and history, status-only and zero power calls');
     } finally { await browser.close(); }
   }
 } finally { server.close(); }
