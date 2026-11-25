@@ -1246,9 +1246,9 @@ export class BayitDashboard extends HTMLElement {
         badge.setAttribute('aria-hidden', 'true');
         element.append(badge);
       }
-      element.onclick = () => {
+      element.onclick = activation => {
         if (kind === 'link') return location.assign(item.path);
-        this.openPanel(kind, element, undefined, undefined, panel);
+        this.openPanel(kind, element, undefined, undefined, panel, undefined, { activation });
       };
       const needsContent = !settings.toolbar && (kind === 'overview' || contextKeys.includes(kind));
       this.nodes.toolbarActions.append(element);
@@ -1364,9 +1364,10 @@ export class BayitDashboard extends HTMLElement {
       count.setAttribute('aria-hidden', 'true');
       const name = make('span', 'room-name', room.name);
       heading.append(icon(room.icon, true), name, count, chevron);
-      heading.onclick = () => this.openPanel('room', heading, room);
+      const openRoom = activation => this.openPanel('room', heading, room, undefined, undefined, undefined, { activation });
+      heading.onclick = openRoom;
       article.onclick = event => {
-        if (!event.target.closest('button')) this.openPanel('room', heading, room);
+        if (!event.target.closest('button')) openRoom(event);
       };
       const status = make('div', 'room-status-strip');
       const temperature = roomBadge('temperature', 'mdi:thermometer');
@@ -1812,6 +1813,7 @@ export class BayitDashboard extends HTMLElement {
       kind,
       roomPosition,
       centeredToolbar,
+      activation: navigation.activation,
       highlighted: type === 'room' ? this.roomViews.get(room.id)?.article : source,
     });
     if (panel.scrollHash) this.restorePopupScroll(panel);

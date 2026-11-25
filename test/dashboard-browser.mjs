@@ -9781,6 +9781,66 @@ async function assertPopupPageLifecycle(browser) {
   }
 }
 
+async function assertPopupCloseFocus(browser) {
+  const page = await browser.newPage({ viewport:{width:391,height:845}, isMobile:true, hasTouch:true, reducedMotion:'reduce' });
+  const url = base + '/fixture-home/home?configuration&cover-grid&locale=en';
+  const title = page.getByRole('button', { name:'Studio', exact:true });
+  const settings = page.getByRole('button', { name:'Appearance', exact:true });
+  const dialog = page.locator('dialog.modal[open]:not(.confirm)');
+  const close = dialog.locator('[data-role=close]');
+  const focusState = () => close.evaluate(button => ({
+    closeFocused: button.getRootNode().activeElement === button,
+    pointerOpen: button.closest('dialog').hasAttribute('data-pointer-open'),
+    ring: getComputedStyle(button).outlineStyle === 'solid',
+  }));
+  const closePanel = async () => {
+    await close.tap();
+    await dialog.waitFor({ state:'hidden' });
+  };
+
+  try {
+    await page.goto(url + '#room-studio');
+    assert.deepEqual(await focusState(), { closeFocused:true, pointerOpen:false, ring:true });
+    await page.emulateMedia({ forcedColors:'active' });
+    if (await page.evaluate(() => matchMedia('(forced-colors: active)').matches)) {
+      assert.equal(await close.evaluate(button => {
+        const dialog = button.closest('dialog');
+        dialog.setAttribute('data-pointer-open', '');
+        const ring = getComputedStyle(button).outlineStyle;
+        dialog.removeAttribute('data-pointer-open');
+        return ring;
+      }), 'solid');
+    }
+    await page.emulateMedia({ forcedColors:'none' });
+    await page.goto(url);
+    await title.tap();
+    assert.deepEqual(await focusState(), { closeFocused:true, pointerOpen:true, ring:false });
+    await page.keyboard.press('Tab');
+    assert.deepEqual(await focusState(), { closeFocused:false, pointerOpen:false, ring:false });
+    await page.keyboard.press('Shift+Tab');
+    assert.deepEqual(await focusState(), { closeFocused:true, pointerOpen:false, ring:true });
+    await page.keyboard.press('Enter');
+    await dialog.waitFor({ state:'hidden' });
+    assert.equal(await title.evaluate(button => button.getRootNode().activeElement === button), true);
+    await page.keyboard.press('Enter');
+    assert.deepEqual(await focusState(), { closeFocused:true, pointerOpen:false, ring:true });
+    await closePanel();
+
+    await settings.tap();
+    assert.deepEqual(await focusState(), { closeFocused:true, pointerOpen:true, ring:false });
+    await closePanel();
+    await title.tap();
+    await dialog.getByRole('button', { name:'Window shade · Device controls', exact:true }).tap();
+    await page.getByRole('dialog', { name:'Window shade', exact:true }).waitFor();
+    assert.equal((await focusState()).pointerOpen, false);
+    await closePanel();
+
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.calls), []);
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertClippedRoomOrigin(browser) {
   const page = await browser.newPage({
     viewport: { width: 390, height: 640 }, isMobile:true, hasTouch:true, reducedMotion:'reduce',
@@ -10542,6 +10602,7 @@ try {
     await run('Popup lifecycle, origin and scroll', async () => {
       await assertPopupPageLifecycle(browser);
       console.log(engine + ': room popup motion pauses safely when leaving the phone app');
+      await assertPopupCloseFocus(browser);
       await assertClippedRoomOrigin(browser);
       await assertPopupScrollMemory(browser);
       console.log(engine + ': popup scroll survives reload and remains scoped to the room and dashboard');

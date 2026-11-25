@@ -317,6 +317,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     delete dialog.dataset.kind;
     dialog.removeAttribute('data-room-position');
     dialog.removeAttribute('data-centered-toolbar');
+    dialog.removeAttribute('data-pointer-open');
     delete dialog.dataset.closing;
     current = undefined;
     if (restoreFocus) focusWithoutScroll(context.source);
@@ -344,7 +345,8 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     dialog.toggleAttribute('data-centered-toolbar', centeredToolbar);
   }
 
-  function open(source, { kind = 'toolbar', roomPosition = false, centeredToolbar = false, highlighted = source } = {}) {
+  function open(source, { kind = 'toolbar', roomPosition = false, centeredToolbar = false,
+    highlighted = source, activation } = {}) {
     if (!isConnected(dialog)) return;
     const focusTarget = dialog.querySelector('[autofocus]');
     if (!source) {
@@ -359,6 +361,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     }
     if (dialog.open && current) {
       const context = current;
+      dialog.removeAttribute('data-pointer-open');
       stopFrame(context);
       if (context.closing) stopAnimation(context);
       context.closing = false;
@@ -376,6 +379,9 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     const context = { source, highlighted: highlighted || source, kind, originalScroll, expectedScroll: originalScroll };
     current = context;
     setDialogPosition(kind, roomPosition, centeredToolbar);
+    // Preserve modal focus without drawing WebKit's keyboard outline after a real tap.
+    const pointerOpen = activation?.isTrusted && (activation.detail > 0 || Boolean(activation.pointerType));
+    dialog.toggleAttribute('data-pointer-open', pointerOpen);
     updateArea(context);
     if (!dialog.open) dialog.showModal();
     const panelRect = dialog.getBoundingClientRect();
@@ -421,6 +427,9 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     if (dialog.open) dialog.close();
   }
 
+  dialog.addEventListener('keydown', event => {
+    if (event.isTrusted) dialog.removeAttribute('data-pointer-open');
+  }, true);
   dialog.addEventListener('close', () => {
     if (!dialog.open) resetContext(current, current?.restoreFocus !== false);
   });

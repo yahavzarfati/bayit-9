@@ -12,6 +12,9 @@ export const styles = `
   button { cursor: pointer; color: inherit; touch-action: manipulation; }
   button:disabled { cursor: default; opacity: .54; }
   :focus-visible { outline: 2px solid #d3f1ff; outline-offset: 3px; }
+  @media (forced-colors: none) {
+    .modal[data-pointer-open] [data-role=close]:focus-visible { outline: none; }
+  }
   ha-icon { display: inline-grid; flex: none; width: 20px; height: 20px; --mdc-icon-size: 20px; }
   .shell {
     color-scheme: dark;
