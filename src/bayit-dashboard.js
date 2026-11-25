@@ -1939,7 +1939,7 @@ export class BayitDashboard extends HTMLElement {
     const standaloneClimate = this.panel?.type === 'device' && model.kind === 'climate';
     const advancedClimate = standaloneClimate ? make('details', 'climate-extra-controls') : undefined;
     const { actions } = model;
-    view.compactLight = !!(view.lightPower && actions.set_brightness && actions.set_color_temp_kelvin &&
+    view.compactLight = !!((view.lightPower || view.inlineLight) && actions.set_brightness && actions.set_color_temp_kelvin &&
       actions.turn_on && actions.turn_off && !actions.set_light_color && !actions.set_effect);
     view.item.toggleAttribute('data-compact-light', view.compactLight);
     if (view.lightPower) {
@@ -2045,7 +2045,8 @@ export class BayitDashboard extends HTMLElement {
   buildField(view, action, id, model) {
     const row = make('div', 'field-row');
     const title = id === 'start_timed' ? this.t('duration') : this.actionLabel(id);
-    const caption = make('label', '', title);
+    const compactInline = view.inlineLight && view.compactLight;
+    const caption = make('label', '', compactInline ? undefined : title);
     const isRange = rangeActions.has(id);
     const directRange = view.inlineLight || (view.compactLight && inlineLightActions.has(id));
     const field = { action, id };

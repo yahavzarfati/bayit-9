@@ -703,6 +703,19 @@ export const styles = `
   .compact-light-controls > .round-action { grid-column: 2; grid-row: 1; }
   .compact-light-controls > .round-action[aria-pressed=true] { border-color: var(--warm); }
   .shell[dir=rtl] .compact-light-controls label { direction: rtl; }
+  .device[data-inline-light][data-compact-light] {
+    .device-tile { direction: ltr; }
+    .action-list { padding-inline: 6px; }
+    .compact-light-controls { align-items: center; gap: 6px; }
+    .compact-light-controls label { grid-template-columns: minmax(0,1fr); }
+    .compact-light-controls :is(input,output) { grid-area: 1 / 1; }
+    .compact-light-controls output {
+      align-self: start; justify-self: end; pointer-events: none;
+      margin-block-start: 2px; font-size: 10px; line-height: 12px;
+    }
+    .compact-light-controls > .round-action { border-radius: 12px; }
+  }
+  .shell[dir=rtl] .device[data-inline-light][data-compact-light] .device-name { direction: rtl; }
   .action-list, .basic-actions { display: grid; gap: 7px; }
   .action-list:empty { display: none; }
   .action-list { margin-block-start: 8px; }

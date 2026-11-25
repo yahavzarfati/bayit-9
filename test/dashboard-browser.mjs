@@ -1467,6 +1467,45 @@ async function assertHeaderRoomLayout(browser) {
   }
 }
 
+async function assertCompactInlineLightLayout(browser) {
+  const cases = [
+    { locale: 'en', width: 320, brightness: 'Brightness', temperature: 'White temperature' },
+    { locale: 'he', width: 391, brightness: 'בהירות', temperature: 'גוון לבן' },
+  ];
+  for (const { locale, width, brightness, temperature } of cases) {
+    const page = await browser.newPage({
+      viewport: { width, height: 845 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce',
+    });
+    try {
+      await page.goto(base + '/fixture-home/home?configuration&inline-room-lights&locale=' + locale);
+      await page.getByRole('button', { name: 'Studio', exact: true }).tap();
+      const card = page.getByRole('dialog', { name: 'Studio', exact: true }).locator('[data-inline-light]');
+      const mode = card.getByRole('button', { name: temperature, exact: true });
+      const bright = card.getByRole('slider', { name: brightness, exact: true });
+      const white = card.getByRole('slider', { name: temperature, exact: true });
+      await mode.waitFor();
+      assert.equal(await mode.getAttribute('aria-pressed'), 'false');
+      assert.equal(await white.count(), 0);
+      assert.equal(await card.locator('output:visible').textContent(), '40%');
+      const [slider, toggle, tile] = await Promise.all([bright.boundingBox(), mode.boundingBox(), card.boundingBox()]);
+      assert.ok(slider.width >= 44 && slider.height >= 44, JSON.stringify(slider));
+      assert.ok(toggle.width >= 44 && toggle.height >= 44, JSON.stringify(toggle));
+      assert.ok(slider.x + slider.width <= toggle.x, 'The slider and mode toggle have separate touch targets');
+      assert.ok(tile.height >= 108 && tile.height <= 112, JSON.stringify(tile));
+      assert.ok(await card.evaluate(el => el.scrollWidth <= el.clientWidth));
+      await mode.tap();
+      await white.waitFor();
+      assert.equal(await mode.getAttribute('aria-pressed'), 'true');
+      assert.equal(await bright.count(), 0);
+      assert.equal(await card.locator('output:visible').textContent(), '3000 K');
+      assert.equal((await card.boundingBox()).height, tile.height);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
@@ -1475,6 +1514,7 @@ try {
       await assertSharedAppearance(browser, engine);
       await assertCompactSettings(browser);
       await assertShortcutDetailRoutes(browser);
+      await assertCompactInlineLightLayout(browser);
       console.log(engine + ': scoped panel and native shortcut destinations, safe taps, focus return and editor persistence');
       console.log(engine + ': independent browser appearance and admin household defaults');
       await assertNativeRoomCoverHeader(browser);
@@ -4952,29 +4992,52 @@ try {
       assert.equal(await inlineCard.count(), 1);
       const brighter = inlineCard.getByRole('slider', { name: 'Brightness', exact: true });
       const warmer = inlineCard.getByRole('slider', { name: 'White temperature', exact: true });
+      const inlineMode = inlineCard.getByRole('button', { name: 'White temperature', exact: true });
       assert.equal(await brighter.inputValue(), '40');
-      assert.equal(await warmer.inputValue(), '3000');
-      assert.equal(await inlineCard.locator('output').last().getAttribute('dir'), 'ltr');
+      assert.equal(await warmer.count(), 0);
+      assert.equal(await inlineCard.locator('output:visible').getAttribute('dir'), 'ltr');
       assert.ok(await inlineCard.evaluate(card => card.scrollWidth <= card.clientWidth));
       assert.ok(await brighter.evaluate(slider => slider.offsetHeight >= 44));
       assert.equal(await inlineCard.getByRole('button', { name: /^Apply/ }).count(), 0);
       await brighter.press('ArrowRight');
       await inlinePage.waitForFunction(() => window.bayitTest.calls.length >= 1);
+      await inlineMode.press('Enter');
+      assert.equal(await inlineMode.getAttribute('aria-pressed'), 'true');
+      assert.equal(await brighter.count(), 0);
+      assert.equal(await warmer.inputValue(), '3000');
+      await inlinePage.evaluate(() => window.bayitTest.setFixtureAttributes('light.demo_lamp', { color_temp_kelvin: 3100 }));
+      await inlineCard.getByText('3100 K', { exact: true }).waitFor();
+      assert.equal(await inlineMode.getAttribute('aria-pressed'), 'true');
+      assert.equal(await warmer.inputValue(), '3100');
+      assert.equal(await inlinePage.evaluate(() => window.bayitTest.calls.length), 1);
       await inlineCard.locator('input[data-action="set_color_temp_kelvin"]:not(:disabled)').waitFor();
       await warmer.press('ArrowRight');
       await inlinePage.waitForFunction(() => window.bayitTest.calls.length >= 2);
       assert.deepEqual(await inlinePage.evaluate(() => window.bayitTest.calls.map(call =>
         [call.domain, call.service, call.target.entity_id, call.service_data])), [
         ['light', 'turn_on', 'light.demo_lamp', { brightness_pct: 41 }],
-        ['light', 'turn_on', 'light.demo_lamp', { color_temp_kelvin: 3001 }],
+        ['light', 'turn_on', 'light.demo_lamp', { color_temp_kelvin: 3101 }],
       ]);
+      await inlinePage.evaluate(() => window.bayitTest.setLightModes('light.demo_lamp', ['color_temp', 'rgb']));
+      await inlineMode.waitFor({ state: 'hidden' });
+      assert.equal(await inlineCard.getByRole('slider').count(), 2);
+      await inlinePage.evaluate(() => window.bayitTest.setLightModes('light.demo_lamp', ['color_temp']));
+      await inlineMode.waitFor();
+      assert.equal(await inlineMode.getAttribute('aria-pressed'), 'true');
+      assert.equal(await warmer.inputValue(), '3101');
+      await inlineMode.press('Enter');
       await inlineCard.locator('input[data-action="set_brightness"]:not(:disabled)').waitFor();
       await inlinePage.evaluate(() => window.bayitTest.rejectNextInlineLight());
       await brighter.press('ArrowRight');
       await inlineRoom.getByText('Could not complete the action.', { exact: true }).waitFor();
       await inlineCard.locator('input[data-action="set_brightness"]:not(:disabled)').waitFor();
       assert.equal(await brighter.inputValue(), '41', 'A rejected change returns to the reported brightness');
-      await inlineCard.getByRole('button', { name: 'Desk lamp · Turn off', exact: true }).press('Shift+Enter');
+      const roomPower = inlineCard.getByRole('button', { name: 'Desk lamp · Turn off', exact: true });
+      const idleTile = inlineCard.locator('.device-tile[aria-busy="false"]');
+      await roomPower.and(idleTile).tap();
+      await inlineCard.getByRole('button', { name: 'Desk lamp · Turn on', exact: true }).and(idleTile).tap();
+      await roomPower.and(idleTile).waitFor();
+      await roomPower.press('Shift+Enter');
       const inlineDetail = inlinePage.getByRole('dialog', { name: 'Desk lamp', exact: true });
       const detailBrightness = inlineDetail.getByRole('slider', { name: 'Brightness', exact: true });
       const detailTemperature = inlineDetail.getByRole('slider', { name: 'White temperature', exact: true });
@@ -4989,12 +5052,13 @@ try {
       assert.ok((await detailBrightness.boundingBox()).height >= 44);
       assert.ok((await temperatureMode.boundingBox()).height >= 44);
       assert.ok(await inlineDetail.locator('.modal-body').evaluate(body => body.scrollHeight === body.clientHeight));
-      assert.equal(await inlineDetail.getByRole('button', { name: 'More info', exact: true }).count(), 1);
+      await inlineDetail.getByRole('button', { name: 'More info', exact: true }).press('Enter');
+      assert.deepEqual(await inlinePage.evaluate(() => window.bayitTest.moreInfoCalls), ['light.demo_lamp']);
       const beforeDetailCalls = await inlinePage.evaluate(() => window.bayitTest.calls.length);
       await temperatureMode.press('Enter');
       assert.equal(await temperatureMode.getAttribute('aria-pressed'), 'true');
       assert.equal(await detailBrightness.count(), 0);
-      assert.equal(await detailTemperature.inputValue(), '3001');
+      assert.equal(await detailTemperature.inputValue(), '3101');
       assert.equal(await inlinePage.evaluate(() => window.bayitTest.calls.length), beforeDetailCalls);
       await detailTemperature.press('ArrowRight');
       await inlinePage.waitForFunction(count => window.bayitTest.calls.length === count + 1, beforeDetailCalls);
@@ -5003,7 +5067,7 @@ try {
       await inlineDetail.getByRole('button', { name: 'Turn off', exact: true }).waitFor();
       assert.deepEqual(await inlinePage.evaluate(from => window.bayitTest.calls.slice(from).map(call =>
         [call.domain, call.service, call.target.entity_id, call.service_data ?? {}]), beforeDetailCalls), [
-        ['light', 'turn_on', 'light.demo_lamp', { color_temp_kelvin: 3002 }],
+        ['light', 'turn_on', 'light.demo_lamp', { color_temp_kelvin: 3102 }],
         ['light', 'turn_off', 'light.demo_lamp', {}],
         ['light', 'turn_on', 'light.demo_lamp', {}],
       ]);
