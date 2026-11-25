@@ -148,7 +148,7 @@ export function buildPanelControls(model, {
     let currentUsage;
     let resetRevision;
     let gestureRevision;
-    usage.onclick = () => usageInfo(currentUsage);
+    usage.onclick = () => usageInfo(currentUsage, usage);
     if (resetOptIn) {
       const capture = () => { gestureRevision = resetRevision; };
       usage.addEventListener('pointerdown', capture);

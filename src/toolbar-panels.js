@@ -141,7 +141,7 @@ export function createToolbarPanel(kind, configuration, context) {
     tile.onclick = () => {
       if (canActivate && !canActivate(item.entity)) return;
       if (action) request(item, action, undefined, tile);
-      else moreInfo(item);
+      else moreInfo(item, tile);
     };
     register(() => {
       const value = amount(item);
@@ -365,7 +365,7 @@ export function createToolbarPanel(kind, configuration, context) {
   function renderCompactLock(item) {
     const row = make('div', 'compact-status-lock');
     const details = renderTile(item, 'status');
-    bindDeviceDetails(details, () => moreInfo(item));
+    bindDeviceDetails(details, () => moreInfo(item, details));
     const change = button('control-button compact-lock-action', t('lock'), 'mdi:lock-outline', true);
     const changeIcon = change.querySelector('ha-icon');
     const availableAction = model => {

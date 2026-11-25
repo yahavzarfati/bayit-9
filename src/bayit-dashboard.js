@@ -7,6 +7,7 @@ import { loadConfiguration, saveConfiguration } from './dashboard-configuration.
 import { createDeviceController, getDeviceModel, roomShutdownTargets, simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupHistory, normalizePopupAliases, popupRouteFragment, resolvePopupRoute } from './popup-routes.js';
+import { preserveMoreInfoReturn } from './native-more-info.js';
 import { buildPanelControls, climateOptionLabel, panelControlStyles } from './panel-controls.js';
 import { lightColorHex, parseLightColor } from './light-color.mjs';
 import { activityKinds, applianceActivity, normalizeRoomActivities } from './room-appliance.mjs';
@@ -477,6 +478,7 @@ export class BayitDashboard extends HTMLElement {
 
   setConfig(raw) {
     const next = normalizeDashboardConfig(raw);
+    this.nativeMoreInfoReturn?.();
     if (this.config?.storageKey !== next.storageKey) this.preferences = {};
     this.popupHistory?.stop();
     this.popupHistory = undefined;
@@ -540,6 +542,7 @@ export class BayitDashboard extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this.nativeMoreInfoReturn?.();
     this.popupHistory?.stop();
     this.popupHistory = this.popupHistoryPath = undefined;
     window.removeEventListener('storage', this.storageChange);
@@ -814,7 +817,7 @@ export class BayitDashboard extends HTMLElement {
 
   openDeviceDetails(config, source, room) {
     if (room) this.openPanel('device', source, room, config.entity);
-    else this.moreInfo(config);
+    else this.moreInfo(config, source);
   }
 
   coverIsMoving(model) {
@@ -1241,6 +1244,7 @@ export class BayitDashboard extends HTMLElement {
   closePanel() {
     const n = this.nodes;
     if (n.modal.open) return;
+    this.nativeMoreInfoReturn?.();
     const routeHash = this.panel?.routeHash;
     if (this.panel?.type === 'room') this.roomScroll.set(this.panel.room.id, n.modalBody.scrollTop);
     n.back.hidden = true;
@@ -1360,7 +1364,7 @@ export class BayitDashboard extends HTMLElement {
         : button('round-action', this.t(hasPanel ? 'device_controls' : 'more_info'),
           cover ? config.icon || deviceIcons.cover : 'mdi:information-outline', true);
       if (hasPanel) more.setAttribute('aria-haspopup', 'dialog');
-      more.onclick = () => hasPanel ? this.openPanel('device', more, room, config.entity) : this.moreInfo(config);
+      more.onclick = () => hasPanel ? this.openPanel('device', more, room, config.entity) : this.moreInfo(config, more);
       const head = launchFromHeader ? more : make('header', 'device-head');
       if (titleInDialog) {
         head.classList.add('device-state-head');
@@ -1376,7 +1380,7 @@ export class BayitDashboard extends HTMLElement {
         if (vacuum) more.onclick = open;
         more.setAttribute('aria-description', hint);
         head.append(glyph, details, icon(vacuum ? 'mdi:arrow-top-right' : 'mdi:information-outline'));
-        bindDeviceDetails(more, vacuum ? () => this.moreInfo(config) : open);
+        bindDeviceDetails(more, vacuum ? () => this.moreInfo(config, more) : open);
         view.panelLaunch = { action: vacuum ? this.t('vacuum_room_open').replace('{name}', targetName)
           : this.t('more_info'), hint };
       } else if (boilerPanel || coverPanel) {
@@ -1428,7 +1432,7 @@ export class BayitDashboard extends HTMLElement {
       locale: this.config.locale, hiddenEntities: this.config.hiddenEntities,
       make, button, icon, label, t: key => this.t(key),
       modelFor: item => this.model(item), stateLabel: model => this.stateLabel(model, type === 'overview' ? 'overview' : undefined),
-      moreInfo: item => this.moreInfo(item), pending: entity => this.pending.has(entity),
+      moreInfo: (item, source) => this.moreInfo(item, source), pending: entity => this.pending.has(entity),
       request: (item, action, value, source) => this.requestAction(item, action, value, source),
       buildDevice: (item, slot, presentation) => this.buildDevice(item, slot, undefined, undefined, presentation),
       graphDestination: item => {
@@ -1511,12 +1515,23 @@ export class BayitDashboard extends HTMLElement {
       isVisibleEntity(config.entity, hass?.states ?? {}, hass?.entities, this.config.hiddenEntities);
   }
 
-  moreInfo(config) {
+  moreInfo(config, source) {
     if (!this.model(config).actions.more_info) return;
-    this.dismissPanel({ immediate: true, restoreFocus: false });
-    this.dispatchEvent(new CustomEvent('hass-more-info', {
+    this.nativeMoreInfoReturn?.();
+    const view = this.ownerDocument.defaultView;
+    const event = new view.CustomEvent('hass-more-info', {
       detail: { entityId: config.entity }, bubbles: true, composed: true,
-    }));
+    });
+    const panel = this.panel;
+    const { modal, modalBody } = this.nodes;
+    if (panel && modal.open && !modal.hasAttribute('data-closing') && source && modal.contains(source)) {
+      this.nativeMoreInfoReturn = preserveMoreInfoReturn(view, {
+        event, source, body: modalBody,
+        active: () => this.isConnected && this.panel === panel && modal.open && !modal.hasAttribute('data-closing'),
+        stopped: () => { this.nativeMoreInfoReturn = undefined; },
+      });
+    }
+    this.dispatchEvent(event);
   }
 
   timerLabel(timer, compact = false) {
@@ -1773,7 +1788,7 @@ export class BayitDashboard extends HTMLElement {
       (timing.simple_timer_entity ?? timing.timer_entity ?? view.config.entity);
     view.special = buildPanelControls(model, { make, button, icon, label, t: key => this.t(key),
       compactTimer: view.inlineClimate, timerPreferenceKey,
-      usageInfo: entity => { if (this.canShowTimerUsage(entity)) this.moreInfo({ entity }); },
+      usageInfo: (entity, source) => { if (this.canShowTimerUsage(entity)) this.moreInfo({ entity }, source); },
       canShowUsage: entity => this.canShowTimerUsage(entity),
       canResetUsage: entity => this.canResetTimerUsage(entity),
       resetOptIn: timing?.allow_daily_usage_reset === true && !!timing.simple_timer_entity,
@@ -1926,7 +1941,7 @@ export class BayitDashboard extends HTMLElement {
     const model = this.model(config);
     const action = model.actions[id];
     if (this.staleScriptAction(id, action, value) || this.staleUsageReset(config, id, action, value) || !action) return;
-    if (!action.requiresConfirmation && !confirmShortcut) return action.requiresCode ? this.moreInfo(config) : this.send(config, id, value);
+    if (!action.requiresConfirmation && !confirmShortcut) return action.requiresCode ? this.moreInfo(config, source) : this.send(config, id, value);
     this.confirming = { config, id, value, source, native: action.requiresCode };
     const n = this.nodes;
     const prompt = id === 'reset_daily_usage' ? this.t('timer_reset_confirm').replace('{name}', model.name)
@@ -1940,7 +1955,7 @@ export class BayitDashboard extends HTMLElement {
     const request = this.confirming;
     if (!request || !this.nodes.confirm.open) return;
     this.nodes.confirm.close();
-    if (request.native) return this.moreInfo(request.config);
+    if (request.native) return this.moreInfo(request.config, request.source);
     return this.send(request.config, request.id, request.value, true);
   }
 

@@ -126,6 +126,27 @@ test('close replaces only a recognized hash, keeps Home Assistant state, and nev
   assert.equal(view.location.hash, roomHash);
 });
 
+test('keeps a linked Bayit parent across native More Info history and removes it for unrelated navigation', () => {
+  for (const mode of ['legacy', 'modern', 'unrelated']) {
+    const { view, navigation, observations } = fixture('/dashboard/home?compact=1');
+    navigation.start();
+    navigation.open(room);
+    navigation.open(device, { fromRoom: room.room });
+    const parent = view.location.href;
+    view.history.replaceState({ ...view.history.state, opensDialog: true }, '', parent);
+    const child = new URL(parent);
+    if (mode !== 'legacy') child.searchParams.set('more-info-entity-id', device.entity);
+    if (mode === 'unrelated') child.searchParams.set('unrelated', '1');
+    view.history.pushState({ dialog: 'ha-more-info-dialog' }, '', child.href);
+    view.dispatchEvent(new Event('location-changed'));
+    navigation.refresh();
+    view.history.back();
+    assert.equal(view.location.href, parent);
+    assert.equal(navigation.backToRoom(room.room, { source: {}, fallback: () => assert.fail() }), mode !== 'unrelated');
+    if (mode !== 'unrelated') assert.equal(observations.at(-1).reason, 'room-return');
+  }
+});
+
 test('takes late configuration into account and stops listening on teardown', () => {
   const { view, admitted, observations, navigation } = fixture('/dashboard/home' + deviceHash);
   admitted.delete(deviceHash);

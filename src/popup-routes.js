@@ -1,3 +1,5 @@
+import { MORE_INFO_DIALOG, sameMoreInfoPage } from './native-more-info.js';
+
 const fragmentPattern = /^#[a-z0-9_.\-/]{1,511}$/i;
 const roomPattern = /^#room-([a-z0-9][a-z0-9_-]*)$/i;
 const devicePattern = /^#device\/([a-zA-Z0-9][a-zA-Z0-9_-]*)\/([a-z0-9_]+\.[a-z0-9_]+)$/;
@@ -71,7 +73,9 @@ export function createPopupHistory({ view, resolve, onChange, pathname = view.lo
     const { pathname, hash } = view.location;
     const inScope = withinView();
     const route = inScope ? resolve(hash) : null;
-    if (linkedEntry && !isCurrent(linkedEntry)) linkedEntry = undefined;
+    const nativeChild = linkedEntry && view.history.state?.dialog === MORE_INFO_DIALOG &&
+      sameMoreInfoPage(view.location.href, linkedEntry.href);
+    if (linkedEntry && !isCurrent(linkedEntry) && !nativeChild) linkedEntry = undefined;
     if (returning && !isCurrent(returning.link)) {
       if (view.location.href === returning.link.previous && route?.kind === 'room' && route.room === returning.link.room) {
         reason = 'room-return';

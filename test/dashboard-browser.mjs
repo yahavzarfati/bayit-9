@@ -43,6 +43,40 @@ function observeScript(state) {
 }
 const query = new URL(location.href).searchParams;
 const linkedPanels = query.has('linked-only-panels');
+if (query.has('native-more-info')) document.addEventListener('hass-more-info', event => {
+  const tag = 'ha-more-info-dialog';
+  const previous = new URL(location.href);
+  const launcher = document.querySelector('bayit-dashboard').shadowRoot.activeElement;
+  const host = document.createElement(tag);
+  const shadow = host.attachShadow({ mode: 'open' });
+  const modal = document.createElement('dialog');
+  modal.setAttribute('aria-label', 'Native entity details');
+  const close = document.createElement('button');
+  close.textContent = 'Close native details';
+  close.onclick = () => modal.close();
+  modal.append(close);
+  shadow.append(modal);
+  document.body.append(host);
+  history.replaceState({ ...history.state, opensDialog: true }, '', previous.href);
+  history.pushState({ dialog: tag }, '', previous.href);
+  if (query.get('native-more-info') === 'modern') {
+    const child = new URL(previous.href);
+    child.searchParams.set('more-info-entity-id', event.detail.entityId);
+    child.searchParams.set('more-info-view', 'info');
+    history.replaceState(history.state, '', child.href);
+    window.dispatchEvent(new CustomEvent('location-changed'));
+  }
+  modal.addEventListener('close', () => {
+    const ownedEntry = history.state?.dialog === tag && location.pathname === previous.pathname && location.hash === previous.hash;
+    if (ownedEntry) history.replaceState(history.state, '', previous.href);
+    host.dispatchEvent(new CustomEvent('dialog-closed', { detail: { dialog: tag }, composed: true, bubbles: true }));
+    if (ownedEntry) history.back();
+    if (launcher?.[Symbol.for('HA focus target')]) requestAnimationFrame(() => setTimeout(() => launcher.focus(), 0));
+    host.remove();
+  }, { once: true });
+  modal.showModal();
+  modal.dispatchEvent(new CustomEvent('opened', { composed: true, bubbles: true }));
+});
 if (query.has('entrance-popup-position')) {
   states['sensor.demo_entry_temperature'] = { state: '24', attributes: { friendly_name: 'טמפרטורה', unit_of_measurement: '°C' } };
   states['lock.demo_entry_position'] = { state: 'locked', attributes: { friendly_name: 'מנעול' } };
@@ -1041,10 +1075,12 @@ try {
       await deskHeading.waitFor();
       const more = routeDialog.getByRole('button', { name: rtlRoutes ? 'מידע נוסף' : 'More info', exact: true });
       await more.tap();
-      await routeDialog.waitFor({ state: 'hidden' });
+      await routeDialog.waitFor();
       assert.deepEqual(await routesPage.evaluate(() => [window.bayitTest.moreInfoCalls, window.bayitTest.moreInfoHashes]),
-        [['light.demo_lamp'], ['']]);
+        [['light.demo_lamp'], ['#legacy-lamp']]);
       assert.equal(new URL(routesPage.url()).search, new URL(delayedUrl).search);
+      await routeClose.tap();
+      await routeDialog.waitFor({ state: 'hidden' });
 
       await routesPage.getByRole('button', { name: 'Studio', exact: true }).tap();
       await studioHeading.waitFor();
@@ -1115,6 +1151,79 @@ try {
       await studioHeading.waitFor();
       assert.equal(new URL(routesPage.url()).hash, '#legacy-lamp');
       await routesPage.close();
+
+      const infoPage = await browser.newPage({ viewport: { width: 320, height: 640 }, hasTouch: true, reducedMotion: 'reduce' });
+      infoPage.setDefaultTimeout(8000);
+      const nativeDetails = infoPage.getByRole('dialog', { name: 'Native entity details', exact: true });
+      const nativeClose = nativeDetails.getByRole('button', { name: 'Close native details', exact: true });
+      const openFixtureRoom = async mode => {
+        const url = base + '/fixture-home/home?device-panel&native-more-info=' + mode;
+        await infoPage.goto(url);
+        await infoPage.getByRole('button', { name: 'Studio', exact: true }).tap();
+        return { url, dialog: infoPage.getByRole('dialog', { name: 'Studio', exact: true }) };
+      };
+      const openInfo = async dialog => {
+        const control = dialog.getByRole('button', { name: 'More info · Studio air conditioner', exact: true });
+        await control.evaluate(button => {
+          const root = button.getRootNode();
+          const body = root.querySelector('.modal-body');
+          const spacer = document.createElement('div');
+          spacer.style.height = '450px';
+          body.append(spacer);
+          body.style.maxHeight = '240px';
+          body.scrollTop = 42;
+          button.click();
+        });
+        await nativeDetails.waitFor();
+        return control;
+      };
+      for (const mode of ['legacy', 'modern']) {
+        const { url, dialog } = await openFixtureRoom(mode);
+        const control = await openInfo(dialog);
+        assert.equal(new URL(infoPage.url()).hash, '#room-studio');
+        assert.equal(new URL(infoPage.url()).searchParams.get('more-info-entity-id'),
+          mode === 'modern' ? 'climate.demo_air' : null);
+        assert.equal(await infoPage.locator('bayit-dashboard dialog[data-kind=room]').evaluate(node => node.open), true);
+        // An event with the right tag from an unrelated node cannot complete this return.
+        await infoPage.evaluate(() => {
+          document.querySelector('bayit-dashboard').shadowRoot.querySelector('.modal-body').scrollTop = 103;
+          window.dispatchEvent(new CustomEvent('dialog-closed', { detail: { dialog: 'ha-more-info-dialog' } }));
+        });
+        await nativeClose.tap();
+        await nativeDetails.waitFor({ state: 'hidden' });
+        await infoPage.waitForFunction(() => {
+          const root = document.querySelector('bayit-dashboard').shadowRoot;
+          return !history.state?.dialog && root.querySelector('.modal-body').scrollTop === 42 &&
+            root.activeElement?.getAttribute('aria-label') === 'More info · Studio air conditioner';
+        });
+        assert.equal(await control.evaluate(button => button.getRootNode().activeElement === button), true);
+        assert.equal(infoPage.url(), url + '#room-studio');
+        assert.deepEqual(await infoPage.evaluate(() => window.bayitTest.moreInfoHashes), ['#room-studio']);
+        assert.equal(await infoPage.evaluate(() => window.bayitTest.calls.length), 0);
+      }
+      const { dialog: interrupted } = await openFixtureRoom('modern');
+      await openInfo(interrupted);
+      await infoPage.evaluate(() => {
+        history.pushState(null, '', '/fixture-home/home?device-panel&native-more-info=modern#outside-section');
+        window.dispatchEvent(new CustomEvent('location-changed'));
+      });
+      await interrupted.waitFor({ state: 'hidden' });
+      await nativeClose.tap();
+      await nativeDetails.waitFor({ state: 'hidden' });
+      assert.equal(new URL(infoPage.url()).hash, '#outside-section');
+      await infoPage.reload();
+      await infoPage.waitForFunction(() => window.bayitTest);
+      assert.equal(await interrupted.count(), 0);
+
+      await infoPage.evaluate(() => document.body.dispatchEvent(new CustomEvent('hass-more-info', {
+        detail: { entityId: 'light.demo_lamp' }, bubbles: true, composed: true,
+      })));
+      await nativeDetails.waitFor();
+      await nativeClose.tap();
+      await nativeDetails.waitFor({ state: 'hidden' });
+      assert.equal(await interrupted.count(), 0);
+      await infoPage.close();
+      console.log(engine + ': native details return to the mounted Bayit popup, exact route, scroll and source focus');
 
       for (const [locale, width] of [['en', 320], ['he', 390], ['en', 430]]) {
         const page = await browser.newPage({ viewport: { width, height: 844 }, hasTouch: true });
@@ -1337,7 +1446,6 @@ try {
       await studio.click();
       await tvHeader.click();
       await mediaPage.waitForFunction(() => window.bayitTest.moreInfoCalls[0] === 'media_player.demo_tv');
-      await studio.click();
       const bounds = await tvHeader.boundingBox();
       await mediaPage.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
       await mediaPage.mouse.down();
@@ -1361,7 +1469,6 @@ try {
       await mediaPage.mouse.down();
       await mediaPage.waitForFunction(() => window.bayitTest.moreInfoCalls.includes('vacuum.demo_robot'));
       await mediaPage.mouse.up();
-      await studio.click();
       await vacuumHeader.press('Shift+Enter');
       await mediaPage.waitForFunction(() => window.bayitTest.moreInfoCalls.filter(entity => entity === 'vacuum.demo_robot').length === 2);
       assert.deepEqual(await mediaPage.evaluate(() => window.bayitTest.calls.map(request => request.service)),
@@ -2274,7 +2381,7 @@ try {
             service_data: { entity_id: 'sensor.demo_air_usage', duration: 105, unit: 'min', reverse_mode: false },
           });
           await info.tap();
-          await room.waitFor({ state: 'hidden' });
+          await room.waitFor();
           assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), ['climate.demo_air']);
           await page.close();
         }
@@ -2496,10 +2603,9 @@ try {
       const usePanel = await openUsage('');
       const reading = usageButton(usePanel, '10:00');
       await reading.tap();
-      await usePanel.waitFor({ state: 'hidden' });
+      await usePanel.waitFor();
       assert.deepEqual(await usagePage.evaluate(() => window.bayitTest.moreInfoCalls), ['sensor.demo_air_usage']);
       assert.deepEqual(await usagePage.evaluate(() => window.bayitTest.calls), []);
-      await usagePage.locator('.quick-button[data-entity="climate.demo_air"]').press('Shift+Enter');
       await reading.click({ delay: 620 });
       await usageConfirmation.waitFor();
       assert.equal(await usagePage.evaluate(() => window.bayitTest.calls.length), 0);
@@ -2533,7 +2639,7 @@ try {
       const differentReading = await openUsage('&different-usage-source');
       assert.equal(await usageButton(differentReading, '30:00').getAttribute('aria-keyshortcuts'), null);
       await usageButton(differentReading, '30:00').tap();
-      await differentReading.waitFor({ state: 'hidden' });
+      await differentReading.waitFor();
       assert.deepEqual(await usagePage.evaluate(() => window.bayitTest.moreInfoCalls), ['sensor.demo_read_only_usage']);
       assert.equal(await usagePage.evaluate(() => window.bayitTest.calls.length), 0);
       await usagePage.close();
@@ -3019,10 +3125,9 @@ try {
         }));
         assert.equal(await entryStatus.locator('.compact-lock-action').count(), 1);
         await entryStatusLock.getByRole('button', { name:'Front lock · Locked', exact:true }).press('Shift+Enter');
-        await entryStatus.waitFor({ state:'hidden' });
+        await entryStatus.waitFor();
         assert.deepEqual(await entryStatusPage.evaluate(() => window.bayitTest.moreInfoCalls), ['lock.demo_compact_entry']);
         assert.deepEqual(await entryLockServiceCalls(), []);
-        await openStatusEntry();
         const unlockEntry = entryStatusLock.getByRole('button', { name:'Unlock · Front lock', exact:true });
         const entryConfirmation = entryStatusPage.locator('dialog.confirm[open]');
         await unlockEntry.tap();
@@ -3043,12 +3148,11 @@ try {
           await openStatusEntry();
           await entryStatusLock.getByRole('button', { name:'Unlock · Front lock', exact:true }).tap();
           await entryConfirmation.getByRole('button', { name:'Confirm', exact:true }).tap();
-          await entryStatus.waitFor({ state:'hidden' });
+          await entryStatus.waitFor();
           assert.deepEqual(await entryStatusPage.evaluate(() => window.bayitTest.moreInfoCalls), ['lock.demo_compact_entry']);
           assert.deepEqual(await entryLockServiceCalls(), []);
-          await openStatusEntry();
           await entryStatus.getByRole('button', { name:/^Studio temperature/ }).tap();
-          await entryStatus.waitFor({ state:'hidden' });
+          await entryStatus.waitFor();
           assert.deepEqual(await entryStatusPage.evaluate(() => window.bayitTest.moreInfoCalls),
             ['lock.demo_compact_entry','sensor.demo_studio_temperature']);
           assert.deepEqual(await entryLockServiceCalls(), []);
@@ -3127,18 +3231,16 @@ try {
       assert.deepEqual(await lightCalls(), [expectedCommand]);
 
       await entrance.getByRole('button', { name: 'Offline light · More info', exact: true }).tap();
-      await entrance.waitFor({ state: 'hidden' });
+      await entrance.waitFor();
       assert.deepEqual(await entrancePage.evaluate(() => window.bayitTest.moreInfoCalls), ['light.demo_entry_unavailable']);
-      await openEntrance();
       const entryLightBounds = await lamp.boundingBox();
       await entrancePage.mouse.move(entryLightBounds.x + entryLightBounds.width / 2, entryLightBounds.y + entryLightBounds.height / 2);
       await entrancePage.mouse.down();
       await entrancePage.waitForFunction(() => window.bayitTest.moreInfoCalls.includes('light.demo_lamp'));
       await entrancePage.mouse.up();
-      await entrance.waitFor({ state: 'hidden' });
-      await openEntrance();
+      await entrance.waitFor();
       await entrance.getByRole('button', { name: 'Porch light · Turn on', exact: true }).press('Shift+Enter');
-      await entrance.waitFor({ state: 'hidden' });
+      await entrance.waitFor();
       assert.deepEqual(await entrancePage.evaluate(() => window.bayitTest.moreInfoCalls), [
         'light.demo_entry_unavailable', 'light.demo_lamp', 'light.demo_entry_second',
       ]);
@@ -3192,22 +3294,19 @@ try {
         const westHeader = west.getByRole('button', { name: 'West shade · More info', exact: true });
         const eastHeader = east.getByRole('button', { name: 'East curtain · More info', exact: true });
         await westHeader.tap();
-        await securityDialog.waitFor({ state: 'hidden' });
-        await openSecurity();
+        await securityDialog.waitFor();
         const curtainBounds = await eastHeader.boundingBox();
         await securityPage.mouse.move(curtainBounds.x + curtainBounds.width / 2, curtainBounds.y + curtainBounds.height / 2);
         await securityPage.mouse.down();
         await securityPage.waitForFunction(() => window.bayitTest.moreInfoCalls.length === 2);
         await securityPage.mouse.up();
-        await securityDialog.waitFor({ state: 'hidden' });
-        await openSecurity();
+        await securityDialog.waitFor();
         await westHeader.press('Shift+Enter');
-        await securityDialog.waitFor({ state: 'hidden' });
+        await securityDialog.waitFor();
         assert.deepEqual(await securityPage.evaluate(() => window.bayitTest.moreInfoCalls),
           ['cover.demo_security_first', 'cover.demo_security_second', 'cover.demo_security_first']);
         assert.deepEqual(await securityCalls(), []);
 
-        await openSecurity();
         assert.equal(await securityDialog.getByRole('button', { name: /^Status shade/ }).count(), 1);
         await west.locator('[data-action=open]').tap();
         await west.locator('.device-panel-launch').getByText(/100%/).waitFor();
