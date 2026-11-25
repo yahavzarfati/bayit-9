@@ -6,6 +6,8 @@ const devicePattern = /^#device\/([a-zA-Z0-9][a-zA-Z0-9_-]*)\/([a-z0-9_]+\.[a-z0
 const panelPattern = /^#panel\/([a-z0-9][a-z0-9_-]*)$/i;
 const navigationEvents = ['location-changed', 'hashchange', 'popstate'];
 const roomReturnTimeout = 350;
+const roomHandoffs = new WeakMap();
+const roomHandoffTimeout = 1000;
 let roomEntryId = 0;
 
 export function isPopupFragment(fragment) {
@@ -67,7 +69,7 @@ export function normalizePopupAliases(config) {
     isPopupFragment(alias) && parsePopupRoute(target) && alias !== target).slice(0, 128));
 }
 
-export function createPopupHistory({ view, resolve, onChange, pathname = view.location.pathname }) {
+export function createPopupHistory({ view, resolve, onChange, pathname = view.location.pathname, scope }) {
   const roomEntries = new Map();
   let listening = false;
   let observed;
@@ -78,6 +80,31 @@ export function createPopupHistory({ view, resolve, onChange, pathname = view.lo
   const withinView = () => view.location.pathname === pathname;
   const isCurrent = link => view.location.href === link.href && view.history.state?.bayit9RoomEntry === link.id &&
     view.history.state?.dialog !== MORE_INFO_DIALOG;
+
+  function takeRoomHandoff() {
+    if (!scope) return;
+    const handoff = roomHandoffs.get(view);
+    if (handoff?.scope !== scope || handoff.pathname !== pathname) return;
+    roomHandoffs.delete(view);
+    view.clearTimeout(handoff.timeout);
+    const { entry } = handoff;
+    // Only the same browser history entry can survive a redraw of this dashboard.
+    if (!isCurrent(entry)) return;
+    roomEntries.set(entry.id, entry);
+    linkedEntry = entry;
+    canReturn = true;
+  }
+
+  function keepRoomHandoff() {
+    if (!scope || !canReturn || !linkedEntry || !withinView() || !isCurrent(linkedEntry)) return;
+    const previous = roomHandoffs.get(view);
+    view.clearTimeout(previous?.timeout);
+    const handoff = { scope, pathname, entry: linkedEntry };
+    handoff.timeout = view.setTimeout(() => {
+      if (roomHandoffs.get(view) === handoff) roomHandoffs.delete(view);
+    }, roomHandoffTimeout);
+    roomHandoffs.set(view, handoff);
+  }
 
   function cancelReturn() {
     if (returning) view.clearTimeout(returning.timer);
@@ -128,12 +155,14 @@ export function createPopupHistory({ view, resolve, onChange, pathname = view.lo
     start() {
       if (listening) return;
       listening = true;
+      takeRoomHandoff();
       for (const event of navigationEvents) view.addEventListener(event, onLocation);
       sync('initial');
     },
     refresh() { sync(); },
-    stop() {
+    stop({ handoff = false } = {}) {
       if (!listening) return;
+      if (handoff) keepRoomHandoff();
       listening = false;
       observed = undefined;
       observedHref = undefined;

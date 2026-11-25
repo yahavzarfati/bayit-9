@@ -10754,6 +10754,33 @@ try {
       console.log(engine + ': Now Playing source, episode details and validated remaining time in English and Hebrew');
     });
 
+    await run('Linked popup survives dashboard registry redraw', async () => {
+      const linked = await browser.newPage({ viewport:{width:391,height:845}, hasTouch:true, reducedMotion:'reduce' });
+      try {
+        await linked.goto(base + '/fixture-home/home?toolbar-panels&room-link&linked-only-panels&locale=en');
+        await linked.getByRole('button',{name:'Studio',exact:true}).tap();
+        const dialog = linked.locator('dialog.modal[open]:not(.confirm)');
+        const launcher = dialog.locator('[data-entity="media_player.demo_tv"] .device-panel-launch');
+        await launcher.press('Shift+Enter');
+        await linked.waitForURL(url => url.hash === '#panel/media-panel');
+        const back = dialog.getByRole('button',{name:'Back to room',exact:true});
+        await back.waitFor();
+        const regenerated = await linked.evaluate(() => {
+          const original = document.querySelector('bayit-dashboard');
+          const { areas } = original._hass;
+          return window.bayitTest.reviseStrategy({ areas:{ ...areas, studio:{ ...areas.studio, name:'Changed studio' } } }) &&
+            !original.isConnected;
+        });
+        assert.equal(regenerated,true);
+        await back.waitFor();
+        await back.tap();
+        await linked.waitForURL(url => url.hash === '#room-studio');
+        await linked.getByRole('dialog',{name:'Changed studio',exact:true}).waitFor();
+        assert.equal(await launcher.evaluate(control => control.getRootNode().activeElement === control),true);
+        assert.deepEqual(await linked.evaluate(() => window.bayitTest.calls),[]);
+      } finally { await linked.close(); }
+    });
+
     await run('Linked media and vacuum routes', async () => {
       for (const locale of ['en','he']) {
         const linkedPage = await browser.newPage({ viewport:{width:391,height:845}, hasTouch:true, reducedMotion:'reduce' });

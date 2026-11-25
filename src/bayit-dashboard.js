@@ -632,7 +632,7 @@ export class BayitDashboard extends HTMLElement {
     this.popupScroll.stop();
     this.nativeMoreInfoReturn?.();
     if (this.config?.storageKey !== next.storageKey) this.preferences = {};
-    this.popupHistory?.stop();
+    this.popupHistory?.stop({ handoff: this.config?.storageKey === next.storageKey && next.page });
     this.popupHistory = undefined;
     if (this.nodes.confirm.open) this.nodes.confirm.close();
     this.popupMotion.reset();
@@ -706,7 +706,7 @@ export class BayitDashboard extends HTMLElement {
     }
     this.popupScroll.stop();
     this.nativeMoreInfoReturn?.();
-    this.popupHistory?.stop();
+    this.popupHistory?.stop({ handoff: true });
     this.popupHistory = this.popupHistoryPath = undefined;
     window.removeEventListener('storage', this.storageChange);
     window.removeEventListener('resize', this.resize);
@@ -746,7 +746,7 @@ export class BayitDashboard extends HTMLElement {
     const view = this.ownerDocument.defaultView;
     this.popupHistoryPath ??= view.location.pathname;
     this.popupHistory = createPopupHistory({
-      view, pathname: this.popupHistoryPath, resolve: hash => this.resolvePopup(hash),
+      view, pathname: this.popupHistoryPath, scope: this.config.storageKey, resolve: hash => this.resolvePopup(hash),
       onChange: event => this.showPopupRoute(event),
     });
     this.popupHistory.start();

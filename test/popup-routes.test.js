@@ -258,3 +258,44 @@ test('uses the replacement fallback at most once if the linked entry does not mo
   assert.equal(view.location.hash, roomHash);
   assert.equal(navigation.backToRoom(room.room, options), false);
 });
+
+test('carries an active linked popup only across a same-dashboard redraw in the same browser', () => {
+  const view = new Browser('/home/view' + roomHash);
+  const make = (browser, scope, changes, resolve = parsePopupRoute) => createPopupHistory({
+    view:browser, scope, resolve, onChange:change => changes.push(change),
+  });
+  const first = make(view, 'household', []);
+  first.start();
+  assert.equal(first.open(device, { fromRoom:room.room, fromEntity:device.entity }), true);
+  const child = view.location.href;
+  const marker = view.history.state;
+  first.stop({ handoff:true });
+
+  const unrelated = [];
+  const other = make(view, 'another-dashboard', unrelated);
+  other.start();
+  assert.equal(unrelated.at(-1).roomLink, undefined);
+  other.stop();
+
+  const restored = [];
+  let ready = false;
+  const replacement = make(view, 'household', restored, hash => ready ? parsePopupRoute(hash) : null);
+  replacement.start();
+  assert.equal(restored.at(-1).roomLink, undefined);
+  ready = true;
+  replacement.refresh();
+  assert.deepEqual(restored.at(-1).roomLink, { room:room.room, entity:device.entity });
+  assert.equal(replacement.backToRoom(room.room, { source:device.entity }), true);
+  assert.equal(view.location.hash, roomHash);
+  assert.equal(restored.at(-1).reason, 'room-return');
+  replacement.stop();
+
+  const fresh = new Browser(child);
+  fresh.history.replaceState(marker, '', child);
+  const freshChanges = [];
+  const direct = make(fresh, 'household', freshChanges);
+  direct.start();
+  assert.equal(freshChanges.at(-1).roomLink, undefined);
+  assert.equal(direct.backToRoom(room.room, {}), false);
+  direct.stop();
+});
