@@ -1122,6 +1122,21 @@ export const styles = `
       max-inline-size: min(126px,100%);
     }
     .room-status { font-size: 12px; }
+    .shell[data-page=true][data-wide-left][data-layout=classic] {
+      .room { --shortcut-width: 42px; padding: 5px 8px 7px; }
+      .room-title { font-size: 14px; line-height: 1.1; }
+      .room-status { font-size: 11px; }
+      @supports (height: round(down,33.5px,1px)) {
+        .room { --shortcut-height: clamp(24px,round(down,calc((var(--room-block) - 46px) / 3),1px),34px); }
+      }
+      .quick {
+        gap: 4px 8px;
+        align-self: start;
+        /* Reserve the first control-height row for the room readings. */
+        margin-block-start: max(0px,calc(var(--shortcut-height) - 16px));
+      }
+      .quick:has(> .quick-button:nth-child(5)) { align-self: end; margin-block-start: 0; }
+    }
   }
   @container (min-width: 421px) {
     .shell[data-page=true][data-wide-left] {

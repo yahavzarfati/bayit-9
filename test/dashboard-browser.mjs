@@ -2147,6 +2147,76 @@ async function assertWideHomeAlignment(browser) {
   }
 }
 
+async function assertWideClassicRoomControls(browser) {
+  const page = await browser.newPage({ viewport:{ width:768,height:846 }, reducedMotion:'reduce' });
+  const cards = page.locator('.room');
+  const capture = () => cards.evaluateAll(rooms => rooms.map(room => {
+    const bounds = room.getBoundingClientRect();
+    const title = room.querySelector('.room-title');
+    const titleText = title.querySelector('.room-name');
+    const label = document.createRange();
+    label.selectNodeContents(titleText);
+    const namePieces = [...label.getClientRects()];
+    const controls = [...room.querySelectorAll('.quick-button')].map(button => button.getBoundingClientRect());
+    const lastEdge = Math.max(...controls.map(box => box.right));
+    const lastBottom = Math.max(...controls.map(box => box.bottom));
+    return { size:controls.length, top:controls[0].top - bounds.top, bottom:bounds.bottom - lastBottom,
+      right:bounds.right - lastEdge, width:controls[0].width, height:controls[0].height,
+      step:controls[1] && controls[1].left - controls[0].left, font:getComputedStyle(title).fontSize, name:titleText.innerText,
+      nameFits:namePieces.every(piece => piece.left >= bounds.left && piece.right <= bounds.right &&
+        piece.top >= bounds.top && piece.bottom <= bounds.bottom && !controls.some(box =>
+          piece.left < box.right && piece.right > box.left && piece.top < box.bottom && piece.bottom > box.top)),
+    };
+  }));
+  try {
+    for (const locale of ['en','he']) {
+      const baseProfile = base + '?locale=' + locale + '&wide-home-profile&home-room-sizing=';
+      await page.setViewportSize({width:420,height:846});
+      await page.goto(baseProfile + '10');
+      const phone = await capture();
+      await page.goto(baseProfile + '10&wide-alignment=left');
+      assert.deepEqual(await capture(), phone, 'The classic controls stay the same at the phone breakpoint');
+
+      for (const [width, controlHeight, sparseTop, denseTop] of [[768,33,43,31.6],[1024,34,44,131.7]]) {
+        await page.setViewportSize({width,height:846});
+        await page.goto(baseProfile + '10&wide-alignment=left');
+        const classic = await capture();
+        assert.equal(classic.length, 10);
+        for (const room of classic) {
+          const details = JSON.stringify({locale,width,room});
+          assert.deepEqual([room.width,room.height,room.font,room.nameFits], [42,controlHeight,'14px',true], details);
+          if (room.size >= 2) assert.deepEqual([room.right,room.step], [9,50], details);
+          if (room.size >= 5) {
+            assert.equal(room.bottom, 8, details);
+            assert.ok(Math.abs(room.top - denseTop) <= 1, details);
+          } else assert.ok(Math.abs(room.top - sparseTop) <= 1, details);
+        }
+        await page.goto(baseProfile + '10');
+        assert.ok((await capture()).every(room => room.width === 48 && room.font === '17px'));
+        await page.goto(baseProfile + '10&header');
+        const header = await capture();
+        await page.goto(baseProfile + '10&header&wide-alignment=left');
+        assert.deepEqual(await capture(), header, 'Wide alignment preserves Header control geometry');
+      }
+
+      await page.goto(baseProfile + '3&wide-alignment=left');
+      const title = page.locator('.room[data-room="fixture_room_0"] .room-title');
+      const longName = locale === 'he' ? 'חדר העבודה והמשחקים בקומה העליונה' : 'Upstairs Office and Guest Bedroom';
+      assert.ok((await capture()).some(room => room.name === longName && room.nameFits && room.size === 6));
+      await title.focus();
+      await page.keyboard.press('Shift+Tab');
+      const lastShortcutFocused = await title.evaluate(title => {
+        const lastShortcut = [...title.closest('.room').querySelectorAll('.quick-button')].at(-1);
+        return title.getRootNode().activeElement === lastShortcut && lastShortcut.matches(':focus-visible') &&
+          getComputedStyle(lastShortcut).outlineStyle === 'solid';
+      });
+      assert.equal(lastShortcutFocused, true);
+    }
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertClassicRoomTitleLanes(browser) {
   const page = await browser.newPage({ viewport:{width:320,height:800}, hasTouch:true, reducedMotion:'reduce' });
   const cards = page.locator('.room');
@@ -4780,6 +4850,7 @@ try {
       await assertHeaderRoomLayout(browser);
       await assertClassicRoomTitleLanes(browser);
       await assertWideHomeAlignment(browser);
+      await assertWideClassicRoomControls(browser);
       console.log(engine + ': room titles, responsive shortcut lanes and keyboard focus');
       await assertSetupFooterLayout(browser);
       console.log(engine + ': setup footer stays clear of the scrollable editor');
