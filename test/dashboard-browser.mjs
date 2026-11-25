@@ -831,6 +831,12 @@ window.bayitTest = {
   rejectNextSetupSave() { rejectSetupSave = true; },
   holdNextSetupSave() { holdSetupSave = true; },
   finishHeldSetupSave() { finishSetupSave(); },
+  remountDashboardBeforeSaveResult() {
+    const fresh = document.createElement('bayit-dashboard');
+    fresh.setConfig(cardConfig);
+    fresh.hass = hass;
+    card.replaceWith(fresh);
+  },
   setRoomState(entity, state) {
     states[entity] = { ...states[entity], state };
     card.hass = { ...hass, states: { ...states } };
@@ -1106,6 +1112,20 @@ async function assertSetupDrafts(browser) {
     assert.equal(await save.isEnabled(), false);
     assert.equal(await savedTitle(), 'Another administrator');
     assert.equal(await writes(), 0);
+
+    await title.fill('Saved during a Home Assistant remount');
+    await title.blur();
+    await page.evaluate(() => window.bayitTest.holdNextSetupSave());
+    await save.tap();
+    await setup.getByText('Saving dashboard…', { exact: true }).waitFor();
+    await page.waitForFunction(() => window.bayitTest.calls.some(call => call.type === 'lovelace/config/save'));
+    await page.evaluate(() => window.bayitTest.remountDashboardBeforeSaveResult());
+    assert.equal(new URL(page.url()).hash, '#panel/settings');
+    await page.evaluate(() => window.bayitTest.finishHeldSetupSave());
+    await page.waitForURL(url => url.hash === '');
+    await page.getByRole('heading', { name: 'Saved during a Home Assistant remount', exact: true }).waitFor();
+    assert.equal(await savedTitle(), 'Saved during a Home Assistant remount');
+    await open();
 
     await title.fill('Saved after close');
     await title.blur();

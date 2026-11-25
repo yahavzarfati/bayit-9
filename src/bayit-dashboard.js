@@ -1826,6 +1826,19 @@ export class BayitDashboard extends HTMLElement {
         void this.paintSetup();
       };
       save.onclick = async () => {
+        const view = this.ownerDocument.defaultView;
+        const initialUrl = view.location.href;
+        const route = page.routeHash && view.location.hash === page.routeHash ? page.routeHash : null;
+        const watch = new view.AbortController();
+        let stayedOnRoute = true;
+        if (route) {
+          const observeNavigation = event => {
+            if (event.type === 'popstate' || view.location.href !== initialUrl) stayedOnRoute = false;
+          };
+          for (const event of ['location-changed', 'hashchange', 'popstate']) {
+            view.addEventListener(event, observeNavigation, { signal: watch.signal });
+          }
+        }
         session.pendingSave = saveConfiguration(this._hass, session.base, session.draft);
         updateActions();
         status.textContent = this.t('setup_saving');
@@ -1834,14 +1847,22 @@ export class BayitDashboard extends HTMLElement {
           await session.pendingSave;
           saved = true;
           if (setupDrafts.get(key) === session) setupDrafts.delete(key);
-          if (this.panel !== page || !this.isConnected) return;
-          if (page.routeHash) this.popupHistory?.close(page.routeHash);
-          location.reload();
+          if (route) {
+            if (!stayedOnRoute || view.location.href !== initialUrl) return;
+            // Home Assistant can remount the dashboard when it broadcasts the saved configuration.
+            if (!this.popupHistory?.close(route)) {
+              const home = new URL(initialUrl);
+              home.hash = '';
+              view.history.replaceState(view.history.state, '', home);
+            }
+          } else if (this.panel !== page || !this.isConnected) return;
+          view.location.reload();
         } catch (error) {
           if (this.panel !== page) return;
           conflict = error.code === 'setup_conflict';
           status.textContent = conflict ? this.t('setup_draft_conflict') : this.configurationErrorText(error);
         } finally {
+          watch.abort();
           session.pendingSave = undefined;
           if (this.panel === page && !saved) updateActions();
         }
