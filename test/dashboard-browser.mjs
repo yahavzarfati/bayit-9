@@ -111,6 +111,15 @@ const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection'
       bayit_room_den: { name: 'Den', entities: ['light.demo_lamp'] },
     },
   }),
+  ...(query.has('shortcut-no-details') && {
+    show_unassigned: false, area_ids: ['studio', 'bayit_room_den'],
+    room_shortcuts: { studio: ['switch.demo_heater'] },
+    room_overrides: {
+      studio: { entities: ['switch.demo_heater'], panel_hidden_entities: ['switch.demo_heater'],
+        shortcut_no_details: ['switch.demo_heater'] },
+      bayit_room_den: { name: 'Den', entities: ['switch.demo_heater'] },
+    },
+  }),
   ...(query.has('room-panel-visibility') && {
     show_unassigned: false, area_ids: ['studio', 'bayit_room_den'],
     room_shortcuts: { studio: ['light.demo_lamp'] },
@@ -166,6 +175,10 @@ const hass = {
           resolve({});
         };
       });
+    }
+    if (query.has('shortcut-no-details') && request.domain === 'switch' && request.target?.entity_id === 'switch.demo_heater') {
+      states['switch.demo_heater'] = { ...states['switch.demo_heater'], state: request.service === 'turn_on' ? 'on' : 'off' };
+      card.hass = { ...hass, states: { ...states } };
     }
     if (request.domain === 'light') {
       if (rejectInlineLight) {
@@ -3911,6 +3924,62 @@ try {
       assert.equal(await namesPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain).length), 0);
       await namesPage.close();
       console.log(engine + ' 320: scoped room names, accessible blank captions and editor persistence');
+
+      const shortcutModePage = await newRoomConfigPage();
+      const shortcutModeUrl = base + '/fixture-home/home?configuration&shortcut-no-details';
+      await shortcutModePage.goto(shortcutModeUrl + '#device/studio/switch.demo_heater');
+      const switchDetails = shortcutModePage.getByRole('dialog', { name: 'Room heater', exact: true });
+      await switchDetails.waitFor();
+      await shortcutModePage.keyboard.press('Escape');
+      await switchDetails.waitFor({ state: 'hidden' });
+      const toggle = shortcutModePage.locator('.room[data-room="studio"] .quick-button[data-entity="switch.demo_heater"]');
+      const alternate = shortcutModePage.locator('.room[data-room="bayit_room_den"] .quick-button[data-entity="switch.demo_heater"]');
+      await toggle.waitFor();
+      assert.equal(await toggle.getAttribute('aria-haspopup'), null);
+      assert.equal(await toggle.getAttribute('aria-keyshortcuts'), null);
+      assert.equal(await alternate.getAttribute('aria-haspopup'), 'dialog');
+      await toggle.evaluate(async button => {
+        button.dispatchEvent(new PointerEvent('pointerdown', { button: 0, pointerId: 12, pointerType: 'touch', isPrimary: true }));
+        await new Promise(resolve => setTimeout(resolve, 530));
+        button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 12, pointerType: 'touch', isPrimary: true }));
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+      });
+      await toggle.press('Shift+Enter');
+      await toggle.press('Shift+Space');
+      assert.equal(await switchDetails.count(), 0);
+      const powerCalls = () => shortcutModePage.evaluate(() => window.bayitTest.calls.filter(request => request.domain === 'switch'));
+      assert.deepEqual(await powerCalls(), []);
+      await toggle.tap();
+      await shortcutModePage.waitForFunction(() => window.bayitTest.calls.some(request => request.domain === 'switch'));
+      assert.deepEqual(await powerCalls(), [{ type:'call_service', domain:'switch', service:'turn_on',
+        service_data:{}, target:{entity_id:'switch.demo_heater'} }]);
+      await alternate.press('Shift+Enter');
+      await switchDetails.waitFor();
+      assert.equal(new URL(shortcutModePage.url()).hash, '#device/bayit_room_den/switch.demo_heater');
+      await shortcutModePage.keyboard.press('Escape');
+      await switchDetails.waitFor({ state: 'hidden' });
+
+      assert.equal((await powerCalls()).length, 1);
+      const shortcutSetup = await openRoomEditor(shortcutModePage);
+      await shortcutSetup.getByText('Room shortcuts', { exact: true }).tap();
+      await shortcutSetup.locator('[data-shortcut-room]').selectOption('studio');
+      const opensDetails = shortcutSetup.getByLabel('Open details with a long press · Room heater', { exact: true });
+      assert.equal(await opensDetails.isChecked(), false);
+      await opensDetails.check();
+      await saveRoomConfig(shortcutSetup);
+      const savedShortcut = await shortcutModePage.evaluate(() => {
+        const { room_overrides, room_shortcuts } = JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy;
+        return { hidden: room_overrides.studio.panel_hidden_entities, suppressed: !!room_overrides.studio.shortcut_no_details,
+          roomShortcuts: room_shortcuts.studio };
+      });
+      assert.deepEqual(savedShortcut, { hidden: ['switch.demo_heater'], suppressed: false, roomShortcuts: ['switch.demo_heater'] });
+      const afterSave = await powerCalls();
+      await toggle.press('Shift+Enter');
+      await switchDetails.waitFor();
+      assert.equal(new URL(shortcutModePage.url()).hash, '#device/studio/switch.demo_heater');
+      assert.deepEqual(await powerCalls(), afterSave);
+      await shortcutModePage.close();
+      console.log(engine + ' 320: optional switch shortcut tap, suppressed hold and keyboard, preserved deep link and editor');
 
       const panelPage = await newRoomConfigPage();
       const panelUrl = base + '/fixture-home/home?configuration&room-panel-visibility';

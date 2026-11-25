@@ -38,6 +38,7 @@ export const TOOLBAR_ROLE_DOMAINS = new Map([
 ]);
 export const ROOM_PANEL_KINDS = new Map([['media_player', 'media'], ['vacuum', 'vacuum']]);
 const ROOM_ICON = /^mdi:[a-z0-9-]+$/;
+const SHORTCUT_DOMAINS = new Set(['light', 'switch', 'fan', 'cover', 'lock', 'climate', 'water_heater']);
 const CONTROL_DOMAINS = new Set(['light', 'switch', 'cover', 'climate', 'fan', 'lock', 'water_heater']);
 const SECURITY_CLASSES = new Set(['door', 'window', 'garage_door', 'opening']);
 const PROFILE_KINDS = new Set(['heater', 'boiler', 'climate']);
@@ -195,6 +196,18 @@ export function usesAutomaticRoomDevices(override, sections, custom) {
     (!Array.isArray(override.entities) && !sections?.length));
 }
 
+export function roomShortcutDevices(room) {
+  if (Array.isArray(room.shortcuts)) {
+    const byId = new Map(room.entities.map(device => [device.entity, device]));
+    return room.shortcuts.map(entity => byId.get(entity)).filter(Boolean);
+  }
+  return room.entities.filter(device => SHORTCUT_DOMAINS.has(domainOf(device.entity))).slice(0, MAX_ROOM_SHORTCUTS);
+}
+
+export function supportsShortcutWithoutDetails(device) {
+  return domainOf(device.entity) === 'switch' && !device.kind && device.role !== 'status';
+}
+
 function dashboardAreas(config, hass) {
   const areas = new Map(Object.entries(hass.areas ?? {}).map(([id, area]) => [
     area.area_id ?? id,
@@ -220,6 +233,7 @@ function dashboardAreas(config, hass) {
       sections,
       readOnly: new Set(idList(override.read_only_entities)),
       panelHidden: idList(override.panel_hidden_entities),
+      shortcutNoDetails: new Set(idList(override.shortcut_no_details)),
       inlineLights: new Set(idList(override.inline_light_entities)),
       lightingCount: idList(override.lighting_count_entities),
       shutdown: idList(override.turn_off_entities).filter(supportsRoomShutdown),
@@ -469,6 +483,11 @@ export function discoverRooms(config, hass, locale) {
     if (Array.isArray(shortcuts)) {
       const visible = new Set(entities.map(device => device.entity));
       room.shortcuts = idList(shortcuts).filter(entity => visible.has(entity)).slice(0, MAX_ROOM_SHORTCUTS);
+    }
+    if (area.shortcutNoDetails?.size) {
+      const excluded = roomShortcutDevices(room).filter(device =>
+        supportsShortcutWithoutDetails(device) && area.shortcutNoDetails.has(device.entity));
+      if (excluded.length) room.shortcut_no_details = excluded.map(device => device.entity);
     }
     return room;
   });

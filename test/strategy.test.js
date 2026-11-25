@@ -224,6 +224,32 @@ test('maps effect categories to visible controllable lights and preserves native
   assert.equal(effects[0].title, ' Nature ');
 });
 
+test('scopes the details opt-out to an active ordinary switch shortcut', () => {
+  const hass = home();
+  const washer = 'switch.demo_washer';
+  const extra = 'bayit_room_laundry';
+  const ordinary = 'switch.demo_ordinary';
+  const hidden = 'switch.demo_hidden';
+  hass.states[washer] = hass.states[ordinary] = hass.states[hidden] = { state: 'off', attributes: {} };
+  hass.entities[washer] = hass.entities[ordinary] = { area_id: 'studio' };
+  hass.entities[hidden] = { area_id: 'studio', disabled_by: 'user' };
+  const config = { area_ids: ['studio', extra], show_unassigned: false, room_shortcuts: { studio: [washer, 'light.demo_lamp', ordinary] },
+    room_overrides: {
+      studio: { entities: [washer, ordinary, hidden, 'light.demo_lamp'], read_only_entities: [ordinary],
+        panel_hidden_entities: [washer], shortcut_no_details: [washer, washer, hidden, ordinary, 'light.demo_lamp'] },
+      [extra]: { name: 'Laundry', entities: [washer] },
+    } };
+  const [studio, laundry] = discoverRooms(config, hass, 'en');
+  assert.deepEqual(studio.shortcut_no_details, [washer]);
+  assert.deepEqual(studio.shortcuts, [washer, 'light.demo_lamp', ordinary]);
+  assert.deepEqual(studio.panel_hidden_entities, [washer]);
+  assert.equal(laundry.shortcut_no_details, undefined);
+  config.room_shortcuts.studio = [];
+  assert.equal(discoverRooms(config, hass, 'en')[0].shortcut_no_details, undefined);
+  delete config.room_shortcuts.studio;
+  assert.deepEqual(discoverRooms(config, hass, 'en')[0].shortcut_no_details, [washer]);
+});
+
 test('discovers rooms via device and entity registries without exposing hidden or disabled entries', () => {
   const rooms = Object.fromEntries(discoverRooms({}, home(), 'en').map(room => [room.id, room]));
   assert.deepEqual(rooms.lounge.entities.map(entry => entry.entity), ['light.demo_lamp']);

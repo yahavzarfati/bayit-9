@@ -2,7 +2,8 @@ import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isVacuumProgramAction,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName,
-  overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME, toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
+  overviewSectionOptions, ROOM_PANEL_KINDS, roomShortcutDevices, STRATEGY_NAME, supportsShortcutWithoutDetails,
+  toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { createDeviceController, getDeviceModel, roomShutdownTargets, simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
@@ -54,7 +55,6 @@ const toolbarIcons = {
   media: 'mdi:play-box-multiple-outline', vacuum: 'mdi:robot-vacuum', calendar: 'mdi:calendar-month-outline', sensors: 'mdi:chart-line',
   devices: 'mdi:devices',
 };
-const shortcutDomains = new Set(['light', 'switch', 'fan', 'cover', 'lock', 'climate', 'water_heater']);
 const presenceIcons = ['mdi:home-off-outline', 'mdi:account', 'mdi:account-group'];
 const powerDomains = new Set(['light', 'switch', 'fan', 'climate', 'water_heater']);
 const roomSectionKinds = new Set(['lights', 'covers', 'climate', 'heating', 'sensors', 'devices', 'garage', 'weather', 'security', 'media', 'vacuum', 'laundry']);
@@ -295,6 +295,11 @@ export function normalizeDashboardConfig(config = {}) {
     }
     if (Array.isArray(room.shortcuts)) {
       parsed.shortcuts = [...new Set(room.shortcuts)].filter(entity => unique.has(entity)).slice(0, MAX_ROOM_SHORTCUTS);
+    }
+    if (Array.isArray(room.shortcut_no_details)) {
+      const excluded = new Set(room.shortcut_no_details);
+      parsed.shortcutNoDetails = new Set(roomShortcutDevices(parsed).filter(device =>
+        supportsShortcutWithoutDetails(device) && excluded.has(device.entity)).map(device => device.entity));
     }
     if (Array.isArray(room.sections)) {
       parsed.sections = room.sections.filter(section => roomSectionKinds.has(section?.kind)).map(section => ({
@@ -802,7 +807,7 @@ export class BayitDashboard extends HTMLElement {
     });
   }
 
-  quickAction(config, source, room) {
+  quickAction(config, source, room, { details = true } = {}) {
     const model = this.model(config);
     const { domain, state } = model;
     let action;
@@ -812,7 +817,7 @@ export class BayitDashboard extends HTMLElement {
     else if (powerDomains.has(domain) && !config.kind) action = state === 'off' ? 'turn_on' : 'turn_off';
     if (action && model.actions[action]) {
       this.requestAction(config, action, undefined, source, domain === 'lock');
-    } else this.openDeviceDetails(config, source, room);
+    } else if (details) this.openDeviceDetails(config, source, room);
   }
 
   openDeviceDetails(config, source, room) {
@@ -866,16 +871,12 @@ export class BayitDashboard extends HTMLElement {
       status.append(temperature.element, activity.element, ...appliances.map(item => item.badge.element), availability.element);
       const quick = make('div', 'quick');
       const shortcut = new Map();
-      const byId = new Map(room.entities.map(config => [config.entity, config]));
-      const chosen = room.shortcuts
-        ? room.shortcuts.map(entity => byId.get(entity))
-        : room.entities.filter(entry => shortcutDomains.has(domainFor(entry))).slice(0, MAX_ROOM_SHORTCUTS);
-      for (const config of chosen) {
+      for (const config of roomShortcutDevices(room)) {
         const el = button('quick-button', config.name || config.entity, config.icon || 'mdi:information-outline', true);
         el.dataset.entity = config.entity;
-        el.setAttribute('aria-haspopup', 'dialog');
-        el.onclick = () => this.quickAction(config, el, room);
-        bindDeviceDetails(el, () => this.openPanel('device', el, room, config.entity));
+        const details = !room.shortcutNoDetails?.has(config.entity);
+        el.onclick = () => this.quickAction(config, el, room, { details });
+        bindDeviceDetails(el, details ? () => this.openPanel('device', el, room, config.entity) : undefined);
         shortcut.set(config.entity, el);
         quick.append(el);
       }

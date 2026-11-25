@@ -39,6 +39,8 @@ In **Rooms**, open **Device display** and select a device. Clear **Name in this 
 
 Turn off **Show device in room panel** to hide the control from both manual sections and automatic grouping inside that room. The corresponding YAML `panel_hidden_entities` lists room member IDs. Use **Room shortcuts** to give a hidden control a button on Home. Existing device links can still open its details. Home Assistant permissions govern device access.
 
+In **Room shortcuts**, turn off **Open details with a long press** for an individual switch shortcut to keep the quick toggle and consume a long press without a command. The YAML field `shortcut_no_details` under that room’s `room_overrides` lists the selected switch shortcuts. This setting applies only to ordinary switch shortcuts and keeps existing device links available.
+
 Enable **Show brightness and temperature in this room** to add a light's supported sliders to its room tile. Adjustments apply when the slider is released. The same light keeps its default presentation in other rooms. The YAML field `inline_light_entities` lists the lights with inline controls.
 
 Use **Devices turned off by the room icon** to give the icon a quick room shutdown action. Pick the exact room members to turn off. The room name still opens the room. The YAML field `turn_off_entities` accepts room lights, switches, fans, climate devices, water heaters, and media players. A device receives the action while it is available and offers a standard direct turn-off command. The selection is independent from the room's lighting count.

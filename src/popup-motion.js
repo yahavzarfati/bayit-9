@@ -19,19 +19,21 @@ export function bindDeviceDetails(button, openDetails) {
     if (!held) return;
     clearTimeout(held.timer);
     held.listeners.abort();
-    if (held.opened) suppressClickUntil = performance.now() + 700;
+    if (held.handled) suppressClickUntil = performance.now() + 700;
     held = undefined;
   }
 
-  function showDetails() {
-    if (!held || held.opened || !button.isConnected || button.disabled) return;
-    held.opened = true;
+  function handleHold() {
+    if (!held || held.handled || !button.isConnected || button.disabled) return;
+    held.handled = true;
     suppressClickUntil = Infinity;
-    openDetails();
+    openDetails?.();
   }
 
-  button.setAttribute('aria-haspopup', 'dialog');
-  button.setAttribute('aria-keyshortcuts', 'Shift+Enter Shift+Space Shift+F10 ContextMenu');
+  if (openDetails) {
+    button.setAttribute('aria-haspopup', 'dialog');
+    button.setAttribute('aria-keyshortcuts', 'Shift+Enter Shift+Space Shift+F10 ContextMenu');
+  }
   button.addEventListener('pointerdown', event => {
     if (event.button !== 0 || event.isPrimary === false || button.disabled) return;
     finishPointer();
@@ -41,10 +43,10 @@ export function bindDeviceDetails(button, openDetails) {
     held = { id: event.pointerId, x: event.clientX, y: event.clientY, touch: event.pointerType === 'touch', listeners };
     held.timer = setTimeout(() => {
       if (!button.isConnected) finishPointer();
-      else showDetails();
+      else handleHold();
     }, HOLD_MS);
     doc.addEventListener('pointermove', move => {
-      if (held && move.pointerId === held.id && !held.opened &&
+      if (held && move.pointerId === held.id && !held.handled &&
           Math.hypot(move.clientX - held.x, move.clientY - held.y) > HOLD_SLOP) finishPointer();
     }, options);
     const release = end => { if (end.pointerId === held?.id) finishPointer(); };
@@ -54,9 +56,9 @@ export function bindDeviceDetails(button, openDetails) {
   });
   // Mobile browsers may start the callout before the hold timer has run.
   button.addEventListener('contextmenu', event => {
-    if (!held?.touch && !held?.opened) return;
+    if (!held?.touch && !held?.handled) return;
     event.preventDefault();
-    showDetails();
+    handleHold();
   });
   button.addEventListener('click', event => {
     const byPointer = event.detail > 0 || Boolean(event.pointerType);
@@ -70,7 +72,7 @@ export function bindDeviceDetails(button, openDetails) {
     event.preventDefault();
     event.stopPropagation();
     if (event.repeat) return;
-    // Opening the dialog moves focus, so release may arrive somewhere else.
+    // Suppress the paired key release even when dialog focus has moved.
     const key = event.code || event.key;
     const listeners = new AbortController();
     const options = { signal: listeners.signal, capture: true };
@@ -80,7 +82,7 @@ export function bindDeviceDetails(button, openDetails) {
       listeners.abort();
     }, options);
     view?.addEventListener('blur', () => listeners.abort(), options);
-    openDetails();
+    openDetails?.();
   });
 }
 

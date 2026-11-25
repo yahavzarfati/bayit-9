@@ -1,7 +1,8 @@
 import {
   BACKGROUNDS, classicRoomTitle, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
   normalizeClimatePresetShortcut, normalizeRoomControlName,
-  PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomPanelOptions, roomSections, selectableRoomEntities, selectedRoomIds, STRATEGY_NAME,
+  PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomPanelOptions, roomSections, roomShortcutDevices, selectableRoomEntities, selectedRoomIds,
+  STRATEGY_NAME, supportsShortcutWithoutDetails,
   usesAutomaticRoomDevices,
 } from './strategy-model.js';
 import { languages } from './bayit-dashboard-i18n.js';
@@ -67,6 +68,7 @@ const WORDS = {
     overviewHint: 'Choose devices for the overview button, such as a lock, people, a calendar or an energy sensor.',
     shortcuts: 'Room shortcuts', shortcutRoom: 'Room', automaticShortcuts: 'Choose shortcuts automatically',
     shortcut: 'Shortcut', shortcutHint: 'Pick up to six devices in display order.',
+    shortcutDetails: 'Long-press gesture', shortcutDetailsDevice: 'Open details with a long press · {name}',
     noShortcutRooms: 'Add a device to a visible room to set its shortcuts.',
     profiles: 'Boiler and heater controls', entity: 'Heating device', kind: 'Control profile',
     heater: 'Room heater', boiler: 'Water heater or boiler', displayName: 'Display name',
@@ -143,6 +145,7 @@ const WORDS = {
     overviewHint: 'בחרו מה יוצג במבט על הבית, למשל מנעול, אנשים, יומן או חיישן צריכת חשמל.',
     shortcuts: 'קיצורים בחדרים', shortcutRoom: 'חדר', automaticShortcuts: 'בחירת קיצורים אוטומטית',
     shortcut: 'קיצור', shortcutHint: 'אפשר לבחור עד שישה מכשירים לפי סדר התצוגה.',
+    shortcutDetails: 'פעולה בלחיצה ארוכה', shortcutDetailsDevice: 'פתיחת פרטי מכשיר בלחיצה ארוכה · {name}',
     noShortcutRooms: 'הוסיפו מכשיר לחדר שמוצג בדשבורד כדי לבחור קיצורים.',
     profiles: 'שליטה בדוד ובתנורים', entity: 'מכשיר חימום', kind: 'סוג בקר',
     heater: 'תנור חימום', boiler: 'דוד או מחמם מים', displayName: 'שם לתצוגה',
@@ -834,7 +837,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const change = (items, focusKey) => {
       const entities = items.map(item => item.id);
       const next = { ...override, entities };
-      for (const key of ['read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities', 'inline_light_entities']) {
+      for (const key of ['read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities', 'inline_light_entities', 'shortcut_no_details']) {
         if (!Array.isArray(next[key])) continue;
         next[key] = next[key].filter(id => entities.includes(id));
         if (!next[key].length) delete next[key];
@@ -1149,8 +1152,29 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const roomInput = select(rooms.map(item => [item.id, item.name]), room.id);
     roomInput.dataset.shortcutRoom = '';
     const list = node('div', { className: 'grid', hidden: true });
+    const details = node('fieldset', { className: 'stack' });
     let inputs = [];
     let fields;
+    const renderDetails = () => {
+      const selected = list.hidden ? undefined : inputs.map(input => input.value).filter(Boolean);
+      const devices = roomShortcutDevices({ ...room, shortcuts: selected }).filter(supportsShortcutWithoutDetails);
+      details.hidden = !devices.length;
+      const excluded = new Set(configuredIds(this.#roomOverride(room.id).shortcut_no_details));
+      details.replaceChildren(node('legend', { textContent: words.shortcutDetails }),
+        ...devices.map(device => checkbox(
+          words.shortcutDetailsDevice.replace('{name}', device.name || device.entity),
+          !excluded.has(device.entity),
+          enabled => {
+            const next = { ...this.#roomOverride(room.id) };
+            const ignored = new Set(configuredIds(next.shortcut_no_details));
+            if (enabled) ignored.delete(device.entity);
+            else ignored.add(device.entity);
+            if (ignored.size) next.shortcut_no_details = [...ignored];
+            else delete next.shortcut_no_details;
+            this.#commit({ room_overrides: { ...this.#config.room_overrides, [room.id]: next } });
+          },
+        )));
+    };
     const refresh = () => {
       const selected = new Set(inputs.map(input => input.value).filter(Boolean));
       for (const input of inputs) {
@@ -1163,6 +1187,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       this.#commit({ room_shortcuts: {
         ...this.#config.room_shortcuts, [room.id]: inputs.map(input => input.value).filter(Boolean),
       } });
+      renderDetails();
     };
     const showManual = () => {
       if (!fields) {
@@ -1180,6 +1205,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       list.hidden = false;
     };
     if (chosen != null) showManual();
+    renderDetails();
     roomInput.addEventListener('change', () => {
       this.#shortcutRoom = roomInput.value;
       this.render();
@@ -1192,12 +1218,13 @@ export class Bayit9StrategyEditor extends HTMLElement {
         const next = { ...this.#config.room_shortcuts };
         delete next[room.id];
         this.#commit({ room_shortcuts: next });
+        renderDetails();
       } else {
         showManual();
         save();
       }
     });
-    return [node('p', { textContent: words.shortcutHint }), field(words.shortcutRoom, roomInput), automatic, list];
+    return [node('p', { textContent: words.shortcutHint }), field(words.shortcutRoom, roomInput), automatic, list, details];
   }
 
   #profilePanel(words) {
