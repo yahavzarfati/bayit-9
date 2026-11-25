@@ -67,6 +67,20 @@ test('canonical routes round-trip and reject malformed or untrusted form fragmen
   assert.equal(popupRouteFragment({ kind: 'room', room: 'Studio\n' }), '');
 });
 
+test('a device schedule address has one typed pane and never carries an edit or draft target', () => {
+  const route = {kind:'device',room:'Studio_1',entity:'switch.boiler',detail:'schedule'};
+  const fragment = '#device/Studio_1/switch.boiler/schedule';
+  assert.equal(popupRouteFragment(route),fragment);
+  assert.deepEqual(parsePopupRoute(fragment),route);
+  const config = normalizePopupAliases({'#former-form':fragment});
+  const aliases = new Map(Object.entries(config));
+  assert.deepEqual(resolvePopupRoute('#former-form',route=>route.detail === 'schedule',aliases),route);
+  assert.equal(resolvePopupRoute('#former-form',()=>false,aliases),null);
+  assert.equal(popupRouteFragment({...route,detail:'edit'}),'');
+  assert.equal(parsePopupRoute(fragment + '/edit'),null);
+  assert.equal(parsePopupRoute(fragment + '?schedule_id=draft'),null);
+});
+
 test('aliases cannot bypass admission, shadow valid native routes, or chain to other aliases', () => {
   const configured = new Map([...aliases, [roomHash, panelHash], ['#chain', '#legacy-light']]);
   const valid = route => [deviceHash, roomHash, panelHash].includes(popupRouteFragment(route));

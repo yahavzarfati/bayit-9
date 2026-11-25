@@ -1,3 +1,5 @@
+import { isReadOnlyRole } from './device-control.mjs';
+
 export const SCHEDULE_DAYS = Object.freeze(['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']);
 const TIMER_SERVICE = 'simple_timer.start_timer';
 const ENTITY = /^[a-z_]+\.[a-z0-9_]+$/;
@@ -41,6 +43,14 @@ function boilerBinding(config, hass) {
   const entryId = state?.attributes?.entry_id;
   return available(state) && typeof entryId === 'string' && SCHEDULE_ID.test(entryId)
     && state.attributes.switch_entity_id === config.entity ? { timer, entryId } : null;
+}
+
+export function canOpenBoilerSchedule(config, hass, hidden) {
+  if (!config || isReadOnlyRole(config.role) || typeof hass?.callWS !== 'function' ||
+      !(config.schedule || hass.services?.scheduler)) return false;
+  const binding = boilerBinding(config, hass);
+  return Boolean(binding && [config.entity, binding.timer].every(entity =>
+    hass.states?.[entity] && !hidden?.has(entity) && visible(hass, entity)));
 }
 
 const guardedScheduleLimits = Object.freeze({ min: 15, max: 300, step: 15 });

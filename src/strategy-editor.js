@@ -2240,7 +2240,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
         const choices = groups.flatMap(([kind, label]) => {
           const entries = destinations.filter(item => item.kind === kind).map(item => {
             const name = item.kind === 'panel' ? item.name || languages[language][item.panelKind] : item.name;
-            return option(item.fragment, item.roomName ? name + ' · ' + item.roomName : name);
+            const caption = item.roomName ? name + ' · ' + item.roomName : name;
+            return option(item.fragment, item.detail === 'schedule' ? languages[language].boiler_schedule + ' · ' + caption : caption);
           });
           return entries.length ? [node('optgroup', { label }, entries)] : [];
         });

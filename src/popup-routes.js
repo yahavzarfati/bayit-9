@@ -2,7 +2,7 @@ import { MORE_INFO_DIALOG, sameMoreInfoPage } from './native-more-info.js';
 
 const fragmentPattern = /^#[a-z0-9_.\-/]{1,511}$/i;
 const roomPattern = /^#room-([a-z0-9][a-z0-9_-]*)$/i;
-const devicePattern = /^#device\/([a-zA-Z0-9][a-zA-Z0-9_-]*)\/([a-z0-9_]+\.[a-z0-9_]+)$/;
+const devicePattern = /^#device\/([a-zA-Z0-9][a-zA-Z0-9_-]*)\/([a-z0-9_]+\.[a-z0-9_]+)(?:\/(schedule))?$/;
 const panelPattern = /^#panel\/([a-z0-9][a-z0-9_-]*)$/i;
 const navigationEvents = ['location-changed', 'hashchange', 'popstate'];
 const roomReturnTimeout = 350;
@@ -17,7 +17,7 @@ export function parsePopupRoute(fragment) {
   const room = roomPattern.exec(fragment);
   if (room) return { kind: 'room', room: room[1] };
   const device = devicePattern.exec(fragment);
-  if (device) return { kind: 'device', room: device[1], entity: device[2] };
+  if (device) return { kind: 'device', room: device[1], entity: device[2], ...(device[3] && { detail:device[3] }) };
   const panel = panelPattern.exec(fragment);
   if (panel) return { kind: 'panel', panel: panel[1] };
   return null;
@@ -29,9 +29,11 @@ export function popupRouteFragment(route) {
     return roomPattern.test(hash) && isPopupFragment(hash) ? hash : '';
   }
   if (route?.kind === 'device' && typeof route.room === 'string' && typeof route.entity === 'string') {
-    const hash = '#device/' + route.room + '/' + route.entity;
+    const detail = route.detail;
+    if (detail !== undefined && detail !== 'schedule') return '';
+    const hash = '#device/' + route.room + '/' + route.entity + (detail ? '/' + detail : '');
     const parsed = parsePopupRoute(hash);
-    return parsed?.room === route.room && parsed.entity === route.entity ? hash : '';
+    return parsed?.room === route.room && parsed.entity === route.entity && parsed.detail === detail ? hash : '';
   }
   if (route?.kind === 'panel' && typeof route.panel === 'string' && route.panel) {
     const hash = '#panel/' + route.panel;

@@ -261,6 +261,27 @@ test('room compact devices are limited to selected visible writable locks and me
   assert.ok(rooms[1].entities.every(item=>item.room_device_compact === undefined));
 });
 
+test('popup destination picker includes only accessible linked boiler schedules', () => {
+  const hass = home();
+  const entity = 'switch.fixture_boiler';
+  const timer = 'sensor.fixture_runtime';
+  const schedulePath = '#device/studio/' + entity + '/schedule';
+  hass.states[entity] = {state:'off',attributes:{}};
+  hass.states[timer] = {state:'0',attributes:{switch_entity_id:entity,entry_id:'fixture-runtime',timer_state:'idle'}};
+  hass.services = {scheduler:{add:{}}};
+  hass.callWS = () => Promise.resolve([]);
+  const config = {area_ids:['studio','lounge'],room_overrides:{
+    studio:{entities:[entity]}, lounge:{entities:[entity],read_only_entities:[entity]},
+  },profiles:[{entity,kind:'boiler',timed:{simple_timer_entity:timer}}]};
+  const options = () => popupAliasDestinations(config,hass).filter(item=>item.detail === 'schedule').map(item=>item.fragment);
+  assert.deepEqual(options(),[schedulePath]);
+  hass.states[timer].attributes.switch_entity_id = 'switch.fixture_wrong';
+  assert.deepEqual(options(),[]);
+  hass.states[timer].attributes.switch_entity_id = entity;
+  hass.entities[timer] = {hidden:true};
+  assert.deepEqual(options(),[]);
+});
+
 test('appliance tile selection keeps read-only switches and excludes a specialized boiler and hidden devices', () => {
   const hass = home();
   const oven = 'switch.fixture_oven';

@@ -27,6 +27,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
         entry_id: 'fixture-runtime', switch_entity_id: boiler.entity, timer_state: 'idle', device_active: false,
       } },
     };
+    if (params.has('wrong-runtime-target')) states['sensor.fixture_runtime'].attributes.switch_entity_id = 'switch.another';
     const names = ['Morning', 'Evening'];
     if (guardedSchedule) names.push(...Array.from({ length: 10 }, (_, index) => 'Fixture schedule ' + index));
     const schedules = names.map((name, index) => ({
@@ -43,7 +44,9 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     let pauseScheduleRead = false;
     let releaseScheduleRead;
     const card = document.createElement('bayit-dashboard');
-    card.setConfig({ locale, page: params.has('routed'), rooms: [
+    card.setConfig({ locale, page: params.has('routed'),
+      ...(params.has('hide-runtime') && {hidden_entities:['sensor.fixture_runtime']}),
+      popup_aliases:{ '#former-boiler-form':'#device/bath/switch.fixture_boiler/schedule' }, rooms: [
       { id: 'kitchen', name: 'Kitchen', entities: [...sensors, boiler], shortcuts: [] },
       { id: 'bath', name: 'Bath', entities: [boiler], shortcuts: [boiler.entity] },
       { id: 'monitor', name: 'Monitor', entities: [{ ...boiler, role: 'status' }], shortcuts: [boiler.entity] },
@@ -60,7 +63,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
       user: { is_admin: true }, states, services,
       callWS(request) {
         requests.push(request.type);
-        if (params.has('stacked') && request.type === 'scheduler') {
+        if ((params.has('stacked') || params.has('schedule-link')) && request.type === 'scheduler') {
           if (!pauseScheduleRead) return Promise.resolve(schedules);
           pauseScheduleRead = false;
           return new Promise(resolve => { releaseScheduleRead = () => resolve(schedules); });
@@ -147,6 +150,77 @@ const server = createServer((request, response) => {
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 
+async function assertBoilerScheduleLinks(browser, locale) {
+  const page = await browser.newPage({viewport:{width:320,height:680},hasTouch:true,reducedMotion:'reduce'});
+  page.setDefaultTimeout(8000);
+  const he = locale === 'he';
+  const base = 'http://127.0.0.1:' + server.address().port + '?compact&routed&schedule-link&locale=' + locale;
+  const stacked = base + '&stacked&guarded-schedule';
+  const regular = '#device/bath/switch.fixture_boiler';
+  const panel = page.getByRole('dialog',{name:'Fixture boiler',exact:true});
+  const schedule = panel.getByRole('button',{name:he ? 'תזמון' : 'Schedule',exact:true});
+  const history = panel.getByRole('button',{name:he ? 'היסטוריית שימוש' : 'Usage history',exact:true});
+  const morning = panel.locator('.schedule-list').getByText('Morning',{exact:true});
+  const noWrite = async () =>
+    assert.equal(await page.evaluate(()=>window.fixture.requests.includes('call_service')),false);
+  try {
+    await page.goto(stacked + regular);
+    await history.tap();
+    await panel.locator('.boiler-history-host').waitFor();
+    assert.equal(await history.getAttribute('aria-pressed'),'true');
+
+    await page.goto(stacked + '#former-boiler-form');
+    await morning.waitFor();
+    assert.equal(await schedule.getAttribute('aria-pressed'),'true');
+    assert.equal(new URL(page.url()).hash,'#former-boiler-form');
+    const form = panel.locator('.schedule-form');
+    assert.equal(await form.isVisible(),false);
+    await noWrite();
+
+    await panel.getByRole('button',{name:he ? 'הוספת תזמון' : 'Add schedule',exact:true}).tap();
+    await form.waitFor();
+    await form.getByRole('button',{name:he ? 'ביטול' : 'Cancel',exact:true}).tap();
+    await form.waitFor({state:'hidden'});
+    await morning.waitFor();
+    assert.equal(new URL(page.url()).hash,'#former-boiler-form');
+    await noWrite();
+
+    await page.goto(stacked + regular);
+    await panel.locator('.boiler-history-host').waitFor();
+    assert.equal(await history.getAttribute('aria-pressed'),'true');
+    await page.goto(stacked + regular + '/schedule');
+    await morning.waitFor();
+    await page.evaluate(()=>history.back());
+    await panel.locator('.boiler-history-host').waitFor();
+    await noWrite();
+
+    await page.goto(base + regular + '/schedule');
+    await morning.waitFor();
+    assert.equal(await schedule.getAttribute('aria-pressed'),'true');
+    await panel.locator('[data-role=close]').tap();
+    await panel.waitFor({state:'hidden'});
+    assert.equal(new URL(page.url()).hash,'');
+    await noWrite();
+
+    for (const [url, fragment] of [
+      [base + '&without-scheduler',regular + '/schedule'],
+      [base + '&wrong-runtime-target',regular + '/schedule'],
+      [base + '&hide-runtime',regular + '/schedule'],
+      [base,'#device/monitor/switch.fixture_boiler/schedule'],
+      [base,'#device/kitchen/sensor.fixture_0/schedule'],
+      [base,'#device/unknown/switch.fixture_boiler/schedule'],
+    ]) {
+      await page.goto(url + fragment);
+      await page.getByRole('button',{name:'Bath',exact:true}).waitFor();
+      assert.equal(await page.getByRole('dialog').count(),0);
+      assert.equal(await page.evaluate(()=>window.fixture.requests.includes('scheduler')),false);
+      await noWrite();
+    }
+  } finally {
+    await page.close();
+  }
+}
+
 try {
   for (const [launcher, locale] of [[chromium, 'en'], [webkit, 'he']]) {
     const browser = await launcher.launch();
@@ -180,6 +254,7 @@ try {
       await reopenedBoiler.waitFor();
       await reopenedBoiler.locator('[data-role=back]').waitFor({ state: 'hidden' });
       await routed.close();
+      await assertBoilerScheduleLinks(browser, locale);
 
       const page = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true });
       const errors = [];

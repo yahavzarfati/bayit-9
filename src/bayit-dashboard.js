@@ -29,7 +29,7 @@ import { createWallpaperController, createWallpaperGallery, personalWallpaperId,
 import { normalizeSharedWallpapers } from './shared-wallpapers.js';
 import { createPageChrome, homePreferencePaths } from './page-chrome.js';
 import { openBoilerHistory, boilerHistoryStyles } from './boiler-history.js';
-import { createBoilerSchedulePanel, isBoilerScheduleProfile } from './boiler-schedule.js';
+import { canOpenBoilerSchedule, createBoilerSchedulePanel, isBoilerScheduleProfile } from './boiler-schedule.js';
 
 export const backgrounds = Object.freeze(Object.keys(wallpaperChoices));
 const options = { background: backgrounds, shape: ['soft', 'circle', 'square'], layout: ['classic', 'header'] };
@@ -685,7 +685,9 @@ export class BayitDashboard extends HTMLElement {
     return resolvePopupRoute(hash, route => {
       if (route.kind === 'panel') return Boolean(this.popupToolbar(route.panel));
       const room = this.roomViews.get(route.room)?.room;
-      return Boolean(room && (route.kind === 'room' || room.entities.some(device => device.entity === route.entity)));
+      if (route.kind === 'room') return !!room;
+      const device = room?.entities.find(item => item.entity === route.entity);
+      return !!device && (!route.detail || canOpenBoilerSchedule(device, this._hass, this.config.hiddenEntities));
     }, this.config.popupAliases);
   }
 
@@ -715,7 +717,7 @@ export class BayitDashboard extends HTMLElement {
     } else {
       const room = this.roomViews.get(route.room)?.room;
       if (reason === 'room-return') this.restoreRoomFromPanel(room, source, { hash });
-      else this.openPanel(route.kind, null, room, route.entity, undefined, undefined, { hash });
+      else this.openPanel(route.kind, null, room, route.entity, undefined, undefined, { hash, detail:route.detail });
     }
   }
 
@@ -1468,7 +1470,7 @@ export class BayitDashboard extends HTMLElement {
     const returnTo = fromRoomDetail ? { room, entity: selected.entity } : fromLinkedRoom ? returnFromRoom : undefined;
     this.popupScroll.stop();
     const scrollRoute = type === 'room' ? { kind: 'room', room: room.id }
-      : boilerControls && this.config.page ? { kind: 'device', room: room.id, entity } : null;
+      : boilerControls && this.config.page ? { kind: 'device', room: room.id, entity, detail:navigation.detail } : null;
     const panel = { type, room, returnTo, roomOrigin: type === 'room' && Boolean(source),
       scrollHash: popupRouteFragment(scrollRoute), routeHash: navigation.hash ?? this.panel?.routeHash };
     this.panel = panel;
@@ -1492,7 +1494,7 @@ export class BayitDashboard extends HTMLElement {
     if (selected) {
       const titleInDialog = ['light', 'climate'].includes(domainFor(selected)) || ['heater', 'boiler'].includes(selected.kind);
       this.buildDevices([selected], undefined, { titleInDialog, showRoomPreset: !room.panelHidden?.has(entity) });
-      if (boilerControls) this.buildBoilerView(selected);
+      if (boilerControls) this.buildBoilerView(selected, navigation.detail);
     }
     if (type === 'overview') {
       if (toolbar?.sections) this.openToolbarPanel('overview', toolbar);
@@ -1874,7 +1876,7 @@ export class BayitDashboard extends HTMLElement {
     });
   }
 
-  buildBoilerView(config) {
+  buildBoilerView(config, detail) {
     const content = this.nodes.content;
     const controls = make('div', 'boiler-pane');
     controls.append(...content.childNodes);
@@ -1956,7 +1958,9 @@ export class BayitDashboard extends HTMLElement {
     if (stacked || compactNavigation) content.append(controls, tabs, ...secondaryPanes);
     else content.append(tabs, controls, ...secondaryPanes);
     this.boilerView = {update:hass=>panel?.update(hass), dispose:()=>panel?.dispose()};
-    if (stacked) {
+    const linkedPane = detail === 'schedule' && secondary.find(item => item.label === 'boiler_schedule');
+    if (linkedPane) activate(linkedPane);
+    else if (stacked) {
       let saved;
       try { saved = localStorage.getItem(detailPreference); } catch {}
       activate(secondary.find(item => item.label === saved) ?? secondary[0]);

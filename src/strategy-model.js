@@ -8,6 +8,7 @@ import { wallpaperChoices } from './wallpapers.js';
 import { normalizeSharedWallpapers } from './shared-wallpapers.js';
 import { normalizeLightEffectFavoriteLights, normalizeLightEffectGroups } from './light-effects.js';
 import { normalizePopupAliases, popupRouteFragment } from './popup-routes.js';
+import { canOpenBoilerSchedule } from './boiler-schedule.js';
 import { calendarAccent, normalizeCalendarAgenda, supportsDailyForecast } from './calendar-agenda.js';
 
 export const CARD_TYPE = 'custom:bayit-dashboard';
@@ -1053,10 +1054,14 @@ export function settingsScreenEntries(config) {
 
 export function popupAliasDestinations(config, hass = {}) {
   const card = generateDashboard(config, hass).views[0].cards[0];
+  const hidden = new Set(card.hidden_entities ?? []);
   const roomLinks = card.rooms.flatMap(room => [
     { kind:'room', room:room.id, name:room.name },
-    ...room.entities.map(item => ({ kind:'device', room:room.id, entity:item.entity,
-      name:item.name || item.entity, roomName:room.name })),
+    ...room.entities.flatMap(item => {
+      const device = { kind:'device', room:room.id, entity:item.entity,
+        name:item.name || item.entity, roomName:room.name };
+      return canOpenBoilerSchedule(item, hass, hidden) ? [device, { ...device, detail:'schedule' }] : [device];
+    }),
   ]);
   const bar = card.toolbar?.filter(item => !item.placement) ?? automaticToolbarKinds(card.context)
     .filter(kind => ['activity','settings'].includes(kind) ||
