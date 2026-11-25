@@ -1,5 +1,6 @@
 import {
-  BACKGROUNDS, classicRoomTitle, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
+  BACKGROUNDS, classicRoomTitle, CUSTOM_ROOM_PREFIX, dashboardRoomMemberships, dashboardRoomOptions, discoverRooms,
+  languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
   normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities, normalizeShortcutDetailRoutes,
   normalizeUnreportedSwingMode,
   PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomPanelOptions, roomSections, roomShortcutDevices, selectableRoomEntities, selectedRoomIds,
@@ -903,20 +904,20 @@ export class Bayit9StrategyEditor extends HTMLElement {
       placement.textContent = '';
       const id = picker.input.value;
       if (!id) return;
-      const contains = candidate => candidate.entities.some(device => device.entity === id);
-      const before = discoverRooms(this.#config, this.#hass, language).filter(candidate => candidate.id !== room.id && contains(candidate));
-      if (!before.length) return;
+      const elsewhere = candidate => candidate.id !== room.id && candidate.entities.includes(id);
+      const before = dashboardRoomMemberships(this.#config, this.#hass, language).find(elsewhere);
+      if (!before) return;
       // Preview the same draft edit the Add button will make.
       const roomOverrides = { ...this.#config.room_overrides, [room.id]: addition(id) };
-      const after = discoverRooms({ ...this.#config, room_overrides: roomOverrides }, this.#hass, language);
-      const others = after.filter(candidate => candidate.id !== room.id && contains(candidate));
+      const after = dashboardRoomMemberships({ ...this.#config, room_overrides: roomOverrides }, this.#hass, language);
+      if (!after.some(candidate => candidate.id === room.id && candidate.entities.includes(id))) return;
+      const others = after.filter(elsewhere);
       if (others.length) {
         const names = new Intl.ListFormat(language).format(others.map(candidate => candidate.name));
         placement.textContent = words.roomDeviceKeep.replace('{rooms}', () => names);
       } else {
-        const [source] = before;
-        const move = words.roomDeviceMove.replace('{room}', () => source.name);
-        placement.textContent = after.some(candidate => candidate.id === source.id) ? move : move + ' ' + words.roomDeviceEmpty;
+        const move = words.roomDeviceMove.replace('{room}', () => before.name);
+        placement.textContent = after.some(candidate => candidate.id === before.id) ? move : move + ' ' + words.roomDeviceEmpty;
       }
     });
     const filter = node('input', { type: 'search', value: this.#roomDeviceQuery });

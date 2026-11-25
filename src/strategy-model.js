@@ -418,12 +418,7 @@ export function selectedRoomIds(config) {
   return ids.length || config.room_selection === 'manual' ? ids : null;
 }
 
-export function discoverRooms(config, hass, locale) {
-  const areas = dashboardAreas(config, hass);
-  const panelKinds = new Map([...areas.values()].some(area => Object.keys(area.panelLinks ?? {}).length)
-    ? roomPanelOptions(config, hass).map(panel => [panel.id, panel.kind]) : []);
-  const detailPanels = [...areas.values()].some(area => area.shortcutDetailRoutes)
-    ? shortcutPanelOptions(config) : [];
+function groupRoomDevices(config, hass, areas) {
   const unassigned = pickUnassignedId(areas);
   const selection = selectedRoomIds(config);
   const explicitOrder = new Map((selection ?? []).map((id, index) => [id, index]));
@@ -442,13 +437,12 @@ export function discoverRooms(config, hass, locale) {
   const grouped = new Map();
   const discoverableDomains = config.discovery_mode === 'controls' ? CONTROL_DOMAINS : DEFAULT_RANK;
   const visible = entity => isVisibleEntity(entity, states, registry, hidden);
-  const present = entity => presentEntity(entity, states[entity], registry?.[entity], profiles.get(entity));
 
   const manuallyPlaced = new Set();
   for (const [id, room] of areas) {
     if (!isSelected(id) || (!room.entityIds && config.room_selection !== 'manual')) continue;
     const ids = (room.entityIds ?? []).filter(visible);
-    grouped.set(id, ids.map(present));
+    grouped.set(id, ids);
     for (const entity of ids) manuallyPlaced.add(entity);
   }
 
@@ -466,9 +460,26 @@ export function discoverRooms(config, hass, locale) {
     const areaId = area && !area.custom ? assigned : unassigned;
     if (areaId === unassigned ? config.show_unassigned === false : !isSelected(areaId) || area.entityIds) continue;
     if (!grouped.has(areaId)) grouped.set(areaId, []);
-    grouped.get(areaId).push(present(entity));
+    grouped.get(areaId).push(entity);
   }
 
+  return { grouped, unassigned, explicitOrder, visible, profiles };
+}
+
+export function dashboardRoomMemberships(config, hass, locale) {
+  const areas = dashboardAreas(config, hass);
+  const { grouped } = groupRoomDevices(config, hass, areas);
+  return Array.from(grouped, ([id, entities]) => ({ id, entities, name: areas.get(id)?.name ?? labels[locale].unassigned }));
+}
+
+export function discoverRooms(config, hass, locale) {
+  const areas = dashboardAreas(config, hass);
+  const panelKinds = new Map([...areas.values()].some(area => Object.keys(area.panelLinks ?? {}).length)
+    ? roomPanelOptions(config, hass).map(panel => [panel.id, panel.kind]) : []);
+  const detailPanels = [...areas.values()].some(area => area.shortcutDetailRoutes)
+    ? shortcutPanelOptions(config) : [];
+  const { grouped, unassigned, explicitOrder, visible, profiles } = groupRoomDevices(config, hass, areas);
+  const present = entity => presentEntity(entity, hass.states[entity], hass.entities?.[entity], profiles.get(entity));
   const roomFor = id => areas.get(id) ?? { name: labels[locale].unassigned, icon: 'mdi:map-marker-outline' };
   const roomIds = [...grouped.keys()].sort((a, b) => {
     if (a === unassigned || b === unassigned) return a === unassigned ? 1 : -1;
@@ -478,7 +489,7 @@ export function discoverRooms(config, hass, locale) {
 
   return roomIds.map(id => {
     const area = roomFor(id);
-    const entities = grouped.get(id);
+    const entities = grouped.get(id).map(present);
     if (!area.entityIds) {
       entities.sort((a, b) => {
         const rank = (DEFAULT_RANK.get(domainOf(a.entity)) ?? 100) - (DEFAULT_RANK.get(domainOf(b.entity)) ?? 100);
