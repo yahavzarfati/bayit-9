@@ -55,7 +55,7 @@ export function climateOptionLabel(action, value, options, t) {
 
 export function buildPanelControls(model, {
   make, button, icon, label, t, request, compactTimer = false, compactClimateControls = false,
-  timerPreferenceKey, buildClimateDetail,
+  timerPreferenceKey, buildClimateDetail, targetTemperatureInfo,
   historyFor, historyInfo, usageInfo, canShowUsage, canResetUsage, resetOptIn, unreportedSwingMode,
 }) {
   const used = new Set();
@@ -80,8 +80,16 @@ export function buildPanelControls(model, {
       group.setAttribute('aria-label', t('set_temperature'));
       const value = make('output', 'target-value');
       const caption = make('span', 'target-caption', t('target_short'));
-      const reading = make('div', 'target-reading');
+      const hasTargetDetails = compactClimateControls && targetTemperatureInfo;
+      const reading = hasTargetDetails ? button('target-reading') : make('div', 'target-reading');
       reading.append(caption, value);
+      if (hasTargetDetails) {
+        const open = () => targetTemperatureInfo(reading);
+        bindDeviceDetails(reading, open);
+        reading.setAttribute('aria-description', t('climate_target_hold'));
+        // Keep the single-tap affordance on the two temperature adjustment buttons.
+        reading.onclick = event => { if (!event.pointerType && event.detail === 0) open(); };
+      }
       for (const [direction, glyph, title] of [[-1, 'mdi:minus', 'temperature_down'], [1, 'mdi:plus', 'temperature_up']]) {
         const action = button('step-control', t(title), glyph, true);
         action.dataset.action = 'set_temperature';
@@ -98,6 +106,10 @@ export function buildPanelControls(model, {
       updates.push((current, pending) => {
         const shown = pending?.id === 'set_temperature' ? pending.value : current.attributes.temperature;
         value.textContent = Number.isFinite(shown) ? shown + '°' : '—';
+        if (hasTargetDetails) {
+          reading.disabled = !current.actions.more_info;
+          label(reading, t('set_temperature') + ' · ' + value.textContent + ' · ' + t('more_info'));
+        }
       });
       row.append(group);
     }
@@ -364,6 +376,10 @@ export const panelControlStyles = `
     border: 1px solid var(--soft-line); border-radius: 10px; background: var(--control);
   }
   .target-reading { text-align: center; line-height: 1.08; }
+  .temperature-stepper > button.target-reading {
+    display: grid; align-content: center; align-self: stretch; min-height: 44px;
+    padding: 0; border: 0; background: transparent; color: inherit;
+  }
   .target-caption { display: block; color: var(--secondary); font-size: 10px; font-weight: 730; }
   .target-value { display: block; font-size: 17px; font-weight: 760; direction: ltr; }
   .step-control { min-width: 30px; min-height: 44px; border: 0; background: transparent; padding: 0; }

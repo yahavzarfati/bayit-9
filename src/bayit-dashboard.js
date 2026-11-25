@@ -2467,7 +2467,8 @@ export class BayitDashboard extends HTMLElement {
       }
       view.item.setAttribute('aria-busy', String(!!pending));
       for (const control of view.group.querySelectorAll('button,input,select')) {
-        if (control.dataset.lightMode || control.hasAttribute('data-room-mute-placeholder')) continue;
+        if (control.dataset.lightMode || control.hasAttribute('data-room-mute-placeholder') ||
+            control.classList.contains('target-reading')) continue;
         const id = control.dataset.action;
         control.disabled = !this.canRequest(view.config.entity, id) || (view.compactCover && !allowsCoverRailAction(model, id));
       }
@@ -2757,6 +2758,14 @@ export class BayitDashboard extends HTMLElement {
       timerPreferenceKey,
       compactClimateControls: view.compactClimateControls,
       unreportedSwingMode: view.config.unreported_swing_mode,
+      targetTemperatureInfo: source => {
+        const { states = {}, entities } = this._hass ?? {};
+        const modal = this.nodes.modal;
+        if (this.deviceViews.has(view) && modal.open && !modal.hasAttribute('data-closing') &&
+            modal.contains(source) && isVisibleEntity(view.config.entity, states, entities, this.config.hiddenEntities)) {
+          this.moreInfo(view.config, source);
+        }
+      },
       historyFor: current => this.timerHistoryEntity(view.config, current),
       historyInfo: (entity, source) => {
         if (source.isConnected && this.nodes.modal.open && !this.nodes.modal.hasAttribute('data-closing') &&

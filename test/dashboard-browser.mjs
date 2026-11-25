@@ -6609,6 +6609,64 @@ async function assertStandaloneTimedClimate(browser) {
   }
 }
 
+async function assertClimateTargetNativeDetails(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({ viewport:{width:391,height:844}, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const entity = 'climate.demo_air';
+    const url = base + '/fixture-home/home?device-panel&preset-shortcut&climate-power-test&room-climate-power&climate-labels=positioned' +
+      '&native-more-info=modern&native-focus-anchor&compact-climate-controls&locale=' + locale;
+    const calls = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service'));
+    const infoCalls = () => page.evaluate(() => window.bayitTest.moreInfoCalls);
+    const native = page.getByRole('dialog',{name:'Native entity details',exact:true});
+    const pathname = '/fixture-home/home';
+    try {
+      for (const [surface, hash, name] of [
+        ['device','#device/studio/' + entity,'Studio air conditioner'],
+        ['room','#room-studio','Studio'],
+      ]) {
+        await page.goto(url + '&surface=' + surface + hash);
+        const dialog = page.getByRole('dialog',{name,exact:true});
+        const reading = dialog.locator('button.target-reading');
+        await reading.waitFor();
+        assert.match(await reading.getAttribute('aria-label'),locale === 'he' ? /טמפרטור/ : /Target temperature/i);
+        assert.equal(await reading.getAttribute('aria-haspopup'),'dialog');
+        assert.ok((await reading.boundingBox()).height >= 44);
+        await reading.tap();
+        assert.deepEqual(await infoCalls(),[]);
+        assert.deepEqual(await calls(),[]);
+        const held = () => reading.evaluate(async button => {
+          const pointer = {button:0,pointerId:12,pointerType:'touch',isPrimary:true,bubbles:true,composed:true};
+          button.dispatchEvent(new PointerEvent('pointerdown',pointer));
+          await new Promise(resolve => setTimeout(resolve,535));
+          button.dispatchEvent(new PointerEvent('pointerup',pointer));
+          button.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,detail:1}));
+        });
+        for (const trigger of [held, () => reading.press('Shift+Enter'), () => reading.press('Enter')]) {
+          await trigger();
+          await native.waitFor();
+          await page.waitForURL(current => current.pathname === pathname && current.hash === hash &&
+            current.searchParams.get('more-info-entity-id') === entity);
+          await native.getByRole('button',{name:'Close native details',exact:true}).tap();
+          await native.waitFor({state:'hidden'});
+          await page.waitForFunction(() => {
+            const card = document.querySelector('bayit-dashboard');
+            return card.shadowRoot.activeElement?.matches('button.target-reading') &&
+              !new URL(location.href).searchParams.has('more-info-entity-id');
+          });
+        }
+        assert.deepEqual(await infoCalls(),[entity,entity,entity]);
+        assert.deepEqual(await calls(),[]);
+        const before = Number((await reading.locator('.target-value').innerText()).replace('°',''));
+        await dialog.locator('.step-control[data-action=set_temperature]').last().tap();
+        await page.waitForFunction(() => window.bayitTest.calls.some(call => call.service === 'set_temperature'));
+        assert.deepEqual(await calls(),[{type:'call_service',domain:'climate',service:'set_temperature',
+          target:{entity_id:entity},service_data:{temperature:before + 1}}]);
+      }
+    } finally { await page.close(); }
+  }
+}
+
 async function assertCompactClimateRail(browser) {
   for (const locale of ['en','he']) {
     const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
@@ -10362,6 +10420,7 @@ try {
       await assertRoomClimatePower(browser);
       await assertCompactClimateRail(browser);
       await assertStandaloneTimedClimate(browser);
+      await assertClimateTargetNativeDetails(browser);
       const presetURL = base + '?device-panel&preset-shortcut';
       const presetName = rightToLeft ? 'SE · בחירת תוכנית ברירת מחדל' : 'SE · Set preset to Default';
       const preset = panel => panel.getByRole('button', { name: presetName, exact: true });
