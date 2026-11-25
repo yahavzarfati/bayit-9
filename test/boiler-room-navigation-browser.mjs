@@ -41,7 +41,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     const moreInfo = [];
     const scheduleActions = params.has('schedule-actions') || guardedSchedule;
     const scheduleCalls = [];
-    let pauseScheduleRead = false;
+    let pausedScheduleRead;
     let releaseScheduleRead;
     const card = document.createElement('bayit-dashboard');
     card.setConfig({ locale, page: params.has('routed'),
@@ -59,17 +59,20 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
       for (const schedule of schedules) states[schedule.entity_id] = { state: 'on', last_updated: 'fixture-revision', attributes: {} };
     }
     if (guardedSchedule) services.script = { fixture_schedule_save: {}, fixture_schedule_delete: {} };
+    const readSchedule = (type, data) => {
+      if (pausedScheduleRead !== type) return Promise.resolve(data);
+      pausedScheduleRead = undefined;
+      return new Promise(resolve => { releaseScheduleRead = () => resolve(data); });
+    };
     const hass = {
       user: { is_admin: true }, states, services,
       callWS(request) {
         requests.push(request.type);
         if ((params.has('stacked') || params.has('schedule-link')) && request.type === 'scheduler') {
-          if (!pauseScheduleRead) return Promise.resolve(schedules);
-          pauseScheduleRead = false;
-          return new Promise(resolve => { releaseScheduleRead = () => resolve(schedules); });
+          return readSchedule(request.type,schedules);
         }
         if (scheduleActions && request.type === 'scheduler/item') {
-          return Promise.resolve(schedules.find(schedule => schedule.schedule_id === request.schedule_id));
+          return readSchedule(request.type,schedules.find(schedule => schedule.schedule_id === request.schedule_id));
         }
         if (scheduleActions && request.type === 'call_service') {
           if (guardedSchedule) {
@@ -117,7 +120,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     } else document.body.append(card);
     window.fixture = {
       requests, moreInfo, scheduleCalls,
-      pauseScheduleRead() { pauseScheduleRead = true; },
+      pauseScheduleRead(type = 'scheduler') { pausedScheduleRead = type; },
       scheduleReadWaiting() { return Boolean(releaseScheduleRead); },
       releaseScheduleRead() {
         releaseScheduleRead();
@@ -221,6 +224,61 @@ async function assertBoilerScheduleLinks(browser, locale) {
   }
 }
 
+async function assertClosedBoilerSchedulePreflight(browser, locale) {
+  const page = await browser.newPage({viewport:{width:320,height:680},hasTouch:true,reducedMotion:'reduce'});
+  page.setDefaultTimeout(8000);
+  const he = locale === 'he';
+  const url = 'http://127.0.0.1:' + server.address().port + '?compact&routed&stacked&guarded-schedule&locale=' + locale;
+  const shortcut = page.locator('[data-room="bath"] .quick-button[data-entity="switch.fixture_boiler"]');
+  const panel = page.getByRole('dialog',{name:'Fixture boiler',exact:true});
+  const schedule = panel.getByRole('button',{name:he ? 'תזמון' : 'Schedule',exact:true});
+  const history = panel.getByRole('button',{name:he ? 'היסטוריית שימוש' : 'Usage history',exact:true});
+  const form = panel.locator('.schedule-form');
+  const save = form.getByRole('button',{name:he ? 'שמירת תזמון' : 'Save schedule',exact:true});
+  const list = panel.locator('.schedule-list');
+  const morning = list.getByRole('button',{name:(he ? 'עריכה' : 'Edit') + ' · Morning',exact:true});
+  const pause = type => page.evaluate(type=>window.fixture.pauseScheduleRead(type),type);
+  const release = () => page.evaluate(() => new Promise(resolve => {
+    window.fixture.releaseScheduleRead();
+    setTimeout(resolve,0);
+  }));
+  const noWrite = () => page.evaluate(()=>window.fixture.requests.filter(request=>request === 'call_service'))
+    .then(requests=>assert.deepEqual(requests,[]));
+  try {
+    await page.goto(url);
+    await shortcut.tap();
+    await morning.waitFor();
+    await panel.getByRole('button',{name:he ? 'הוספת תזמון' : 'Add schedule',exact:true}).tap();
+    await form.getByRole('button',{name:he ? 'כל יום' : 'Every day',exact:true}).tap();
+    await form.locator('input[type=text]').fill('Cancelled creation');
+    await pause('scheduler');
+    await save.tap();
+    await page.waitForFunction(()=>window.fixture.scheduleReadWaiting());
+    await panel.locator('[data-role=close]').tap();
+    await release();
+    await panel.waitFor({state:'hidden'});
+    await noWrite();
+
+    await shortcut.tap();
+    await morning.waitFor();
+    await morning.tap();
+    await form.locator('input[type=text]').fill('Cancelled edit');
+    await pause('scheduler/item');
+    await save.tap();
+    await page.waitForFunction(()=>window.fixture.scheduleReadWaiting());
+    await history.tap();
+    await panel.locator('.boiler-history-host').waitFor();
+    await release();
+    await schedule.tap();
+    await morning.waitFor();
+    await form.waitFor({state:'hidden'});
+    assert.equal(await list.getByText('Cancelled edit',{exact:true}).count(),0);
+    await noWrite();
+  } finally {
+    await page.close();
+  }
+}
+
 try {
   for (const [launcher, locale] of [[chromium, 'en'], [webkit, 'he']]) {
     const browser = await launcher.launch();
@@ -255,6 +313,7 @@ try {
       await reopenedBoiler.locator('[data-role=back]').waitFor({ state: 'hidden' });
       await routed.close();
       await assertBoilerScheduleLinks(browser, locale);
+      await assertClosedBoilerSchedulePreflight(browser, locale);
 
       const page = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true });
       const errors = [];

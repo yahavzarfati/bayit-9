@@ -68,6 +68,63 @@ test('native edits and deletes re-read authoritative ownership and settings and 
   assert.equal(calls.filter(call => call.type === 'scheduler/item').length, 2);
 });
 
+test('scheduler declines abandoned form writes after preflight and keeps normal toggles unchanged', async () => {
+  for (const config of [boiler, { ...boiler, schedule:guard }]) {
+    const { controller, database, hass, writes, onWrite } = fixture(config);
+    const [opening] = await controller.list();
+    const saved = controller.revisionOf(opening);
+    const send = hass.callWS;
+    const changedDraft = { ...draft, duration:105 };
+    for (const [read, action] of [
+      ['scheduler', stillCurrent => controller.create(changedDraft, stillCurrent)],
+      ['scheduler/item', stillCurrent => controller.update(saved, changedDraft, stillCurrent)],
+      ['scheduler/item', stillCurrent => controller.remove(saved, stillCurrent)],
+    ]) {
+      let current = true;
+      let release;
+      hass.callWS = request => request.type === read ? new Promise(resolve => {
+        release = () => resolve(send(request));
+      }) : send(request);
+      const pending = action(() => current);
+      assert.equal(typeof release,'function');
+      current = false;
+      release();
+      await assert.rejects(pending,{code:'abandoned'});
+    }
+    assert.deepEqual(writes(),[]);
+    hass.callWS = send;
+    onWrite(message => { if (message.service === 'turn_off') database.get('current').enabled = false; });
+    await controller.setEnabled(saved,false);
+    assert.deepEqual(writes().map(call=>[call.domain,call.service]),[['switch','turn_off']]);
+  }
+});
+
+test('an already dispatched schedule write still reconciles after its form leaves', async () => {
+  const { controller, database, calls, writes, onWrite } = fixture();
+  const [opening] = await controller.list();
+  const saved = controller.revisionOf(opening);
+  let current = true;
+  let release;
+  let dispatched;
+  const dispatch = new Promise(resolve => { dispatched = resolve; });
+  onWrite(message => new Promise(resolve => {
+    release = () => {
+      const updated = database.get('current');
+      updated.name = message.service_data.name;
+      updated.timeslots[0].actions[0].service_data.duration = 105;
+      resolve({});
+    };
+    dispatched();
+  }));
+  const updating = controller.update(saved,{...draft,duration:105},()=>current);
+  await dispatch;
+  current = false;
+  release();
+  await updating;
+  assert.equal(writes().length,1);
+  assert.equal(calls.filter(call=>call.type === 'scheduler/item').length,2);
+});
+
 test('native CRUD writes only the proven schedule or the mapped timer and verifies readback', async () => {
   const { controller, database, writes, onWrite } = fixture();
   const [opening] = await controller.list();

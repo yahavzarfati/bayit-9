@@ -224,13 +224,18 @@ export function createBoilerScheduler(config, getHass, { locale = 'en', retry = 
     }],
   });
 
-  async function create(input) {
+  function requireCurrentForm(stillCurrent) {
+    if (stillCurrent && !stillCurrent()) reject('abandoned');
+  }
+
+  async function create(input, stillCurrent) {
     if (!canCreate()) reject('unavailable');
     const draft = validate(input);
     draft.name ||= useGuards ? 'דוד' : profileName;
     const linked = binding();
     const before = new Set((await records()).map(record => record.schedule_id));
     if (binding().entryId !== linked.entryId) reject('changed');
+    requireCurrentForm(stillCurrent);
     if (useGuards) {
       await send('script', saveScript, { schedule_entity: '', expected_revision: '', schedule_name: draft.name,
         schedule_time: draft.time, duration: draft.duration, weekdays: draft.weekdays }, null, true);
@@ -240,13 +245,14 @@ export function createBoilerScheduler(config, getHass, { locale = 'en', retry = 
     await observe(async () => (await list()).filter(entry => !before.has(entry.id) && sameSettings(entry, draft)).length === 1);
   }
 
-  async function update(saved, input) {
+  async function update(saved, input, stillCurrent) {
     if (!capabilities().edit) reject('unavailable');
     const draft = validate(input);
     draft.name ||= useGuards ? 'דוד' : profileName;
     const linked = binding();
     const { current, lastUpdated } = await preflight(saved, linked);
     if (sameSettings(current, draft)) return;
+    requireCurrentForm(stillCurrent);
     if (useGuards) {
       if (!current.entryTarget || !lastUpdated || lastUpdated !== saved.lastUpdated) reject('changed');
       await send('script', saveScript, { schedule_entity: current.entity, expected_revision: lastUpdated,
@@ -259,9 +265,10 @@ export function createBoilerScheduler(config, getHass, { locale = 'en', retry = 
     await observe(async () => sameSettings(parse(await item(saved.id), binding()), draft));
   }
 
-  async function remove(saved) {
+  async function remove(saved, stillCurrent) {
     if (!capabilities().remove) reject('unavailable');
     const { current, lastUpdated } = await preflight(saved, binding());
+    requireCurrentForm(stillCurrent);
     if (useGuards) {
       if (!current.entryTarget || !lastUpdated || lastUpdated !== saved.lastUpdated) reject('changed');
       await send('script', deleteScript, { schedule_entity: current.entity, expected_revision: lastUpdated }, null, true);
@@ -348,7 +355,9 @@ const styles = [
   '.bayit-boiler-schedules .schedule-confirm { border:1px solid var(--critical,currentColor); display:grid; gap:8px; padding:10px; border-radius:10px; }',
 ].join('\n');
 
-export function createBoilerSchedulePanel(config, { host, viewport, hass, locale = 'en', compact = false, pauseScrollMemory }) {
+export function createBoilerSchedulePanel(config, {
+  host, viewport, hass, locale = 'en', compact = false, pauseScrollMemory, isCurrent = () => true,
+}) {
   const t = text[locale] ?? text.en;
   const make = (tag, cls, value) => {
     const node = host.ownerDocument.createElement(tag);
@@ -619,7 +628,9 @@ export function createBoilerSchedulePanel(config, { host, viewport, hass, locale
         cancelDelete.focus({ preventScroll: true });
       });
       const acceptDelete = button(t.yes, () => {
-        if (confirmedRemove && draft?.id === row.id) void operate(() => schedule.remove(draft), t.removed);
+        if (confirmedRemove && draft?.id === row.id) {
+          void operate(stillCurrent => schedule.remove(draft, stillCurrent), t.removed);
+        }
       });
       acceptDelete.setAttribute('data-schedule-commit', '');
       const cancelDelete = button(t.cancel, () => {
@@ -635,7 +646,8 @@ export function createBoilerSchedulePanel(config, { host, viewport, hass, locale
     form.onsubmit = event => {
       event.preventDefault();
       const payload = { name: title.value, time: time.value, duration: Number(duration.value), weekdays: [...selected] };
-      void operate(() => row ? schedule.update(draft, payload) : schedule.create(payload), t.saved);
+      void operate(stillCurrent => row ? schedule.update(draft, payload, stillCurrent)
+        : schedule.create(payload, stillCurrent), t.saved);
     };
     form.append(heading, fields, group, commands, confirmation);
     form.hidden = false;
@@ -649,15 +661,17 @@ export function createBoilerSchedulePanel(config, { host, viewport, hass, locale
     pending = true;
     message('');
     syncButtons();
+    const submittedDraft = draft;
+    const stillCurrent = () => !gone && isCurrent() && form.isConnected && !form.hidden && submittedDraft === draft;
     let origin;
     try {
-      await action();
-      if (gone) return;
+      await action(stillCurrent);
+      if (gone || (submittedDraft && !stillCurrent())) return;
       origin = closeForm();
       message(success);
       await refresh({ quiet: true, keepMessage: true });
     } catch (error) {
-      if (!gone) {
+      if (!gone && error?.code !== 'abandoned' && (!submittedDraft || stillCurrent())) {
         if (error?.code === 'uncertain') needsRefresh = true;
         message(t[error?.code] ?? t.error);
       }

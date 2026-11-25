@@ -1895,18 +1895,19 @@ export class BayitDashboard extends HTMLElement {
       scheduleHost.hidden = true;
       choices.splice(1,0,{label:'boiler_schedule',icon:'mdi:calendar-clock',element:scheduleHost,open:() => {
         const popup = this.panel;
+        const isCurrent = () => {
+          const { modal } = this.nodes;
+          const { location } = this.ownerDocument.defaultView;
+          return this.isConnected && this.panel === popup && modal.open && !modal.hasAttribute('data-closing') &&
+            (!popup?.routeHash || (location.pathname === this.popupHistoryPath && location.hash === popup.routeHash));
+        };
         const pauseScrollMemory = stacked && popup?.scrollHash ? () => {
           this.popupScroll.stop();
-          return () => {
-            const modal = this.nodes.modal;
-            if (this.isConnected && this.panel === popup && modal.open && !modal.hasAttribute('data-closing')) {
-              this.restorePopupScroll(popup);
-            }
-          };
+          return () => { if (isCurrent()) this.restorePopupScroll(popup); };
         } : undefined;
         const schedule = createBoilerSchedulePanel(config, {
           host: scheduleHost, viewport: this.nodes.modalBody, hass: this._hass, locale: this.config.locale,
-          compact: stacked, pauseScrollMemory,
+          compact: stacked, pauseScrollMemory, isCurrent,
         });
         return {update:schedule.update,dispose:schedule.destroy};
       }});
