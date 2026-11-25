@@ -3122,7 +3122,8 @@ try {
           await editor.getByText('Rooms',{exact:true}).tap();
           await editor.getByLabel('Room to customize',{exact:true}).selectOption('studio');
           assert.equal(await editor.getByLabel('Open on media press and hold · Television',{exact:true}).inputValue(),'media-panel');
-          assert.equal(await editor.getByLabel('Open on vacuum tap · Robot',{exact:true}).inputValue(),'vacuum-panel');
+          assert.equal(await editor.getByLabel('Vacuum panel · Robot',{exact:true}).inputValue(),'vacuum-panel');
+          assert.equal(await editor.getByLabel('Open the vacuum panel with · Robot',{exact:true}).inputValue(),'tap');
           await editor.getByText('Toolbar and extra screens',{exact:true}).tap();
           await editor.getByRole('button',{name:expectedMedia,exact:true}).tap();
           const placement = editor.getByLabel('Show in',{exact:true});
