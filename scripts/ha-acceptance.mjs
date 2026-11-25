@@ -184,6 +184,7 @@ try {
     const saved = await api.command('lovelace/config', { url_path: dashboard.url_path, force: true });
     return Object.values(saved?.strategy?.room_overrides ?? {}).some(room => room.name === 'Reading nook');
   });
+  await page.waitForURL(url => url.pathname === new URL(target).pathname && url.hash === '');
   await card.getByRole('button', { name: 'Reading nook', exact: true }).waitFor();
   console.log('Bayit 9 room customization was saved and survived the dashboard reload');
 
@@ -224,12 +225,12 @@ try {
   await setup.getByText('Appearance', { exact: true }).click();
   await setup.getByRole('checkbox', { name: 'Hide Home Assistant chrome on this dashboard' }).check();
   await setup.getByRole('button', { name: 'Save dashboard', exact: true }).click();
-  assert.equal(new URL(page.url()).hash, '', 'Saving setup removes the inherited Appearance route');
   await poll('full-screen preference persisted', async () => {
     const saved = await api.command('lovelace/config', { url_path: dashboard.url_path, force: true });
     return saved?.strategy?.fullscreen === true;
   });
   await settings.waitFor();
+  await page.waitForURL(url => url.pathname === new URL(target).pathname && url.hash === '');
   const nativeHeader = dashboardHeader.locator('.header').first();
   await nativeHeader.waitFor({ state: 'hidden' });
   await settings.click();
