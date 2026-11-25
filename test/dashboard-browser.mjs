@@ -319,9 +319,11 @@ const hass = {
     calls.push(request);
     if (request.type === 'history/history_during_period' && query.has('room-temperature-chart')) {
       const end = Date.parse(request.end_time) / 1000;
+      const current = states['sensor.demo_temperature'].state;
       return Promise.resolve({ 'sensor.demo_temperature': [
         { s:'21', lu:end - 85000 }, { s:'22', lu:end - 78000 }, { s:'unknown', lu:end - 72000 },
         { s:'22.5', lu:end - 71000 }, { s:'23.5', lu:end - 20800 },
+        ...(['26', '27'].includes(current) ? [{ s:current, lu:end - 15 }] : []),
       ] });
     }
     if (request.type === 'lovelace/dashboards/list') {
@@ -4762,15 +4764,52 @@ async function assertRoomTemperatureCharts(browser) {
       assert.equal(await chart.evaluate(el=>el.style.getPropertyValue('--room-chart-color')),'#9AC8FF');
       await chart.press('Enter');
       assert.deepEqual(await page.evaluate(()=>window.bayitTest.moreInfoCalls),['sensor.demo_temperature']);
-      await page.evaluate(()=>window.bayitTest.setRoomState('sensor.demo_temperature','unavailable'));
+      const readHistory = () => page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='history/history_during_period'));
+      const line = chart.locator('path.room-temperature-line').last();
+      const originalPath = await line.getAttribute('d');
+      const waitForUpdatedPlot = oldPath => page.waitForFunction(previous => {
+        const paths = document.querySelector('bayit-dashboard').shadowRoot.querySelectorAll('path.room-temperature-line');
+        const path = [...paths].at(-1)?.getAttribute('d');
+        return !!path && path !== previous;
+      }, oldPath);
+      const setTemperature = state => page.evaluate(next=>{
+        window.bayitTest.setRoomState('sensor.demo_temperature',next);
+      }, state);
+      await setTemperature('unavailable');
       await chart.getByText('—',{ exact:true }).waitFor();
       assert.equal(await chart.locator('.room-temperature-unit').textContent(),'');
-      const calls = await page.evaluate(()=>window.bayitTest.calls);
-      const histories = calls.filter(call=>call.type==='history/history_during_period');
-      assert.equal(histories.length,1);
-      assert.deepEqual(histories[0].entity_ids,['sensor.demo_temperature']);
-      assert.equal(Date.parse(histories[0].end_time)-Date.parse(histories[0].start_time),24.5*3600000);
-      assert.equal(calls.filter(call=>call.domain).length,0);
+      await setTemperature('26');
+      await chart.getByText('26',{ exact:true }).waitFor();
+      await waitForUpdatedPlot(originalPath);
+      assert.equal((await readHistory()).length,2,'Coalesce updates for the same chart');
+
+      const updatedPath = await line.getAttribute('d');
+      await page.evaluate(()=>{
+        Object.defineProperty(document,'visibilityState',{ configurable:true, value:'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await setTemperature('27');
+      await chart.getByText('27',{ exact:true }).waitFor();
+      await page.waitForTimeout(1600);
+      assert.equal((await readHistory()).length,2,'Avoid reading Recorder in the background');
+      assert.equal(await line.getAttribute('d'),updatedPath);
+      await page.evaluate(()=>{
+        delete document.visibilityState;
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await waitForUpdatedPlot(updatedPath);
+      const histories = await readHistory();
+      assert.equal(histories.length,3);
+      for (const history of histories) {
+        assert.deepEqual(history.entity_ids,['sensor.demo_temperature']);
+        assert.equal(Date.parse(history.end_time)-Date.parse(history.start_time),24.5*3600000);
+      }
+      await setTemperature('26');
+      await dialog.getByRole('button',{ name:he ? 'סגירה' : 'Close', exact:true }).tap();
+      await dialog.waitFor({ state:'hidden' });
+      await page.waitForTimeout(1600);
+      assert.equal((await readHistory()).length,3,'Closing cancels a scheduled history refresh');
+      assert.equal(await page.evaluate(()=>window.bayitTest.calls.filter(call=>call.domain).length),0);
 
       await page.goto(url + compact + '&editor');
       await page.getByText(he ? 'חדרים' : 'Rooms',{ exact:true }).tap();

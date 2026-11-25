@@ -2,6 +2,8 @@ import { buildComparisonSeries, parseTemperatureValue } from './temperature-comp
 import { createNativeCards, sensorGraphConfig } from './toolbar-panels.js';
 
 const day = 24 * 60 * 60 * 1000;
+const recorderRefreshDelay = 1500;
+const recorderTimeout = 10000;
 const chartWidth = 320;
 const chartHeight = 45;
 const svgNamespace = 'http://www.w3.org/2000/svg';
@@ -77,12 +79,45 @@ function buildCompactGraph(config, hass, { host, make, icon, moreInfo, locale, t
   let disposed = false;
   let latest;
   let currentHass = hass;
-  let started = false;
-  let scheduled;
+  let transport;
+  let requested = false;
+  let queued = false;
+  let frame;
+  let timer;
+  let pendingRequest;
+
+  const canRead = () => typeof currentHass?.callWS === 'function' &&
+    currentHass.connected !== false && transport?.connected !== false;
+  const active = () => {
+    const dialog = root.closest('dialog');
+    return !disposed && root.isConnected && document.visibilityState !== 'hidden' &&
+      (!dialog || (dialog.open && !dialog.hasAttribute('data-closing')));
+  };
+
+  function scheduleRefresh() {
+    queued = true;
+    if (disposed || pendingRequest || frame !== undefined || timer !== undefined ||
+        !canRead() || document.visibilityState === 'hidden') return;
+    if (requested) timer = view.setTimeout(load, recorderRefreshDelay);
+    else frame = view.requestAnimationFrame(load);
+  }
+
+  function refreshOnReturn() {
+    if (active()) scheduleRefresh();
+  }
 
   function update(next) {
+    const couldRead = canRead();
     currentHass = next;
+    const replacedTransport = transport !== next?.connection;
+    if (replacedTransport) {
+      transport?.removeEventListener?.('ready', refreshOnReturn);
+      transport = next?.connection;
+      transport?.addEventListener?.('ready', refreshOnReturn);
+    }
     const sensor = next?.states?.[config.entity];
+    const sampleChanged = latest?.state !== sensor?.state ||
+      latest?.attributes?.unit_of_measurement !== sensor?.attributes?.unit_of_measurement;
     if (sensor !== latest) {
       latest = sensor;
       const reported = parseTemperatureValue(sensor?.state);
@@ -96,41 +131,57 @@ function buildCompactGraph(config, hass, { host, make, icon, moreInfo, locale, t
       value.textContent = '—';
       root.setAttribute('aria-label', heading + ' · ' + t('unknown') + ' · ' + t('more_info'));
     }
-    if (!started && typeof next?.callWS === 'function') {
-      started = true;
-      scheduled = view.requestAnimationFrame(load);
-    }
+    if (!requested || sampleChanged || replacedTransport || !couldRead || queued) scheduleRefresh();
   }
 
   async function load() {
-    scheduled = undefined;
-    if (disposed || !root.isConnected) return;
+    frame = timer = undefined;
+    if (!queued || !active() || !canRead()) return;
+    requested = true;
+    queued = false;
     const end = Date.now();
     const start = end - day;
-    const unit = currentHass.states?.[config.entity]?.attributes?.unit_of_measurement;
+    const unit = latest?.attributes?.unit_of_measurement;
+    const request = view.setTimeout(() => {
+      pendingRequest = undefined;
+      if (queued && active()) scheduleRefresh();
+    }, recorderTimeout);
+    pendingRequest = request;
     try {
       const result = await currentHass.callWS({
         type: 'history/history_during_period', entity_ids: [config.entity],
         start_time: new Date(start - 30 * 60000).toISOString(), end_time: new Date(end).toISOString(),
         minimal_response: true, significant_changes_only: false,
       });
-      if (disposed || !root.isConnected) return;
+      if (pendingRequest !== request || !active() || latest?.attributes?.unit_of_measurement !== unit) return;
       const [series] = buildComparisonSeries(result, [{ entity: config.entity, unit }], { startMs: start, endMs: end });
       const paths = chartPaths(series?.points ?? [], start, end);
       plot.replaceChildren(...paths.flatMap(({ line, fill }) => [
         shape('path', { class: 'room-temperature-fill', d: fill, fill: 'url(#' + id + ')' }),
         shape('path', { class: 'room-temperature-line', d: line }),
       ]));
-    } catch { /* The current reading remains available if the recorder cannot serve history. */ }
+    } catch { /* Keep the latest reading and existing plot when Recorder cannot serve history. */ }
+    finally {
+      if (pendingRequest === request) {
+        view.clearTimeout(request);
+        pendingRequest = undefined;
+        if (queued && active()) scheduleRefresh();
+      }
+    }
   }
 
+  document.addEventListener('visibilitychange', refreshOnReturn);
   update(hass);
   return {
     root,
     update,
     dispose() {
       disposed = true;
-      if (scheduled !== undefined) view.cancelAnimationFrame(scheduled);
+      document.removeEventListener('visibilitychange', refreshOnReturn);
+      transport?.removeEventListener?.('ready', refreshOnReturn);
+      view.cancelAnimationFrame(frame);
+      view.clearTimeout(timer);
+      view.clearTimeout(pendingRequest);
     },
   };
 }
