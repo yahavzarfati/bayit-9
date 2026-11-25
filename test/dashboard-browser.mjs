@@ -11154,7 +11154,9 @@ try {
         const bounds = dialog.getBoundingClientRect();
         const outer = dialog.getRootNode();
         const body = dialog.querySelector('.modal-body');
+        const close = dialog.querySelector('[data-role=close]').getBoundingClientRect();
         return { top:bounds.top, bottom:bounds.bottom,height:bounds.height,
+          sideGap:[bounds.left,window.innerWidth-bounds.right],closeSize:[close.width,close.height],
           areaTop:parseFloat(dialog.style.getPropertyValue('--bayit-popup-area-top')),
           bandBottom:parseFloat(dialog.style.getPropertyValue('--bayit-popup-view-bottom')) - 16,
           centered:dialog.hasAttribute('data-centered-toolbar'), opener:outer.querySelector('[data-popup-origin]')?.dataset.role,
@@ -11174,6 +11176,8 @@ try {
         const source = toolbarButton(kind);
         await source.tap();
         const frame = await readToolbarPlacement();
+        assert.deepEqual(frame.sideGap,[16,16]);
+        assert.deepEqual(frame.closeSize,[50,50]);
         assert.equal(frame.opener, kind);
         assert.equal(await placementDialog.evaluate(dialog =>
           dialog.getRootNode().activeElement === dialog.querySelector('[data-role=close]')), true);
@@ -11185,6 +11189,14 @@ try {
         await closePlacement();
         assert.equal(await source.evaluate(button => button.getRootNode().activeElement === button), true);
       }
+
+      await toolbarPlacementPage.setViewportSize({width:320,height:568});
+      await toolbarButton('settings').tap();
+      const compactFrame = await readToolbarPlacement();
+      assert.deepEqual(compactFrame.sideGap,[16,16]);
+      assert.deepEqual(compactFrame.closeSize,[50,50]);
+      await closePlacement();
+      await toolbarPlacementPage.setViewportSize({width:391,height:845});
 
       await toolbarPlacementPage.goto(toolbarPlacementUrl + '#panel/fixture-security');
       await placementDialog.waitFor();

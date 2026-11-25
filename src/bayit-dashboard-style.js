@@ -555,10 +555,10 @@ export const styles = `
   .shell[dir=rtl] .modal-header h2 { direction: rtl; flex-direction: row-reverse; text-align: left; }
   .modal-header > .round-action { flex: 0 0 44px; border-radius: 999px; }
   @media (max-width: 420px) {
-    .shell[data-page=true] .modal:is([data-kind=room],[data-kind=device],[data-room-position]) { width: calc(100% - 32px); }
-    .shell[data-page=true] .modal:is([data-kind=room],[data-kind=device],[data-room-position]) .modal-header { padding: 17px 17px var(--modal-header-end,11px); }
-    .shell[data-page=true] .modal:is([data-kind=room],[data-kind=device],[data-room-position]) .modal-header h2 { min-height: var(--modal-title-height,50px); }
-    .shell[data-page=true] .modal:is([data-kind=room],[data-kind=device],[data-room-position]) .modal-header > [data-role=close] {
+    .shell[data-page=true] .modal[data-kind] { width: calc(100% - 32px); }
+    .shell[data-page=true] .modal[data-kind] .modal-header { padding: 17px 17px var(--modal-header-end,11px); }
+    .shell[data-page=true] .modal[data-kind] .modal-header h2 { min-height: var(--modal-title-height,50px); }
+    .shell[data-page=true] .modal[data-kind] .modal-header > [data-role=close] {
       flex-basis: 50px;
       min-block-size: 50px;
     }
