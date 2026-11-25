@@ -53,6 +53,8 @@ When adding a device from an automatic room, select **Keep in the automatic room
 
 In an automatic room, open **Additional devices**, select a device and choose **Also show in this room**. Save the dashboard to apply the change. The device stays visible in its other rooms, and new devices assigned to this Home Assistant area still appear automatically. In YAML, list these IDs under `additional_entities` in the automatic room's override.
 
+Switching **Devices in this room** keeps the ordered manual list and its mirroring settings ready for your return. Automatic mode keeps its own additional devices. In YAML, `device_selection: auto` activates automatic discovery even when the same override retains an `entities` list.
+
 You can arrange sections manually while **Devices in this room** stays **Automatic**. Devices later added to the room's Home Assistant area follow the default grouping until you move them to a custom section. A room override with `device_selection: auto` uses this arrangement. Existing sections-only overrides continue to select their listed entities unless this option is set.
 
 In **Rooms**, open **Device display** and select a device. Clear **Name in this room** to display its default name, or turn off **Show name in this room** to keep the caption available to assistive technology while hiding it visually. The YAML `entity_names` maps IDs to room captions. An explicit empty string hides the visual caption.

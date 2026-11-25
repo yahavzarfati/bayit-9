@@ -3733,12 +3733,111 @@ async function assertAdditionalAutomaticRoomDevices(browser) {
         await additional.waitFor();
         assert.equal(await original.count(), 1);
         const saved = await override();
-        assert.equal(saved.additional_entities, undefined);
+        assert.deepEqual(saved.additional_entities, [entity]);
         assert.ok(saved.entities.includes(pairedLater));
         assert.deepEqual(saved.keep_in_automatic_room_entities, [entity]);
       }
       assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call =>
         call.domain || (call.type && call.type.startsWith('config/entity_registry/')))), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+
+async function assertRoomDeviceModesKeepTheirSelections(browser) {
+  for (const [locale, words] of [
+    ['en', { appearance:'Appearance', setup:'Customize home', rooms:'Rooms', room:'Room to customize',
+      mode:'Devices in this room', extra:'Additional devices', picker:'Available devices', remove:'Remove',
+      add:'Also show in this room', empty:'No additional devices.', sections:'Room sections',
+      arrangement:'Section arrangement', save:'Save dashboard' }],
+    ['he', { appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים', room:'חדר להתאמה אישית',
+      mode:'מכשירים בחדר', extra:'מכשירים נוספים', picker:'מכשירים זמינים', remove:'הסרה',
+      add:'הצגה גם בחדר הזה', empty:'אין מכשירים נוספים.', sections:'קבוצות בחדר',
+      arrangement:'סידור הקבוצות', save:'שמירת הדשבורד' }],
+  ]) {
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      const native = 'light.demo_lamp';
+      const mirror = 'light.demo_lounge';
+      const manual = [mirror, 'switch.demo_heater'];
+      await page.addInitScript(({ mirror, manual }) => {
+        const key = 'bayit9-browser-fixture';
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy:{
+          type:'custom:bayit-9', show_unassigned:false,
+          room_overrides:{ studio:{ entities:manual, keep_in_automatic_room_entities:[mirror] } },
+        } }));
+      }, { mirror, manual });
+      await page.goto(base + '/fixture-home/home?configuration&room-selection&locale=' + locale);
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      const mode = setup.getByLabel(words.mode, { exact:true });
+      const picker = setup.getByLabel(words.picker, { exact:true });
+      const open = async () => {
+        await page.getByRole('button', { name:words.appearance, exact:true }).tap();
+        await page.getByRole('button', { name:words.setup, exact:true }).tap();
+        await setup.getByText(words.rooms, { exact:true }).tap();
+        await setup.getByLabel(words.room, { exact:true }).selectOption('studio');
+      };
+      const showExtra = async () => {
+        if (!await picker.isVisible()) await setup.getByText(words.extra, { exact:true }).tap();
+      };
+      const saved = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.room_overrides.studio);
+      const listed = () => setup.locator('[data-room-focus^="devices:"][data-room-focus$=":remove"]')
+        .evaluateAll(rows => rows.map(row => row.dataset.roomFocus.split(':')[1]));
+      const save = async () => {
+        await setup.getByRole('button', { name:words.save, exact:true }).tap();
+        await setup.waitFor({ state:'hidden' });
+        await page.reload();
+        await page.getByRole('button', { name:words.appearance, exact:true }).waitFor();
+      };
+      const shortcut = (room, entity) => page.locator('.room[data-room=' + room + '] .quick-button[data-entity="' + entity + '"]');
+
+      await open();
+      assert.deepEqual(await listed(), manual);
+      await mode.selectOption('auto');
+      await showExtra();
+      await picker.selectOption(mirror);
+      await setup.getByRole('button', { name:words.add, exact:true }).tap();
+      assert.deepEqual(await listed(), [mirror]);
+      assert.deepEqual((await saved()).entities, manual);
+      assert.equal((await saved()).additional_entities, undefined);
+      await save();
+      assert.deepEqual(await saved(), { device_selection:'auto', entities:manual,
+        keep_in_automatic_room_entities:[mirror], additional_entities:[mirror] });
+      await shortcut('studio', native).waitFor();
+      await shortcut('studio', mirror).waitFor();
+      await shortcut('lounge', mirror).waitFor();
+
+      await open();
+      await setup.getByText(words.sections, { exact:true }).tap();
+      const sections = setup.getByLabel(words.arrangement, { exact:true });
+      await sections.selectOption('manual');
+      await sections.selectOption('auto');
+      assert.equal(await mode.inputValue(), 'auto');
+      await mode.selectOption('manual');
+      assert.deepEqual(await listed(), manual);
+      await save();
+      assert.deepEqual(await saved(), { entities:manual, keep_in_automatic_room_entities:[mirror], additional_entities:[mirror] });
+      assert.equal(await shortcut('studio', native).count(), 0);
+      await shortcut('lounge', mirror).waitFor();
+
+      await open();
+      await mode.selectOption('auto');
+      await showExtra();
+      assert.deepEqual(await listed(), [mirror]);
+      await setup.getByRole('button', { name:words.remove + ' · Lounge lamp', exact:true }).tap();
+      await mode.selectOption('manual');
+      assert.deepEqual(await listed(), manual);
+      await mode.selectOption('auto');
+      await setup.getByText(words.empty, { exact:true }).waitFor();
+      assert.deepEqual(await listed(), []);
+      await save();
+      assert.deepEqual(await saved(), { device_selection:'auto', entities:manual, keep_in_automatic_room_entities:[mirror] });
+      await shortcut('studio', native).waitFor();
+      assert.equal(await shortcut('studio', mirror).count(), 0);
+      await shortcut('lounge', mirror).waitFor();
     } finally {
       await page.close();
     }
@@ -9904,6 +10003,7 @@ try {
       await assertRetiredRoomLinks(browser);
       console.log(engine + ' 320: optional mirrored room placement, saved reload and native registry unchanged');
       await assertAdditionalAutomaticRoomDevices(browser);
+      await assertRoomDeviceModesKeepTheirSelections(browser);
       console.log(engine + ' 320: additional devices keep automatic Room discovery and existing placement');
       await assertPopupAliasEditing(browser);
       await assertWeatherSurvivesRegistryReplay(browser);

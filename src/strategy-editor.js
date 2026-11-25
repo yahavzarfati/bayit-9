@@ -646,8 +646,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       if (items) next.sections = items;
       else delete next.sections;
       if (autoDevices) {
-        delete next.entities;
-        if (items) next.device_selection = 'auto';
+        if (items || Array.isArray(next.entities)) next.device_selection = 'auto';
         else delete next.device_selection;
       } else if (items || !Array.isArray(next.entities)) {
         next.entities = this.#roomMembership(room, override, sections, language);
@@ -1168,19 +1167,19 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const choice = select([['auto', words.automaticDevices], ['manual', words.manualDevices]], manual ? 'manual' : 'auto');
     choice.dataset.roomFocus = 'room-device-mode';
     choice.addEventListener('change', () => {
+      if ((choice.value === 'manual') === manual) return;
       const next = { ...override };
       if (choice.value === 'auto') {
-        delete next.entities;
-        delete next.keep_in_automatic_room_entities;
-        if (sections) next.device_selection = 'auto';
-        else delete next.device_selection;
+        if (!Array.isArray(next.entities)) next.entities = this.#roomMembership(room, override, sections, language);
+        next.device_selection = 'auto';
       } else {
         delete next.device_selection;
-        next.entities = this.#roomMembership(room, override, sections, language);
-        const extra = configuredIds(next.additional_entities).filter(id => next.entities.includes(id));
-        if (extra.length) next.keep_in_automatic_room_entities =
-          [...new Set([...configuredIds(next.keep_in_automatic_room_entities), ...extra])];
-        delete next.additional_entities;
+        if (!Array.isArray(next.entities)) {
+          next.entities = this.#roomMembership(room, override, sections, language);
+          const extra = configuredIds(next.additional_entities).filter(id => next.entities.includes(id));
+          if (extra.length) next.keep_in_automatic_room_entities =
+            [...new Set([...configuredIds(next.keep_in_automatic_room_entities), ...extra])];
+        }
       }
       this.#setRoomOverride(room.id, next, 'room-device-mode');
     });
