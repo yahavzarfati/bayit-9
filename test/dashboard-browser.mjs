@@ -2678,6 +2678,81 @@ async function assertDuplicateRoomEditorLabels(browser) {
   }
 }
 
+async function assertDuplicateShortcutEditorLabels(browser) {
+  const labels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', shortcuts:'Room shortcuts',
+      room:'Room', destination:'Long-press destination · Lounge lamp', screen:'Screen', save:'Save dashboard' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', shortcuts:'קיצורים בחדרים',
+      room:'חדר', destination:'יעד לחיצה ארוכה · Lounge lamp', screen:'מסך', save:'שמירת הדשבורד' },
+  ];
+  const upper = 'entertainment-upper';
+  const main = 'entertainment-main';
+  const strategy = {
+    type:'custom:bayit-9', room_selection:'manual', show_unassigned:false,
+    area_ids:['studio', 'lounge', 'bayit_room_north', 'bayit_room_south', 'spare'],
+    room_overrides:{
+      studio:{ name:'Shared room' }, lounge:{ name:'Shared room' },
+      bayit_room_north:{ name:'Shared room', entities:[] }, bayit_room_south:{ name:'Shared room', entities:[] },
+    },
+    toolbar:[
+      { kind:'settings', id:'settings' },
+      { kind:'media', id:main, label:'Entertainment' }, { kind:'media', id:upper, label:'Entertainment' },
+      { kind:'weather', id:'forecast', label:'Forecast' },
+    ],
+  };
+  for (const words of labels) {
+    const page = await browser.newPage({ viewport:{ width:320, height:660 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      await page.addInitScript(value => {
+        const key = 'bayit9-browser-fixture';
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy:value }));
+      }, strategy);
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      const room = setup.getByLabel(words.room, { exact:true });
+      const destination = setup.getByLabel(words.destination, { exact:true });
+      const openShortcuts = async () => {
+        await page.getByRole('button', { name:words.appearance, exact:true }).press('Enter');
+        await page.getByRole('button', { name:words.setup, exact:true }).press('Enter');
+        await setup.getByText(words.shortcuts, { exact:true }).press('Enter');
+      };
+      const optionText = (picker, value) => picker.locator('option[value="' + value + '"]').textContent();
+      await page.goto(base + '/fixture-home/home?configuration&room-selection&locale=' + words.locale);
+      await openShortcuts();
+      assert.equal(await optionText(room, 'studio'), 'Shared room · Studio');
+      assert.equal(await optionText(room, 'lounge'), 'Shared room · Lounge');
+      assert.equal(await optionText(room, 'bayit_room_north'), 'Shared room · 1');
+      assert.equal(await optionText(room, 'bayit_room_south'), 'Shared room · 2');
+      assert.equal(await optionText(room, 'spare'), 'Spare room');
+      await room.selectOption({ label:'Shared room · Lounge' });
+      assert.equal(await room.inputValue(), 'lounge');
+      const screen = (name, id) => words.screen + ' · ' + name + (id ? ' · ' + id : '');
+      assert.equal(await optionText(destination, 'panel:' + main), screen('Entertainment', main));
+      assert.equal(await optionText(destination, 'panel:' + upper), screen('Entertainment', upper));
+      assert.equal(await optionText(destination, 'panel:forecast'), screen('Forecast'));
+      await destination.selectOption({ label:screen('Entertainment', upper) });
+      assert.equal(await destination.inputValue(), 'panel:' + upper);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call =>
+        call.domain || call.type === 'lovelace/config/save')), []);
+      const save = setup.getByRole('button', { name:words.save, exact:true });
+      await Promise.all([page.waitForEvent('load'), save.press('Enter')]);
+      const saved = await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      assert.deepEqual(saved.room_overrides, { ...strategy.room_overrides, lounge:{
+        ...strategy.room_overrides.lounge, shortcut_detail_routes:{ 'light.demo_lounge':'panel:' + upper },
+      } });
+      assert.deepEqual(saved.toolbar, strategy.toolbar);
+
+      const shortcut = page.locator('.room[data-room="lounge"] .quick-button[data-entity="light.demo_lounge"]');
+      await shortcut.press('Shift+Enter');
+      await page.getByRole('dialog', { name:'Entertainment', exact:true }).waitFor();
+      assert.equal(new URL(page.url()).hash, '#panel/' + upper);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertManualRoomOrderRestored(browser) {
   const labels = [
     { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', mode:'Rooms on the dashboard',
@@ -9586,6 +9661,8 @@ try {
       await assertRoomEditorQuickPaths(browser);
       console.log(engine + ': setup drafts survive closing, preserve conflicts, and retry safely');
     });
+
+    await run('Shortcut editor distinguishes same-named rooms and popups', () => assertDuplicateShortcutEditorLabels(browser));
 
     await run('Home glass and accessibility', async () => {
       await assertHomeMaterial(browser);

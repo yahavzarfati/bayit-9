@@ -481,6 +481,10 @@ function entityArea(hass, id) {
   return entry?.area_id ?? entry?.ai ?? device?.area_id ?? device?.ai;
 }
 
+function nativeAreaNames(hass) {
+  return new Map(Object.entries(hass.areas ?? {}).map(([id, area]) => [area.area_id ?? id, area.name ?? id]));
+}
+
 function distinctEditorLabels(items, identifiers) {
   const groups = new Map();
   const labels = new Map();
@@ -1825,7 +1829,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #roomsPanel(words, language) {
     const rooms = dashboardRoomOptions(this.#config, this.#hass).sort((a, b) => a.name.localeCompare(b.name, language));
     const byId = new Map(rooms.map(room => [room.id, room]));
-    const areaNames = new Map(Object.entries(this.#hass.areas ?? {}).map(([id, area]) => [area.area_id ?? id, area.name ?? id]));
+    const areaNames = nativeAreaNames(this.#hass);
     const names = distinctEditorLabels(rooms, areaNames);
     const selection = selectedRoomIds(this.#config);
     const selected = selection ?? [];
@@ -2037,7 +2041,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
     if (!rooms.length) return [node('p', { textContent: words.noShortcutRooms })];
     const room = rooms.find(item => item.id === this.#shortcutRoom) ?? rooms[0];
     const { manual: chosen, automatic: autoMode } = roomShortcutSettings(this.#config, room.id);
-    const roomInput = select(rooms.map(item => [item.id, item.name]), room.id);
+    const roomLabels = distinctEditorLabels(rooms, nativeAreaNames(this.#hass));
+    const roomInput = select(rooms.map(item => [item.id, roomLabels.get(item.id)]), room.id);
     roomInput.dataset.shortcutRoom = '';
     const list = node('div', { className: 'grid', hidden: true });
     const details = node('fieldset', { className: 'stack' });
@@ -2061,8 +2066,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const targets = normalizeShortcutDetailEntities(scope, override.shortcut_detail_entities);
       const panels = shortcutPanelOptions(this.#config);
       const routes = normalizeShortcutDetailRoutes(scope, override.shortcut_detail_routes, panels);
-      const panelChoices = panels.map(({ id, label, kind }) =>
-        ['panel:' + id, words.shortcutPanel.replace('{name}', label || languages[language][kind] || id)]);
+      const panelLabels = distinctEditorLabels(
+        panels.map(({ id, label, kind }) => ({ id, name: label || languages[language][kind] || id })),
+        new Map(panels.map(({ id }) => [id, id])),
+      );
+      const panelChoices = panels.map(({ id }) =>
+        ['panel:' + id, words.shortcutPanel.replace('{name}', () => panelLabels.get(id))]);
       const controls = [];
       const powerControls = [];
       const commit = next => this.#commitRoomOverride(room.id, next);
