@@ -136,6 +136,7 @@ export function buildPanelControls(model, {
   if (model.timer || duration || showStop) {
     for (const id of ['start_timed', 'extend_timed', 'stop_timed']) used.add(id);
     const card = make('section', 'device-timer');
+    card.toggleAttribute('data-compact', compactTimer);
     const visibleDuration = value => value + ' ' + t(compactTimer ? 'duration_short' : 'duration');
     const spokenDuration = value => value + ' ' + t('duration');
     card.setAttribute('aria-label', t('timed'));
@@ -323,21 +324,21 @@ export const panelControlStyles = `
   .timer-presets, .heat-level-options { display: grid; gap: 4px; direction: ltr; }
   .timer-presets { grid-template-columns: repeat(auto-fit,minmax(48px,1fr)); }
   .timer-preset { padding-inline: 3px; }
-  .device[data-inline-climate] .device-timer {
+  .device-timer[data-compact] {
     --timer-rail: color-mix(in srgb,var(--ink) 10%,transparent);
   }
-  .device[data-inline-climate] .timer-clock { line-height: 1.2; }
-  .device[data-inline-climate] .timer-range {
+  .device-timer[data-compact] .timer-clock { line-height: 1.2; }
+  .device-timer[data-compact] .timer-range {
     -webkit-appearance: none;
     appearance: none;
     background: transparent;
   }
-  .device[data-inline-climate] .timer-range::-webkit-slider-runnable-track {
+  .device-timer[data-compact] .timer-range::-webkit-slider-runnable-track {
     height: 8px;
     background: var(--timer-rail);
     border-radius: 999px;
   }
-  .device[data-inline-climate] .timer-range::-webkit-slider-thumb {
+  .device-timer[data-compact] .timer-range::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
     width: 18px;
@@ -347,26 +348,26 @@ export const panelControlStyles = `
     border: 1px solid var(--line);
     border-radius: 50%;
   }
-  .device[data-inline-climate] .timer-range::-moz-range-track {
+  .device-timer[data-compact] .timer-range::-moz-range-track {
     height: 8px;
     background: var(--timer-rail);
     border-radius: 999px;
   }
-  .device[data-inline-climate] .timer-range::-moz-range-progress { background: transparent; }
-  .device[data-inline-climate] .timer-range::-moz-range-thumb {
+  .device-timer[data-compact] .timer-range::-moz-range-progress { background: transparent; }
+  .device-timer[data-compact] .timer-range::-moz-range-thumb {
     width: 18px;
     height: 18px;
     background: var(--moving);
     border: 1px solid var(--line);
     border-radius: 50%;
   }
-  .device[data-inline-climate] :is(.timer-command,.timer-preset) {
+  .device-timer[data-compact] :is(.timer-command,.timer-preset) {
     isolation: isolate;
     position: relative;
     border: 0;
     background: transparent;
   }
-  .device[data-inline-climate] :is(.timer-command,.timer-preset)::before {
+  .device-timer[data-compact] :is(.timer-command,.timer-preset)::before {
     content: '';
     position: absolute;
     z-index: -1;
@@ -376,9 +377,17 @@ export const panelControlStyles = `
     border-radius: inherit;
     pointer-events: none;
   }
-  .device[data-inline-climate] :is(.timer-command,.timer-preset):hover::before {
+  .device-timer[data-compact] :is(.timer-command,.timer-preset):hover::before {
     background: color-mix(in srgb,var(--ink) 10%,var(--control));
   }
+  .modal[data-kind=device] .modal-body:has(.device-timer[data-compact]) { padding-block-end: 9px; }
+  .modal[data-kind=device] .device:has(.device-timer[data-compact]) { padding-block: 6px; }
+  .modal[data-kind=device] .device:has(.device-timer[data-compact]) .action-list {
+    margin-block-start: 4px;
+    gap: 5px;
+  }
+  .modal[data-kind=device] .device-timer[data-compact] { padding-top: 4px; }
+  .modal[data-kind=device] .device-timer[data-compact] .timer-tools { margin-block: 0 2px; }
   .heat-level-options {
     margin-top: 5px;
     grid-template-columns: repeat(auto-fit,minmax(25px,1fr));

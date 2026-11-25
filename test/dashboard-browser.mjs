@@ -1879,11 +1879,48 @@ try {
       const rememberedDevice = rememberedTimerPage.getByRole('dialog', { name: 'Studio air conditioner', exact: true });
       const rememberedDeviceRange = rememberedDevice.locator('input.timer-range');
       assert.equal(await rememberedDeviceRange.inputValue(), '45');
+      await rememberedDeviceRange.press('ArrowRight');
+      assert.equal(await rememberedDeviceRange.inputValue(), '60');
+      assert.equal(await rememberedDeviceRange.getAttribute('aria-valuetext'), '60 Minutes');
+      assert.equal(await rememberedDeviceRange.evaluate(range =>
+        range === range.getRootNode().activeElement && range.matches(':focus-visible')), true);
+      await rememberedDeviceRange.press('ArrowLeft');
       await rememberedTimerPage.reload();
       assert.equal(await rememberedDeviceRange.inputValue(), '45');
       assert.deepEqual(await rememberedTimerPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
       await rememberedTimerPage.close();
       console.log(engine + ': timer duration survives reopening, detail navigation and reload');
+
+      const compactTimerPage = await browser.newPage({
+        viewport: { width: 320, height: 660 }, hasTouch: true, isMobile: true, reducedMotion: 'reduce',
+      });
+      await compactTimerPage.goto(base + '/fixture-home/home?device-panel&locale=he#device/studio/climate.demo_air');
+      const compactTimerDialog = compactTimerPage.getByRole('dialog', { name: 'Studio air conditioner', exact: true });
+      const timerDimensions = await compactTimerDialog.locator('.device-timer[data-compact]').evaluate(timer => {
+        const body = timer.closest('.modal-body');
+        const slider = timer.querySelector('.timer-range');
+        const button = timer.querySelector('.timer-preset');
+        const rect = button.getBoundingClientRect();
+        const inset = getComputedStyle(button, '::before').top;
+        return {
+          appearance: getComputedStyle(slider).appearance,
+          sliderHeight: slider.getBoundingClientRect().height,
+          presetHeight: rect.height, presetWidth: rect.width, inset,
+          overflowY: body.scrollHeight - body.clientHeight,
+          overflowX: body.scrollWidth - body.clientWidth,
+          timerHeight: timer.getBoundingClientRect().height,
+        };
+      });
+      assert.equal(timerDimensions.appearance, 'none');
+      assert.ok(timerDimensions.sliderHeight >= 44 && timerDimensions.presetHeight >= 44 && timerDimensions.presetWidth >= 44);
+      assert.equal(timerDimensions.inset, '6px');
+      assert.ok(timerDimensions.overflowY <= 1 && timerDimensions.overflowX <= 1);
+      assert.ok(timerDimensions.timerHeight <= 152);
+      await compactTimerDialog.getByText('120 דק׳', { exact: true }).first().waitFor();
+      assert.equal(await compactTimerDialog.locator('.timer-range').getAttribute('aria-valuetext'), '120 דקות');
+      assert.deepEqual(await compactTimerPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+      await compactTimerPage.close();
+      console.log(engine + ': compact standalone climate timer rail and full-size narrow RTL controls');
 
       const geometryPage = await browser.newPage({
         viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce',
