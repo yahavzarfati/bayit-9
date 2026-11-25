@@ -1055,7 +1055,9 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
       const accent = kind === 'calendar' && domain === 'calendar' ? calendarAccent(item.accent_color) : undefined;
       const readout = normalizeToolbarReadout(kind, section, item);
       const seriesColor = comparison && sensorSeriesColor(item);
-      const hourlyForecast = item?.hourly_forecast === true && supportsHourlyWeatherForecast(kind, section, item);
+      const forecast = supportsHourlyWeatherForecast(kind, section, item);
+      const hourlyForecast = forecast && item?.hourly_forecast === true;
+      const clockWeatherCard = forecast && item?.clock_weather_card === true;
       const horizonCard = item?.horizon_card === true && supportsHorizonCard(kind, section, item);
       return [{ ...descriptor, ...(name && { name }), ...(ROOM_ICON.test(icon) && { icon }),
         ...(role && { role }), ...(command && { command }),
@@ -1063,7 +1065,7 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
         ...(graphRoom && { graph_room_id: graphRoom }), ...(vacuumPanel && { vacuum_panel_id: vacuumPanel }),
         ...(accent && { accent_color: accent }), ...(readout && { readout }),
         ...(seriesColor && { series_color: seriesColor }), ...(hourlyForecast && { hourly_forecast: true }),
-        ...(horizonCard && { horizon_card: true }) }];
+        ...(clockWeatherCard && { clock_weather_card: true }), ...(horizonCard && { horizon_card: true }) }];
     });
     return [{ id, kind: section.kind, ...(title !== undefined && { title }),
       ...(isCompactAutomationActions(kind, section) && { layout: 'compact-actions' }),

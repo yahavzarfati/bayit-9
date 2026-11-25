@@ -71,6 +71,7 @@ const WORDS = {
     compactAutomationActions: 'Show compact action buttons',
     weatherReadingsList: 'Show readings as a compact read-only list',
     horizonCard: 'Show the Sun and Moon with Horizon Card',
+    clockWeatherCard: 'Use Clock Weather Card for the forecast',
     readingChartCards: 'Show readings as chart cards',
     hourlyForecast: 'Show the 24-hour forecast above the daily forecast',
     energyReadingCards: 'Show readings with large values',
@@ -149,6 +150,7 @@ const WORDS = {
     compactAutomationActions: 'הצגת כפתורי פעולה קומפקטיים',
     weatherReadingsList: 'הצגת המדדים ברשימה קומפקטית לקריאה בלבד',
     horizonCard: 'הצגת השמש והירח באמצעות Horizon Card',
+    clockWeatherCard: 'הצגת התחזית באמצעות Clock Weather Card',
     readingChartCards: 'הצגת המדדים ככרטיסי גרף',
     hourlyForecast: 'הצגת תחזית ל־24 שעות מעל התחזית היומית',
     energyReadingCards: 'הצגת ערכי המדידה בגדול',
@@ -428,7 +430,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     role.addEventListener('change', () => save({
       role: role.value || undefined,
       ...(role.value && role.value !== 'status' && { readout: undefined }),
-      ...(role.value && role.value !== 'forecast' && { hourly_forecast: undefined }),
+      ...(role.value && role.value !== 'forecast' && { hourly_forecast: undefined, clock_weather_card: undefined }),
       ...(role.value && role.value !== 'sun' && { horizon_card: undefined }),
       ...(role.value !== 'graph' && { graph_hours: undefined, graph_room_id: undefined, vacuum_panel_id: undefined, series_color: undefined }),
       ...(role.value !== 'action' && { command: undefined,
@@ -448,6 +450,9 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       const hourly = node('input', { type: 'checkbox', checked: record.hourly_forecast === true });
       hourly.addEventListener('change', () => save({ hourly_forecast: hourly.checked || undefined }));
       fields.push(node('label', { className: 'check' }, [hourly, words.hourlyForecast]));
+      const clock = node('input', { type: 'checkbox', checked: record.clock_weather_card === true });
+      clock.addEventListener('change', () => save({ clock_weather_card: clock.checked || undefined }));
+      fields.push(node('label', { className: 'check' }, [clock, words.clockWeatherCard]));
     }
     if (supportsHorizonCard(kind, section, record)) {
       const horizon = node('input', { type: 'checkbox', checked: record.horizon_card === true });

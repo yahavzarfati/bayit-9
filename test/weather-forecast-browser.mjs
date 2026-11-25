@@ -11,6 +11,8 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
     const locale = options.get('locale') || 'en';
     const solar = options.get('solar');
     const horizonMode = options.get('horizon');
+    const clockMode = options.get('clock-card');
+    const clock = { configurations:[], contexts:[], events:[], details:0 };
     const horizon = { configurations:[], contexts:[], connected:0, requests:[] };
     const entity = 'weather.fixture';
     const connected = new Set();
@@ -46,6 +48,23 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
       connectedCallback() { activate(this); }
       disconnectedCallback() { connected.delete(this); }
     });
+    if (['installed', 'reject'].includes(clockMode)) {
+      customElements.define('clock-weather-card', class extends HTMLElement {
+        setConfig(config) {
+          if (clockMode === 'reject') throw new Error('Clock Weather card setup failed');
+          this.config = config;
+          clock.configurations.push(config);
+        }
+        set hass(value) { this.scoped = value; clock.contexts.push(value); }
+        connectedCallback() {
+          this.textContent = 'Clock Weather fixture';
+          this.stop = ['hourly','daily'].map(type => this.scoped.connection.subscribeMessage(event => {
+            clock.events.push([type, event.forecast.length]);
+          }, { type:'weather/subscribe_forecast', entity_id:this.config.entity, forecast_type:type }));
+        }
+        disconnectedCallback() { for (const stop of this.stop) void stop.then(unsubscribe => unsubscribe()); }
+      });
+    }
     if (['installed', 'reject', 'no-location'].includes(horizonMode)) {
       customElements.define('horizon-card', class extends HTMLElement {
         setConfig(config) {
@@ -116,6 +135,7 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
     const config = { type:'custom:bayit-9', locale, toolbar: [{ id:'weather-fixture', kind:'weather', label:'Fixture Weather',
       sections: [{ id:'forecast', title:'Forecast settings', kind:'forecast', entities:[{
         entity, role:'forecast', ...(!options.has('legacy') && { hourly_forecast:true }),
+        ...(clockMode && { clock_weather_card:true }),
       }] }, { id:'sun', kind:'sun', title:'Sun settings', entities:[{ entity:'sun.sun', role:'sun',
         ...(horizonMode && { horizon_card:true }),
       }] }],
@@ -126,7 +146,13 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
     dashboard.hass = hass;
     dashboard.addEventListener('hass-more-info', event => details.push(event.detail.entityId));
     const tracker = {
-      created, forecastCalls, details, horizon,
+      created, forecastCalls, details, horizon, clock,
+      tryClockAction(source, action) {
+        const card = dashboard.shadowRoot.querySelector('clock-weather-card');
+        card.dispatchEvent(new CustomEvent('hass-action',{ bubbles:true,composed:true,detail:{
+          config:{ entity:source,tap_action:{action} }, action:'tap',
+        } }));
+      },
       hideSun(hidden) {
         hass.entities['sun.sun'] = hidden ? { hidden_by:'user' } : {};
         dashboard.hass = { ...hass, entities:{ ...hass.entities } };
@@ -170,6 +196,104 @@ const server = createServer((request, response) => {
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 const base = 'http://127.0.0.1:' + server.address().port + '/fixture/home';
+
+async function assertClockWeatherCard(browser) {
+  for (const [locale, reducedMotion] of [['en','no-preference'],['he','reduce']]) {
+    const page = await browser.newPage({ viewport:{width:391,height:844}, hasTouch:true, reducedMotion });
+    page.setDefaultTimeout(8000);
+    const hebrew = locale === 'he';
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    const panel = page.getByRole('dialog',{name:'Fixture Weather',exact:true});
+    const original = panel.locator('.weather-current-summary');
+    const card = panel.locator('clock-weather-card');
+    const open = mode => page.goto(base + '?locale=' + locale + '&clock-card=' + mode + '#panel/weather-fixture');
+    try {
+      for (const mode of ['missing','reject','installed&no-subscriptions','installed&daily-error']) {
+        await open(mode);
+        await original.waitFor();
+        if (mode.endsWith('daily-error')) {
+          await panel.getByText(hebrew ? 'התחזית היומית אינה זמינה' : 'Daily forecast unavailable',{exact:true}).waitFor();
+        }
+        for (let frame = 0; frame < 2; frame++) await page.evaluate(() => new Promise(requestAnimationFrame));
+        assert.equal(await card.count(),0);
+      }
+      await open('installed');
+      await card.waitFor();
+      assert.equal(await original.count(),0);
+      await page.waitForFunction(() => tracker.clock.events.length === 2);
+      const { configurations, contexts, events } = await page.evaluate(() => tracker.clock);
+      assert.deepEqual(configurations,[{
+        type:'custom:clock-weather-card',entity:'weather.fixture',locale,sun_entity:'sun.sun',weather_icon_type:'line',
+        tap_action:{action:'more-info'},
+        sections:{ header:{animated_icons:!hebrew},forecast_strip:{forecast_type:'hourly',count:24,hide_sunrise_sunset:false},
+          forecast_list:{forecast_type:'daily',count:5} },
+      }]);
+      assert.deepEqual(events,[['hourly',27],['daily',7]]);
+      assert.deepEqual(Object.keys(contexts.at(-1)).sort(),['config','connection','language','locale','states']);
+      assert.deepEqual(Object.keys(contexts.at(-1).states).sort(),['sun.sun','weather.fixture']);
+      assert.equal(contexts.at(-1).locale.time_format,'24');
+      assert.equal(await page.evaluate(() => tracker.maximum()),2);
+
+      const refused = await page.evaluate(async () => {
+        const scope = tracker.clock.contexts.at(-1);
+        const requests = [
+          {type:'render_template',template:'{{ 1 }}'},
+          {type:'call_service',domain:'weather',service:'get_forecasts'},
+          {type:'weather/subscribe_forecast',forecast_type:'daily',entity_id:'weather.other'},
+          {type:'weather/subscribe_forecast',forecast_type:'twice_daily',entity_id:'weather.fixture'},
+        ];
+        return await Promise.all(requests.map(request =>
+          scope.connection.subscribeMessage(()=>{},request).then(()=>false,()=>true)));
+      });
+      assert.deepEqual(refused,[true,true,true,true]);
+      await page.evaluate(() => {
+        tracker.tryClockAction('weather.other','more-info');
+        tracker.tryClockAction('weather.fixture','call-service');
+        tracker.tryClockAction('weather.fixture','more-info');
+      });
+      assert.deepEqual(await page.evaluate(() => tracker.details),['weather.fixture']);
+      await page.evaluate(() => tracker.setFeatures(3,'unavailable'));
+      await card.waitFor({state:'detached'});
+      await original.waitFor();
+      await page.waitForFunction(() => tracker.active().length === 0);
+      await page.evaluate(() => tracker.setFeatures(3));
+      await card.waitFor();
+      await panel.getByRole('button',{name:hebrew ? 'סגירה' : 'Close',exact:true}).tap();
+      await panel.waitFor({state:'hidden'});
+      await page.waitForFunction(() => tracker.active().length === 0);
+      assert.ok(await page.evaluate(async () => {
+        const scope=tracker.clock.contexts.at(-1);
+        try {
+          await scope.connection.subscribeMessage(()=>{},{
+            type:'weather/subscribe_forecast',forecast_type:'daily',entity_id:'weather.fixture',
+          });
+          return false;
+        } catch { return true; }
+      }));
+      assert.deepEqual(await page.evaluate(() => tracker.horizon.requests),[]);
+      assert.deepEqual(errors,[]);
+
+      await page.goto(base + '?editor&locale=' + locale);
+      await page.getByText(hebrew ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens',{exact:true}).tap();
+      await page.getByRole('button',{name:'Fixture Weather',exact:true}).tap();
+      await page.getByRole('button',{name:'Forecast settings',exact:true}).tap();
+      await page.getByRole('button',{name:'Fixture Outlook',exact:true}).tap();
+      const setting = page.getByRole('checkbox',{ name:hebrew ? 'הצגת התחזית באמצעות Clock Weather Card'
+        : 'Use Clock Weather Card for the forecast',exact:true });
+      const saved = () => page.evaluate(() => tracker.draft.toolbar[0].sections[0].entities[0].clock_weather_card);
+      assert.equal(await setting.isChecked(),false);
+      await setting.check();
+      assert.equal(await saved(),true);
+      await setting.uncheck();
+      assert.equal(await saved(),undefined);
+      await setting.check();
+      await page.getByLabel(hebrew ? 'אופן התצוגה' : 'Display as',{exact:true}).selectOption('status');
+      assert.equal(await saved(),undefined);
+      await setting.waitFor({ state:'hidden' });
+    } finally { await page.close(); }
+  }
+}
 
 async function assertHorizonPresentation(browser) {
   for (const locale of ['en', 'he']) {
@@ -516,6 +640,8 @@ try {
       }
       assert.deepEqual(errors, []);
       console.log(engine.name() + ' at 320 px (' + locale + '): forecast/Sun swipe, hourly scrolling, daily ranges, subscriptions, and editor');
+      await assertClockWeatherCard(browser);
+      console.log(engine.name() + ' at 391 px (EN/HE): optional Clock Weather forecast, narrow feed scope, and fallback');
       await assertHorizonPresentation(browser);
       console.log(engine.name() + ' at 391 px (EN/HE): optional read-only Sun/Moon presentation and native fallback');
       await assertSolarForecast(browser);

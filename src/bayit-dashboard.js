@@ -449,8 +449,9 @@ export function normalizeDashboardConfig(config = {}) {
           if (readout) entity.readout = readout;
           const seriesColor = comparison && sensorSeriesColor(raw);
           if (seriesColor) entity.series_color = seriesColor;
-          if (raw?.hourly_forecast === true && supportsHourlyWeatherForecast(item.kind, section, raw)) {
-            entity.hourly_forecast = true;
+          if (supportsHourlyWeatherForecast(item.kind, section, raw)) {
+            if (raw.hourly_forecast === true) entity.hourly_forecast = true;
+            if (raw.clock_weather_card === true) entity.clock_weather_card = true;
           }
           if (raw?.horizon_card === true && supportsHorizonCard(item.kind, section, raw)) entity.horizon_card = true;
           if (item.kind === 'sensors' && section.kind !== 'series' && entity.role === 'graph' &&

@@ -10,6 +10,7 @@ import { bindDeviceDetails } from './popup-motion.js';
 import { comparisonSources, createTemperatureComparison, temperatureComparisonStyles } from './temperature-comparison-view.js';
 import { createHourlyWeather, hourlyWeatherStyles } from './hourly-weather.js';
 import { createDailyWeather, createWeatherSummary, weatherSummaryStyles } from './weather-summary.js';
+import { createClockWeatherProjection } from './clock-weather-card.js';
 
 const sectionKeys = {
   actions: 'automations', locks: 'toolbar_locks', covers: 'room_covers', status: 'toolbar_status',
@@ -76,7 +77,7 @@ export function createNativeCards(host, hass, make) {
   }
 
   return {
-    mount(config, fallback, projectHass) {
+    mount(config, fallback, projectHass, onPresentationChange) {
       const slot = make('div', 'native-panel-card');
       if (fallback) slot.append(fallback);
       void (async () => {
@@ -100,11 +101,17 @@ export function createNativeCards(host, hass, make) {
               const context = projectHass ? projectHass(next) : next;
               if (context) {
                 if (card.hass !== context) card.hass = context;
-                if (slot.firstElementChild !== card) slot.replaceChildren(card);
+                if (slot.firstElementChild !== card) {
+                  slot.replaceChildren(card);
+                  onPresentationChange?.(true);
+                }
                 return;
               }
             } catch { /* Keep the fallback if the custom card cannot use the available data. */ }
-            if (fallback && slot.firstElementChild !== fallback) slot.replaceChildren(fallback);
+            if (fallback && slot.firstElementChild !== fallback) {
+              slot.replaceChildren(fallback);
+              onPresentationChange?.(false);
+            }
           };
           update(hass);
           cards.set(card, update);
@@ -656,7 +663,9 @@ export function createToolbarPanel(kind, configuration, context) {
       type: 'weather-forecast', entity: item.entity, name: item.name, show_current: showCurrent,
       show_forecast: Boolean(mode), forecast_type: mode ?? 'daily', forecast_slots: 5, tap_action: { action: 'none' },
     }, fallback());
-    if (!item.hourly_forecast) return build(knownForecast(getState()?.attributes?.supported_features));
+    if (!item.hourly_forecast && !item.clock_weather_card) {
+      return build(knownForecast(getState()?.attributes?.supported_features));
+    }
 
     const region = make('div', 'weather-forecast-stack');
     const visible = (hass, entity) => isVisibleEntity(entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities);
@@ -703,9 +712,16 @@ export function createToolbarPanel(kind, configuration, context) {
       daily.replaceChildren(views.get(mode));
     }
 
+    let nativePresented = false;
     function update() {
       const state = getState();
       region.hidden = !visible(currentHass, item.entity);
+      if (nativePresented) {
+        hourly.update(undefined);
+        showDaily(undefined);
+        daysView.update(undefined, false);
+        return;
+      }
       const features = !region.hidden && state && !['unknown', 'unavailable'].includes(state.state)
         ? state.attributes?.supported_features : undefined;
       const preferred = knownForecast(features);
@@ -720,7 +736,39 @@ export function createToolbarPanel(kind, configuration, context) {
     region.append(current.root, hourly.root, daysView.root, daily);
     handlers.push(update);
     update();
-    return region;
+    if (!item.clock_weather_card) return region;
+
+    const active = () => live && dialog?.open && !dialog.hasAttribute('data-closing') &&
+      slot.firstElementChild?.localName === 'clock-weather-card' && slot.isConnected;
+    const projection = createClockWeatherProjection({
+      entity: item.entity, sun: sunEntity, locale: context.locale, visible, active,
+      source: () => currentHass,
+      onUnavailable: () => { if (active()) native.update(currentHass); },
+    });
+    const slot = nativeCard({
+      type: 'custom:clock-weather-card', entity: item.entity, locale: context.locale,
+      ...(sunEntity && { sun_entity: sunEntity }), weather_icon_type: 'line',
+      tap_action: { action: 'more-info' },
+      sections: {
+        header: { animated_icons: !view.matchMedia('(prefers-reduced-motion: reduce)').matches },
+        forecast_strip: { forecast_type: 'hourly', count: 24, hide_sunrise_sunset: !sunEntity },
+        forecast_list: { forecast_type: 'daily', count: 5 },
+      },
+    }, region, projection, presented => {
+      nativePresented = presented;
+      update();
+    });
+    slot.addEventListener('hass-action', event => {
+      event.stopPropagation();
+      const config = event.detail?.config;
+      if (active() && event.target === slot.firstElementChild && event.detail?.action === 'tap' &&
+          config?.entity === item.entity && config.tap_action?.action === 'more-info' &&
+          visible(currentHass, item.entity) && modelFor(item).actions.more_info) {
+        const card = slot.firstElementChild;
+        moreInfo(item, card.shadowRoot?.querySelector('ha-card[tabindex="0"]') ?? card);
+      }
+    });
+    return slot;
   }
 
   function render(item, section, { compactStatus, readingCards, compactActions, compactVacuum }) {
@@ -809,7 +857,7 @@ export function createToolbarPanel(kind, configuration, context) {
   }
   const forecastPages = new Map();
   const detailedForecast = kind === 'weather' && sections.some(section =>
-    section.kind === 'forecast' && section.entities.some(item => item.hourly_forecast));
+    section.kind === 'forecast' && section.entities.some(item => item.hourly_forecast || item.clock_weather_card));
   const beforeMap = configuration.vacuumMap?.before_section;
   const compactVacuum = kind === 'vacuum' && configuration.vacuumMap?.compact_controls === true;
   let vacuumMapAnchor;
@@ -921,7 +969,7 @@ export function createToolbarPanel(kind, configuration, context) {
       panel.addEventListener('pointerdown', event => {
         if (event.pointerType !== 'touch') return;
         touch = event.isPrimary && !event.composedPath().some(node =>
-          node.matches?.('button, a, input, select, textarea, [contenteditable], [role="button"], [data-weather-forecast-scroll]'))
+          node.matches?.('button, a, input, select, textarea, [contenteditable], [role="button"], [data-weather-forecast-scroll], clock-weather-card-forecast-strip'))
           ? { id: event.pointerId, x: event.clientX, y: event.clientY } : undefined;
       });
       panel.addEventListener('pointercancel', () => { touch = undefined; });
@@ -1269,7 +1317,7 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .weather-page-dot[aria-pressed=true]::before { background: currentColor; }
   .weather-page-dot:focus-visible { outline-offset: -2px; }
   [data-weather-swipe] { touch-action: pan-y pinch-zoom; }
-  [data-weather-swipe]:has([data-weather-forecast-scroll]) { touch-action: auto; }
+  [data-weather-swipe]:has([data-weather-forecast-scroll], clock-weather-card) { touch-action: auto; }
   [data-weather-swipe] .daily-weather { touch-action: pan-y pinch-zoom; }
   .weather-forecast-stack { display: grid; gap: 8px; min-width: 0; }
   .weather-forecast-view { display: contents; }
