@@ -303,6 +303,7 @@ if (query.has('device-panel')) {
   const attributes = states['climate.demo_air'].attributes;
   if (query.has('timer-usage')) {
     states['sensor.demo_air_usage'].attributes.entry_id = 'fixture-timer-entry';
+    hass.entities['sensor.demo_air_usage'] = { platform: query.has('fake-usage-provider') ? 'template' : 'simple_timer' };
     hass.services = { simple_timer: { reset_daily_usage: {} } };
     states['sensor.demo_read_only_usage'] = { state: '30', attributes: { unit_of_measurement: 'min' } };
   }
@@ -2373,8 +2374,10 @@ try {
       await usagePage.evaluate(() => window.bayitTest.finishUsageReset());
       await usageButton(usePanel, '00:00').waitFor();
       assert.equal(await usageButton(usePanel, '00:00').getAttribute('aria-keyshortcuts'), null);
-      const viewOnly = await openUsage('&usage-view-only');
-      assert.equal(await usageButton(viewOnly, '10:00').getAttribute('aria-keyshortcuts'), null);
+      for (const flags of ['&usage-view-only', '&fake-usage-provider']) {
+        const viewOnly = await openUsage(flags);
+        assert.equal(await usageButton(viewOnly, '10:00').getAttribute('aria-keyshortcuts'), null);
+      }
       const differentReading = await openUsage('&different-usage-source');
       assert.equal(await usageButton(differentReading, '30:00').getAttribute('aria-keyshortcuts'), null);
       await usageButton(differentReading, '30:00').tap();

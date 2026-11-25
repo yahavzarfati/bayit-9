@@ -185,7 +185,8 @@ function readSimpleTimer(entity, device, states, nowMs) {
 
 export function simpleTimerUsageResetAvailable(hass, sensor) {
   const entity = hass?.entities?.[sensor];
-  return Object.hasOwn(hass?.services?.simple_timer ?? {}, "reset_daily_usage") &&
+  return (entity?.platform ?? entity?.pl) === "simple_timer" &&
+    Object.hasOwn(hass?.services?.simple_timer ?? {}, "reset_daily_usage") &&
     !entity?.hidden && !entity?.hidden_by && !entity?.disabled_by;
 }
 

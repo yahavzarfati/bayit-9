@@ -267,7 +267,7 @@ test("daily usage reset is explicitly opted in and targets the same linked Simpl
 
   const calls = [];
   let acknowledge = false;
-  const hass = { states, services: {}, callWS: req => {
+  const hass = { states, services: {}, entities: { [sensor]: { platform: 'simple_timer' } }, callWS: req => {
     calls.push(req);
     if (acknowledge) hass.states[sensor] = entity("0", attrs);
   } };
@@ -276,10 +276,12 @@ test("daily usage reset is explicitly opted in and targets the same linked Simpl
   });
   await assert.rejects(controller.execute(c, action, token, { confirmed: true }), code("service_unavailable"));
   hass.services.simple_timer = { reset_daily_usage: {} };
-  hass.entities = { [sensor]: { hidden: true } };
+  hass.entities = { [sensor]: { platform: "simple_timer", hidden: true } };
+  await assert.rejects(controller.execute(c, action, token, { confirmed: true }), code("service_unavailable"));
+  hass.entities = { [sensor]: { platform: "template" } };
   await assert.rejects(controller.execute(c, action, token, { confirmed: true }), code("service_unavailable"));
   assert.equal(calls.length, 0);
-  hass.entities = {};
+  hass.entities = { [sensor]: { pl: "simple_timer" } };
   assert.equal((await controller.execute(c, action, token, { confirmed: true })).status, "unconfirmed");
   acknowledge = true;
   assert.equal((await controller.execute(c, action, token, { confirmed: true })).status, "confirmed");
