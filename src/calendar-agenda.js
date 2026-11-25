@@ -4,6 +4,7 @@ const isoDay = /^\d{4}-\d{2}-\d{2}$/;
 const notReady = new Set(['unknown', 'unavailable']);
 const calendarRetryMin = 60000;
 const calendarRetryMax = 30 * calendarRetryMin;
+const calendarPollInterval = 30 * 60000;
 const permanentCalendarErrors = new Set(['unauthorized', 'unauthenticated', 'auth_invalid', 'forbidden',
   'permission_denied', 'not_found', 'entity_not_found', 'invalid_entity_id', 'invalid_format']);
 let nextAgendaId = 0;
@@ -282,6 +283,7 @@ export function createCalendarAgenda({ host, context, items, settings }) {
   let calendar = browserCalendar;
   let requestedTimeZone;
   let hass;
+  let restPoll;
   let stopWeather;
   let forecasts;
   let alarm;
@@ -324,6 +326,29 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     try { void Promise.resolve(stop()).catch(() => {}); } catch { /* The connection may already have closed. */ }
   }
 
+  const active = () => !disposed && (!context.dialog || context.dialog.open && !context.dialog.hasAttribute('data-closing'));
+
+  function syncRestPolling() {
+    if (!active() || ![...subscriptions.values()].some(entry => entry.poll)) {
+      view.clearTimeout(restPoll);
+      restPoll = undefined;
+      return;
+    }
+    restPoll ??= view.setTimeout(() => {
+      restPoll = undefined;
+      if (!active()) return;
+      if (!range || calendar.dayKey(new Date()) !== range.firstDay) { update(hass); return; }
+      for (const entry of subscriptions.values()) entry.poll?.();
+      syncRestPolling();
+    }, calendarPollInterval);
+  }
+
+  function connectionReady() {
+    if (!active()) return;
+    clearSources();
+    update(hass);
+  }
+
   function subscribe(message, receive, onError) {
     let closed = false;
     let close;
@@ -347,16 +372,16 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     const requestHass = hass;
     const entry = { status: 'pending', events: [], close: undefined };
     subscriptions.set(source.entity, entry);
-    const dialog = context.dialog;
-    const current = () => !disposed && subscriptions.get(source.entity) === entry;
+    const current = () => active() && subscriptions.get(source.entity) === entry;
     let failures = priorFailures;
     let retryTimer;
+    let timeout;
     let restInFlight = false;
     let retryAfterRest = false;
 
     function retry() {
       retryTimer = undefined;
-      if (!current() || (dialog && (!dialog.open || dialog.hasAttribute('data-closing')))) return;
+      if (!current()) return;
       if (calendar.dayKey(new Date()) !== range.firstDay || !available(hass, source.entity)) {
         update(hass);
         return;
@@ -376,6 +401,8 @@ export function createCalendarAgenda({ host, context, items, settings }) {
       retryTimer = undefined;
       entry.status = 'failed';
       entry.events = [];
+      entry.poll = undefined;
+      syncRestPolling();
       if (retryable) {
         const delay = Math.min(calendarRetryMin * 2 ** failures, calendarRetryMax);
         failures = Math.min(failures + 1, 5);
@@ -396,7 +423,11 @@ export function createCalendarAgenda({ host, context, items, settings }) {
       draw();
     }
 
-    const timeout = view.setTimeout(() => failed(true), 8000);
+    const armTimeout = () => {
+      view.clearTimeout(timeout);
+      timeout = view.setTimeout(() => failed(true), 8000);
+    };
+    armTimeout();
     entry.stop = () => {
       view.clearTimeout(timeout);
       view.clearTimeout(retryTimer);
@@ -404,19 +435,26 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     };
     const params = { entity_id: source.entity, start: range.start.toISOString(), end: range.end.toISOString() };
     const rest = () => {
-      if (!current() || restInFlight) return;
+      if (!current() || restInFlight || !available(hass, source.entity)) return;
       if (typeof requestHass.callApi !== 'function') { failed(false); return; }
       restInFlight = true;
+      armTimeout();
       const done = (data, error) => {
         restInFlight = false;
         if (!current()) return;
-        if (Array.isArray(data)) receive(data);
-        else if (retryAfterRest && canRetryCalendar(error)) retry();
+        if (Array.isArray(data)) {
+          retryAfterRest = false;
+          entry.poll = rest;
+          receive(data);
+          syncRestPolling();
+        } else if (retryAfterRest && canRetryCalendar(error)) retry();
         else failed(canRetryCalendar(error));
       };
       const query = new URLSearchParams({ start: params.start, end: params.end });
       void Promise.resolve().then(() => {
-        if (current()) return requestHass.callApi('GET', 'calendars/' + source.entity + '?' + query);
+        if (current() && available(hass, source.entity)) {
+          return requestHass.callApi('GET', 'calendars/' + source.entity + '?' + query);
+        }
       }).then(done, error => done(null, error));
     };
     if (typeof requestHass.connection?.subscribeMessage === 'function') {
@@ -426,6 +464,8 @@ export function createCalendarAgenda({ host, context, items, settings }) {
   }
 
   function clearSources() {
+    view.clearTimeout(restPoll);
+    restPoll = undefined;
     for (const [id, entry] of subscriptions) {
       subscriptions.delete(id);
       entry.stop?.();
@@ -644,6 +684,10 @@ export function createCalendarAgenda({ host, context, items, settings }) {
       clearSources();
       clearWeather();
     }
+    if (hass?.connection !== next.connection) {
+      hass?.connection?.removeEventListener?.('ready', connectionReady);
+      next.connection?.addEventListener?.('ready', connectionReady);
+    }
     hass = next;
     const timeZone = hass.locale?.time_zone === 'server' ? hass.config?.time_zone : undefined;
     if (timeZone !== requestedTimeZone) {
@@ -667,6 +711,7 @@ export function createCalendarAgenda({ host, context, items, settings }) {
         current.stop?.();
       }
     }
+    syncRestPolling();
     if (sources.length) updateWeather();
     draw();
   }
@@ -679,6 +724,7 @@ export function createCalendarAgenda({ host, context, items, settings }) {
       disposed = true;
       clearSources();
       clearWeather();
+      hass?.connection?.removeEventListener?.('ready', connectionReady);
       view.clearTimeout(alarm);
       host.ownerDocument.removeEventListener('visibilitychange', resumed);
     },

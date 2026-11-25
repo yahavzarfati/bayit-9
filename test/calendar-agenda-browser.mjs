@@ -14,6 +14,11 @@ const fixture = function () {
   const denied = 'calendar.demo_denied';
   const weather = 'weather.demo_daily';
   let rejectRest;
+  let liveCalendar = false;
+  let nextRest;
+  let finishRest;
+  let primarySummary = 'Original REST appointment';
+  const connectionEvents = new EventTarget();
   const loadRequests = [];
   const restRequests = [];
   const mutations = [];
@@ -61,6 +66,13 @@ const fixture = function () {
     callWS(...args) { mutations.push(args); },
     callApi(method, path) {
       restRequests.push({method,path});
+      if (query.has('rest-poll') && path.startsWith('calendars/' + primary + '?')) {
+        if (nextRest) {
+          nextRest = false;
+          return new Promise(resolve => { finishRest = () => resolve([event('Expired REST reply',0)]); });
+        }
+        return Promise.resolve([event(primarySummary,0)]);
+      }
       if (query.has('rest-retry')) {
         if (path.startsWith('calendars/' + denied + '?')) return Promise.reject({status:403});
         if (path.startsWith('calendars/' + offline + '?')) return Promise.reject({status:404});
@@ -77,11 +89,16 @@ const fixture = function () {
       return Promise.resolve([]);
     },
     connection: query.has('rest') ? undefined : {
+      addEventListener: connectionEvents.addEventListener.bind(connectionEvents),
+      removeEventListener: connectionEvents.removeEventListener.bind(connectionEvents),
       subscribeMessage(callback, message) {
         const request = {message,callback,closed:0};
         loadRequests.push(request);
         if (message.entity_id === denied) return Promise.reject({code:'unauthorized'});
         if (message.entity_id === offline) return Promise.reject({code:'not_found'});
+        if (query.has('rest-poll') && message.type === 'calendar/event/subscribe' && !liveCalendar) {
+          return Promise.reject({code:'unknown_command'});
+        }
         if (message.entity_id === primary && query.has('recover')) {
           const attempts = loadRequests.filter(entry => entry.message.entity_id === primary).length;
           if (attempts <= Number(query.get('recover'))) return Promise.reject({code:'connection_lost'});
@@ -110,6 +127,13 @@ const fixture = function () {
     requests: () => loadRequests.map(({message,closed}) => ({...message,closed})),
     restRequests,
     rejectRest: status => rejectRest?.({ status }),
+    updateRestSummary: value => { primarySummary = value; },
+    holdNextRest: () => { nextRest = true; },
+    releaseRest: () => { finishRest?.(); },
+    reconnect() {
+      liveCalendar = true;
+      connectionEvents.dispatchEvent(new Event('ready'));
+    },
     mutations,
     send(index, payload) { loadRequests[index].callback(payload); },
     useBrowserTimeZone() {
@@ -149,6 +173,68 @@ const server = http.createServer((request, response) => {
 server.listen(0,'127.0.0.1');
 await once(server,'listening');
 const base = 'http://127.0.0.1:' + server.address().port;
+
+async function assertCalendarRestPoll(browser, locale, name) {
+  const page = await browser.newPage({viewport:{width:391,height:844},hasTouch:true,reducedMotion:'reduce',
+    timezoneId:'America/New_York'});
+  page.setDefaultTimeout(8000);
+  const clock = page.clock;
+  const panel = page.getByRole('dialog',{name,exact:true});
+  const primaryReads = () => page.evaluate(() => window.fixture.restRequests.filter(request =>
+    request.path.startsWith('calendars/calendar.demo_primary?')));
+  const waitReads = length => page.waitForFunction(length => window.fixture.restRequests.filter(request =>
+    request.path.startsWith('calendars/calendar.demo_primary?')).length === length, length);
+  const allReads = () => page.evaluate(() => window.fixture.restRequests.length);
+  const fresh = title => panel.getByText(title,{exact:true}).waitFor();
+  const url = base + '?rest-poll&locale=' + locale + '#panel/demo-calendar';
+  try {
+    await clock.install({time:new Date('2026-11-25T16:00:00Z')});
+    await page.goto(url);
+    await fresh('Original REST appointment');
+    assert.equal(await allReads(),2);
+    await page.evaluate(() => window.fixture.updateRestSummary('New REST appointment'));
+    await clock.fastForward(29 * 60000);
+    assert.equal(await allReads(),2);
+    await clock.fastForward(61000);
+    await fresh('New REST appointment');
+    assert.equal(await allReads(),4);
+    assert.equal(await page.evaluate(() => window.fixture.requests().filter(request =>
+      request.entity_id === 'calendar.demo_primary').length),1);
+
+    await page.evaluate(() => window.fixture.holdNextRest());
+    await clock.fastForward(30 * 60000 + 100);
+    await waitReads(3);
+    await page.evaluate(() => window.fixture.reconnect());
+    await page.waitForFunction(() => window.fixture.requests().filter(request =>
+      request.entity_id === 'calendar.demo_primary').length === 2);
+    await page.evaluate(() => window.fixture.emitPrimary());
+    await fresh('Recovered appointment');
+    await page.evaluate(() => window.fixture.releaseRest());
+    await clock.fastForward(30 * 60000 + 200);
+    assert.equal((await primaryReads()).length,3);
+    assert.equal(await panel.getByText('Expired REST reply',{exact:true}).count(),0);
+
+    await clock.setSystemTime(new Date('2026-11-25T04:45:00Z'));
+    await page.goto(url.replace('#', '&case=midnight#'));
+    await fresh('Original REST appointment');
+    await clock.fastForward(16 * 60000);
+    await waitReads(2);
+    const ranges = await primaryReads();
+    assert.match(decodeURIComponent(ranges[0].path), /2026-11-24T05:00:00/);
+    assert.match(decodeURIComponent(ranges[1].path), /2026-11-25T05:00:00/);
+    await clock.fastForward(16 * 60000);
+    assert.equal((await primaryReads()).length,2);
+    await page.evaluate(() => window.fixture.holdNextRest());
+    await clock.fastForward(15 * 60000);
+    await waitReads(3);
+    await panel.locator('button[data-role=close]').tap();
+    await panel.waitFor({state:'hidden'});
+    await page.evaluate(() => window.fixture.releaseRest());
+    await clock.fastForward(31 * 60000);
+    assert.equal((await primaryReads()).length,3);
+    assert.deepEqual(await page.evaluate(() => window.fixture.mutations),[]);
+  } finally { await page.close(); }
+}
 
 try {
   for (const [label, launcher, locale, width] of [['Chromium',chromium,'en',390],['WebKit',webkit,'he',320]]) {
@@ -523,6 +609,8 @@ try {
       }
       assert.equal(await zonePage.evaluate(() => window.fixture.mutations.length),0);
       await zonePage.close();
+
+      await assertCalendarRestPoll(browser, locale, names.calendar);
 
       console.log(label + ': compact/expanded agenda, localized event details, availability, retry, cleanup, and Home Assistant time zone');
     } finally { await browser.close(); }
