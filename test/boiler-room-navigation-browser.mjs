@@ -171,6 +171,7 @@ async function assertDedicatedBoilerPresentation(browser, locale) {
   const header = dialog.locator('.boiler-state-head');
   const symbol = header.locator('.device-icon');
   const status = header.locator('.current');
+  const range = dialog.locator('.timer-range');
   const info = header.getByRole('button', { name: he ? 'מידע נוסף' : 'More info', exact: true });
   const schedule = dialog.getByRole('button', { name: scheduleLabel, exact: true });
   const history = dialog.getByRole('button', { name: historyLabel, exact: true });
@@ -229,7 +230,33 @@ async function assertDedicatedBoilerPresentation(browser, locale) {
     await header.getByText(he ? 'פועל' : 'On', { exact: true }).waitFor();
     const active = await mark();
     assert.equal(active.heating,true);
+    assert.equal(active.color,'rgb(255, 155, 105)');
     assert.notEqual(active.color,idle.color);
+    const railStyle = () => range.evaluate(input => {
+      const css = getComputedStyle(input);
+      return {
+        thumb: css.getPropertyValue('--timer-thumb').trim(), border: css.getPropertyValue('--timer-thumb-border').trim(),
+        rail: css.getPropertyValue('--timer-rail').trim(), forcedAdjustment: css.getPropertyValue('forced-color-adjust'),
+      };
+    });
+    const glass = await railStyle();
+    assert.equal(glass.thumb,'#ff9b69');
+    assert.equal(glass.border,'#20100a');
+    await page.emulateMedia({ contrast:'more' });
+    if (await page.evaluate(() => matchMedia('(prefers-contrast: more)').matches)) {
+      const contrast = await railStyle();
+      assert.equal(contrast.thumb,glass.thumb);
+      assert.notEqual(contrast.rail,glass.rail);
+    }
+    await page.emulateMedia({ contrast:'no-preference', forcedColors:'active' });
+    if (await page.evaluate(() => matchMedia('(forced-colors: active)').matches)) {
+      const { forcedAdjustment, ...colors } = await railStyle();
+      assert.deepEqual(colors,{ thumb:'Highlight', border:'Canvas', rail:'CanvasText' });
+      if (await page.evaluate(() => CSS.supports('forced-color-adjust','none'))) assert.equal(forcedAdjustment,'none');
+      await range.press('Home');
+      assert.equal(await range.inputValue(),await range.getAttribute('min'));
+    }
+    await page.emulateMedia({ forcedColors:'none' });
     await page.evaluate(() => window.fixture.setupState('unavailable','active'));
     await header.getByText(he ? 'לא זמין' : 'Unavailable', { exact: true }).waitFor();
     assert.deepEqual(await mark(), idle);
@@ -590,8 +617,7 @@ try {
       const timerArea = compactDialog.locator('.device-timer');
       const railStyle = () => timerArea.locator('.timer-range').evaluate(input => {
         const css = getComputedStyle(input);
-        return { appearance: css.appearance, thumb: css.getPropertyValue('--timer-thumb').trim(),
-          warm: css.getPropertyValue('--warm').trim() };
+        return { appearance: css.appearance, thumb: css.getPropertyValue('--timer-thumb').trim() };
       });
       await start.waitFor();
       await timer.waitFor({ state: 'hidden' });
@@ -599,7 +625,7 @@ try {
       assert.equal(await timerArea.getAttribute('data-compact'), '');
       const idleRail = await railStyle();
       assert.equal(idleRail.appearance, 'none');
-      assert.ok(idleRail.thumb && idleRail.thumb === idleRail.warm);
+      assert.equal(idleRail.thumb,'#ff9b69');
       assert.equal(await timerArea.locator('.timer-range').getAttribute('aria-valuetext'), locale === 'he' ? '300 דקות' : '300 Minutes');
       await compactDialog.evaluate(node => Promise.allSettled(node.getAnimations().map(animation => animation.finished)));
       const [scheduleBox, historyBox, timerBox, startBox] = await Promise.all(

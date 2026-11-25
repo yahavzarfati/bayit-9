@@ -629,10 +629,11 @@ export const styles = `
     width: 32px; height: 32px; --mdc-icon-size: 20px; place-items: center;
     background: var(--room-icon-fill); border: 1px solid var(--room-icon-line); border-radius: 50%;
   }
+  .device[data-treatment=boiler] { --boiler-heat: #ff9b69; }
   .device[data-boiler-heating] .boiler-state-head > .device-icon {
-    color: var(--warm);
-    background: color-mix(in srgb,var(--warm) 14%,transparent);
-    border-color: color-mix(in srgb,var(--warm) 28%,transparent);
+    color: var(--boiler-heat);
+    background: color-mix(in srgb,var(--boiler-heat) 14%,transparent);
+    border-color: color-mix(in srgb,var(--boiler-heat) 28%,transparent);
   }
   .device[data-inline-climate] { padding: 0; border: 0; }
   .device[data-inline-climate] .device-head {

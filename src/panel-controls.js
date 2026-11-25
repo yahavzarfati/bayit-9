@@ -436,8 +436,26 @@ export const panelControlStyles = `
   .device-timer[data-compact] {
     --timer-rail: color-mix(in srgb,var(--ink) 10%,transparent);
   }
-  .device[data-compact-heater] .device-timer,
-  .device[data-treatment=boiler] .device-timer[data-compact] { --timer-thumb: var(--warm); }
+  .device[data-compact-heater] .device-timer { --timer-thumb: var(--warm); }
+  .device[data-treatment=boiler] .device-timer[data-compact] {
+    --timer-thumb: var(--boiler-heat);
+    --timer-thumb-border: #20100a;
+  }
+  .device[data-treatment=boiler] .device-timer[data-compact] .timer-range { accent-color: var(--timer-thumb); }
+  @media (prefers-contrast: more) {
+    .device[data-treatment=boiler] .device-timer[data-compact] {
+      --timer-rail: color-mix(in srgb,var(--ink) 42%,transparent);
+    }
+  }
+  @media (forced-colors: active) {
+    .device[data-treatment=boiler] .device-timer[data-compact] {
+      --timer-thumb: Highlight;
+      --timer-thumb-border: Canvas;
+      --timer-rail: CanvasText;
+    }
+    .device[data-treatment=boiler] .device-timer[data-compact] .timer-range { forced-color-adjust: none; }
+    .device[data-treatment=boiler] .device-timer[data-compact] .timer-range:focus-visible { outline-color: Highlight; }
+  }
   .device-timer[data-compact] .timer-clock { line-height: 1.2; }
   .device-timer[data-compact] .timer-range {
     -webkit-appearance: none;
@@ -456,7 +474,7 @@ export const panelControlStyles = `
     height: 18px;
     margin-top: -5px;
     background: var(--timer-thumb,var(--moving));
-    border: 1px solid var(--line);
+    border: 1px solid var(--timer-thumb-border,var(--line));
     border-radius: 50%;
   }
   .device-timer[data-compact] .timer-range::-moz-range-track {
@@ -469,7 +487,7 @@ export const panelControlStyles = `
     width: 18px;
     height: 18px;
     background: var(--timer-thumb,var(--moving));
-    border: 1px solid var(--line);
+    border: 1px solid var(--timer-thumb-border,var(--line));
     border-radius: 50%;
   }
   .device-timer[data-compact] :is(.timer-command,.timer-preset) {
