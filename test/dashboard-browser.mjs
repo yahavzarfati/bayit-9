@@ -655,6 +655,12 @@ if (query.has('toolbar-panels')) {
         ...(query.has('room-media-test') && {supported_features:23997,volume_level:.42,media_title:'Evening news',
           source_list:['HDMI','Live TV'],source:'Live TV'}),
       }},
+    ...(query.has('appliance-tile-test') && {
+      'switch.demo_oven': {state:'off',attributes:{friendly_name:'Oven'}},
+      'switch.demo_cooktop': {state:'off',attributes:{friendly_name:'Cooktop'}},
+      'switch.demo_appliance_boiler': {state:'off',attributes:{friendly_name:'Fixture boiler'}},
+      'timer.demo_appliance_boiler': {state:'idle',attributes:{}},
+    }),
     'vacuum.demo_robot': {state:'idle',attributes:{friendly_name:'Robot',
       supported_features:query.has('vacuum-room-display-test') ? 8244 | 8 | 512 : 8244,fan_speed_list:['silent','normal']}},
     'button.demo_filter': {state:'unknown',attributes:{friendly_name:'Reset filter'}},
@@ -851,9 +857,18 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     {entity:'light.demo_dining',role:'status'}, {entity:'climate.demo_overview_air',role:'status'},
   ]}]}] : []), {kind:'settings'}],
 } : query.has('toolbar-panels') ? {
+  ...(query.has('appliance-tile-test') && {profiles:[{entity:'switch.demo_appliance_boiler',kind:'boiler',
+    timed:{timer_entity:'timer.demo_appliance_boiler'}}]}),
   ...(linkedPanels && { popup_aliases: { '#legacy-media-panel': '#panel/media-panel' } }),
   ...(query.has('room-link') && { room_overrides: { studio: {
-    entities:['light.demo_lamp','media_player.demo_tv','vacuum.demo_robot'],
+    entities:['light.demo_lamp','media_player.demo_tv','vacuum.demo_robot',
+      ...(query.has('appliance-tile-test') ? ['switch.demo_oven','switch.demo_cooktop','switch.demo_appliance_boiler'] : [])],
+    ...(query.has('appliance-tile-test') && {
+      read_only_entities:['switch.demo_cooktop'],
+      sections:[{kind:'lights',entities:['light.demo_lamp']},{kind:'devices',
+        entities:['switch.demo_oven','switch.demo_cooktop','switch.demo_appliance_boiler']}],
+      ...(query.has('appliance-tiles') && {appliance_tile_entities:['switch.demo_oven','switch.demo_cooktop','switch.demo_appliance_boiler']}),
+    }),
     media_panel_links:{'media_player.demo_tv':'media-panel'},
     ...(query.has('room-media-compact') && {media_compact_entities:['media_player.demo_tv']}),
     vacuum_panel_links:{'vacuum.demo_robot':'vacuum-panel'},
@@ -3172,6 +3187,109 @@ async function assertCompactRoomMedia(browser) {
   }
 }
 
+async function assertKitchenApplianceTiles(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const url = base + '/fixture-home/home?toolbar-panels&room-link&appliance-tile-test&locale=' + locale;
+    const room = page.getByRole('dialog',{name:'Studio',exact:true});
+    const oven = room.locator('[data-entity="switch.demo_oven"] .device-tile');
+    const cooktop = room.locator('[data-entity="switch.demo_cooktop"] .device-tile');
+    const boiler = room.locator('[data-entity="switch.demo_appliance_boiler"]');
+    const native = page.getByRole('dialog',{name:'Native entity details',exact:true});
+    const state = state => page.evaluate(state=>window.bayitTest.setRoomState('switch.demo_oven',state),state);
+    const calls = () => page.evaluate(()=>window.bayitTest.calls);
+    const open = async flags => {
+      await page.goto(url + flags);
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+      await room.waitFor();
+    };
+    const closeNative = async id => {
+      await native.waitFor();
+      assert.equal(new URL(page.url()).searchParams.get('more-info-entity-id'),id);
+      await native.getByRole('button',{name:'Close native details',exact:true}).tap();
+      await page.waitForFunction(()=>!new URL(location.href).searchParams.has('more-info-entity-id'));
+    };
+    try {
+      await open('&appliance-tiles&native-more-info=modern');
+      await oven.waitFor();
+      const [first, second] = await Promise.all([oven.boundingBox(),cooktop.boundingBox()]);
+      assert.ok(first.width >= 44 && first.height >= 44 && second.width >= 44 && second.height >= 44 &&
+        Math.abs(first.y - second.y) < 1 && Math.abs(first.x - second.x) >= first.width);
+      assert.equal(await cooktop.getAttribute('data-action'),null);
+      await cooktop.tap();
+      await cooktop.press('Enter');
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.moreInfoCalls),[]);
+      await cooktop.press('Shift+Enter');
+      await closeNative('switch.demo_cooktop');
+      await cooktop.evaluate(button=>button.getRootNode().activeElement === button).then(value=>assert.ok(value));
+
+      await oven.evaluate(button=>button.click());
+      const bounds = await oven.boundingBox();
+      await page.mouse.move(bounds.x + bounds.width / 2,bounds.y + bounds.height / 2);
+      await page.mouse.down();
+      await native.waitFor();
+      await page.mouse.up();
+      await closeNative('switch.demo_oven');
+      assert.deepEqual(await calls(),[]);
+
+      await page.mouse.move(bounds.x + bounds.width / 2,bounds.y + bounds.height / 2);
+      await page.mouse.down();
+      await state('on');
+      await room.locator('.device-tile[data-action=turn_off]').waitFor();
+      await page.mouse.up();
+      assert.deepEqual(await calls(),[]);
+      await state('off');
+      await room.locator('.device-tile[data-action=turn_on]').waitFor();
+      await oven.tap();
+      await page.waitForFunction(()=>window.bayitTest.calls.length === 1);
+      assert.equal(await oven.getAttribute('aria-pressed'),'false');
+      await oven.tap();
+      assert.equal((await calls()).length,1);
+      await state('on');
+      await room.locator('.device-tile[data-action=turn_off]').waitFor();
+      await oven.press('Enter');
+      await page.waitForFunction(()=>window.bayitTest.calls.length === 2);
+      await state('off');
+      await room.locator('.device-tile[data-action=turn_on]').waitFor();
+      for (const missing of ['unknown','unavailable','starting']) {
+        await state(missing);
+        await room.locator('[data-entity="switch.demo_oven"] .device-tile:not([data-action])').waitFor();
+        await oven.tap();
+      }
+      assert.deepEqual(await calls(), ['turn_on','turn_off'].map(service=>({
+        type:'call_service',domain:'switch',service,service_data:{},target:{entity_id:'switch.demo_oven'},
+      })));
+      assert.equal(await boiler.getAttribute('data-room-appliance-tile'),null);
+      await boiler.locator('.device-panel-launch').tap();
+      await page.getByRole('dialog',{name:'Fixture boiler',exact:true}).waitFor();
+
+      await open('');
+      assert.equal(await oven.count(),0);
+      assert.equal(await cooktop.count(),0);
+
+      await page.goto(url + '&appliance-tiles&editor');
+      await page.getByText(he ? 'חדרים' : 'Rooms',{exact:true}).tap();
+      await page.getByLabel(he ? 'חדר להתאמה אישית' : 'Room to customize',{exact:true}).selectOption('studio');
+      await page.getByText(he ? 'תצוגת מכשירים' : 'Device display',{exact:true}).tap();
+      const device = page.getByLabel(he ? 'מכשיר להתאמה אישית' : 'Device to customize',{exact:true});
+      const tile = page.getByRole('checkbox',{name:he ? 'הצגה כאריח מכשיר חשמלי' : 'Show as an appliance tile',exact:true});
+      await device.selectOption('switch.demo_cooktop');
+      assert.equal(await tile.isChecked(),true);
+      await tile.uncheck();
+      const setting = () => page.evaluate(()=>window.latest.room_overrides.studio);
+      assert.ok(!(await setting()).appliance_tile_entities.includes('switch.demo_cooktop'));
+      assert.deepEqual((await setting()).read_only_entities,['switch.demo_cooktop']);
+      await device.selectOption('switch.demo_appliance_boiler');
+      assert.equal(await tile.count(),0);
+      assert.deepEqual(await calls(),[]);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
@@ -3662,6 +3780,7 @@ try {
       await mediaPage.close();
       console.log(engine + ': curated media and vacuum controls, Now Playing, and the original room shortcuts');
       await assertCompactRoomMedia(browser);
+      await assertKitchenApplianceTiles(browser);
       await assertRoomVacuumGestures(browser);
       await assertRoomVacuumPresentation(browser);
       await assertRoomVacuumSummary(browser);

@@ -245,6 +245,25 @@ test('a vacuum link opens on hold only for the selected vacuum and its valid roo
   assert.equal(get('porch').room_vacuum_presentation, undefined);
 });
 
+test('appliance tile selection keeps read-only switches and excludes a specialized boiler and hidden devices', () => {
+  const hass = home();
+  const oven = 'switch.fixture_oven';
+  const cooktop = 'switch.fixture_cooktop';
+  const boiler = 'switch.fixture_boiler';
+  const hidden = 'switch.fixture_hidden';
+  for (const entity of [oven,cooktop,boiler,hidden]) {
+    hass.states[entity] = {state:'off',attributes:{}};
+    hass.entities[entity] = {};
+  }
+  const targets = [oven,cooktop,boiler,hidden];
+  const {rooms} = generateDashboard({area_ids:['studio'],show_unassigned:false,profiles:[{entity:boiler,kind:'boiler'}],
+    room_overrides:{studio:{entities:targets,appliance_tile_entities:targets,
+      read_only_entities:[cooktop],panel_hidden_entities:[hidden]}},
+  },hass).views[0].cards[0];
+  assert.deepEqual(rooms[0].entities.filter(item=>item.room_appliance_tile)
+    .map(item=>[item.entity,item.role]),[[oven,undefined],[cooktop,'status']]);
+});
+
 test('compact room media applies only to selected visible media devices in that room', () => {
   const hass = home();
   const tv = 'media_player.fixture_tv';

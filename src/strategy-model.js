@@ -315,6 +315,10 @@ export function shortcutDetailPanels(toolbar) {
     ids.get(id) === 1 && kind !== 'settings' && kind !== 'link' && placement !== 'settings');
 }
 
+export function supportsRoomApplianceTile(device) {
+  return domainOf(device?.entity ?? '') === 'switch' && !device.timed && (!device.kind || device.kind === 'switch');
+}
+
 export function supportsNativeShortcutDetails(device) {
   return !isReadOnlyRole(device.role);
 }
@@ -372,6 +376,7 @@ function dashboardAreas(config, hass) {
       activities: override.activities,
       climatePower: new Set(idList(override.climate_power_entities)),
       compactMedia: new Set(idList(override.media_compact_entities)),
+      applianceTiles: new Set(idList(override.appliance_tile_entities)),
       vacuumPanelHolds: new Set(idList(override.vacuum_panel_hold_entities)),
       vacuumPanelPresentations: override.vacuum_panel_presentation,
       vacuumPanelSummaries: override.vacuum_panel_summary,
@@ -649,6 +654,8 @@ export function discoverRooms(config, hass, locale) {
       }
       if (domainOf(device.entity) === 'media_player' && device.role !== 'status' && area.compactMedia?.has(device.entity) &&
           !room.panel_hidden_entities?.includes(device.entity)) device.room_media_compact = true;
+      if (area.applianceTiles?.has(device.entity) && supportsRoomApplianceTile(device) &&
+          !room.panel_hidden_entities?.includes(device.entity)) device.room_appliance_tile = true;
       const panelKind = ROOM_PANEL_KINDS.get(domainOf(device.entity));
       const links = area.panelLinks?.[panelKind];
       if (links && Object.hasOwn(links, device.entity)) {

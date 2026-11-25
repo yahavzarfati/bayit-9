@@ -13,7 +13,8 @@ function isDetailsKey(event) {
   return event.key === 'ContextMenu' || (event.shiftKey && (event.key === 'F10' || isActivationKey(event)));
 }
 
-export function bindDeviceDetails(button, openDetails) {
+export function bindDeviceDetails(button, openDetails, { requireShortTap = false, activationStart } = {}) {
+  const requirePairedPointer = requireShortTap || !openDetails;
   const doc = button.ownerDocument;
   const view = doc.defaultView;
   let held;
@@ -43,6 +44,7 @@ export function bindDeviceDetails(button, openDetails) {
   button.addEventListener('pointerdown', event => {
     if (event.button !== 0 || event.isPrimary === false || button.disabled) return;
     finishPointer();
+    activationStart?.();
     suppressClickUntil = 0;
     shortTapUntil = 0;
     const listeners = new AbortController();
@@ -64,7 +66,7 @@ export function bindDeviceDetails(button, openDetails) {
         // The release can arrive before a delayed timer callback.
         const elapsed = Math.max(now - held.startedAt, end.timeStamp - held.eventTime);
         if (elapsed >= HOLD_MS) handleHold();
-        if (!openDetails && !held.handled && end.composedPath().includes(button)) shortTapUntil = now + TRAILING_CLICK_MS;
+        if (requirePairedPointer && !held.handled && end.composedPath().includes(button)) shortTapUntil = now + TRAILING_CLICK_MS;
       }
       finishPointer();
     };
@@ -80,14 +82,19 @@ export function bindDeviceDetails(button, openDetails) {
     handleHold();
   });
   button.addEventListener('click', event => {
+    if (requireShortTap && !event.isTrusted) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
     const byPointer = event.detail > 0 || Boolean(event.pointerType);
     const now = performance.now();
-    if (byPointer && !openDetails && shortTapUntil > 0 && now <= shortTapUntil) {
+    if (byPointer && requirePairedPointer && shortTapUntil > 0 && now <= shortTapUntil) {
       shortTapUntil = 0;
       return;
     }
     const deadline = byPointer ? suppressClickUntil : suppressKeyClickUntil;
-    if ((!byPointer || openDetails) && now > deadline) return;
+    if ((!byPointer || !requirePairedPointer) && now > deadline) return;
     if (byPointer) suppressClickUntil = 0;
     else suppressKeyClickUntil = 0;
     event.preventDefault();
@@ -96,7 +103,14 @@ export function bindDeviceDetails(button, openDetails) {
   button.addEventListener('keydown', event => {
     if (button.disabled) return;
     if (!isDetailsKey(event)) {
-      if (isActivationKey(event)) suppressKeyClickUntil = 0;
+      if (isActivationKey(event)) {
+        if (requireShortTap && event.repeat) {
+          event.preventDefault();
+          return;
+        }
+        activationStart?.();
+        suppressKeyClickUntil = 0;
+      }
       return;
     }
     event.preventDefault();

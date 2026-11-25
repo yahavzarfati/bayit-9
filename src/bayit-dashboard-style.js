@@ -845,6 +845,10 @@ export const styles = `
     inset-block-end: var(--page-bottom);
   }
   @media (min-width: 300px) {
+    .devices[data-room=true] .device-group[data-group=room_devices]:has(> [data-room-appliance-tile] + [data-room-appliance-tile]) {
+      grid-template-columns: repeat(2,minmax(0,1fr));
+      > .device:not([data-room-appliance-tile]) { grid-column: 1 / -1; }
+    }
     .devices[data-room=true] .device-group[data-group=room_lights]:has(> .device[data-compact=tile]) {
       grid-template-columns: repeat(2,minmax(0,1fr));
       .device:not([data-compact=tile]) { grid-column: 1 / -1; }

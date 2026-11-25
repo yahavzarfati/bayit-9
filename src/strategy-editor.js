@@ -7,7 +7,7 @@ import {
   PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, roomShortcutDevices, roomVacuumPresentation, ROOM_VACUUM_SUMMARY_DOMAINS,
   selectableRoomEntities, selectedRoomIds,
   shortcutPanelOptions, STRATEGY_NAME, supportsNativeShortcutDetails, supportsShortcutWithoutDetails,
-  supportsRoomTemperatureSource, usesAutomaticRoomDevices,
+  supportsRoomTemperatureSource, supportsRoomApplianceTile, usesAutomaticRoomDevices,
 } from './strategy-model.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { climateOptionLabel } from './panel-controls.js';
@@ -36,6 +36,7 @@ const WORDS = {
     roomInlineLight: 'Show brightness and temperature in this room',
     roomNativeCoverHeader: 'Open Home Assistant details from the cover header',
     roomNativeLightHold: 'Open Home Assistant details with a long press on this light',
+    roomApplianceTile: 'Show as an appliance tile',
     roomClimatePower: 'Show quick power for this climate device',
     climatePresetShortcut: 'Preset shortcut', climatePresetNone: 'No shortcut', climatePresetLabel: 'Shortcut label',
     climatePresetIcon: 'Shortcut icon', climatePresetHighlight: 'Highlight when this preset is reported',
@@ -137,6 +138,7 @@ const WORDS = {
     roomInlineLight: 'הצגת בהירות וגוון אור בתוך החדר',
     roomNativeCoverHeader: 'פתיחת פרטי Home Assistant מכותרת התריס',
     roomNativeLightHold: 'פתיחת פרטי Home Assistant בלחיצה ארוכה על התאורה',
+    roomApplianceTile: 'הצגה כאריח מכשיר חשמלי',
     roomClimatePower: 'הצגת כפתור הפעלה וכיבוי מהיר למזגן',
     climatePresetShortcut: 'קיצור לתוכנית מזגן', climatePresetNone: 'ללא קיצור', climatePresetLabel: 'שם הקיצור',
     climatePresetIcon: 'סמל הקיצור', climatePresetHighlight: 'הדגשה כשהמזגן מדווח על תוכנית זו',
@@ -851,6 +853,19 @@ export class Bayit9StrategyEditor extends HTMLElement {
           power.firstElementChild.dataset.roomFocus = 'room-climate-power';
           fields.append(power, ...this.#climatePresetFields(room, profile ?? { entity: id }, words));
         }
+        if (supportsRoomApplianceTile(profile ?? {entity:id})) {
+          const appliance = checkbox(words.roomApplianceTile, configuredIds(override.appliance_tile_entities).includes(id), checked => {
+            const next = { ...this.#roomOverride(room.id) };
+            const ids = new Set(configuredIds(next.appliance_tile_entities));
+            if (checked) ids.add(id);
+            else ids.delete(id);
+            if (ids.size) next.appliance_tile_entities = [...ids];
+            else delete next.appliance_tile_entities;
+            this.#setRoomOverride(room.id, next, 'room-appliance-tile');
+          });
+          appliance.firstElementChild.dataset.roomFocus = 'room-appliance-tile';
+          fields.append(appliance);
+        }
         if (id.startsWith('media_player.') && !configuredIds(override.read_only_entities).includes(id)) {
           const compact = checkbox(words.roomCompactMedia, configuredIds(override.media_compact_entities).includes(id), checked => {
             const next = { ...this.#roomOverride(room.id) };
@@ -1134,7 +1149,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       }
       for (const key of ['read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
         'inline_light_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details',
-        'vacuum_panel_hold_entities', 'climate_power_entities', 'media_compact_entities']) {
+        'vacuum_panel_hold_entities', 'climate_power_entities', 'media_compact_entities', 'appliance_tile_entities']) {
         if (!Array.isArray(next[key])) continue;
         next[key] = next[key].filter(id => entities.includes(id));
         if (!next[key].length) delete next[key];

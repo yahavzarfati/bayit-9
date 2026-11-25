@@ -60,6 +60,8 @@ Use **Devices turned off by the room icon** to give the icon a quick room shutdo
 
 On a standalone Bayit 9 dashboard, opening a room, device or screen updates the URL. Use the browser's Back and Forward buttons to return to those views. To keep an old bookmark, add a fragment under `popup_aliases`, such as `"#old-lamp": "#device/studio/light.desk"`. Room links use `#room-<room-id>` and screen links use `#panel/<toolbar-id>`. Links open the viewer with the dashboard's usual device permissions.
 
+In **Rooms → Device display**, choose **Show as an appliance tile** for an ordinary switch. Tap a writable tile to switch it on or off and hold for Home Assistant details. A switch marked read-only keeps the details gesture. In YAML, list the switches in `appliance_tile_entities` on their room override.
+
 In **Rooms**, enable **Show quick power for this climate device** under **Device display** to add a power button to the room and device popups. Hold it to open Home Assistant details. The button follows the climate device's reported state and uses only supported on or off commands. In YAML, list the climate entities under `climate_power_entities` in the room override.
 
 In **Rooms**, use **Temperature on home card** to choose a room temperature sensor or a climate device's current temperature. With a sensor selected, **Fallback room temperature** can use a specific climate device when the sensor has no usable reading. Use **Automatic** to let Bayit 9 choose. In YAML, set `room_temperature_entity` and, optionally, `room_temperature_fallback_entity` on the room override.
