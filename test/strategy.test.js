@@ -763,3 +763,23 @@ test('only an individual Sensors history graph can link to an existing Vacuum pa
   config.toolbar.pop();
   assert.equal(makeToolbar()[0].sections[0].entities[0].vacuum_panel_id, undefined);
 });
+
+test('an optional lighting count selection changes only the scope of the room badge', () => {
+  const hass = home();
+  for (const entity of ['light.fixture_detail','light.fixture_hidden','light.fixture_elsewhere']) {
+    hass.states[entity] = {state:'on', attributes:{}};
+  }
+  hass.entities['light.fixture_hidden'] = {hidden:true};
+  const entities = ['light.demo_lamp','light.fixture_detail','light.fixture_hidden','switch.demo_heater'];
+  const scope = ['light.demo_lamp','light.demo_lamp','light.fixture_hidden','light.fixture_elsewhere','switch.demo_heater'];
+  const build = lighting_count_entities => generateDashboard({
+    room_overrides:{studio:{entities, lighting_count_entities}},
+    room_shortcuts:{studio:['light.fixture_detail']},
+  }, hass).views[0].cards[0].rooms.find(room => room.id === 'studio');
+  const automatic = build();
+  assert.deepEqual(build(scope), { ...automatic, lighting_count_entities:['light.demo_lamp'] });
+  assert.ok(automatic.entities.some(item => item.entity === 'light.fixture_detail'));
+  assert.deepEqual(automatic.shortcuts, ['light.fixture_detail']);
+  assert.deepEqual(build([]),automatic);
+  assert.deepEqual(build(['light.fixture_elsewhere']),automatic);
+});

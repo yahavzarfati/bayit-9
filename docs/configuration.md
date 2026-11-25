@@ -64,6 +64,8 @@ In YAML, use `discover: {domain: light, exclude_entities: [light.example], exclu
 
 A history graph in **Sensors** can open a configured Vacuum panel when you tap its heading or reading. Set **Open Vacuum on graph tap** in the graph's display settings.
 
+In **Rooms**, choose **Lights in the room count** to count only selected room lights. Clear the selection to count every light in that room. Devices remain available in the room and keep their existing controls.
+
 To use the read-only **Compact agenda**, enable it on the Calendar panel and choose the calendars to include. Its short view shows up to six events across four listed dates. Tap the agenda or use **Show the full week** to see the next seven days. Under **Sections**, each calendar can have its own icon and accent color. Select a daily forecast to show the condition and high beside dates.
 
 For a media player with playback controls and track details, edit its row in a toolbar section and choose **Now Playing** under **Display as**. In YAML, set `role: now_playing` on that media player. The display uses the title, artist or source, and progress reported by Home Assistant. Artwork can load through the selected player's Home Assistant proxy.

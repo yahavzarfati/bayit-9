@@ -234,6 +234,11 @@ export function normalizeDashboardConfig(config = {}) {
     }
     const parsed = { id, name, icon: validIcon(room.icon, 'mdi:door-open'), entities: [...unique.values()],
       activities: normalizeRoomActivities(room.activities) };
+    if (Array.isArray(room.lighting_count_entities)) {
+      const lightingCount = new Set(room.lighting_count_entities.filter(entity =>
+        typeof entity === 'string' && entity.startsWith('light.') && unique.has(entity)));
+      if (lightingCount.size) parsed.lightingCount = lightingCount;
+    }
     if (Array.isArray(room.shortcuts)) {
       parsed.shortcuts = [...new Set(room.shortcuts)].filter(entity => unique.has(entity)).slice(0, MAX_ROOM_SHORTCUTS);
     }
@@ -825,11 +830,13 @@ export class BayitDashboard extends HTMLElement {
       for (const config of view.room.entities) {
         const model = this.model(config);
         const tone = this.tone(model);
+        const countedLight = (model.domain === 'light' || domainFor(config) === 'light') &&
+          (!view.room.lightingCount || view.room.lightingCount.has(config.entity));
         if (haveStates && !model.available) {
           unavailable.push(model.name);
-          lightUnavailable ||= model.domain === 'light' || domainFor(config) === 'light';
+          lightUnavailable ||= countedLight;
         }
-        if (model.domain === 'light' && model.state === 'on') lit++;
+        if (countedLight && model.domain === 'light' && model.state === 'on') lit++;
         if (tone !== 'quiet' && !active.has(config.entity)) active.set(config.entity, { config, model, room: view.room });
         if (model.available) {
           if (isTemperatureSensor(model.domain, model.attributes)) {
@@ -877,7 +884,12 @@ export class BayitDashboard extends HTMLElement {
         text: unavailable.length > 1 ? unavailable.length : '',
         label: this.t('unavailable') + ' · ' + unavailable.join(', '),
       });
-      setText(view.count, lit || (lightUnavailable ? '—' : this.t('off')));
+      const lightingStatus = lit || (lightUnavailable ? '—' : this.t('off'));
+      setText(view.count, lightingStatus);
+      const lightingDescription = this.t('room_lights') + ' · ' + (lightingStatus === '—' ? this.t('unavailable') : lightingStatus);
+      if (view.heading.getAttribute('aria-description') !== lightingDescription) {
+        view.heading.setAttribute('aria-description', lightingDescription);
+      }
       view.count.dataset.tone = lit ? 'warm' : 'quiet';
       view.article.toggleAttribute('data-current', this.panel?.type === 'room' && this.panel.room?.id === id);
     }

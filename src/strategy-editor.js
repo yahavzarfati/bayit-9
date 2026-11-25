@@ -22,6 +22,8 @@ const WORDS = {
     roomToAdd: 'Available rooms', addRoom: 'Show room', createRoom: 'New dashboard-only room',
     newRoomName: 'New room name', newRoomHint: 'This room exists only on this dashboard.',
     roomName: 'Room display name', roomToEdit: 'Room to customize', roomIcon: 'Room icon', defaultRoomIcon: 'Default icon',
+    lightCount: 'Lights in the room count', lightCountHint: 'With no lights selected, the count includes every room light.',
+    lightCountReset: 'Use automatic lighting count',
     newRoom: 'Create room', customRoom: 'Dashboard room', deleteRoom: 'Delete dashboard room',
     noRooms: 'No rooms to customize yet.',
     moveUp: 'Move up', moveDown: 'Move down', hideRoom: 'Hide room',
@@ -83,6 +85,8 @@ const WORDS = {
     roomToAdd: 'חדרים זמינים', addRoom: 'הצגת חדר', createRoom: 'חדר חדש לדשבורד',
     newRoomName: 'שם החדר החדש', newRoomHint: 'החדר יופיע בדשבורד הזה בלבד.',
     roomName: 'שם החדר לתצוגה', roomToEdit: 'חדר להתאמה אישית', roomIcon: 'סמל החדר', defaultRoomIcon: 'סמל ברירת המחדל',
+    lightCount: 'תאורה שנכללת במונה החדר', lightCountHint: 'כשלא מסומן אף פריט, המונה כולל את כל התאורה בחדר.',
+    lightCountReset: 'חזרה לספירת תאורה אוטומטית',
     newRoom: 'יצירת חדר', customRoom: 'חדר בדשבורד', deleteRoom: 'מחיקת חדר מהדשבורד',
     noRooms: 'עדיין אין חדרים להתאמה.',
     moveUp: 'העברה למעלה', moveDown: 'העברה למטה', hideRoom: 'הסתרת חדר',
@@ -522,6 +526,29 @@ export class Bayit9StrategyEditor extends HTMLElement {
     return body();
   }
 
+  #roomLightingCount(room, selected, lights, words) {
+    const key = 'room-light-count';
+    const input = node('select', { multiple:true, size:Math.min(5, Math.max(2, lights.length)), disabled:!lights.length });
+    input.dataset.roomFocus = key;
+    const current = new Set(selected);
+    for (const light of lights) {
+      const item = option(light.entity, light.name || light.entity);
+      item.selected = current.has(light.entity);
+      input.append(item);
+    }
+    const save = entities => {
+      const next = { ...this.#roomOverride(room.id) };
+      if (entities.length) next.lighting_count_entities = entities;
+      else delete next.lighting_count_entities;
+      this.#setRoomOverride(room.id, next, entities.length || lights.length > 1 ? key : 'room-edit');
+    };
+    input.addEventListener('change', () => save([...input.selectedOptions].map(item => item.value)));
+    const reset = button(words.lightCountReset, () => save([]));
+    reset.hidden = !selected.length;
+    const hint = node('small', { textContent:words.lightCountHint });
+    return node('div', { className:'stack' }, [field(words.lightCount, input), hint, reset]);
+  }
+
   #roomDevicePanel(room, words, language, areas) {
     const override = this.#roomOverride(room.id);
     const sections = roomSections(override.sections);
@@ -541,6 +568,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
       ? [node('h4', { className: 'room-choice-heading', textContent: words.roomDevices })]
       : [field(words.roomDevices, choice)];
     const chosen = this.#roomMembership(room, override, sections, language);
+    const lights = chosen.filter(id => id.startsWith('light.'));
+    const selectedCount = configuredIds(override.lighting_count_entities);
+    const editCount = lights.length > 1 || selectedCount.length > 0;
+    const available = manual || editCount
+      ? new Map(selectableRoomEntities(this.#config, this.#hass).map(entry => [entry.entity, entry])) : undefined;
     if (chosen.length) {
       const readOnly = new Set(configuredIds(override.read_only_entities));
       const selected = node('select', { multiple: true, size: Math.min(5, Math.max(2, chosen.length)) });
@@ -558,6 +590,9 @@ export class Bayit9StrategyEditor extends HTMLElement {
         this.#setRoomOverride(room.id, next, 'room-read-only');
       });
       children.push(field(words.readOnlyRoom, selected));
+    }
+    if (editCount) {
+      children.push(this.#roomLightingCount(room, selectedCount, lights.map(id => available.get(id)).filter(Boolean), words));
     }
     const linkedDevices = chosen.flatMap(id => {
       const kind = ROOM_PANEL_KINDS.get(id.split('.')[0]);
@@ -591,7 +626,6 @@ export class Bayit9StrategyEditor extends HTMLElement {
     if (!manual) return children;
 
     const areaNames = new Map(areas.map(area => [area.id, area.name]));
-    const available = new Map(selectableRoomEntities(this.#config, this.#hass).map(entry => [entry.entity, entry]));
     const records = chosen.map(id => {
       const device = available.get(id);
       const previousName = this.#hass.states?.[id]?.attributes?.friendly_name;
@@ -603,6 +637,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
       if (Array.isArray(next.read_only_entities)) {
         next.read_only_entities = next.read_only_entities.filter(id => entities.includes(id));
         if (!next.read_only_entities.length) delete next.read_only_entities;
+      }
+      if (Array.isArray(next.lighting_count_entities)) {
+        next.lighting_count_entities = next.lighting_count_entities.filter(id => entities.includes(id));
+        if (!next.lighting_count_entities.length) delete next.lighting_count_entities;
       }
       for (const kind of ROOM_PANEL_KINDS.values()) {
         const key = kind + '_panel_links';

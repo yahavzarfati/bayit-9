@@ -181,6 +181,7 @@ function dashboardAreas(config, hass) {
       entityIds,
       sections,
       readOnly: new Set(idList(override.read_only_entities)),
+      lightingCount: idList(override.lighting_count_entities),
       activities: override.activities,
       panelLinks: Object.fromEntries([...ROOM_PANEL_KINDS.values()].flatMap(kind => {
         const links = override[kind + '_panel_links'];
@@ -365,6 +366,11 @@ export function discoverRooms(config, hass, locale) {
       }
     }
     const room = { id, name: area.name, icon: area.icon, entities };
+    if (area.lightingCount?.length) {
+      const lights = new Set(entities.filter(item => domainOf(item.entity) === 'light').map(item => item.entity));
+      const scope = area.lightingCount.filter(entity => lights.has(entity));
+      if (scope.length) room.lighting_count_entities = scope;
+    }
     const activities = normalizeRoomActivities(area.activities, visible);
     if (activities.length) room.activities = activities;
     for (const device of entities) {

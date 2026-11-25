@@ -319,7 +319,8 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
   room_shortcuts: { studio: ['switch.demo_heater'] },
 } : query.has('room-grid') ? {
   room_overrides: { studio: { entities: ['light.demo_lamp', 'light.demo_wall', 'light.demo_pendant', 'light.demo_monitor'],
-    read_only_entities: ['light.demo_monitor'] } },
+    read_only_entities: ['light.demo_monitor'],
+    ...(query.has('lighting-count') && {lighting_count_entities:['light.demo_wall']}) } },
   ...(query.has('grouped-effects') && { light_effect_groups: {
     'light.demo_pendant': [
       { title: 'Evening', effects: [{ effect: 'Slow pulse', name: 'Gentle glow', icon: 'mdi:weather-night' }, 'Missing',
@@ -386,7 +387,8 @@ document.querySelector('#surface').append(card);
 if (query.has('editor')) {
   document.querySelector('#surface').hidden = true;
   const editor = Strategy.getConfigElement();
-  editor.setConfig({ type: 'custom:bayit-9', ...((query.has('toolbar-panels') || query.has('overview-opt-in')) && selected) });
+  editor.setConfig({ type: 'custom:bayit-9',
+    ...((query.has('toolbar-panels') || query.has('overview-opt-in') || query.has('lighting-count')) && selected) });
   editor.hass = hass;
   editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
   document.querySelector('#editor').append(editor);
@@ -942,6 +944,43 @@ try {
       await curatedPage.keyboard.press('Escape');
       await overview.waitFor({ state: 'hidden' });
       await curatedPage.close();
+
+      const lightingPage = await browser.newPage({ viewport:{width:390,height:844}, reducedMotion:'reduce' });
+      await lightingPage.goto(base + '?room-grid&lighting-count');
+      const lightingRoom = lightingPage.locator('.room[data-room="studio"]');
+      const lightingBadge = lightingRoom.locator('.room-count');
+      const lightingRoomButton = lightingRoom.getByRole('button',{name:'Studio',exact:true});
+      assert.equal(await lightingBadge.innerText(),'1');
+      assert.equal(await lightingRoomButton.getAttribute('aria-description'),'Lights · 1');
+      await lightingRoomButton.click();
+      const lightingDialog = lightingPage.getByRole('dialog',{name:'Studio',exact:true});
+      const detailLight = lightingDialog.getByRole('button',{name:'Pendant lamp · Turn off',exact:true});
+      await detailLight.click();
+      await lightingPage.waitForFunction(() => window.bayitTest.calls.some(call =>
+        call.domain === 'light' && call.service === 'turn_off' && call.target.entity_id === 'light.demo_pendant'));
+      await lightingPage.keyboard.press('Escape');
+      await lightingDialog.waitFor({state:'hidden'});
+      await lightingPage.evaluate(() => window.bayitTest.setRoomState('light.demo_wall','off'));
+      await lightingBadge.filter({hasText:/^Off$/}).waitFor();
+      await lightingPage.evaluate(() => window.bayitTest.setRoomState('light.demo_pendant','unavailable'));
+      await lightingRoom.locator('[data-badge="availability"][aria-label*="Pendant lamp"]').waitFor();
+      assert.equal(await lightingBadge.innerText(),'Off');
+      await lightingPage.evaluate(() => window.bayitTest.setRoomState('light.demo_wall','unavailable'));
+      await lightingBadge.filter({hasText:/^—$/}).waitFor();
+      await lightingPage.goto(base + '?room-grid&lighting-count&editor');
+      await lightingPage.getByText('Rooms',{exact:true}).click();
+      const countEditor = lightingPage.getByLabel('Lights in the room count',{exact:true});
+      assert.deepEqual(await countEditor.locator('option:checked').evaluateAll(nodes => nodes.map(node => node.value)),
+        ['light.demo_wall']);
+      await countEditor.selectOption(['light.demo_pendant']);
+      assert.deepEqual(await lightingPage.evaluate(() => window.latest.room_overrides.studio.lighting_count_entities),
+        ['light.demo_pendant']);
+      await lightingPage.getByRole('button',{name:'Use automatic lighting count',exact:true}).click();
+      const draft = await lightingPage.evaluate(() => window.latest.room_overrides.studio);
+      assert.equal(draft.lighting_count_entities,undefined);
+      assert.ok(draft.entities.includes('light.demo_pendant'));
+      assert.deepEqual(draft.read_only_entities,['light.demo_monitor']);
+      await lightingPage.close();
 
       const roomGridPage = await browser.newPage({ viewport: { width: 320, height: 690 } });
       await roomGridPage.goto(base + '?room-grid&locale=he');
