@@ -67,13 +67,17 @@ function isAvailable(record) {
     !["unavailable", "unknown"].includes(record.state);
 }
 
-export function isPairedLightStatusRefresh(light, button, registry) {
-  if (!isEntity(light, "light") || !isEntity(button, "button")) return false;
+export function isPairedLightCompanion(light, companion, domain, registry) {
+  if (!isEntity(light, "light") || !isEntity(companion, domain)) return false;
   const source = registry?.[light];
-  const target = registry?.[button];
+  const target = registry?.[companion];
   if ([source, target].some(item => item?.hidden || item?.hidden_by || item?.disabled_by)) return false;
   const device = source?.device_id ?? source?.di;
   return Boolean(device && device === (target?.device_id ?? target?.di));
+}
+
+export function isPairedLightStatusRefresh(light, button, registry) {
+  return isPairedLightCompanion(light, button, "button", registry);
 }
 
 function scriptRevision(record) {

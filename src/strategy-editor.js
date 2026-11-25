@@ -13,14 +13,15 @@ import { languages } from './bayit-dashboard-i18n.js';
 import { climateOptionLabel } from './panel-controls.js';
 import { buildToolbarEditor } from './toolbar-editor.js';
 import { activityKinds, activitySources, normalizeRoomActivities } from './room-appliance.mjs';
-import { getDeviceModel, isPairedLightStatusRefresh, supportsRoomShutdown } from './device-control.mjs';
-import { normalizeLightEffectFavoriteLights, normalizeLightEffectGroups } from './light-effects.js';
+import { getDeviceModel, isPairedLightCompanion, isPairedLightStatusRefresh, supportsRoomShutdown } from './device-control.mjs';
+import { normalizeLightEffectFavoriteLights, normalizeLightEffectGroups, normalizeLightModeSource } from './light-effects.js';
 import { isPopupFragment, normalizePopupAliases, parsePopupRoute } from './popup-routes.js';
 
 const WORDS = {
   en: {
     lightEffects: 'Light effect categories', effectLight: 'Light', effectGroup: 'Category',
     effectFavorites: 'Allow personal favorites on this device', lightStatusRefresh: 'Light status refresh button',
+    lightModeSource: 'Light opening mode source', lightFixedColorOption: 'Fixed-color option',
     newEffectGroup: 'New category', effectGroupName: 'Category name', addEffectGroup: 'Add category',
     removeEffectGroup: 'Delete category', availableEffect: 'Available effect', chooseEffect: 'Select an effect',
     addEffect: 'Add effect', removeEffect: 'Remove effect',
@@ -152,6 +153,7 @@ const WORDS = {
   he: {
     lightEffects: 'קטגוריות אפקטים לתאורה', effectLight: 'תאורה', effectGroup: 'קטגוריה',
     effectFavorites: 'אפשר סימון מועדפים אישיים במכשיר', lightStatusRefresh: 'כפתור לרענון מצב המנורה',
+    lightModeSource: 'מקור למצב הפתיחה של התאורה', lightFixedColorOption: 'אפשרות לצבע קבוע',
     newEffectGroup: 'קטגוריה חדשה', effectGroupName: 'שם קטגוריה', addEffectGroup: 'הוספת קטגוריה',
     removeEffectGroup: 'מחיקת קטגוריה', availableEffect: 'אפקט זמין', chooseEffect: 'בחירת אפקט',
     addEffect: 'הוספת אפקט', removeEffect: 'הסרת אפקט',
@@ -2284,6 +2286,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const optionsFor = id => lights.has(id) && !hidden(id) ? nativeLightEffects(lights.get(id), this.#hass.states) : [];
     const groupsFor = id => normalizeLightEffectGroups(Object.hasOwn(configured(), id) ? configured()[id] : []);
     const configuredRefresh = () => this.#config.light_status_refresh_buttons ?? {};
+    const configuredModes = () => this.#config.light_mode_sources ?? {};
     const selectedLight = () => this.#lightEffectEntity;
     let signature;
 
@@ -2307,19 +2310,21 @@ export class Bayit9StrategyEditor extends HTMLElement {
     };
 
     const refresh = (force = false, focusKey) => {
-      const buttons = entityOptions(this.#hass, new Set(['button'])).filter(([id]) => !hidden(id));
+      const companions = entityOptions(this.#hass, new Set(['button', 'select'])).filter(([id]) => !hidden(id));
       const eligible = [...lights.values()].flatMap(device => {
         if (hidden(device.entity)) return [];
         const options = optionsFor(device.entity);
         const hasGroups = groupsFor(device.entity).length > 0;
-        const refreshButtons = buttons.filter(([id]) => isPairedLightStatusRefresh(device.entity, id, this.#hass.entities));
-        return options.length || hasGroups || refreshButtons.length || configuredRefresh()[device.entity]
-          ? [{ device, options, refreshButtons }] : [];
+        const refreshButtons = companions.filter(([id]) => isPairedLightStatusRefresh(device.entity, id, this.#hass.entities));
+        const modeSources = companions.filter(([id]) => isPairedLightCompanion(device.entity, id, 'select', this.#hass.entities));
+        return options.length || hasGroups || refreshButtons.length || configuredRefresh()[device.entity] || configuredModes()[device.entity]
+          ? [{ device, options, refreshButtons, modeSources }] : [];
       });
       const entity = selectedLight();
       const source = eligible.find(item => item.device.entity === entity);
       const nextSignature = JSON.stringify([eligible.map(({ device, options }) => [device.entity, !!options.length]),
-        source?.options, source?.refreshButtons]);
+        source?.options, source?.refreshButtons, source?.modeSources,
+        this.#hass.states?.[configuredModes()[entity]?.entity]?.attributes?.options]);
       if (!force && (signature === nextSignature || panel.contains(this.shadowRoot.activeElement) &&
           this.shadowRoot.activeElement?.matches('input[type=text]'))) return;
       signature = nextSignature;
@@ -2364,6 +2369,47 @@ export class Bayit9StrategyEditor extends HTMLElement {
       }
 
       const groups = groupsFor(entity);
+      const modeSource = normalizeLightModeSource(configuredModes()[entity]);
+      if (modeSource || (groups.length && source.modeSources.length)) {
+        const sources = [['', words.none], ...source.modeSources];
+        if (modeSource && !source.modeSources.some(([id]) => id === modeSource.entity)) {
+          sources.push([modeSource.entity, modeSource.entity + ' · ' + words.unavailableEffect]);
+        }
+        const sourcePicker = mark(select(sources, modeSource?.entity ?? ''), 'mode-source');
+        const fixedPicker = mark(select([], ''), 'fixed-color-option');
+        const fixedField = field(words.lightFixedColorOption, fixedPicker);
+        const available = () => {
+          const id = sourcePicker.value;
+          const options = this.#hass.states?.[id]?.attributes?.options;
+          return Array.isArray(options) && !hidden(id) && isPairedLightCompanion(entity, id, 'select', this.#hass.entities)
+            ? [...new Set(options.filter(value => normalizeLightModeSource({ entity:id, fixed_color_option:value })))] : [];
+        };
+        const showFixedOptions = () => {
+          const options = available();
+          const current = configuredModes()[entity];
+          const saved = current?.entity === sourcePicker.value ? current.fixed_color_option : '';
+          fixedPicker.replaceChildren(option('', words.choose), ...options.map(value => option(value, value)));
+          if (saved && !options.includes(saved)) fixedPicker.append(option(saved, saved + ' · ' + words.unavailableEffect));
+          fixedPicker.value = saved;
+          fixedField.hidden = !sourcePicker.value;
+          fixedPicker.disabled = !options.length;
+        };
+        sourcePicker.addEventListener('change', () => {
+          showFixedOptions();
+          if (sourcePicker.value) return;
+          const next = { ...configuredModes() };
+          delete next[entity];
+          this.#commit({ light_mode_sources: next });
+        });
+        fixedPicker.addEventListener('change', () => {
+          if (!available().includes(fixedPicker.value)) return;
+          const selected = { entity:sourcePicker.value, fixed_color_option:fixedPicker.value };
+          this.#commit({ light_mode_sources: { ...configuredModes(), [entity]:selected } });
+        });
+        showFixedOptions();
+        fields.push(field(words.lightModeSource, sourcePicker), fixedField);
+      }
+
       if (groups.length) {
         const enabled = new Set(normalizeLightEffectFavoriteLights(this.#config.light_effect_favorites));
         const favorites = node('input', { type:'checkbox', checked:enabled.has(entity) });

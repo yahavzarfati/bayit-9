@@ -557,6 +557,27 @@ test('installs as a native panel dashboard from a Hebrew Home Assistant', () => 
   assert.equal(view.cards[0].rooms.at(-1).name, 'ללא חדר');
 });
 
+test('projects a light mode source only for a writable light with a visible paired select', () => {
+  const light = 'light.fixture_lamp';
+  const passive = 'light.fixture_passive';
+  const select = 'select.fixture_lamp_mode';
+  const states = { [light]:{state:'off'}, [passive]:{state:'off'}, [select]:{state:'Fixed color'} };
+  const entities = { [light]:{di:'lamp'}, [passive]:{di:'lamp'}, [select]:{device_id:'lamp'} };
+  const source = { entity:select, fixed_color_option:'Fixed color' };
+  const config = { area_ids:['bayit_room_demo'], room_overrides:{ bayit_room_demo:{
+    name:'Demo', entities:[light,passive], read_only_entities:[passive],
+  } }, light_mode_sources:{ [light]:source, [passive]:source } };
+  const projected = options => discoverRooms({ ...config, ...options },{states,entities},'en')[0].entities;
+  assert.deepEqual(projected().map(device=>device.light_mode_source),[source,undefined]);
+  assert.equal(projected({hidden_entities:[select]})[0].light_mode_source,undefined);
+  for (const invalid of [{...source,entity:'button.fixture'}, {...source,fixed_color_option:'unavailable'},
+    {...source,fixed_color_option:''}]) {
+    assert.equal(projected({light_mode_sources:{[light]:invalid}})[0].light_mode_source,undefined);
+  }
+  entities[select].device_id = 'foreign';
+  assert.equal(projected()[0].light_mode_source,undefined);
+});
+
 test('projects an optional light refresh only to its registered paired light', () => {
   const lamp = 'light.fixture_lamp';
   const status = 'light.fixture_status';

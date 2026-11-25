@@ -300,6 +300,14 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
   };
 }
 
+export function normalizeLightModeSource(value) {
+  const { entity, fixed_color_option } = value ?? {};
+  if (typeof entity !== 'string' || !/^select\.[a-z0-9_]+$/.test(entity) ||
+      typeof fixed_color_option !== 'string' || !fixed_color_option.trim() || fixed_color_option.length > 160 ||
+      ['unknown', 'unavailable'].includes(fixed_color_option)) return;
+  return { entity, fixed_color_option };
+}
+
 function reportedLightMode({ actions, attributes, state }) {
   const { effect, color_mode: colorMode } = attributes;
   if (state === 'on' && typeof effect === 'string' && effect.trim().toLowerCase() !== 'off' &&
@@ -308,7 +316,7 @@ function reportedLightMode({ actions, attributes, state }) {
   if (supportsLightColor([colorMode])) return 'set_light_color';
 }
 
-export function organizeLightModes(fields, selected, changed, { make, button, t, model }) {
+export function organizeLightModes(fields, selected, changed, { make, button, t, model, fixedColorFallback }) {
   const parts = lightModes.flatMap(([id, name]) => fields.has(id)
     ? [{ id, name, field: fields.get(id) }] : []);
   if (parts.length < 2) return;
@@ -332,11 +340,13 @@ export function organizeLightModes(fields, selected, changed, { make, button, t,
       field.hidden = id !== active;
     }
   }
-  const initial = [selected, reportedLightMode(model)].find(mode => parts.some(({ id }) => id === mode));
-  setActive(initial ?? parts[0].id);
+  const fallback = fixedColorFallback ? ['set_light_color', 'set_color_temp_kelvin'] : [];
+  const initial = [selected, reportedLightMode(model), ...fallback].find(mode => parts.some(({ id }) => id === mode)) ?? parts[0].id;
+  setActive(initial);
   const panel = make('div', 'light-mode-panel');
   panel.append(modeBar, ...parts.map(({ field }) => field));
   fields.set(effectAction, panel);
+  return initial;
 }
 
 export const lightEffectStyles = `

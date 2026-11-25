@@ -545,6 +545,17 @@ if (query.has('room-grid')) {
     hass.entities['button.fixture_other_device'] = { device_id:'other' };
     hass.services = { ...hass.services, button:{press:{}} };
   }
+  if (query.has('light-mode-source')) {
+    const light = 'light.demo_pendant';
+    const helper = 'select.fixture_light_mode';
+    states[light].state = 'off';
+    Object.assign(states[light].attributes,{ effect:null, color_mode:null });
+    states[helper] = { state:'Fixed view', attributes:{ friendly_name:'Lamp modes', options:['Fixed view','Slow pulse'] } };
+    states['select.fixture_other'] = { state:'Fixed view', attributes:{ friendly_name:'Other modes', options:['Fixed view'] } };
+    hass.entities[light] = { area_id:'studio', di:'fixture-lamp' };
+    hass.entities[helper] = { device_id:'fixture-lamp' };
+    hass.entities['select.fixture_other'] = { device_id:'other' };
+  }
   if (query.has('many-effect-categories')) {
     states['light.demo_pendant'].attributes.effect_list.push('Sunburst', 'Midnight',
       ...Array.from({ length: 7 }, (_, i) => 'Preset ' + (i + 1)));
@@ -912,6 +923,9 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     light_status_refresh_buttons:{'light.demo_pendant':'button.fixture_refresh_lamp'},
     light_effect_favorites:['light.demo_pendant'],
   }),
+  ...(query.has('light-mode-source') && {light_mode_sources:{
+    'light.demo_pendant':{entity:'select.fixture_light_mode',fixed_color_option:'Fixed view'},
+  }}),
   ...(query.has('grouped-effects') && { light_effect_groups: {
     'light.demo_pendant': [
       { title: 'Evening', effects: [{ effect: 'Slow pulse', name: 'Gentle glow', icon: 'mdi:weather-night' }, 'Missing',
@@ -1172,7 +1186,8 @@ if (query.has('editor')) {
     ...((query.has('toolbar-panels') || query.has('automation-compact') || query.has('overview-opt-in') || query.has('lighting-count') ||
       query.has('preset-shortcut') || query.has('entrance-popup-position') || query.has('timer-usage') ||
       query.has('swing-unreported') || query.has('temperature-source') || query.has('room-temperature-chart') || query.has('dual-light-details') ||
-      query.has('compact-light-reading') || query.has('light-status-refresh') || query.has('wide-home-profile')) && selected) });
+      query.has('compact-light-reading') || query.has('light-status-refresh') || query.has('light-mode-source') ||
+      query.has('wide-home-profile')) && selected) });
   editor.hass = hass;
   editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
   document.querySelector('#editor').append(editor);
@@ -6118,6 +6133,89 @@ async function assertCompactColorLightDetail(browser) {
   }
 }
 
+async function assertLightOpeningMode(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({ viewport:{width:320,height:760}, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(6000);
+    const he = locale === 'he';
+    const url = base + '?room-grid&grouped-effects&light-mode-source&locale=' + locale;
+    const room = page.getByRole('dialog',{name:'Studio',exact:true});
+    const light = 'light.demo_pendant';
+    const helper = 'select.fixture_light_mode';
+    const dialog = page.getByRole('dialog',{name:'Pendant lamp',exact:true});
+    const selectedMode = () => dialog.locator('.light-mode-bar button[aria-pressed=true]').getAttribute('data-light-mode');
+    const mode = id => dialog.locator('.light-mode-bar [data-light-mode="' + id + '"]');
+    const open = async () => {
+      await room.locator('.device[data-entity="light.demo_pendant"] .device-tile').press('Shift+Enter');
+      await dialog.waitFor();
+    };
+    const back = async () => {
+      await dialog.getByRole('button',{name:he ? 'חזרה לחדר' : 'Back to room',exact:true}).tap();
+      await room.waitFor();
+    };
+    const attrs = (entity, attributes) => page.evaluate(([id,current])=>window.bayitTest.setFixtureAttributes(id,current),[entity,attributes]);
+    const state = (id,value) => page.evaluate(([id,value])=>window.bayitTest.setRoomState(id,value),[id,value]);
+    const calls = () => page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service'));
+    try {
+      await page.goto(url);
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+      await open();
+      assert.equal(await selectedMode(), 'set_light_color');
+      await state(helper,'Slow pulse');
+      await attrs(light,{effect_list:['Color loop','Slow pulse','Midnight']});
+      assert.equal(await selectedMode(), 'set_light_color');
+      await mode('set_effect').press('Enter');
+      assert.equal(await selectedMode(), 'set_effect');
+      await state(helper,'Fixed view');
+      await attrs(light,{effect_list:['Color loop','Slow pulse','Midnight','Sunburst']});
+      assert.equal(await selectedMode(), 'set_effect');
+      await back();
+      await open();
+      assert.equal(await selectedMode(), 'set_light_color');
+      await back();
+
+      await state(helper,'unavailable');
+      await open();
+      assert.equal(await selectedMode(), 'set_effect');
+      await back();
+      await state(helper,'Fixed view');
+      await attrs(helper,{options:['Slow pulse']});
+      await open();
+      assert.equal(await selectedMode(), 'set_effect');
+      await back();
+      await attrs(helper,{options:['Fixed view','Slow pulse']});
+      await attrs(light,{color_mode:'color_temp'});
+      await open();
+      assert.equal(await selectedMode(), 'set_color_temp_kelvin');
+      await back();
+      await state(light,'on');
+      await attrs(light,{effect:'Slow pulse'});
+      await open();
+      assert.equal(await selectedMode(), 'set_effect');
+      assert.deepEqual(await calls(),[]);
+
+      const editor = he ? { section:'קטגוריות אפקטים לתאורה', light:'תאורה',
+        mode:'מקור למצב הפתיחה של התאורה', fixed:'אפשרות לצבע קבוע' }
+        : { section:'Light effect categories', light:'Light', mode:'Light opening mode source', fixed:'Fixed-color option' };
+      await page.goto(url + '&editor');
+      await page.getByText(editor.section,{exact:true}).click();
+      await page.getByLabel(editor.light,{exact:true}).selectOption(light);
+      const source = page.getByLabel(editor.mode,{exact:true});
+      const fixed = page.getByLabel(editor.fixed,{exact:true});
+      assert.deepEqual(await source.locator('option').evaluateAll(options=>options.map(option=>option.value)), ['',helper]);
+      assert.equal(await fixed.inputValue(),'Fixed view');
+      await source.selectOption('');
+      assert.deepEqual(await page.evaluate(()=>window.latest.light_mode_sources),{});
+      await source.selectOption(helper);
+      await fixed.selectOption('Fixed view');
+      assert.deepEqual(await page.evaluate(()=>window.latest.light_mode_sources),{[light]:{entity:helper,fixed_color_option:'Fixed view'}});
+      assert.deepEqual(await calls(),[]);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertLightStatusRefresh(browser) {
   for (const locale of ['en','he']) {
     const page = await browser.newPage({ viewport:{width:320,height:760}, hasTouch:true, reducedMotion:'reduce' });
@@ -7698,6 +7796,7 @@ try {
       console.log(engine + ': opt-in color palette fits and only sends committed changes');
       await assertCompactColorLightDetail(browser);
       console.log(engine + ': opted-in color light keeps compact direct brightness, modes and guarded refresh');
+      await assertLightOpeningMode(browser);
       await assertLightStatusRefresh(browser);
       await assertKitchenBoilerQuickPower(browser);
       await assertRoomVacuumGestures(browser);

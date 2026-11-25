@@ -9,7 +9,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
-import { allowsCoverRailAction, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightStatusRefresh, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
+import { allowsCoverRailAction, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
   simpleTimerStatusEntity, simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupScrollMemory } from './popup-scroll.js';
@@ -19,7 +19,7 @@ import { preserveMoreInfoReturn } from './native-more-info.js';
 import { buildPanelControls, climateOptionLabel, panelControlStyles } from './panel-controls.js';
 import { lightColorHex, parseLightColor } from './light-color.mjs';
 import { activityKinds, applianceActivity, normalizeRoomActivities } from './room-appliance.mjs';
-import { createLightEffectGallery, lightEffectStyles, normalizeLightEffectGroups, organizeLightModes } from './light-effects.js';
+import { createLightEffectGallery, lightEffectStyles, normalizeLightEffectGroups, normalizeLightModeSource, organizeLightModes } from './light-effects.js';
 import { createLightColorPalette, lightColorPaletteStyles } from './light-color-palette.js';
 import { createToolbarPanel, toolbarPanelStyles } from './toolbar-panels.js';
 import { createRoomGraphs, roomTemperatureChartStyles } from './room-temperature-chart.js';
@@ -263,6 +263,8 @@ function normalizeEntity(item) {
   if (domain === 'light' && supportsNativeShortcutDetails(entry) && /^button\.[a-z0-9_]+$/.test(text(item.light_status_refresh_button))) {
     entry.light_status_refresh_button = item.light_status_refresh_button;
   }
+  const modeSource = domain === 'light' && supportsNativeShortcutDetails(entry) && normalizeLightModeSource(item.light_mode_source);
+  if (modeSource) entry.light_mode_source = modeSource;
   if (domain === 'cover' && item.room_cover_native_details === true && supportsNativeShortcutDetails(entry)) {
     entry.room_cover_native_details = true;
   }
@@ -2086,6 +2088,17 @@ export class BayitDashboard extends HTMLElement {
     }
   }
 
+  lightUsesFixedColorSource(config) {
+    if (!config.light_mode_source) return false;
+    const { entity, fixed_color_option } = config.light_mode_source;
+    const { states = {}, entities } = this._hass ?? {};
+    const source = states[entity];
+    return source?.state === fixed_color_option && Array.isArray(source.attributes?.options) &&
+      source.attributes.options.includes(fixed_color_option) &&
+      isPairedLightCompanion(config.entity, entity, 'select', entities) &&
+      [config.entity, entity].every(id => isVisibleEntity(id, states, entities, this.config.hiddenEntities));
+  }
+
   lightStatusRefreshTarget(config) {
     const entity = config.light_status_refresh_button;
     const { states = {}, entities, services } = this._hass ?? {};
@@ -2664,10 +2677,14 @@ export class BayitDashboard extends HTMLElement {
       control.disabled = true;
       basic.append(control);
     }
-    if (view.effectGallery) organizeLightModes(complex, view.lightMode, mode => {
-      view.lightMode = mode;
-      if (mode !== 'set_light_color') view.colorPalette?.cancel();
-    }, { make, button, t: key => this.t(key), model });
+    if (view.effectGallery) {
+      const initial = organizeLightModes(complex, view.lightMode, mode => {
+        view.lightMode = mode;
+        if (mode !== 'set_light_color') view.colorPalette?.cancel();
+      }, { make, button, t: key => this.t(key), model,
+        fixedColorFallback: !view.lightMode && this.lightUsesFixedColorSource(view.config) });
+      if (view.config.light_mode_source && !view.lightMode) view.lightMode = initial;
+    }
     const hasAdvanced = !!advancedClimate?.childElementCount;
     if (hasAdvanced) {
       advancedClimate.open = view.climateExtraControls?.open ?? false;
