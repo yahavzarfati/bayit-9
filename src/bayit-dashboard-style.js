@@ -414,10 +414,10 @@ export const styles = `
     padding: 0;
     color: var(--ink);
     border: 1px solid var(--line);
-    border-radius: 20px;
+    border-radius: 25px;
     background: transparent;
-    -webkit-backdrop-filter: blur(14px);
-    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
     overflow: hidden;
     overscroll-behavior: contain;
     transform-origin: var(--motion-x,50%) var(--motion-y,34%);

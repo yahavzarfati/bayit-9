@@ -2855,12 +2855,13 @@ try {
 
       const panelsPage = await browser.newPage({ viewport: { width:390,height:844 } });
       panelsPage.setDefaultTimeout(8000);
-      if (engine === 'Chromium') {
-        const session = await panelsPage.context().newCDPSession(panelsPage);
-        await session.send('Emulation.setEmulatedMedia', { features: [
-          { name: 'prefers-reduced-transparency', value: 'no-preference' },
-        ] });
-      }
+      const glassSession = engine === 'Chromium' ? await panelsPage.context().newCDPSession(panelsPage) : null;
+      const setGlassMedia = (transparency = 'no-preference', contrast = 'no-preference') => glassSession
+        ? glassSession.send('Emulation.setEmulatedMedia', { features: [
+          { name: 'prefers-reduced-transparency', value: transparency }, { name: 'prefers-contrast', value: contrast },
+        ] })
+        : panelsPage.emulateMedia({ contrast });
+      await setGlassMedia();
       await panelsPage.goto(base + '?toolbar-panels');
       const roomGraph = panelsPage.locator('[data-native-type=sensor][data-graph-hours="24"]');
       assert.equal(await roomGraph.count(), 0);
@@ -2869,26 +2870,39 @@ try {
       await graphRoom.getByText('Studio temperature',{exact:true}).waitFor();
       await roomGraph.waitFor();
       assert.equal(await roomGraph.getAttribute('data-during-opening'), 'false', 'The optional graph cannot preempt opening motion');
-      const material = await graphRoom.evaluate(dialog => {
+      const readPopupMaterial = panel => panel.evaluate(dialog => {
         const reduced = matchMedia('(prefers-reduced-transparency: reduce), (prefers-contrast: more)').matches;
         const surface = getComputedStyle(dialog);
-        return { reduced, fill: surface.backgroundColor, blur: surface.backdropFilter,
+        return { reduced, radius: surface.borderRadius, fill: surface.backgroundColor, blur: surface.backdropFilter,
           backdrop: getComputedStyle(dialog, '::backdrop').backgroundColor };
       });
-      if (!material.reduced) {
-        assert.equal(material.fill, 'rgba(0, 0, 0, 0)');
-        assert.equal(material.backdrop, 'rgba(0, 0, 0, 0)');
-        assert.equal(material.blur, 'blur(14px)');
+      const assertClearPopup = async panel => {
+        assert.deepEqual(await readPopupMaterial(panel), {
+          reduced: false, radius: '25px', fill: 'rgba(0, 0, 0, 0)', blur: 'blur(16px)', backdrop: 'rgba(0, 0, 0, 0)',
+        });
+      };
+      const assertOpaquePopup = async panel => {
+        const material = await readPopupMaterial(panel);
+        assert.equal(material.reduced, true);
+        assert.equal(material.radius, '25px');
+        assert.equal(material.blur, 'none');
+        assert.equal(material.fill, 'rgb(40, 40, 40)');
+      };
+      await assertClearPopup(graphRoom);
+      if (glassSession) {
+        await setGlassMedia('reduce');
+        await assertOpaquePopup(graphRoom);
       }
-      await panelsPage.emulateMedia({ contrast: 'more' });
-      assert.equal(await graphRoom.evaluate(dialog => getComputedStyle(dialog).backdropFilter), 'none');
-      assert.equal(await graphRoom.evaluate(dialog => getComputedStyle(dialog).backgroundColor), 'rgb(40, 40, 40)');
-      await panelsPage.emulateMedia({ contrast: 'no-preference' });
+      await setGlassMedia('no-preference', 'more');
+      await assertOpaquePopup(graphRoom);
+      await setGlassMedia();
+      await assertClearPopup(graphRoom);
       await panelsPage.keyboard.press('Escape');
       await roomGraph.waitFor({state:'detached'});
       await panelsPage.getByRole('button',{name:'Weather',exact:true}).click();
       let panels = panelsPage.getByRole('dialog',{name:'Weather',exact:true});
       await panels.locator('[data-native-type=weather-forecast]').waitFor();
+      await assertClearPopup(panels);
       await panels.getByRole('button',{name:'Sun',exact:true}).click();
       await panels.getByText('Sunrise',{exact:true}).waitFor();
       await panelsPage.keyboard.press('Escape');
@@ -2898,6 +2912,7 @@ try {
       await panels.getByRole('button',{name:'Evening scene',exact:true}).click();
       let confirm = panelsPage.getByRole('dialog',{name:'Confirm action',exact:true});
       await confirm.getByText('Run the evening scene?',{exact:true}).waitFor();
+      await assertClearPopup(confirm);
       await confirm.getByRole('button',{name:'Cancel'}).click();
       assert.equal(await panelsPage.evaluate(() => window.bayitTest.calls.length),0);
       await panels.getByRole('button',{name:/Front door/}).click();
