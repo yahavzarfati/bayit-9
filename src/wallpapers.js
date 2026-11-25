@@ -11,6 +11,9 @@ const acceptedTypes = 'image/png,image/jpeg,image/webp,image/avif,image/heic,ima
 const sampleSize = 32;
 const maxPhotoBytes = 20 * 1024 * 1024;
 const maxPhotoSide = 2048;
+const sharedPhotoTimeout = 10000;
+const revisionDebounce = 120;
+const revisionInterval = 2000;
 const databaseName = 'bayit-9-wallpapers';
 const photoStore = 'personal';
 const thumbnailPattern = /^data:image\/jpeg;base64,[+/=a-z0-9]+$/i;
@@ -50,9 +53,17 @@ function loadImage(view, source) {
   });
 }
 
-async function loadSharedPhoto(view, path) {
+function sharedPhotoRevision(headers) {
+  const tag = headers.get('etag')?.trim();
+  if (tag && tag.length <= 256) return 'etag:' + tag;
+  const modified = Date.parse(headers.get('last-modified') ?? '');
+  return Number.isFinite(modified) ? 'modified:' + modified : null;
+}
+
+async function loadSharedPhoto(view, path, { signal, cache } = {}) {
   const response = await view.fetch(path, {
-    mode: 'same-origin', redirect: 'error', signal: view.AbortSignal?.timeout?.(10000),
+    mode: 'same-origin', redirect: 'error', cache,
+    signal: signal ?? view.AbortSignal?.timeout?.(sharedPhotoTimeout),
   });
   if (!response.ok || Number(response.headers.get('content-length')) > maxPhotoBytes) {
     throw new Error('Wallpaper photo is unavailable');
@@ -61,7 +72,7 @@ async function loadSharedPhoto(view, path) {
   if (!allowedImage.test(file.type) || !file.size || file.size > maxPhotoBytes) throw new Error('Invalid wallpaper photo');
   const url = view.URL.createObjectURL(file);
   try {
-    return { image: await loadImage(view, url), url };
+    return { image: await loadImage(view, url), url, revision: sharedPhotoRevision(response.headers) };
   } catch (error) {
     view.URL.revokeObjectURL(url);
     throw error;
@@ -187,10 +198,14 @@ export function createWallpaperController(shell, {
 } = {}) {
   const document = shell.ownerDocument;
   const view = document.defaultView;
-  const output = { id: null, url: null, raster: null };
+  const output = { id: null, url: null, raster: null, shared: null };
   let generation = 0;
   let pending;
+  let pendingChoice;
   let stockRequest;
+  let revisionTimer;
+  let revisionRequest;
+  let lastRevisionCheck = -Infinity;
   let frame = 0;
   let disposed = false;
   const themedNodes = new Set();
@@ -234,9 +249,9 @@ export function createWallpaperController(shell, {
     for (const dialog of shell.querySelectorAll('.modal[data-wallpaper-ink]')) delete dialog.dataset.wallpaperInk;
   }
 
-  function publish(id, background, darkInk, url = null, raster = null) {
+  function publish(id, background, darkInk, url = null, raster = null, shared = null) {
     const previousUrl = output.url;
-    Object.assign(output, { id, url, raster });
+    Object.assign(output, { id, url, raster, shared });
     clearRegionalInk();
     shell.style.setProperty('--bayit-wallpaper', background);
     shell.dataset.background = id;
@@ -283,22 +298,81 @@ export function createWallpaperController(shell, {
     }, () => {});
   }
 
-  function publishSharedPhoto(id, { image, url }) {
+  function publishSharedPhoto({ id, path }, { image, url, revision }) {
     let raster;
     try { raster = rasterFor(document, image); } catch {}
     const box = shell.getBoundingClientRect();
-    publish(id, sharedPhotoBackground(url), !!raster && darkInkOn(raster, box, box), url, raster);
+    publish(id, sharedPhotoBackground(url), !!raster && darkInkOn(raster, box, box), url, raster, { id, path, revision });
   }
 
-  async function showSharedPhoto(ticket, { id, path }) {
-    const photo = await loadSharedPhoto(view, path);
+  async function showSharedPhoto(ticket, shared) {
+    const photo = await loadSharedPhoto(view, shared.path);
     try {
       if (disposed || ticket !== generation) return false;
-      publishSharedPhoto(id, photo);
+      publishSharedPhoto(shared, photo);
       return true;
     } finally {
       if (output.url !== photo.url) view.URL.revokeObjectURL(photo.url);
     }
+  }
+
+  const canCheckRevision = () => !disposed && shell.isConnected && output.shared && pendingChoice === undefined &&
+    document.visibilityState === 'visible';
+
+  function cancelRevisionCheck() {
+    view.clearTimeout(revisionTimer);
+    revisionTimer = undefined;
+    revisionRequest?.abort();
+    revisionRequest = undefined;
+  }
+
+  async function checkSharedRevision() {
+    if (!canCheckRevision() || revisionRequest) return;
+    const shared = output.shared;
+    const ticket = generation;
+    const request = new view.AbortController();
+    const active = () => revisionRequest === request && !request.signal.aborted && generation === ticket &&
+      output.shared === shared && canCheckRevision();
+    revisionRequest = request;
+    lastRevisionCheck = view.performance.now();
+    const timeout = view.setTimeout(() => request.abort(), sharedPhotoTimeout);
+    let photo;
+    try {
+      const response = await view.fetch(shared.path, {
+        method: 'HEAD', mode: 'same-origin', redirect: 'error', cache: 'no-cache', signal: request.signal,
+      });
+      if (!active() || !response.ok) return;
+      const revision = sharedPhotoRevision(response.headers);
+      if (!revision || revision === shared.revision) return;
+      photo = await loadSharedPhoto(view, shared.path, { signal: request.signal, cache: 'reload' });
+      if (active()) publishSharedPhoto(shared, { ...photo, revision: photo.revision ?? revision });
+    } catch { /* Keep the last verified photo when the shared file is unavailable. */ }
+    finally {
+      view.clearTimeout(timeout);
+      if (revisionRequest === request) revisionRequest = undefined;
+      if (photo && output.url !== photo.url) view.URL.revokeObjectURL(photo.url);
+    }
+  }
+
+  function scheduleRevisionCheck(event) {
+    if (event.type === 'pageshow' && !event.persisted) return;
+    if (document.visibilityState !== 'visible') {
+      cancelRevisionCheck();
+      return;
+    }
+    if (!canCheckRevision() || revisionTimer !== undefined || revisionRequest) return;
+    const delay = Math.max(revisionDebounce, revisionInterval - (view.performance.now() - lastRevisionCheck));
+    revisionTimer = view.setTimeout(() => {
+      revisionTimer = undefined;
+      void checkSharedRevision();
+    }, delay);
+  }
+
+  function trackChoice(ticket, promise) {
+    pendingChoice = ticket;
+    return promise.finally(() => {
+      if (pendingChoice === ticket) pendingChoice = undefined;
+    });
   }
 
   async function prepareSharedPhoto(id) {
@@ -308,8 +382,9 @@ export function createWallpaperController(shell, {
     return {
       apply() {
         if (disposed) return false;
+        cancelRevisionCheck();
         generation++;
-        publishSharedPhoto(id, photo);
+        publishSharedPhoto(shared, photo);
         return true;
       },
       dispose() {
@@ -324,6 +399,7 @@ export function createWallpaperController(shell, {
     const stock = Object.hasOwn(catalog, id) ? catalog[id] : null;
     const shared = sharedWallpapers.find(item => item.id === id);
     if (id !== personalWallpaperId && !stock && !shared) return Promise.resolve(false);
+    cancelRevisionCheck();
     const ticket = ++generation;
     if (output.id === id) return Promise.resolve(true);
     if (stock) {
@@ -331,23 +407,19 @@ export function createWallpaperController(shell, {
       if (stock.photo) showStockPhoto(id, stock);
       return Promise.resolve(true);
     }
-    if (shared) return showSharedPhoto(ticket, shared).catch(() => false);
-    const promise = readSavedPhoto().then(record => showPhoto(ticket, record, false), () => false)
-      .catch(() => false).finally(() => { if (pending?.promise === promise) pending = undefined; });
+    if (shared) return trackChoice(ticket, showSharedPhoto(ticket, shared).catch(() => false));
+    const promise = trackChoice(ticket, readSavedPhoto().then(record => showPhoto(ticket, record, false), () => false)
+      .catch(() => false)).finally(() => { if (pending?.promise === promise) pending = undefined; });
     pending = { ticket, promise };
     return promise;
   }
 
   async function upload(file) {
     if (disposed) return false;
+    cancelRevisionCheck();
     const ticket = ++generation;
     pending = undefined;
-    try {
-      const record = await preparePhoto(document, file);
-      return await showPhoto(ticket, record, true);
-    } catch {
-      return false;
-    }
+    return trackChoice(ticket, preparePhoto(document, file).then(record => showPhoto(ticket, record, true)).catch(() => false));
   }
 
   async function preview() {
@@ -362,16 +434,23 @@ export function createWallpaperController(shell, {
   resize?.observe(shell);
   for (const dialog of shell.querySelectorAll('.modal')) dialogs.observe(dialog, { attributes: true, attributeFilter: ['open'] });
   shell.addEventListener('scroll', scheduleRefresh, { capture: true, passive: true });
+  view.addEventListener('focus', scheduleRevisionCheck);
+  view.addEventListener('pageshow', scheduleRevisionCheck);
+  document.addEventListener('visibilitychange', scheduleRevisionCheck);
 
   return {
     apply, upload, preview, refresh, prepareSharedPhoto,
     destroy() {
       disposed = true;
       generation++;
+      cancelRevisionCheck();
       view.cancelAnimationFrame(frame);
       resize?.disconnect();
       dialogs.disconnect();
       shell.removeEventListener('scroll', scheduleRefresh, true);
+      view.removeEventListener('focus', scheduleRevisionCheck);
+      view.removeEventListener('pageshow', scheduleRevisionCheck);
+      document.removeEventListener('visibilitychange', scheduleRevisionCheck);
       clearRegionalInk();
       if (output.url) view.URL.revokeObjectURL(output.url);
       shell.style.removeProperty('--bayit-wallpaper');
