@@ -8,6 +8,7 @@ import {
 } from './strategy-model.js';
 import { normalizeOrefMap, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
 import { sameVacuumDevice } from './vacuum-map.js';
+import { normalizeMediaStage } from './now-playing.js';
 import { normalizeMediaRemote } from './media-device-support.mjs';
 import { normalizeCalendarAgenda, supportsDailyForecast } from './calendar-agenda.js';
 
@@ -40,6 +41,8 @@ const WORDS = {
     scriptButton: 'Script button behavior', scriptStartOnly: 'Start script only', scriptToggle: 'Start or stop script',
     mediaRemote: 'Media remote', mediaTransport: 'Playback device', mediaVolume: 'Volume device',
     mediaStandby: 'Show remote controls in standby',
+    mediaStage: 'Large Now Playing artwork', mediaStageSource: 'Artwork and playback source',
+    mediaStageIcon: 'Fallback artwork icon',
     orefMapTitle: 'Regional alerts',
     orefMap: 'Show the Oref alert map',
     orefMapHint: 'Requires the Oref Alert integration in Home Assistant.',
@@ -101,6 +104,8 @@ const WORDS = {
     scriptButton: 'פעולת כפתור התרחיש', scriptStartOnly: 'הפעלת תרחיש בלבד', scriptToggle: 'הפעלה או עצירה של תרחיש',
     mediaRemote: 'שלט מדיה', mediaTransport: 'מכשיר לניגון', mediaVolume: 'מכשיר לעוצמת שמע',
     mediaStandby: 'הצגת פקדי השלט במצב המתנה',
+    mediaStage: 'עטיפה גדולה לתוכן שמתנגן', mediaStageSource: 'מקור העטיפה ופרטי הניגון',
+    mediaStageIcon: 'סמל כשאין עטיפה',
     orefMapTitle: 'התראות אזוריות',
     orefMap: 'הצגת מפת התרעות פיקוד העורף',
     orefMapHint: 'נדרשת אינטגרציית פיקוד העורף ב־Home Assistant.',
@@ -324,9 +329,9 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     return { field: label, input };
   }
 
-  function iconField(value, update) {
-    const control = textField(words.icon, value, update,
-      { pattern: iconPattern, error: words.invalidIcon, placeholder: 'mdi:home', dir: 'ltr' });
+  function iconField(value, update, { label = words.icon, placeholder = 'mdi:home' } = {}) {
+    const control = textField(label, value, update,
+      { pattern: iconPattern, error: words.invalidIcon, placeholder, dir: 'ltr' });
     const sample = node('span', { className: 'toolbar-editor-icon' });
     sample.setAttribute('aria-hidden', 'true');
     const glyph = node('ha-icon');
@@ -762,6 +767,24 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     return node('fieldset', { className: 'toolbar-editor-detail' }, output);
   }
 
+  function editMediaStage(entry) {
+    const settings = normalizeMediaStage(entry.media_stage) ?? {};
+    const players = candidates.filter(item => item.entity.startsWith('media_player.'))
+      .map(item => [item.entity, item.name || item.entity]);
+    const current = settings.source_entity;
+    if (current && !players.some(([entity]) => entity === current)) players.push([current, current + ' · ' + words.unavailable]);
+    const source = select([['', words.choose], ...players], current || '');
+    source.dataset.toolbarFocus = 'media-stage-source';
+    const save = (edits, structural = false) => changeEntry({
+      media_stage: normalizeMediaStage({ ...settings, ...edits }),
+    }, structural, source.dataset.toolbarFocus);
+    source.addEventListener('change', () => save({ source_entity: source.value }, true));
+    const fields = [node('legend', { textContent: words.mediaStage }), field(words.mediaStageSource, source)];
+    if (current) fields.push(iconField(settings.fallback_icon, value => save({ fallback_icon: value }),
+      { label: words.mediaStageIcon, placeholder: 'mdi:music-note' }));
+    return node('fieldset', { className: 'toolbar-editor-detail' }, fields);
+  }
+
   function editMediaRemote(entry) {
     const settings = normalizeMediaRemote(entry.media_remote) ?? {};
     const players = candidates.filter(item => item.entity.startsWith('media_player.'))
@@ -844,7 +867,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     }
     if (entry.kind === 'security') fields.push(editOrefMap(entry));
     if (entry.kind === 'vacuum') fields.push(editVacuumMap(entry));
-    if (entry.kind === 'media') fields.push(editMediaRemote(entry));
+    if (entry.kind === 'media') fields.push(editMediaStage(entry), editMediaRemote(entry));
     if (entry.kind === 'calendar') fields.push(editCalendarAgenda(entry));
     if (entry.kind === 'link') {
       const path = textField(words.localPath, entry.path, value => {

@@ -547,6 +547,15 @@ export function createToolbarPanel(kind, configuration, context) {
   }
 
   const sections = configuration.sections ?? sectionsFor(kind, configuration.entities);
+  if (kind === 'media' && configuration.mediaStage) {
+    const { source_entity: entity, fallback_icon: fallbackIcon } = configuration.mediaStage;
+    const stage = createNowPlaying({ host, dialog, make, icon, t, artworkStage: true, fallbackIcon });
+    mediaViews.push(stage);
+    handlers.push(() => {
+      const visible = isVisibleEntity(entity, currentHass?.states ?? {}, currentHass?.entities, context.hiddenEntities);
+      stage.update(visible ? modelFor({ entity }) : { available: false });
+    });
+  }
   if (kind === 'media' && configuration.mediaRemote) host.append(renderMediaRemote(configuration.mediaRemote));
   const calendarItems = kind === 'calendar' ? sections.flatMap(section => section.entities).filter(item => domain(item) === 'calendar') : [];
   let calendarAgenda;

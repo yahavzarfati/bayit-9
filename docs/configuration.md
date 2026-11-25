@@ -108,6 +108,10 @@ Enable **Show month in the date column** for a compact weekday, day and month be
 
 For a media player with playback controls and track details, edit its row in a toolbar section and choose **Now Playing** under **Display as**. In YAML, set `role: now_playing` on that media player. The display uses the track or series title, episode, artist, and playback app or source reported by Home Assistant. When playback position and duration are available, the progress bar also shows the time remaining. Artwork can load through the selected player's Home Assistant proxy.
 
+In a Media panel, select an **Artwork and playback source** under **Large Now Playing artwork** to show the full artwork and track details above the media controls. The artwork is contained within the image area and uses the selected media player's Home Assistant proxy. A local MDI icon appears when the artwork is missing. Set **Fallback artwork icon** to choose that icon.
+
+In YAML use `media_stage: { source_entity: media_player.streamer, fallback_icon: 'mdi:music-note' }` on a Media toolbar entry. The fallback icon is optional. Remove any extra Now Playing section if the artwork stage already shows that device.
+
 To open a Media panel from a room, first configure a Media panel in the toolbar editor. Then choose that panel under **Open on media press and hold** for a media player in the room editor. A regular press opens Home Assistant details, a press and hold opens the selected Media panel, and **Back to room** returns to the source row. In YAML, set `media_panel_links` under the room override with the media entity ID as its key and a Media toolbar entry ID as its value.
 
 For a Media or Vacuum panel, set **Show in** to **Linked only** to use it from room links and direct popup URLs. In YAML, set `placement: linked` on the Media or Vacuum toolbar entry.

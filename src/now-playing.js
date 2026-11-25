@@ -2,6 +2,14 @@ const mediaStates = new Set(['playing', 'paused', 'buffering', 'on', 'idle']);
 const progressStates = new Set(['playing', 'paused', 'buffering']);
 const cleanText = value => typeof value === 'string' ? value.trim().slice(0, 160) : '';
 
+export function normalizeMediaStage(value, visible = () => true) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+  const entity = value.source_entity;
+  if (typeof entity !== 'string' || !/^media_player\.[a-z0-9_]+$/.test(entity) || !visible(entity)) return;
+  const fallback = typeof value.fallback_icon === 'string' ? value.fallback_icon.trim() : '';
+  return { source_entity: entity, ...(fallback.length <= 80 && /^mdi:[a-z0-9-]+$/.test(fallback) && { fallback_icon: fallback }) };
+}
+
 function episodeLabel(value) {
   if (typeof value === 'number') return Number.isSafeInteger(value) && value >= 0 ? String(value) : '';
   const label = cleanText(value);
@@ -59,17 +67,19 @@ function timeLabel(seconds) {
   return minutes < 60 ? minutes + ':' + suffix : Math.floor(minutes / 60) + ':' + pair(minutes % 60) + ':' + suffix;
 }
 
-export function createNowPlaying({ host, dialog, make, icon, t }) {
+export function createNowPlaying({ host, dialog, make, icon, t, artworkStage = false, fallbackIcon = 'mdi:music-note' }) {
   const view = host.ownerDocument.defaultView;
   const pathname = view.location.pathname;
   const element = make('div', 'now-playing');
+  element.toggleAttribute('data-artwork-stage', artworkStage);
   const art = make('span', 'now-playing-art');
   const picture = make('img');
   picture.alt = '';
   picture.hidden = true;
   picture.referrerPolicy = 'no-referrer';
   art.setAttribute('aria-hidden', 'true');
-  art.append(icon('mdi:music-note'), picture);
+  const fallback = icon(fallbackIcon);
+  art.append(fallback, picture);
   const info = make('div', 'now-playing-info');
   const title = make('strong', 'now-playing-title');
   const episodeInfo = make('span', 'now-playing-episode');
@@ -86,7 +96,11 @@ export function createNowPlaying({ host, dialog, make, icon, t }) {
   const remaining = make('span', 'now-playing-remaining');
   remaining.title = t('media_remaining');
   timelineRow.append(elapsed, meter, duration, remaining);
-  element.append(art, info, timelineRow);
+  if (artworkStage) {
+    const details = make('div', 'now-playing-stage-details');
+    details.append(info, timelineRow);
+    element.append(art, details);
+  } else element.append(art, info, timelineRow);
   host.append(element);
   let timeline;
   let interval;
@@ -112,8 +126,19 @@ export function createNowPlaying({ host, dialog, make, icon, t }) {
   function paintArtwork(url) {
     if (picture.getAttribute('src') === url) return;
     picture.hidden = true;
-    picture.onload = () => { if (picture.getAttribute('src') === url) picture.hidden = false; };
-    picture.onerror = () => { if (picture.getAttribute('src') === url) picture.hidden = true; };
+    fallback.hidden = false;
+    picture.onload = () => {
+      if (active() && picture.getAttribute('src') === url) {
+        picture.hidden = false;
+        fallback.hidden = artworkStage;
+      }
+    };
+    picture.onerror = () => {
+      if (picture.getAttribute('src') === url) {
+        picture.hidden = true;
+        fallback.hidden = false;
+      }
+    };
     if (url) picture.setAttribute('src', url);
     else picture.removeAttribute('src');
   }
@@ -143,7 +168,11 @@ export function createNowPlaying({ host, dialog, make, icon, t }) {
         interval ??= view.setInterval(paintProgress, 1000);
       } else stop();
     },
-    dispose() { stop(); picture.removeAttribute('src'); },
+    dispose() {
+      stop();
+      picture.onload = picture.onerror = null;
+      picture.removeAttribute('src');
+    },
   };
 }
 
@@ -163,5 +192,23 @@ export const nowPlayingStyles = `
     grid-template-columns:auto minmax(0,1fr) auto auto; gap:8px; font-size:12px; font-variant-numeric:tabular-nums; }
   .now-playing-remaining { color:var(--secondary); }
   .now-playing progress { inline-size:100%; min-inline-size:0; block-size:7px; accent-color:var(--warm); }
+  .now-playing[data-artwork-stage] {
+    grid-template-columns:minmax(0,1fr); gap:12px; padding:8px; margin-block-end:0;
+  }
+  .now-playing[data-artwork-stage] .now-playing-art {
+    inline-size:100%; block-size:clamp(190px,32vw,280px);
+    box-sizing:border-box; border:1px solid var(--soft-line);
+  }
+  .now-playing[data-artwork-stage] .now-playing-art ha-icon {
+    --mdc-icon-size:38px; width:38px; height:38px;
+  }
+  .now-playing[data-artwork-stage] .now-playing-art img {
+    box-sizing:border-box; padding:10px; object-fit:contain;
+  }
+  .now-playing-stage-details { display:flex; flex-direction:column; gap:10px; min-inline-size:0; padding:4px; }
+  .now-playing[data-artwork-stage] .now-playing-title { font-size:18px; }
+  @media (min-width:641px) {
+    .now-playing[data-artwork-stage] { grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr); }
+  }
   .now-playing [hidden] { display:none !important; }
 `;

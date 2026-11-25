@@ -2,6 +2,7 @@ import { normalizeRoomActivities } from './room-appliance.mjs';
 import { HEATING_DOMAINS, isReadOnlyRole, supportsRoomShutdown } from './device-control.mjs';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
+import { normalizeMediaStage } from './now-playing.js';
 import { normalizeMediaRemote } from './media-device-support.mjs';
 import { wallpaperChoices } from './wallpapers.js';
 import { normalizeLightEffectGroups } from './light-effects.js';
@@ -816,6 +817,8 @@ function dashboardToolbar(config, hass, roomIds) {
     const sections = entry.kind !== 'link'
       ? toolbarSections(entry.sections, describe, entry.kind, { vacuumPanels, roomIds }) : undefined;
     const orefMap = entry.kind === 'security' ? normalizeOrefMap(entry.oref_map) : undefined;
+    const mediaStage = entry.kind === 'media' ? normalizeMediaStage(entry.media_stage, entity =>
+      isVisibleEntity(entity, states, registry, hidden)) : undefined;
     const mediaRemote = entry.kind === 'media' ? normalizeMediaRemote(entry.media_remote, entity =>
       isVisibleEntity(entity, states, registry, hidden)) : undefined;
     const vacuumMap = entry.kind === 'vacuum'
@@ -830,6 +833,7 @@ function dashboardToolbar(config, hass, roomIds) {
       ...(usesRoomPopupPosition(entry) && { popup_position: 'room' }),
       ...(entities !== undefined && { entities }), ...(sections !== undefined && { sections }),
       ...(agenda && { calendar_agenda: agenda }), ...(mediaRemote && { media_remote: mediaRemote }),
+      ...(mediaStage && { media_stage: mediaStage }),
       ...(orefMap && { oref_map: orefMap }), ...(vacuumMap && { vacuum_map: vacuumMap }) };
   });
 }

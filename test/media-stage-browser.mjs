@@ -1,0 +1,218 @@
+import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { readFile } from 'node:fs/promises';
+import http from 'node:http';
+import { chromium, webkit } from 'playwright-core';
+
+const bundle = await readFile(new URL('../dist/bayit-9.js', import.meta.url));
+const proxy = '/api/media_player_proxy/media_player.fixture_source';
+const fixture = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<main></main><div id="editor"></div><script type="module">
+import '/bayit-9.js';
+const options = new URL(location.href).searchParams;
+const tracker = { calls: [] };
+const source = 'media_player.fixture_source';
+const other = 'media_player.fixture_other';
+tracker.source = source;
+const attributes = { friendly_name:'Fixture player', media_title:'Track title', media_artist:'A performer', app_name:'Media source',
+  media_position:17, media_duration:180, entity_picture:'/api/media_player_proxy/' + source + '?format=wide', supported_features: 16433 };
+const hass = {
+  locale: { language: options.get('locale') || 'en' }, themes: {}, areas:{}, devices:{}, entities:{},
+  states: { [source]:{ state:'paused', attributes },
+    [other]:{ state:'idle', attributes:{ friendly_name:'Alternative player' } } },
+  services: { media_player:{ media_play_pause:{}, media_previous_track:{}, media_next_track:{} } },
+  callWS(message) { tracker.calls.push(message); return Promise.resolve({}); },
+};
+const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
+const legacy = options.has('legacy');
+const config = { type:'custom:bayit-9', locale:hass.locale.language, toolbar:[
+  { id:'sample-media', kind:'media', label:'Fixture Media', placement:'linked',
+    ...(!legacy && { media_stage:{ source_entity:source, ...(options.has('default-icon') ? {} : { fallback_icon:'mdi:radio' }) } }),
+    media_remote:{ transport_entity:source }, sections:legacy
+      ? [{id:'small',kind:'media',entities:[{entity:source,role:'now_playing'}]}] : [] },
+] };
+const dashboard = document.createElement('bayit-dashboard');
+dashboard.setConfig(Strategy.generate(config, hass).views[0].cards[0]);
+dashboard.hass = hass;
+document.querySelector('main').append(dashboard);
+tracker.update = (picture, state = 'paused') => {
+  hass.states[source] = { state, attributes:{ ...attributes, entity_picture:picture } };
+  dashboard.hass = { ...hass, states:{ ...hass.states } };
+};
+tracker.hide = () => {
+  hass.entities[source] = { hidden_by:'user' };
+  dashboard.hass = { ...hass, entities:{ ...hass.entities } };
+};
+if (options.has('editor')) {
+  const editor = Strategy.getConfigElement();
+  editor.hass = hass;
+  editor.setConfig(config);
+  editor.addEventListener('config-changed', event => { tracker.draft = event.detail.config; });
+  document.querySelector('#editor').append(editor);
+}
+window.tracker = tracker;
+</script>`;
+const referrers = [];
+const server = http.createServer((request, response) => {
+  const url = new URL(request.url, 'http://127.0.0.1');
+  if (url.pathname === '/bayit-9.js') {
+    response.writeHead(200, { 'content-type':'text/javascript' });
+    response.end(bundle);
+  } else if (url.pathname === proxy) {
+    referrers.push(request.headers.referer);
+    const format = url.searchParams.get('format');
+    const [width, height] = format === 'tall' ? [100, 260] : [260, 100];
+    if (format === 'broken') {
+      response.writeHead(404);
+      response.end();
+    } else {
+      response.writeHead(200, { 'content-type':'image/svg+xml' });
+      response.end('<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '">' +
+        '<rect width="100%" height="100%" fill="teal"/></svg>');
+    }
+  } else {
+    response.writeHead(200, { 'content-type':'text/html' });
+    response.end(fixture);
+  }
+});
+server.listen(0, '127.0.0.1');
+await once(server, 'listening');
+
+const home = 'http://127.0.0.1:' + server.address().port + '/fixture-home/home';
+const hash = '#panel/sample-media';
+const state = (page, picture, value) => page.evaluate(([src, current]) => tracker.update(src, current), [picture, value]);
+
+try {
+  for (const [name, engine] of [['Chromium', chromium], ['WebKit', webkit]]) {
+    const browser = await engine.launch();
+    try {
+      const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+      page.setDefaultTimeout(8000);
+      const errors = [];
+      const rejected = [];
+      referrers.length = 0;
+      page.on('pageerror', error => errors.push(error.message));
+      await page.route('**/invalid.fixture/**', route => route.abort());
+      page.on('request', request => {
+        if (request.url().includes('invalid.fixture') || request.url().includes('/api/media_player_proxy/media_player.fixture_other')) {
+          rejected.push(request.url());
+        }
+      });
+      const dialog = page.getByRole('dialog', { name:'Fixture Media', exact:true });
+      const stage = dialog.locator('.now-playing[data-artwork-stage]');
+      const image = stage.locator('img');
+      const art = stage.locator('.now-playing-art');
+      const details = stage.locator('.now-playing-stage-details');
+      const fallback = art.locator('ha-icon');
+
+      for (const [width, locale] of [[320, 'he'], [391, 'en'], [900, 'en']]) {
+        await page.setViewportSize({ width, height:844 });
+        await page.goto(home + '?locale=' + locale + hash);
+        await image.waitFor();
+        const geometry = await stage.evaluate(node => {
+          const art = node.querySelector('.now-playing-art');
+          const details = node.querySelector('.now-playing-stage-details');
+          const artBounds = art.getBoundingClientRect();
+          const detailBounds = details.getBoundingClientRect();
+          const style = getComputedStyle(art.querySelector('img'));
+          return { fit:style.objectFit, height:artBounds.height, artWidth:artBounds.width,
+            stageWidth:node.clientWidth, sideBySide:detailBounds.x > artBounds.right,
+            stacked:detailBounds.y > artBounds.bottom, overflow:node.scrollWidth > node.clientWidth };
+        });
+        assert.equal(geometry.fit, 'contain');
+        assert.equal(geometry.overflow, false);
+        if (width < 641) {
+          assert.equal(geometry.height, 190);
+          assert.equal(geometry.stacked, true);
+          assert.ok(geometry.artWidth > geometry.stageWidth - 20);
+        } else {
+          assert.equal(geometry.height, 280);
+          assert.equal(geometry.sideBySide, true);
+        }
+        await stage.getByText('Track title', { exact:true }).waitFor();
+        assert.equal(await stage.locator('.now-playing-remaining').innerText(), '−2:43');
+        assert.equal(await art.getAttribute('aria-hidden'), 'true');
+        assert.equal(await image.getAttribute('referrerpolicy'), 'no-referrer');
+        assert.equal(await fallback.isVisible(), false);
+        assert.equal(await stage.evaluate(node => node.nextElementSibling.classList.contains('media-remote')), true);
+        assert.equal(await dialog.locator('.toolbar-device').count(), 0);
+        assert.deepEqual(await page.evaluate(() => tracker.calls), []);
+      }
+      const tallResponse = page.waitForResponse(response => response.url().endsWith('?format=tall'));
+      await state(page, proxy + '?format=tall');
+      await tallResponse;
+      const tallImage = stage.locator('img[src$="?format=tall"]');
+      await tallImage.waitFor();
+      const portrait = await tallImage.evaluate(node => ({
+        fit:getComputedStyle(node).objectFit, width:node.naturalWidth, height:node.naturalHeight,
+      }));
+      assert.equal(portrait.fit, 'contain');
+      assert.ok(portrait.height > portrait.width, JSON.stringify(portrait));
+
+      const loadFailed = page.waitForResponse(response => response.url().endsWith('?format=broken'));
+      await state(page, proxy + '?format=broken');
+      await loadFailed;
+      await fallback.waitFor();
+      assert.equal(await image.isVisible(), false);
+      assert.equal(await fallback.getAttribute('icon'), 'mdi:radio');
+      await stage.getByText('Track title', { exact:true }).waitFor();
+      for (const url of ['https://invalid.fixture/art', '/api/media_player_proxy/media_player.fixture_other',
+        'https://name:secret@127.0.0.1:' + server.address().port + proxy, proxy + '#invalid']) {
+        await state(page, proxy + '?format=wide');
+        await image.waitFor();
+        await state(page, url);
+        await stage.locator('img[src]').waitFor({ state:'detached' });
+        await fallback.waitFor();
+      }
+      assert.deepEqual(rejected, []);
+      assert.ok(referrers.length >= 4 && referrers.every(value => value === undefined));
+      await state(page, proxy + '?format=wide');
+      await image.waitFor();
+      await page.evaluate(() => tracker.hide());
+      await stage.getByText('No track playing', { exact:true }).waitFor();
+      assert.equal(await image.getAttribute('src'), null);
+      assert.equal(await details.locator('.now-playing-timeline').isVisible(), false);
+
+      await page.goto(home + '?default-icon' + hash);
+      await image.waitFor();
+      await state(page, proxy, 'off');
+      await stage.getByText('No track playing', { exact:true }).waitFor();
+      assert.equal(await fallback.getAttribute('icon'), 'mdi:music-note');
+      await state(page, proxy + '?format=wide');
+      await image.waitFor();
+      await image.evaluate(node => { window.tracker.previousImage = node; });
+      await dialog.getByRole('button', { name:'Close', exact:true }).click();
+      await dialog.waitFor({ state:'hidden' });
+      await page.waitForFunction(() => !tracker.previousImage.hasAttribute('src'));
+      assert.deepEqual(await page.evaluate(() => tracker.calls), []);
+
+      await page.goto(home + '?legacy' + hash);
+      const compact = dialog.locator('.now-playing');
+      await compact.locator('img').waitFor();
+      assert.equal(await stage.count(), 0);
+      assert.equal(await compact.locator('img').evaluate(node => getComputedStyle(node).objectFit), 'cover');
+      assert.equal(await dialog.locator('.media-remote').evaluate(node => node === node.parentElement.firstElementChild), true);
+      assert.equal(await dialog.locator('.toolbar-device').count(), 1);
+
+      await page.goto(home + '?editor&legacy');
+      await page.getByText('Toolbar and extra screens', { exact:true }).click();
+      await page.locator('#editor').getByRole('button', { name:'Fixture Media', exact:true }).click();
+      const picker = page.getByLabel('Artwork and playback source', { exact:true });
+      assert.equal(await picker.inputValue(), '');
+      await picker.selectOption('media_player.fixture_other');
+      const icon = page.getByLabel('Fallback artwork icon', { exact:true });
+      await icon.fill('mdi:play-box-outline');
+      await icon.press('Tab');
+      assert.deepEqual(await page.evaluate(() => tracker.draft.toolbar[0].media_stage),
+        { source_entity:'media_player.fixture_other', fallback_icon:'mdi:play-box-outline' });
+      await picker.selectOption('');
+      assert.equal(await page.evaluate(() => tracker.draft.toolbar[0].media_stage), undefined);
+      assert.deepEqual(errors, []);
+      console.log(name + ': optional artwork stage, responsive containment, private artwork, cleanup and editor');
+    } finally {
+      await browser.close();
+    }
+  }
+} finally {
+  await new Promise(resolve => server.close(resolve));
+}

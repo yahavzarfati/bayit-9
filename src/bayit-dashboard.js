@@ -20,6 +20,7 @@ import { createLightEffectGallery, lightEffectStyles, normalizeLightEffectGroups
 import { createNativeCards, createToolbarPanel, sensorGraphConfig, toolbarPanelStyles } from './toolbar-panels.js';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
+import { normalizeMediaStage } from './now-playing.js';
 import { normalizeMediaRemote } from './media-device-support.mjs';
 import { calendarAccent, normalizeCalendarAgenda } from './calendar-agenda.js';
 import { createWallpaperController, createWallpaperGallery, personalWallpaperId, wallpaperChoices, wallpaperStyles } from './wallpapers.js';
@@ -333,6 +334,7 @@ export function normalizeDashboardConfig(config = {}) {
     if (!Object.hasOwn(toolbarIcons, item?.kind) || (item.kind === 'link' && !localPath.test(item.path))) return [];
     const orefMap = item.kind === 'security' ? normalizeOrefMap(item.oref_map) : undefined;
     const vacuumMap = item.kind === 'vacuum' ? normalizeVacuumMap(item.vacuum_map) : undefined;
+    const mediaStage = item.kind === 'media' ? normalizeMediaStage(item.media_stage) : undefined;
     const mediaRemote = item.kind === 'media' ? normalizeMediaRemote(item.media_remote) : undefined;
     const agenda = item.kind === 'calendar' ? normalizeCalendarAgenda(item.calendar_agenda) : undefined;
     const placement = toolbarPlacement(item.kind, item.placement);
@@ -342,6 +344,7 @@ export function normalizeDashboardConfig(config = {}) {
       ...(usesRoomPopupPosition(item) && { popup_position: 'room' }),
       ...(orefMap && { oref_map: orefMap }),
       ...(vacuumMap && { vacuum_map: vacuumMap }),
+      ...(mediaStage && { media_stage: mediaStage }),
       ...(mediaRemote && { media_remote: mediaRemote }),
       ...(agenda && { calendar_agenda: agenda }),
       icon: validIcon(item.icon, toolbarIcons[item.kind]),
@@ -1505,6 +1508,7 @@ export class BayitDashboard extends HTMLElement {
       entities: toolbar?.entities ?? (toolbar?.calendar_agenda ? [] : this.config.context[type]) ?? [],
       orefMap: toolbar?.oref_map,
       vacuumMap: toolbar?.vacuum_map,
+      mediaStage: toolbar?.media_stage,
       mediaRemote: toolbar?.media_remote,
       calendarAgenda: toolbar?.calendar_agenda,
     }, {

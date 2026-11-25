@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { nowPlayingDetails, playbackSecond } from '../src/now-playing.js';
+import { normalizeMediaStage, nowPlayingDetails, playbackSecond } from '../src/now-playing.js';
 import { generateDashboard } from '../src/strategy-model.js';
 
 const origin = 'http://fixture.test:8123';
@@ -55,6 +55,28 @@ test('limits artwork to the selected player proxy and keeps metadata for externa
     '/api/media_player_proxy/media_player.other?token=fixture', '/local/image.png', artwork + '#other']) {
     assert.deepEqual(nowPlayingDetails(model(picture), origin), { title: 'Music', artist: '', picture: '' });
   }
+});
+
+test('projects a large artwork stage only for an explicitly visible Media source', () => {
+  const other = 'media_player.other_fixture';
+  const stage = { source_entity: entity, fallback_icon: ' mdi:play-box-outline ', unrecognized: 'ignored' };
+  assert.deepEqual(normalizeMediaStage(stage), { source_entity: entity, fallback_icon: 'mdi:play-box-outline' });
+  for (const fallback_icon of [4, 'https://fixture.invalid/icon.svg', 'mdi:play" onclick="bad', 'mdi:' + 'a'.repeat(80)]) {
+    assert.deepEqual(normalizeMediaStage({ ...stage, fallback_icon }), { source_entity: entity });
+  }
+  assert.equal(normalizeMediaStage({ source_entity:'light.fixture' }), undefined);
+  const config = { hidden_entities: [other], toolbar: [
+    { kind:'media', media_stage:stage, sections:[] },
+    { kind:'vacuum', media_stage:stage }, { kind:'media', media_stage:{ source_entity:other } },
+    { kind:'media', media_stage:{ source_entity:'media_player.missing' } },
+  ] };
+  const states = { [entity]:{ state:'playing', attributes:{} }, [other]:{ state:'playing', attributes:{} } };
+  const projected = generateDashboard(config,{ states }).views[0].cards[0].toolbar;
+  assert.deepEqual(projected.map(item => item.media_stage),
+    [{ source_entity:entity, fallback_icon:'mdi:play-box-outline' },undefined,undefined,undefined]);
+  assert.deepEqual(projected[0].sections, []);
+  assert.equal(generateDashboard(config,{ states, entities:{ [entity]:{ hidden_by:'user' } } })
+    .views[0].cards[0].toolbar[0].media_stage, undefined);
 });
 
 test('curated toolbar only applies Now Playing to an explicitly chosen media entity', () => {
