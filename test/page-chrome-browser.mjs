@@ -5,6 +5,7 @@ import http from 'node:http';
 import { chromium, webkit } from 'playwright-core';
 
 const moduleSource = await readFile(new URL('../src/page-chrome.js', import.meta.url));
+const stylesSource = await readFile(new URL('../src/bayit-dashboard-style.js', import.meta.url));
 const toolbarPressSource = await readFile(new URL('../src/popup-toolbar-press.js', import.meta.url));
 const fixture = `<!doctype html><meta charset="utf-8">
 <style>
@@ -15,6 +16,7 @@ const fixture = `<!doctype html><meta charset="utf-8">
 <script type="module">
 import { createPageChrome, isActiveDashboardPage, preparePageChrome } from '/page-chrome.js';
 import { preserveToolbarPopupPress } from '/popup-toolbar-press.js';
+import { styles } from '/bayit-dashboard-style.js';
 
 function shadow(host, html) {
   const root = host.attachShadow({ mode: 'open' });
@@ -51,7 +53,30 @@ function state() {
     getComputedStyle(hui.querySelector('#view')).paddingTop,
   ];
 }
+function mountWallpaperSafeArea() {
+  document.body.style.margin = '0';
+  const style = card.shadowRoot.appendChild(document.createElement('style'));
+  style.textContent = styles;
+  const shell = card.shadowRoot.appendChild(document.createElement('div'));
+  shell.className = 'shell';
+  shell.dataset.page = 'true';
+  const toolbar = shell.appendChild(document.createElement('nav'));
+  toolbar.className = 'toolbar';
+  cardParent.append(card);
+  chrome.update({ enabled: true });
+  return ({ inset, edit = false }) => {
+    huiRoot.style.setProperty('--safe-area-inset-top', inset + 'px');
+    navigate(edit ? '/bayit-9/home?edit=1' : '/bayit-9/home');
+    return {
+      wallpaperTop: shell.getBoundingClientRect().top,
+      toolbarTop: toolbar.getBoundingClientRect().top,
+      paintsWallpaper: getComputedStyle(shell).backgroundImage.startsWith('radial-gradient('),
+      nativeHeader: getComputedStyle(hui.querySelector('.header')).display,
+    };
+  };
+}
 window.test = {
+  mountWallpaperSafeArea,
   app, card, cardParent, chrome, changes, drawer, drawerRoot, hui, huiRoot, panel, navigate, state,
   early: () => preparePageChrome(settings),
 };
@@ -86,6 +111,9 @@ const server = http.createServer((request, response) => {
   if (request.url === '/page-chrome.js') {
     response.writeHead(200, { 'content-type': 'text/javascript' });
     response.end(moduleSource);
+  } else if (request.url === '/bayit-dashboard-style.js') {
+    response.writeHead(200, { 'content-type': 'text/javascript' });
+    response.end(stylesSource);
   } else if (request.url === '/popup-toolbar-press.js') {
     response.writeHead(200, { 'content-type': 'text/javascript' });
     response.end(toolbarPressSource);
@@ -97,7 +125,26 @@ const server = http.createServer((request, response) => {
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 
-const full = ['none', 'none', '0px', '12px'];
+async function assertWallpaperPaintsTopSafeArea(browser, base) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  try {
+    await page.goto(base + '/bayit-9/home');
+    await page.waitForFunction(() => window.test);
+    await page.evaluate(() => { test.safeArea = test.mountWallpaperSafeArea(); });
+    for (const inset of [54, 12, 0]) {
+      assert.deepEqual(await page.evaluate(inset => test.safeArea({ inset }), inset), {
+        wallpaperTop: 0, toolbarTop: Math.max(8, inset), paintsWallpaper: true, nativeHeader: 'none',
+      });
+    }
+    const editing = await page.evaluate(() => test.safeArea({ inset: 54, edit: true }));
+    assert.ok(editing.wallpaperTop >= 60);
+    assert.equal(editing.nativeHeader, 'block');
+  } finally {
+    await page.close();
+  }
+}
+
+const full = ['none', 'none', '0px', '0px'];
 const native = ['block', 'block', '56px', '60px'];
 async function assertLaunchToolbarPress(browser, base) {
   const page = await browser.newPage({ viewport:{width:390,height:844}, hasTouch:true });
@@ -266,6 +313,8 @@ try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
     try {
+      await assertWallpaperPaintsTopSafeArea(browser, 'http://127.0.0.1:' + server.address().port);
+      console.log(engine + ': wallpaper reaches the top while the toolbar clears the safe area');
       const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
       const errors = [];
       page.on('pageerror', error => errors.push(error));

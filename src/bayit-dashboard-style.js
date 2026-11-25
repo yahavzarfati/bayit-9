@@ -42,7 +42,7 @@ export const styles = `
     background: var(--wallpaper);
   }
   .shell[data-page=true] {
-    --page-top: max(0px,calc(8px - var(--bayit-page-top,0px)));
+    --page-top: max(var(--bayit-page-safe-top,0px),calc(8px - var(--bayit-page-top,0px)));
     --page-bottom: max(8px,env(safe-area-inset-bottom,0px));
     --room-rows: var(--bayit-room-rows,5);
     --room-available: calc(var(--bayit-view-height,100dvh) - var(--toolbar-min) - var(--page-top) - var(--page-bottom) - 9px);

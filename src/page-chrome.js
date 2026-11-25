@@ -8,7 +8,8 @@ const early = new WeakMap();
 const ROOT_CSS = `
   :host([${OWNED}]) > div:not(.edit-mode) > .header { display: none !important; }
   :host([${OWNED}]) > div:not(.edit-mode) > hui-view-container#view {
-    padding-top: var(--safe-area-inset-top, 0px) !important;
+    --bayit-page-safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+    padding-top: 0 !important;
     padding-bottom: 0 !important;
     padding-left: var(--safe-area-inset-left, 0px) !important;
     padding-right: var(--safe-area-inset-right, 0px) !important;
