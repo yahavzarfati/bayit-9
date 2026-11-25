@@ -1179,8 +1179,12 @@ export class BayitDashboard extends HTMLElement {
 
   model(config, options) {
     try {
-      const model = getDeviceModel(config, this._hass?.states ?? {}, Date.now(), options);
-      return { ...model, icon: validIcon(model.icon, DEVICE_ICONS[model.kind || model.domain]) };
+      const hiddenClimate = domainFor(config) === 'climate' && !this.shortcutEntityVisible(config.entity);
+      // A registry update can arrive while a climate popup is still mounted.
+      const model = getDeviceModel(hiddenClimate ? { ...config, role:'status' } : config,
+        this._hass?.states ?? {}, Date.now(), options);
+      return { ...model, available: model.available && !hiddenClimate,
+        icon: validIcon(model.icon, DEVICE_ICONS[model.kind || model.domain]) };
     }
     catch {
       return { ...config, name: config.name || config.entity, icon: validIcon(config.icon),
@@ -1235,9 +1239,11 @@ export class BayitDashboard extends HTMLElement {
     return isVisibleEntity(entity, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities);
   }
 
-  coverActionVisible(config, id) {
-    return domainFor(config) !== 'cover' || (!movement.has(id) && id !== 'stop') ||
-      this.shortcutEntityVisible(config.entity);
+  deviceActionVisible(config, id) {
+    const domain = domainFor(config);
+    const requiresVisible = (domain === 'climate' && id !== 'more_info') ||
+      (domain === 'cover' && (movement.has(id) || id === 'stop'));
+    return !requiresVisible || this.shortcutEntityVisible(config.entity);
   }
 
   quickAction(config, source, room, { details = true, shortcutCurrent } = {}) {
@@ -3276,7 +3282,7 @@ export class BayitDashboard extends HTMLElement {
 
   requestAction(config, id, value, source, { confirmShortcut = false, compactCover = false, compactDevice = false,
     roomPowerTile = false, shortcutCurrent } = {}) {
-    if (!this.coverActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
+    if (!this.deviceActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
         !this.canRequest(config.entity, id)) return;
     const roomBoilerQuickPower = roomPowerTile && config.room_boiler_quick_power === true;
     const model = this.model(config, { roomBoilerQuickPower });
@@ -3314,7 +3320,7 @@ export class BayitDashboard extends HTMLElement {
   }
 
   async send(config, id, value, { confirmed = false, roomBoilerQuickPower = false, shortcutCurrent } = {}) {
-    if (!this.coverActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
+    if (!this.deviceActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
         !this.canRequest(config.entity, id)) return;
     const model = this.model(config, { roomBoilerQuickPower });
     if (this.staleScriptAction(id, model.actions[id], value) || this.staleUsageReset(config, id, model.actions[id], value) || !model.actions[id]) return;
@@ -3335,7 +3341,7 @@ export class BayitDashboard extends HTMLElement {
     this.update();
     let confirmedByHomeAssistant = false;
     try {
-      if (!this.coverActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent())) {
+      if (!this.deviceActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent())) {
         this.announce(this.t('unavailable'));
         return;
       }

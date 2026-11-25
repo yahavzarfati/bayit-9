@@ -7297,6 +7297,93 @@ async function assertStandaloneTimedClimate(browser) {
   }
 }
 
+async function assertClimatePopupVisibility(browser) {
+  const entity = 'climate.demo_air';
+  for (const locale of ['en', 'he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({ viewport:{width:391,height:844}, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const url = base + '/fixture-home/home?device-panel&preset-shortcut&compact-climate-controls&compact-climate-summary' +
+      '&room-climate-power&climate-power-test&timer-history&timer-usage&usage-view-only&native-more-info=modern&locale=' + locale;
+    const route = '#device/studio/' + entity;
+    const dialog = page.getByRole('dialog', { name:'Studio air conditioner', exact:true });
+    const native = page.getByRole('dialog', { name:'Native entity details', exact:true });
+    const power = dialog.locator('.room-climate-power');
+    const range = dialog.locator('.timer-range');
+    const mode = dialog.locator('select[data-action=set_hvac_mode]');
+    const status = dialog.locator('.modal-heading .current');
+    const noAccess = status.filter({ hasText:he ? /^לא זמין$/ : /^Unavailable$/ });
+    const registry = metadata => page.evaluate(([id, info]) => window.bayitTest.setFixtureRegistry(id, info), [entity, metadata]);
+    const commands = () => page.evaluate(() => window.bayitTest.calls.filter(call => ['climate','simple_timer'].includes(call.domain)));
+    const start = dialog.locator('.timer-command[data-action=start_timed]');
+    const stop = dialog.locator('.timer-command[data-action=stop_timed]');
+    const extend = dialog.locator('.timer-command[data-action=extend_timed]');
+    try {
+      await page.goto(url + route);
+      await range.waitFor();
+      assert.equal(await power.isEnabled(),true);
+      await mode.evaluate((input, id) => {
+        window.bayitTest.setFixtureRegistry(id, { hidden_by:'user' });
+        input.value = 'cool';
+        input.dispatchEvent(new Event('change', { bubbles:true }));
+      }, entity);
+      await noAccess.waitFor();
+      await range.waitFor({ state:'hidden' });
+      await mode.waitFor({ state:'hidden' });
+      assert.equal(await power.isDisabled(),true);
+      assert.deepEqual(await commands(),[]);
+
+      const info = dialog.locator('.compact-device-heading-info');
+      await info.tap();
+      await page.waitForURL(url => url.searchParams.get('more-info-entity-id') === entity);
+      await native.getByRole('button', { name:'Close native details', exact:true }).tap();
+      await noAccess.waitFor();
+      assert.deepEqual(await commands(),[]);
+
+      await registry({});
+      await mode.waitFor();
+      await range.waitFor();
+      await start.tap();
+      await extend.and(dialog.locator(':enabled')).waitFor();
+      await stop.and(dialog.locator(':enabled')).waitFor();
+      assert.equal((await commands()).length,1);
+      assert.equal((await commands())[0].service,'start_timer');
+
+      // Hiding the entity after send starts must still stop the actual call.
+      await extend.evaluate((button, id) => {
+        const card = document.querySelector('bayit-dashboard');
+        const update = card.update;
+        card.update = function (...args) {
+          this.update = update;
+          window.bayitTest.setFixtureRegistry(id, { disabled_by:'user' });
+          return update.apply(this, args);
+        };
+        button.click();
+      }, entity);
+      await noAccess.waitFor();
+      await extend.waitFor({ state:'hidden' });
+      await stop.waitFor({ state:'hidden' });
+      assert.equal((await commands()).length,1);
+
+      await registry({});
+      await stop.waitFor();
+      await stop.tap();
+      await page.waitForFunction(() => window.bayitTest.calls.some(call => call.service === 'cancel_timer'));
+      await page.evaluate(id => {
+        window.bayitTest.setFixtureAttributes('sensor.demo_air_usage', { timer_state:'idle', device_active:false });
+        window.bayitTest.setRoomState(id,'off');
+      }, entity);
+      await start.waitFor();
+      assert.deepEqual((await commands()).map(call => call.service), ['start_timer','cancel_timer']);
+
+      await page.evaluate(id => window.bayitTest.setRoomState(id,'unavailable'), entity);
+      await noAccess.waitFor();
+      await range.waitFor({ state:'hidden' });
+      assert.deepEqual((await commands()).map(call => call.service), ['start_timer','cancel_timer']);
+    } finally { await page.close(); }
+  }
+}
+
 async function assertClimateTargetNativeDetails(browser) {
   for (const locale of ['en','he']) {
     const page = await browser.newPage({ viewport:{width:391,height:844}, hasTouch:true, reducedMotion:'reduce' });
@@ -9433,6 +9520,8 @@ try {
     await run('Compact Presence controls', async () => {
       await assertCompactPresenceCards(browser);
     });
+
+    await run('Stale climate registry controls', () => assertClimatePopupVisibility(browser));
 
     await run('Overview climate discovery', async () => {
       await assertOverviewClimateDiscovery(browser);
