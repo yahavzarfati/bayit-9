@@ -9114,13 +9114,25 @@ try {
       console.log(engine + ': popup scroll survives reload and remains scoped to the room and dashboard');
     });
 
-    await run('Toolbar controls, lock palette and overview climate', async () => {
+    await run('Compact Settings geometry', async () => {
       await assertCompactSettings(browser);
+    });
+
+    await run('Toolbar lock colors and contrast', async () => {
       await assertToolbarLockPalette(browser);
       console.log(engine + ': semantic toolbar lock colors, contrast and scope');
+    });
+
+    await run('Compact Automation controls', async () => {
       await assertCompactAutomationActions(browser);
-      await assertCompactPresenceCards(browser);
       console.log(engine + ': compact Automation actions and editor scope');
+    });
+
+    await run('Compact Presence controls', async () => {
+      await assertCompactPresenceCards(browser);
+    });
+
+    await run('Overview climate discovery', async () => {
       await assertOverviewClimateDiscovery(browser);
       console.log(engine + ': editable active climate discovery, passive rows and live scope');
     });
