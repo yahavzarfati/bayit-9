@@ -1091,7 +1091,7 @@ export function toolbarPlacement(kind, value) {
   return undefined;
 }
 
-function dashboardToolbarEntries(config) {
+export function dashboardToolbarEntries(config) {
   if (!Array.isArray(config.toolbar)) return undefined;
   const seen = new Set();
   return config.toolbar.flatMap((entry, index) => {

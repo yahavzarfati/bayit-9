@@ -1,5 +1,5 @@
 import {
-  discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactAutomationActions, isCompactToolbarStatus, isReadingCards, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
+  dashboardToolbarEntries, discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactAutomationActions, isCompactToolbarStatus, isReadingCards, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
   isToolbarReadoutEntity, isToolbarReadouts, isWeatherReadingsList, normalizeOverviewDiscovery, normalizeToolbarReadout, overviewSectionOptions, roomPanelOptions,
   securityReadoutLabelStates, selectableRoomEntities, sensorComparisonMaxHours, sensorComparisonOptions,
   SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
@@ -13,6 +13,7 @@ import { sameVacuumDevice } from './vacuum-map.js';
 import { normalizeMediaStage } from './now-playing.js';
 import { normalizeMediaRemote } from './media-device-support.mjs';
 import { normalizeCalendarAgenda, supportsDailyForecast } from './calendar-agenda.js';
+import { createPopupRouteId } from './popup-routes.js';
 
 const WORDS = {
   en: {
@@ -229,13 +230,26 @@ function automaticEntries(config, hass) {
   const kinds = [first, ...['security', 'presence', 'weather', 'energy'].filter(kind => context[kind]?.length)];
   if (card.overview?.length) kinds.push('overview');
   kinds.push('settings');
-  return kinds.map((kind, index) => ({ kind, id: 'toolbar-' + (index + 1) }));
+  const taken = new Set();
+  return kinds.map(kind => {
+    const id = createPopupRouteId('toolbar-', taken);
+    taken.add(id);
+    return { kind, id };
+  });
 }
 
 export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange, viewState = {} }) {
   const words = WORDS[locale] ?? WORDS.en;
-  let toolbar = Array.isArray(config.toolbar) ? structuredClone(config.toolbar)
+  const existingIds = new Map((dashboardToolbarEntries(config) ?? []).map(({ entry, id }) => [entry, id]));
+  const taken = new Set(existingIds.values());
+  let toolbar = Array.isArray(config.toolbar) ? config.toolbar
     .filter(entry => TOOLBAR_KINDS.has(entry?.kind))
+    .map(entry => {
+      // Keep the viewer's assigned IDs when importing a saved toolbar without an ID on every entry.
+      const id = existingIds.get(entry) ?? createPopupRouteId('toolbar-', taken);
+      taken.add(id);
+      return { ...structuredClone(entry), id };
+    })
     .map(entry => Array.isArray(entry.sections) ? {
       ...entry,
       sections: entry.sections.flatMap(section => {
@@ -1057,7 +1071,8 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         entryIndex = toolbar.length;
         sectionIndex = 0;
         editedEntity = undefined;
-        toolbar.push({ id: nextId('toolbar-', toolbar), kind, ...(route && kind === 'link' && { path: route }) });
+        const id = createPopupRouteId('toolbar-', new Set(toolbar.map(item => item.id)));
+        toolbar.push({ id, kind, ...(route && kind === 'link' && { path: route }) });
         commit(true, 'button-edit-' + entryIndex);
       }, { ...path, when: kind => kind === 'link', value: () => path.input.value.trim(),
         valid: () => LOCAL_ROUTE.test(path.input.value.trim()) }));

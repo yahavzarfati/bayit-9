@@ -12,6 +12,16 @@ export function isPopupFragment(fragment) {
   return typeof fragment === 'string' && fragmentPattern.exec(fragment)?.[0] === fragment;
 }
 
+export function createPopupRouteId(prefix, taken) {
+  // A deleted room or screen may still have bookmarks. Avoid recycling its identity.
+  let id;
+  do {
+    const entropy = crypto.getRandomValues(new Uint32Array(3));
+    id = prefix + Array.from(entropy, part => part.toString(16).padStart(8, '0')).join('');
+  } while (taken.has(id));
+  return id;
+}
+
 export function parsePopupRoute(fragment) {
   if (!isPopupFragment(fragment)) return null;
   const room = roomPattern.exec(fragment);

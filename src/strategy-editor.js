@@ -16,7 +16,7 @@ import { activityKinds, activitySources, normalizeRoomActivities } from './room-
 import { getDeviceModel, isPairedLightCompanion, isPairedLightStatusRefresh, supportsRoomShutdown } from './device-control.mjs';
 import { lightEffectCategoryOptions, lightEffectCategoryTitles, normalizeLightEffectCategorySource,
   normalizeLightEffectFavoriteLights, normalizeLightEffectGroups, normalizeLightModeSource } from './light-effects.js';
-import { isPopupFragment, normalizePopupAliases, parsePopupRoute } from './popup-routes.js';
+import { createPopupRouteId, isPopupFragment, normalizePopupAliases, parsePopupRoute } from './popup-routes.js';
 
 const WORDS = {
   en: {
@@ -1644,12 +1644,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       if (!text) return;
       const used = new Set([...rooms.map(room => room.id), ...configuredIds(this.#config.area_ids),
         ...Object.keys(this.#config.room_overrides ?? {})]);
-      // Room IDs identify saved links, so a deleted room's ID cannot be reused.
-      let id;
-      do {
-        const entropy = crypto.getRandomValues(new Uint32Array(3));
-        id = CUSTOM_ROOM_PREFIX + Array.from(entropy, part => part.toString(16).padStart(8, '0')).join('');
-      } while (used.has(id));
+      const id = createPopupRouteId(CUSTOM_ROOM_PREFIX, used);
       const change = { room_overrides: { ...this.#config.room_overrides, [id]: { name: text, entities: [] } } };
       if (selection !== null) {
         change.room_selection = 'manual';

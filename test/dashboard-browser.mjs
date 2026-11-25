@@ -5045,6 +5045,109 @@ async function assertRoomMirrorPlacement(browser) {
 }
 
 
+async function assertToolbarLinksKeepTheirScreenIdentity(browser) {
+  const labels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', toolbar:'Toolbar and extra screens',
+      remove:'Remove', type:'Button type', add:'Add button', label:'Button label', placement:'Show in', save:'Save dashboard',
+      links:'Popup links', entry:'Link to edit', destination:'Popup destination', update:'Update link', layout:'Toolbar layout' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', toolbar:'סרגל ומסכים נוספים',
+      remove:'הסרה', type:'סוג הכפתור', add:'הוספת כפתור', label:'תווית הכפתור', placement:'מקום הצגה', save:'שמירת הדשבורד',
+      links:'קישורים לחלוניות', entry:'קישור לעריכה', destination:'יעד הקישור', update:'עדכון הקישור', layout:'פריסת הסרגל' },
+  ];
+  const archive = 'Archive screen';
+  const retained = 'Pinned readings';
+  const replacement = 'Replacement screen';
+  const oldRoute = '#panel/toolbar-2';
+  const retainedRoute = '#panel/toolbar-3';
+  const alias = '#old-fixture-screen';
+  const config = { type:'custom:bayit-9', toolbar:[
+    { kind:'settings', id:'toolbar-1' },
+    { kind:'sensors', id:'toolbar-2', label:archive, placement:'settings' },
+    { kind:'sensors', label:retained, placement:'settings' },
+  ], popup_aliases:{ [alias]:oldRoute } };
+  for (const words of labels) {
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      await page.addInitScript(strategy => {
+        const key = 'bayit9-browser-fixture';
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy }));
+      }, config);
+      const url = base + '/fixture-home/home?configuration&room-selection&locale=' + words.locale;
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      const button = (name, root=page) => root.getByRole('button', { name, exact:true });
+      const dialog = name => page.getByRole('dialog', { name, exact:true });
+      const field = name => setup.getByLabel(name, { exact:true });
+      const open = async () => {
+        await button(words.appearance).tap();
+        await button(words.setup).tap();
+        await setup.getByText(words.toolbar, { exact:true }).tap();
+      };
+      const persist = async () => {
+        assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+        await Promise.all([page.waitForEvent('load'), button(words.save, setup).tap()]);
+        await button(words.appearance).waitFor();
+        return page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      };
+      const checkLink = async (fragment, title) => {
+        await page.goto(url + fragment);
+        await page.reload();
+        await page.waitForFunction(() => Boolean(window.bayitTest?.config));
+        if (title) await dialog(title).waitFor();
+        else assert.equal(await page.getByRole('dialog').count(), 0);
+      };
+      await checkLink(alias, archive);
+      await checkLink(retainedRoute, retained);
+      await page.goto(url);
+      await open();
+      await button(words.remove + ' · ' + archive, setup).tap();
+      const afterDelete = await persist();
+      assert.equal(afterDelete.toolbar.find(item => item.label === retained).id,'toolbar-3');
+      await checkLink(alias);
+      await checkLink(oldRoute);
+
+      await page.goto(url);
+      await open();
+      await field(words.type).selectOption('sensors');
+      await button(words.add, setup).tap();
+      await field(words.label).fill(replacement);
+      await field(words.label).press('Tab');
+      await field(words.placement).selectOption('settings');
+      const added = await persist();
+      const id = added.toolbar.find(item => item.label === replacement).id;
+      assert.match(id,/^toolbar-[a-f0-9]{24}$/);
+      assert.equal(added.popup_aliases[alias],oldRoute);
+      await checkLink(alias);
+      await checkLink(oldRoute);
+      await checkLink(retainedRoute,retained);
+      const newRoute = '#panel/' + id;
+      await checkLink(newRoute,replacement);
+
+      await page.goto(url);
+      await open();
+      await setup.getByText(words.links, { exact:true }).tap();
+      await field(words.entry).selectOption(alias);
+      assert.equal(await field(words.destination).inputValue(),oldRoute);
+      await field(words.destination).selectOption(newRoute);
+      await button(words.update, setup).tap();
+      assert.equal((await persist()).popup_aliases[alias],newRoute);
+      await checkLink(alias,replacement);
+      await checkLink(oldRoute);
+
+      await page.goto(url);
+      await open();
+      await field(words.layout).selectOption('automatic');
+      await field(words.layout).selectOption('custom');
+      const reseeded = await persist();
+      assert.ok(reseeded.toolbar.every(item => /^toolbar-[a-f0-9]{24}$/.test(item.id) && item.id !== id));
+      await checkLink(oldRoute);
+      await checkLink(alias);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertRetiredRoomLinks(browser) {
   const identities = [
     { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', create:'New dashboard-only room',
@@ -12244,6 +12347,7 @@ try {
       console.log(engine + ' 320: device placement preview reflects automatic moves and stays local until saved');
       await assertRoomMirrorPlacement(browser);
       await assertRetiredRoomLinks(browser);
+      await assertToolbarLinksKeepTheirScreenIdentity(browser);
       console.log(engine + ' 320: optional mirrored room placement, saved reload and native registry unchanged');
       await assertAdditionalAutomaticRoomDevices(browser);
       await assertRoomDeviceModesKeepTheirSelections(browser);
