@@ -9,7 +9,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
-import { allowsCoverRailAction, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
+import { allowsCoverRailAction, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightStatusRefresh, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
   simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupScrollMemory } from './popup-scroll.js';
@@ -259,6 +259,9 @@ function normalizeEntity(item) {
   }
   if (typeof item.role === 'string') entry.role = item.role;
   const domain = domainFor(entry);
+  if (domain === 'light' && supportsNativeShortcutDetails(entry) && /^button\.[a-z0-9_]+$/.test(text(item.light_status_refresh_button))) {
+    entry.light_status_refresh_button = item.light_status_refresh_button;
+  }
   if (domain === 'cover' && item.room_cover_native_details === true && supportsNativeShortcutDetails(entry)) {
     entry.room_cover_native_details = true;
   }
@@ -1923,6 +1926,18 @@ export class BayitDashboard extends HTMLElement {
           head.append(action);
           view.presetShortcut = action;
         }
+        if (titleInDialog && config.light_status_refresh_button) {
+          const refresh = button('round-action light-status-refresh', this.t('light_refresh_status'), 'mdi:refresh', true);
+          refresh.disabled = true;
+          refresh.onclick = () => {
+            if (!refresh.isConnected || this.panel?.type !== 'device' || !this.nodes.modal.open ||
+                this.nodes.modal.hasAttribute('data-closing')) return;
+            const target = this.lightStatusRefreshTarget(config);
+            if (target) this.requestAction(target, 'press_button', undefined, refresh);
+          };
+          head.append(refresh);
+          view.lightStatusRefresh = refresh;
+        }
         head.append(more);
       }
       const group = make('div', 'action-list');
@@ -2068,6 +2083,17 @@ export class BayitDashboard extends HTMLElement {
       try { saved = localStorage.getItem(detailPreference); } catch {}
       activate(secondary.find(item => item.label === saved) ?? secondary[0]);
     }
+  }
+
+  lightStatusRefreshTarget(config) {
+    const entity = config.light_status_refresh_button;
+    const { states = {}, entities, services } = this._hass ?? {};
+    if (!isPairedLightStatusRefresh(config.entity, entity, entities) ||
+        !Object.hasOwn(services?.button ?? {}, 'press') || this.pending.has(config.entity) ||
+        !this.canRequest(entity, 'press_button') ||
+        ![config.entity, entity].every(id => isVisibleEntity(id, states, entities, this.config.hiddenEntities))) return;
+    const target = { entity, role: 'action', light_status_refresh_for: config.entity };
+    if (this.model(target).actions.press_button) return target;
   }
 
   canShowTimerUsage(entity) {
@@ -2259,6 +2285,10 @@ export class BayitDashboard extends HTMLElement {
         power.toggleAttribute('data-powered', model.state === 'on');
         power.disabled = !this.canRequest(view.config.entity, actionId);
         label(power, this.t(actionId));
+      }
+      if (view.lightStatusRefresh) {
+        view.lightStatusRefresh.disabled = !this.lightStatusRefreshTarget(view.config);
+        view.lightStatusRefresh.setAttribute('aria-busy', String(this.pending.has(view.config.light_status_refresh_button)));
       }
       view.item.setAttribute('aria-busy', String(!!pending));
       for (const control of view.group.querySelectorAll('button,input,select')) {

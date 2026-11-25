@@ -13,14 +13,14 @@ import { languages } from './bayit-dashboard-i18n.js';
 import { climateOptionLabel } from './panel-controls.js';
 import { buildToolbarEditor } from './toolbar-editor.js';
 import { activityKinds, activitySources, normalizeRoomActivities } from './room-appliance.mjs';
-import { getDeviceModel, supportsRoomShutdown } from './device-control.mjs';
+import { getDeviceModel, isPairedLightStatusRefresh, supportsRoomShutdown } from './device-control.mjs';
 import { normalizeLightEffectFavoriteLights, normalizeLightEffectGroups } from './light-effects.js';
 import { isPopupFragment, normalizePopupAliases, parsePopupRoute } from './popup-routes.js';
 
 const WORDS = {
   en: {
     lightEffects: 'Light effect categories', effectLight: 'Light', effectGroup: 'Category',
-    effectFavorites: 'Allow personal favorites on this device',
+    effectFavorites: 'Allow personal favorites on this device', lightStatusRefresh: 'Light status refresh button',
     newEffectGroup: 'New category', effectGroupName: 'Category name', addEffectGroup: 'Add category',
     removeEffectGroup: 'Delete category', availableEffect: 'Available effect', chooseEffect: 'Select an effect',
     addEffect: 'Add effect', removeEffect: 'Remove effect',
@@ -151,7 +151,7 @@ const WORDS = {
   },
   he: {
     lightEffects: 'קטגוריות אפקטים לתאורה', effectLight: 'תאורה', effectGroup: 'קטגוריה',
-    effectFavorites: 'אפשר סימון מועדפים אישיים במכשיר',
+    effectFavorites: 'אפשר סימון מועדפים אישיים במכשיר', lightStatusRefresh: 'כפתור לרענון מצב המנורה',
     newEffectGroup: 'קטגוריה חדשה', effectGroupName: 'שם קטגוריה', addEffectGroup: 'הוספת קטגוריה',
     removeEffectGroup: 'מחיקת קטגוריה', availableEffect: 'אפקט זמין', chooseEffect: 'בחירת אפקט',
     addEffect: 'הוספת אפקט', removeEffect: 'הסרת אפקט',
@@ -2198,6 +2198,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const hidden = id => Array.isArray(this.#config.hidden_entities) && this.#config.hidden_entities.includes(id);
     const optionsFor = id => lights.has(id) && !hidden(id) ? nativeLightEffects(lights.get(id), this.#hass.states) : [];
     const groupsFor = id => normalizeLightEffectGroups(Object.hasOwn(configured(), id) ? configured()[id] : []);
+    const configuredRefresh = () => this.#config.light_status_refresh_buttons ?? {};
     const selectedLight = () => this.#lightEffectEntity;
     let signature;
 
@@ -2221,15 +2222,19 @@ export class Bayit9StrategyEditor extends HTMLElement {
     };
 
     const refresh = (force = false, focusKey) => {
+      const buttons = entityOptions(this.#hass, new Set(['button'])).filter(([id]) => !hidden(id));
       const eligible = [...lights.values()].flatMap(device => {
         if (hidden(device.entity)) return [];
         const options = optionsFor(device.entity);
         const hasGroups = groupsFor(device.entity).length > 0;
-        return options.length || hasGroups ? [{ device, options }] : [];
+        const refreshButtons = buttons.filter(([id]) => isPairedLightStatusRefresh(device.entity, id, this.#hass.entities));
+        return options.length || hasGroups || refreshButtons.length || configuredRefresh()[device.entity]
+          ? [{ device, options, refreshButtons }] : [];
       });
       const entity = selectedLight();
       const source = eligible.find(item => item.device.entity === entity);
-      const nextSignature = JSON.stringify([eligible.map(({ device, options }) => [device.entity, !!options.length]), source?.options]);
+      const nextSignature = JSON.stringify([eligible.map(({ device, options }) => [device.entity, !!options.length]),
+        source?.options, source?.refreshButtons]);
       if (!force && (signature === nextSignature || panel.contains(this.shadowRoot.activeElement) &&
           this.shadowRoot.activeElement?.matches('input[type=text]'))) return;
       signature = nextSignature;
@@ -2250,6 +2255,27 @@ export class Bayit9StrategyEditor extends HTMLElement {
         panel.replaceChildren(...fields);
         focus(focusKey);
         return;
+      }
+
+      const selectedRefresh = configuredRefresh()[entity];
+      if (source.refreshButtons.length || selectedRefresh) {
+        const choices = [['', words.none], ...source.refreshButtons];
+        if (selectedRefresh && !source.refreshButtons.some(([id]) => id === selectedRefresh)) {
+          choices.push([selectedRefresh, selectedRefresh + ' · ' + words.unavailableEffect]);
+        }
+        const picker = mark(select(choices, selectedRefresh || ''), 'status-refresh');
+        picker.addEventListener('change', () => {
+          const next = { ...configuredRefresh() };
+          if (!picker.value) delete next[entity];
+          else if (isPairedLightStatusRefresh(entity, picker.value, this.#hass.entities) && !hidden(picker.value)) {
+            next[entity] = picker.value;
+          } else {
+            refresh(true, 'status-refresh');
+            return;
+          }
+          this.#commit({ light_status_refresh_buttons: next });
+        });
+        fields.push(field(words.lightStatusRefresh, picker));
       }
 
       const groups = groupsFor(entity);

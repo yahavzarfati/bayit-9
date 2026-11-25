@@ -7,6 +7,39 @@ const config = (id, fields) => ({ entity: id, ...fields });
 const code = value => error => error instanceof DeviceControlError && error.code === value;
 const actionIds = model => Object.keys(model.actions).sort();
 
+test("a paired light refresh can press a first-use button and refuses stale or hidden devices", async () => {
+  const light = "light.fixture_lamp";
+  const button = "button.fixture_light_refresh";
+  const target = { entity: button, role: "action", light_status_refresh_for: light };
+  const calls = [];
+  const hass = {
+    states: { [light]:entity("unavailable"), [button]:entity("unknown") },
+    entities: { [light]:{ di:"device" }, [button]:{ device_id:"device" } },
+    services: { button:{ press:{} } },
+    callWS: request => { calls.push(request); },
+  };
+  const controller = createDeviceController({ getHass:()=>hass, confirmationTimeoutMs:0 });
+  const model = config => getDeviceModel(config, hass.states);
+  assert.equal(model({entity:button}).actions.press_button.requiresConfirmation, true);
+  assert.equal(model(target).actions.press_button.requiresConfirmation, false);
+  await controller.execute(target,"press_button");
+  assert.deepEqual(calls,[{type:"call_service",domain:"button",service:"press",service_data:{},target:{entity_id:button}}]);
+
+  hass.entities[button].device_id = "other";
+  await assert.rejects(controller.execute(target,"press_button"),code("action_unavailable"));
+  hass.entities[button].device_id = "device";
+  hass.entities[light].hidden_by = "user";
+  await assert.rejects(controller.execute(target,"press_button"),code("action_unavailable"));
+  delete hass.entities[light].hidden_by;
+  delete hass.services.button.press;
+  await assert.rejects(controller.execute(target,"press_button"),code("action_unavailable"));
+  hass.services.button.press = {};
+  hass.states[button] = entity("unavailable");
+  assert.equal(model(target).actions.press_button,undefined);
+  await assert.rejects(controller.execute(target,"press_button"),code("action_unavailable"));
+  assert.equal(calls.length,1);
+});
+
 test("boiler quick power revalidates the latest relay, timer and native service before dispatch", async () => {
   const relay = "switch.fixture_boiler";
   const sensor = "sensor.fixture_runtime";

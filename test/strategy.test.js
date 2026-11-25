@@ -557,6 +557,25 @@ test('installs as a native panel dashboard from a Hebrew Home Assistant', () => 
   assert.equal(view.cards[0].rooms.at(-1).name, 'ללא חדר');
 });
 
+test('projects an optional light refresh only to its registered paired light', () => {
+  const lamp = 'light.fixture_lamp';
+  const status = 'light.fixture_status';
+  const unpaired = 'light.fixture_unpaired';
+  const button = 'button.fixture_refresh';
+  const ids = [lamp,status,unpaired,button];
+  const states = Object.fromEntries(ids.map(id => [id,{ state:'unknown', attributes:{} }]));
+  const entities = { [lamp]:{device_id:'pair'}, [status]:{device_id:'pair'},
+    [unpaired]:{device_id:'other'}, [button]:{di:'pair'} };
+  const config = { area_ids:['bayit_room_demo'], room_overrides:{ bayit_room_demo:{
+    name:'Demo', entities:[lamp,status,unpaired], read_only_entities:[status],
+  } }, light_status_refresh_buttons: { [lamp]:button, [status]:button, [unpaired]:button } };
+  const generated = discoverRooms(config,{states,entities},'en')[0].entities;
+  assert.deepEqual(generated.map(device=>[device.entity,device.light_status_refresh_button]),
+    [[lamp,button],[status,undefined],[unpaired,undefined]]);
+  entities[button].disabled_by = 'integration';
+  assert.equal(discoverRooms(config,{states,entities},'en')[0].entities[0].light_status_refresh_button,undefined);
+});
+
 test('maps effect categories to visible controllable lights and preserves native names exactly', () => {
   const states = Object.fromEntries(['light.demo_lamp', 'light.demo_read_only', 'light.demo_hidden', 'switch.demo_switch']
     .map(entity => [entity, { state: 'off', attributes: {} }]));

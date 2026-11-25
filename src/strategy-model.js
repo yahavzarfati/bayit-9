@@ -1,5 +1,5 @@
 import { normalizeRoomActivities } from './room-appliance.mjs';
-import { HEATING_DOMAINS, isReadOnlyRole, supportsHomeHeaterPower, supportsRoomShutdown } from './device-control.mjs';
+import { HEATING_DOMAINS, isPairedLightStatusRefresh, isReadOnlyRole, supportsHomeHeaterPower, supportsRoomShutdown } from './device-control.mjs';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
 import { normalizeMediaStage } from './now-playing.js';
@@ -765,6 +765,10 @@ export function discoverRooms(config, hass, locale) {
       if (area.inlineLights?.has(device.entity)) device.room_light_controls = true;
       if (area.dualLightDetails?.has(device.entity)) device.room_dual_light_detail = true;
       if (area.compactLightReadings?.has(device.entity)) device.room_compact_light_reading = true;
+      const refreshButton = config.light_status_refresh_buttons?.[device.entity];
+      if (!isReadOnlyRole(device.role) && isPairedLightStatusRefresh(device.entity, refreshButton, hass.entities)) {
+        device.light_status_refresh_button = refreshButton;
+      }
       if (!Object.hasOwn(config.light_effect_groups ?? {}, device.entity)) continue;
       const groups = normalizeLightEffectGroups(config.light_effect_groups[device.entity]);
       if (groups.length) {

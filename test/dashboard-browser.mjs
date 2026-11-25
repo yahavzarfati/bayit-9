@@ -20,6 +20,7 @@ const states = {
 };
 const calls = [];
 let rejectInlineLight = false;
+let finishLightStatusRefresh;
 const moreInfoCalls = [];
 const moreInfoHashes = [];
 document.addEventListener('hass-more-info', event => {
@@ -347,6 +348,9 @@ const hass = {
     if (query.has('hold-appliance-command') && request.target?.entity_id === 'switch.demo_oven') {
       return new Promise(resolve => { finishApplianceCommand = resolve; });
     }
+    if (query.has('light-status-refresh') && request.domain === 'button') {
+      return new Promise(resolve => { finishLightStatusRefresh = resolve; });
+    }
     if (request.domain === 'light') {
       if (rejectInlineLight) {
         rejectInlineLight = false;
@@ -527,6 +531,14 @@ if (query.has('room-grid')) {
       min_color_temp_kelvin: 2200, max_color_temp_kelvin: 7000, color_temp_kelvin: 3200,
       supported_features: 4, effect_list: ['Color loop', 'Slow pulse'], effect: 'off',
     });
+  }
+  if (query.has('light-status-refresh')) {
+    states['button.fixture_refresh_lamp'] = { state:'unknown', attributes:{ friendly_name:'Lamp status request' } };
+    states['button.fixture_other_device'] = { state:'unknown', attributes:{ friendly_name:'Other device request' } };
+    hass.entities['light.demo_pendant'] = { area_id:'studio', di:'fixture-lamp' };
+    hass.entities['button.fixture_refresh_lamp'] = { device_id:'fixture-lamp' };
+    hass.entities['button.fixture_other_device'] = { device_id:'other' };
+    hass.services = { ...hass.services, button:{press:{}} };
   }
   if (query.has('many-effect-categories')) {
     states['light.demo_pendant'].attributes.effect_list.push('Sunburst', 'Midnight',
@@ -861,6 +873,10 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     read_only_entities: ['light.demo_monitor'],
     ...(query.has('room-shutdown') && {turn_off_entities:['light.demo_lamp', 'light.demo_pendant', 'light.demo_monitor']}),
     ...(query.has('lighting-count') && {lighting_count_entities:['light.demo_wall']}) } },
+  ...(query.has('light-status-refresh') && {
+    light_status_refresh_buttons:{'light.demo_pendant':'button.fixture_refresh_lamp'},
+    light_effect_favorites:['light.demo_pendant'],
+  }),
   ...(query.has('grouped-effects') && { light_effect_groups: {
     'light.demo_pendant': [
       { title: 'Evening', effects: [{ effect: 'Slow pulse', name: 'Gentle glow', icon: 'mdi:weather-night' }, 'Missing',
@@ -1112,7 +1128,7 @@ if (query.has('editor')) {
     ...((query.has('toolbar-panels') || query.has('automation-compact') || query.has('overview-opt-in') || query.has('lighting-count') ||
       query.has('preset-shortcut') || query.has('entrance-popup-position') || query.has('timer-usage') ||
       query.has('swing-unreported') || query.has('temperature-source') || query.has('room-temperature-chart') || query.has('dual-light-details') ||
-      query.has('compact-light-reading') || query.has('wide-home-profile')) && selected) });
+      query.has('compact-light-reading') || query.has('light-status-refresh') || query.has('wide-home-profile')) && selected) });
   editor.hass = hass;
   editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
   document.querySelector('#editor').append(editor);
@@ -1120,6 +1136,12 @@ if (query.has('editor')) {
 window.bayitTest = {
   registrations: window.customStrategies, calls, moreInfoCalls, moreInfoHashes, config,
   loadPopupHass() { card.hass = hass; },
+  setLightRefreshBinding(deviceId, registered = true) {
+    hass.entities = { ...hass.entities, 'button.fixture_refresh_lamp': { device_id:deviceId } };
+    hass.services = { ...hass.services, button: registered ? {press:{}} : {} };
+    card.hass = { ...hass };
+  },
+  finishLightStatusRefresh() { finishLightStatusRefresh?.(); },
   reviseStrategy(change, override) {
     const visible = document.querySelector('bayit-dashboard');
     const previous = visible._hass;
@@ -5457,6 +5479,81 @@ async function assertCompactRoomMedia(browser) {
   }
 }
 
+async function assertLightStatusRefresh(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({ viewport:{width:320,height:760}, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(6000);
+    const he = locale === 'he';
+    const url = base + '?room-grid&grouped-effects&light-status-refresh&locale=' + locale;
+    const light = 'light.demo_pendant';
+    const helper = 'button.fixture_refresh_lamp';
+    const room = page.getByRole('dialog',{name:'Studio',exact:true});
+    const lightDialog = page.getByRole('dialog',{name:'Pendant lamp',exact:true});
+    const refresh = lightDialog.getByRole('button',{name:he ? 'רענון מצב המנורה' : 'Refresh light status',exact:true});
+    const calls = () => page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service'));
+    const registry = (deviceId,registered) => page.evaluate(([id,registered])=>window.bayitTest.setLightRefreshBinding(id,registered),
+      [deviceId,registered]);
+    const state = (id,value) => page.evaluate(([id,value])=>window.bayitTest.setRoomState(id,value),[id,value]);
+    const waitEnabled = () => lightDialog.locator('.light-status-refresh:enabled').waitFor();
+    const waitDisabled = () => lightDialog.locator('.light-status-refresh:disabled').waitFor();
+    try {
+      await page.goto(url);
+      assert.equal(await page.locator('.light-status-refresh').count(),0);
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+      assert.equal(await room.locator('.light-status-refresh').count(),0);
+      await room.locator('.device[data-entity="light.demo_pendant"] .device-tile').press('Shift+Enter');
+      await waitEnabled();
+      assert.ok((await refresh.boundingBox()).height >= 44);
+      const mode = lightDialog.getByRole('button',{name:he ? 'אפקטים' : 'Effects',exact:true});
+      await mode.tap();
+      await lightDialog.getByRole('region',{name:he ? 'אפקט תאורה' : 'Light effect'}).waitFor();
+      assert.deepEqual(await calls(),[]);
+
+      await registry('other');
+      await waitDisabled();
+      await refresh.evaluate(control=>control.onclick());
+      await registry('fixture-lamp',false);
+      await waitDisabled();
+      await refresh.evaluate(control=>control.onclick());
+      await state(helper,'unavailable');
+      await registry('fixture-lamp');
+      await waitDisabled();
+      await refresh.evaluate(control=>control.onclick());
+      assert.deepEqual(await calls(),[]);
+
+      await state(light,'unavailable');
+      await state(helper,'unknown');
+      await waitEnabled();
+      await refresh.tap();
+      await lightDialog.locator('.light-status-refresh[aria-busy=true]').waitFor();
+      await refresh.evaluate(control=>control.onclick());
+      assert.deepEqual(await calls(),[{type:'call_service',domain:'button',service:'press',service_data:{},target:{entity_id:helper}}]);
+      await page.evaluate(()=>window.bayitTest.finishLightStatusRefresh());
+      await waitEnabled();
+      await page.keyboard.press('Escape');
+      await lightDialog.waitFor({state:'hidden'});
+      await page.locator('.light-status-refresh').waitFor({state:'hidden'});
+
+      const editor = he ? { section:'קטגוריות אפקטים לתאורה', light:'תאורה', refresh:'כפתור לרענון מצב המנורה' }
+        : { section:'Light effect categories', light:'Light', refresh:'Light status refresh button' };
+      await page.goto(url + '&editor');
+      await page.getByText(editor.section,{exact:true}).click();
+      await page.getByLabel(editor.light,{exact:true}).selectOption(light);
+      const picker = page.getByLabel(editor.refresh,{exact:true});
+      assert.deepEqual(await picker.locator('option').evaluateAll(options=>options.map(option=>option.value)), ['',helper]);
+      assert.equal(await picker.inputValue(),helper);
+      await picker.selectOption('');
+      assert.deepEqual(await page.evaluate(()=>window.latest.light_status_refresh_buttons),{});
+      await picker.selectOption(helper);
+      assert.deepEqual(await page.evaluate(()=>window.latest.light_status_refresh_buttons),{[light]:helper});
+      assert.deepEqual(await page.evaluate(()=>window.latest.light_effect_favorites),[light]);
+      assert.deepEqual(await calls(),[]);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertKitchenBoilerQuickPower(browser) {
   for (const locale of ['en','he']) {
     const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
@@ -6953,6 +7050,7 @@ try {
       await assertCompactRoomDevicePair(browser);
       await assertAuthoredKitchenDeviceGrid(browser);
       await assertKitchenApplianceTiles(browser);
+      await assertLightStatusRefresh(browser);
       await assertKitchenBoilerQuickPower(browser);
       await assertRoomVacuumGestures(browser);
       await assertRoomVacuumPresentation(browser);

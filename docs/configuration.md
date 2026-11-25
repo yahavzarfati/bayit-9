@@ -18,6 +18,7 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 | `popup_aliases` | Optional mapping of old URL fragments to visible popup routes on this dashboard. |
 | `light_effect_groups` | Optional categories for a light's advertised effects. Open the light's details, choose an effect and press **Apply**. |
 | `light_effect_favorites` | Lights with configured effect categories that allow personal favorites. |
+| `light_status_refresh_buttons` | Optional mapping from a light to a status request button registered to the same Home Assistant device. |
 | `background` | A built-in wallpaper ID such as `aurora` or the ID of a shared photo listed in the same dashboard. |
 | `shared_wallpapers` | Ordered shared photos with an `id`, `name`, local image `path` and optional local `preview` path. |
 | `fullscreen` | Set to `true` to hide the Home Assistant header and sidebar on this standalone dashboard. Use **Home Assistant menu** in Bayit 9 Settings, or add `?disable_km=1` to the dashboard address, to restore them. |
@@ -112,6 +113,8 @@ In **Customize home**, open **Light effect categories** and pick a light. Name a
 In YAML, use the light's exact reported effect names. Each category has a `title` and ordered `effects`. An effect entry can add an optional display `name` and MDI `icon`. Unlisted native effects appear in **Other effects**. Lights without a matching category use the default effect picker.
 
 In a grouped gallery, **Effects**, **Fixed color**, and **White** switch between controls supported by the light. Switching views leaves the light as it is. Use **Apply** to send the chosen effect, color, or white temperature.
+
+Under **Light effect categories**, choose a **Light status refresh button** when the integration provides a button that requests the light's current state. The light details show a refresh icon that presses the selected button. The light and button must belong to the same Home Assistant device.
 
 For a grouped light, enable **Allow personal favorites on this device** under **Light effect categories**. Use the star to save or remove the active effect, and use the Favorites button to browse saved effects across all categories. The list belongs to the signed-in Home Assistant account in that browser. If an effect is temporarily unavailable, it reappears in Favorites when the light reports it again.
 

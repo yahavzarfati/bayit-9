@@ -67,6 +67,15 @@ function isAvailable(record) {
     !["unavailable", "unknown"].includes(record.state);
 }
 
+export function isPairedLightStatusRefresh(light, button, registry) {
+  if (!isEntity(light, "light") || !isEntity(button, "button")) return false;
+  const source = registry?.[light];
+  const target = registry?.[button];
+  if ([source, target].some(item => item?.hidden || item?.hidden_by || item?.disabled_by)) return false;
+  const device = source?.device_id ?? source?.di;
+  return Boolean(device && device === (target?.device_id ?? target?.di));
+}
+
 function scriptRevision(record) {
   if (typeof record?.last_changed !== "string" || !record.last_changed) return null;
   return JSON.stringify([record.last_changed, record.attributes?.last_triggered ?? null]);
@@ -122,6 +131,10 @@ function normalizedConfig(config) {
   }
   if (config.level_read_entity !== undefined && (!config.level_steps || !isEntity(config.level_read_entity, "input_number"))) {
     throw new DeviceControlError("invalid_config", "Fan heating level feedback requires a numeric helper.");
+  }
+  if (config.light_status_refresh_for !== undefined &&
+      (domain !== "button" || config.role !== "action" || !isEntity(config.light_status_refresh_for, "light"))) {
+    throw new DeviceControlError("invalid_config", "A light status refresh requires a button assigned to its light.");
   }
   if (config.media_remote_role !== undefined &&
       (domain !== "media_player" || !["transport", "volume", "power"].includes(config.media_remote_role))) {
@@ -843,6 +856,10 @@ export function createDeviceController({
     },
     async execute(config, actionId, value, options) {
       const hass = getHass();
+      if (config.light_status_refresh_for && (
+        !isPairedLightStatusRefresh(config.light_status_refresh_for, config.entity, hass?.entities) ||
+        !hass?.states?.[config.light_status_refresh_for] || !Object.hasOwn(hass?.services?.button ?? {}, "press")
+      )) throw new DeviceControlError("action_unavailable", "The light status refresh is unavailable.");
       if (options?.roomBoilerQuickPower) {
         const model = getDeviceModel(config, hass?.states, Date.now(), options);
         if (config.room_boiler_quick_power !== true || roomBoilerQuickPowerAction(hass, model) !== actionId) {
