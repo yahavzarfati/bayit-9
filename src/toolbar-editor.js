@@ -1,7 +1,8 @@
 import {
   discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactToolbarStatus, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
   isToolbarReadoutEntity, isToolbarReadouts, isWeatherReadingsList, normalizeOverviewDiscovery, normalizeToolbarReadout, overviewSectionOptions, roomPanelOptions,
-  securityReadoutLabelStates, selectableRoomEntities, sensorComparisonOptions, supportsSensorComparison,
+  securityReadoutLabelStates, selectableRoomEntities, sensorComparisonMaxHours, sensorComparisonOptions,
+  SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
   supportsCompactToolbarStatus, supportsOverviewLightsOff, supportsToolbarReadouts, supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
@@ -675,13 +676,22 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         const saveComparison = updates => changeSection({
           comparison: { ...getSections()[sectionIndex].comparison, ...updates },
         });
-        const hours = node('input', { type:'number', min:'1', max:'72', step:'1', required:true, value:String(options.hours) });
+        const hours = node('input', { type:'number', min:'1', max:String(sensorComparisonMaxHours(options.bucket_minutes)),
+          step:'1', required:true, value:String(options.hours) });
         hours.addEventListener('change', () => {
           if (hours.validity.valid) saveComparison({ hours: hours.valueAsNumber });
         });
-        const choices = [5, 10, 15, 30, 60].map(value => [String(value), String(value)]);
+        const choices = SENSOR_COMPARISON_INTERVALS.map(value => [String(value), String(value)]);
         const interval = select(choices, String(options.bucket_minutes));
-        interval.addEventListener('change', () => saveComparison({ bucket_minutes: Number(interval.value) }));
+        interval.addEventListener('change', () => {
+          const bucket = Number(interval.value);
+          hours.max = String(sensorComparisonMaxHours(bucket));
+          const maximum = Number(hours.max);
+          const current = getSections()[sectionIndex].comparison.hours;
+          const adjusted = Math.min(current, maximum);
+          hours.value = String(adjusted);
+          saveComparison({ hours: adjusted, bucket_minutes: bucket });
+        });
         fields.push(field(words.comparisonHours, hours), field(words.comparisonInterval, interval));
       }
     }

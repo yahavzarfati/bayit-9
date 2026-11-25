@@ -1243,11 +1243,13 @@ test('an optional Sensors comparison retains only valid graph colors and bounded
   ];
   const series = { kind:'series', entities, comparison:{enabled:true, hours:500, bucket_minutes:3} };
   const { toolbar } = generateDashboard({ toolbar:[
-    { kind:'sensors', sections:[series, { ...series, kind:'readings' }, { ...series, comparison:{enabled:false} }] },
+    { kind:'sensors', sections:[series, { ...series, comparison:{enabled:true,hours:72,bucket_minutes:5} },
+      { ...series, kind:'readings' }, { ...series, comparison:{enabled:false} }] },
     { kind:'weather', sections:[series] },
   ] }, hass).views[0].cards[0];
-  const [active, ...legacy] = toolbar.flatMap(entry => entry.sections);
+  const [active, limited, ...legacy] = toolbar.flatMap(entry => entry.sections);
   assert.deepEqual(active.comparison, { enabled:true, hours:24, bucket_minutes:30 });
+  assert.deepEqual(limited.comparison, { enabled:true, hours:24, bucket_minutes:5 });
   assert.deepEqual(active.entities.map(item => [item.entity,item.series_color]), [[inside,'#397BD6'],[outside,undefined]]);
   assert.equal(active.entities[0].graph_hours,24);
   for (const section of legacy) {

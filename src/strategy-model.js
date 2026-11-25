@@ -722,6 +722,13 @@ export function normalizeToolbarReadout(kind, section, item) {
   return Object.keys(settings).length ? settings : undefined;
 }
 
+export const SENSOR_COMPARISON_INTERVALS = [5, 10, 15, 30, 60];
+export const SENSOR_COMPARISON_MAX_BUCKETS = 288;
+
+export function sensorComparisonMaxHours(bucketMinutes) {
+  return Math.min(72, Math.floor(SENSOR_COMPARISON_MAX_BUCKETS * bucketMinutes / 60));
+}
+
 export function supportsSensorComparison(kind, section) {
   return kind === 'sensors' && section?.kind === 'series';
 }
@@ -729,12 +736,9 @@ export function supportsSensorComparison(kind, section) {
 export function sensorComparisonOptions(kind, section) {
   const options = section?.comparison;
   if (!supportsSensorComparison(kind, section) || options?.enabled !== true) return undefined;
-  const { hours, bucket_minutes: bucket } = options;
-  return {
-    enabled: true,
-    hours: Number.isInteger(hours) && hours >= 1 && hours <= 72 ? hours : 24,
-    bucket_minutes: [5, 10, 15, 30, 60].includes(bucket) ? bucket : 30,
-  };
+  const bucket = SENSOR_COMPARISON_INTERVALS.includes(options.bucket_minutes) ? options.bucket_minutes : 30;
+  const hours = Number.isInteger(options.hours) && options.hours >= 1 && options.hours <= 72 ? options.hours : 24;
+  return { enabled: true, hours: Math.min(hours, sensorComparisonMaxHours(bucket)), bucket_minutes: bucket };
 }
 
 export function sensorSeriesColor(item) {
