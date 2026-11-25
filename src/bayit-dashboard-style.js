@@ -135,13 +135,17 @@ export const styles = `
   }
   .chrome-button {
     flex: 0 0 44px;
-    width: 44px;
-    height: 44px;
+    width: var(--chrome-size,44px);
+    height: var(--chrome-size,44px);
     background: transparent;
     border-color: var(--line);
     border-radius: var(--chrome-radius,999px);
   }
-  .chrome-button ha-icon { width: 22px; height: 22px; --mdc-icon-size: 22px; }
+  .chrome-button ha-icon {
+    width: var(--chrome-icon-size,22px);
+    height: var(--chrome-icon-size,22px);
+    --mdc-icon-size: var(--chrome-icon-size,22px);
+  }
   .chrome-button:where(:hover,[aria-expanded=true]), .round-action:hover, .quick-button:hover {
     background: rgba(255,255,255,.12);
     color: var(--ink);
@@ -163,6 +167,16 @@ export const styles = `
     font-size: 10px;
     text-align: center;
     font-weight: 800;
+  }
+  .chrome-button[data-role=presence] .badge {
+    inset-block-end: 4px;
+    inset-inline-end: 4px;
+    min-inline-size: 27px;
+    min-block-size: 19px;
+    line-height: 17px;
+    background: transparent;
+    color: var(--ink);
+    pointer-events: none;
   }
   .rooms { display: grid; direction: ltr; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--room-gap); }
   .room {
@@ -286,6 +300,7 @@ export const styles = `
   .room:is([data-appliance-status],[data-concurrent-activities]) .room-status { flex: none; max-width: 100%; }
   .room-status[data-tone=finished] { color: #bcead0; border-color: rgba(160,224,188,.4); }
   .room-status ha-icon { --mdc-icon-size: 12px; width: 12px; height: 12px; }
+  .room-status[data-badge=temperature] ha-icon { color: #dfeaff; }
   .room-status span { overflow: hidden; text-overflow: ellipsis; }
   .room-status span:empty { display: none; }
   .room-status[data-badge=availability] { flex: none; }
@@ -728,7 +743,11 @@ export const styles = `
     }
     .shell[data-page=true] .modal::backdrop { background: rgba(0,0,0,.34); }
     .toolbar, .room { -webkit-backdrop-filter: none; backdrop-filter: none; }
-    .toolbar, .room { background: var(--surface); }
+    .chrome-button, .room { background: var(--surface); }
+    .chrome-button:is(:hover,[aria-expanded=true]), .chrome-button[data-role=presence] .badge {
+      background: color-mix(in srgb,var(--ink) 10%,var(--surface));
+    }
+    .room-status[data-badge=temperature] ha-icon { color: #a4c8ff; }
     .shell, .modal { --line: rgba(255,255,255,.58); --soft-line: rgba(255,255,255,.31); }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -790,7 +809,24 @@ export const styles = `
       padding-block: 1px;
     }
     .shell[data-page=true][data-layout=classic] .room-title > ha-icon:first-child { width: 22px; height: 22px; --mdc-icon-size: 22px; }
-    .shell[data-page=true][data-layout=classic] .room-title > .room-name { text-align: left; }
+    .shell[data-page=true][data-layout=classic] .room-title > :is(ha-icon,.room-count,.room-name) { translate: 0 3px; }
+    .shell[data-page=true][data-layout=classic] .room-title > .room-name { text-align: left; padding-inline-end: 3px; }
+  }
+  @container (min-width: 320px) and (max-width: 420px) {
+    .shell[data-page=true] .toolbar-actions:has(> :nth-child(6 of .chrome-button:not([hidden]))):not(:has(> :nth-child(7 of .chrome-button:not([hidden])))) {
+      --chrome-size: 48px;
+      --chrome-icon-size: 24px;
+      display: grid;
+      grid-template-columns: repeat(6,minmax(0,1fr));
+      justify-items: start;
+      gap: 8px;
+    }
+  }
+  @container (min-width: 374px) and (max-width: 420px) {
+    .shell[data-page=true][data-layout=classic] .room:not([data-appliance-status],[data-concurrent-activities]) .quick:not(:has(> :nth-child(7))) {
+      row-gap: 0;
+      translate: 0 3px;
+    }
   }
   @container (max-width: 275px) {
     .rooms { grid-template-columns: 1fr; }

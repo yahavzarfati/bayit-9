@@ -40,6 +40,7 @@ const states = {
     state: '2026-11-25 17:18:00', attributes: { has_date: true, has_time: true, timestamp: boilerStarted / 1000 },
   },
   'climate.solo': air(24),
+  'sensor.solo_temperature': { state: '75', attributes: { device_class: 'temperature', unit_of_measurement: '°F' } },
   'timer.solo': { state: 'active', attributes: { finishes_at: finish(12) } },
   'light.one': power, 'light.two': power, 'light.three': power, 'light.four': power,
 };
@@ -62,6 +63,7 @@ card.setConfig({
       { entity: 'switch.boiler', name: 'Kitchen boiler', kind: 'boiler', timed: { simple_timer_entity: 'sensor.boiler_timer' } },
     ] },
     { id: 'solo', name: 'Solo', entities: [
+      'sensor.solo_temperature',
       { entity: 'climate.solo', name: 'Solo AC', timed: { timer_entity: 'timer.solo' } },
     ] },
   ],
@@ -118,7 +120,10 @@ try {
         assert.equal(await activities(bedroom).count(), 2, 'Bedroom AC and separate heater countdown must both be visible');
         await expectVisible(activities(bedroom), 'mdi:air-conditioner', /Bedroom AC/, /26/);
         await expectVisible(activities(bedroom), 'mdi:radiator', /Bedroom heater/, /23:00/);
-        assert.match(await bedroom.locator('[data-badge=temperature]').textContent(), /23\.5°C/);
+        const bedroomTemperature = bedroom.locator('[data-badge=temperature]');
+        assert.match(await bedroomTemperature.textContent(), /23\.5°(?!C)/);
+        assert.match(await bedroomTemperature.getAttribute('aria-label'), /23\.5°C/);
+        assert.match(await solo.locator('[data-badge=temperature]').textContent(), /75°F/);
         assert.equal(await activities(bathroom).count(), 2, 'Bathroom heater and boiler must both be visible');
         await expectVisible(activities(bathroom), 'mdi:radiator', /Bathroom heater/, /18:00/);
         await expectVisible(activities(bathroom), 'mdi:water-boiler', /Boiler/, /40:00/);

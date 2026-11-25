@@ -1,6 +1,6 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
-import { isAutomationScriptToggle, MAX_ROOM_SHORTCUTS, normalizeRoomControlName, overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
+import { classicRoomTitle, isAutomationScriptToggle, MAX_ROOM_SHORTCUTS, normalizeRoomControlName, overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { createDeviceController, getDeviceModel } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
@@ -261,6 +261,7 @@ export function normalizeDashboardConfig(config = {}) {
       if (!unique.has(entry.entity)) unique.set(entry.entity, entry);
     }
     const parsed = { id, name, icon: validIcon(room.icon, 'mdi:door-open'), entities: [...unique.values()],
+      classicTitle: classicRoomTitle(name, room.classic_title_break),
       activities: normalizeRoomActivities(room.activities).filter(activity => activity.kind !== 'boiler' ||
         unique.get(activity.boiler_entity)?.kind === 'boiler') };
     if (Array.isArray(room.panel_hidden_entities)) {
@@ -620,9 +621,11 @@ export class BayitDashboard extends HTMLElement {
   applyPreferences() {
     for (const key of ['layout','shape']) this.nodes.shell.dataset[key] = this.preferences[key] || this.config[key];
     this.applySavedWallpaper();
-    for (const {article,heading} of this.roomViews.values()) {
-      if (this.nodes.shell.dataset.layout === 'header' && article.firstElementChild !== heading) article.prepend(heading);
-      if (this.nodes.shell.dataset.layout !== 'header' && article.lastElementChild !== heading) article.append(heading);
+    const header = this.nodes.shell.dataset.layout === 'header';
+    for (const {room,article,heading,name} of this.roomViews.values()) {
+      if (room.classicTitle) setText(name, header ? room.name : room.classicTitle);
+      if (header && article.firstElementChild !== heading) article.prepend(heading);
+      if (!header && article.lastElementChild !== heading) article.append(heading);
     }
     this.wallpaper?.refresh();
     if (this.panel?.type !== 'settings') return;
@@ -803,7 +806,8 @@ export class BayitDashboard extends HTMLElement {
       chevron.className = 'chevron';
       const count = make('span', 'room-count');
       count.setAttribute('aria-hidden', 'true');
-      heading.append(icon(room.icon), make('span', 'room-name', room.name), count, chevron);
+      const name = make('span', 'room-name', room.name);
+      heading.append(icon(room.icon), name, count, chevron);
       heading.onclick = () => this.openPanel('room', heading, room);
       article.onclick = event => {
         if (!event.target.closest('button')) this.openPanel('room', heading, room);
@@ -835,7 +839,7 @@ export class BayitDashboard extends HTMLElement {
       article.append(status, quick, heading);
       n.rooms.append(article);
       this.roomViews.set(room.id, {
-        room, article, heading, count, temperature, activityBadges: [activity],
+        room, article, heading, name, count, temperature, activityBadges: [activity],
         activityAnchor: appliances[0]?.badge.element ?? availability.element, appliances, boilerActivity, availability, shortcut,
       });
       if (this.isConnected && (appliances.length || boilerActivity)) this.applianceObserver?.observe(article);
@@ -883,8 +887,10 @@ export class BayitDashboard extends HTMLElement {
     const temperature = number(value);
     if (temperature === null) return undefined;
     const suffix = unit || this._hass?.config?.unit_system?.temperature || '°';
-    const shown = typeof suffix === 'string' && suffix.trim().length <= 3 ? suffix.trim() : '°';
-    return ltr(Number(temperature.toFixed(1)) + shown);
+    const fullUnit = typeof suffix === 'string' && suffix.trim().length <= 3 ? suffix.trim() : '°';
+    const compactUnit = fullUnit === '°C' ? '°' : fullUnit;
+    const rounded = Number(temperature.toFixed(1));
+    return { text: ltr(rounded + compactUnit), fullText: ltr(rounded + fullUnit) };
   }
 
   roomClimateBadge(model, tone) {
@@ -898,7 +904,8 @@ export class BayitDashboard extends HTMLElement {
     const target = ['cool','heat','heat_cool','auto'].includes(model.state)
       ? this.temperatureBadge(model.attributes?.temperature) : undefined;
     return {
-      text: target || mode, label: [model.name, mode, target && this.t('target_short') + ' ' + target].filter(Boolean).join(' · '),
+      text: target?.text || mode,
+      label: [model.name, mode, target && this.t('target_short') + ' ' + target.fullText].filter(Boolean).join(' · '),
       glyph: 'mdi:air-conditioner', tone,
     };
   }
@@ -987,7 +994,7 @@ export class BayitDashboard extends HTMLElement {
         shortcut.setAttribute('aria-busy', String(busy));
       }
       const reading = temperature || ambient;
-      updateRoomBadge(view.temperature, reading && { text: reading, label: this.t('room_temperature') + ' · ' + reading });
+      updateRoomBadge(view.temperature, reading && { text: reading.text, label: this.t('room_temperature') + ' · ' + reading.fullText });
       updateRoomActivities(view, activities);
       let visibleAppliance = false;
       for (const { mapping, badge } of view.appliances) {

@@ -1,5 +1,5 @@
 import {
-  BACKGROUNDS, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
+  BACKGROUNDS, classicRoomTitle, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
   normalizeRoomControlName,
   PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomPanelOptions, roomSections, selectableRoomEntities, selectedRoomIds, STRATEGY_NAME,
   usesAutomaticRoomDevices,
@@ -24,6 +24,7 @@ const WORDS = {
     roomToAdd: 'Available rooms', addRoom: 'Show room', createRoom: 'New dashboard-only room',
     newRoomName: 'New room name', newRoomHint: 'This room exists only on this dashboard.',
     roomName: 'Room display name', roomToEdit: 'Room to customize', roomIcon: 'Room icon', defaultRoomIcon: 'Default icon',
+    roomTitleBreak: 'Room name line break in classic layout', roomTitleAuto: 'Wrap automatically',
     roomControlDisplay: 'Device display', roomControlDevice: 'Device to customize', roomControlName: 'Name in this room',
     roomControlShow: 'Show name in this room',
     roomInlineLight: 'Show brightness and temperature in this room',
@@ -92,6 +93,7 @@ const WORDS = {
     roomToAdd: 'חדרים זמינים', addRoom: 'הצגת חדר', createRoom: 'חדר חדש לדשבורד',
     newRoomName: 'שם החדר החדש', newRoomHint: 'החדר יופיע בדשבורד הזה בלבד.',
     roomName: 'שם החדר לתצוגה', roomToEdit: 'חדר להתאמה אישית', roomIcon: 'סמל החדר', defaultRoomIcon: 'סמל ברירת המחדל',
+    roomTitleBreak: 'חלוקת שם החדר לשורות בפריסה הקלאסית', roomTitleAuto: 'גלישה לפי רוחב הכרטיס',
     roomControlDisplay: 'תצוגת מכשירים', roomControlDevice: 'מכשיר להתאמה אישית', roomControlName: 'שם המכשיר בחדר הזה',
     roomControlShow: 'הצגת שם המכשיר בחדר הזה',
     roomInlineLight: 'הצגת בהירות וגוון אור בתוך החדר',
@@ -988,13 +990,29 @@ export class Bayit9StrategyEditor extends HTMLElement {
           saveName();
         }
       });
-      const fields = [
-        field(words.roomToEdit, picker), field(words.roomName, input),
+      const titleBreaks = active.name.trim().split(/\s+/u).slice(1).map((_, index) => {
+        const at = index + 1;
+        return [String(at), classicRoomTitle(active.name, at).replace('\n', ' ↵ ')];
+      });
+      const fields = [field(words.roomToEdit, picker), field(words.roomName, input)];
+      if (titleBreaks.length) {
+        const currentBreak = classicRoomTitle(active.name, override.classic_title_break) ? String(override.classic_title_break) : '';
+        const titleBreak = select([['', words.roomTitleAuto], ...titleBreaks], currentBreak);
+        titleBreak.dataset.roomFocus = 'room-title-break';
+        titleBreak.addEventListener('change', () => {
+          const updated = { ...override };
+          if (titleBreak.value) updated.classic_title_break = Number(titleBreak.value);
+          else delete updated.classic_title_break;
+          this.#setRoomOverride(active.id, updated, 'room-title-break');
+        });
+        fields.push(field(words.roomTitleBreak, titleBreak));
+      }
+      fields.push(
         this.#roomIconPicker(active, override, words, language),
         ...this.#roomDevicePanel(active, words, language, rooms),
         this.#roomSectionsPanel(active, override, words, language),
         this.#roomAppliancePanel(active, override, words, language),
-      ];
+      );
       if (active.custom) {
         const remove = button(words.deleteRoom, () => {
           const after = { ...this.#config.room_overrides };

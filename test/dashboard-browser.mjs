@@ -700,18 +700,25 @@ try {
           context.fillRect(0, 0, 1, 1);
           return Array.from(context.getImageData(0, 0, 1, 1).data);
         };
+        const root = control.getRootNode();
+        const toolbar = getComputedStyle(root.querySelector('.toolbar'));
+        const chrome = getComputedStyle(root.querySelector('.chrome-button:not([hidden])'));
         return {
           reduced: matchMedia('(prefers-reduced-transparency: reduce)').matches,
           stronger: matchMedia('(prefers-contrast: more)').matches,
           background: pixel(style.backgroundColor),
           rimAlpha: pixel(style.borderColor)[3],
           strongRimAlpha: pixel(style.getPropertyValue('--soft-line'))[3],
+          toolbarAlpha: pixel(toolbar.backgroundColor)[3],
+          chromeAlpha: pixel(chrome.backgroundColor)[3],
         };
       });
       assert.equal(await quietShortcut.locator('ha-icon').evaluate(glyph => glyph.offsetWidth), 24);
       assert.equal(await movingShortcut.locator('ha-icon').evaluate(glyph => glyph.offsetWidth), 24);
       const assertAppearance = async () => {
         const current = await appearance();
+        assert.equal(current.toolbarAlpha, 0, 'The space between toolbar buttons should show the wallpaper');
+        assert.equal(current.chromeAlpha, current.reduced || current.stronger ? 255 : 0);
         if (current.reduced) {
           assert.ok(current.background.slice(0, 3).every(value => Math.abs(value - 62) <= 1));
           assert.equal(current.background[3], 255);
@@ -887,7 +894,7 @@ try {
         await active.locator('ha-icon[icon="mdi:timer-outline"]').waitFor();
         await strip.locator('[data-badge="availability"]:not([hidden])').waitFor();
         assert.equal(await strip.locator('.room-status:not([hidden])').count(), 3);
-        assert.match(await strip.locator('[data-badge="temperature"]').innerText(), /23\.5°C/);
+        assert.match(await strip.locator('[data-badge="temperature"]').innerText(), /23\.5°(?!C)/);
         assert.match(await active.innerText(), /\d+:\d{2}/);
         assert.match(await strip.locator('[data-badge="availability"]').getAttribute('aria-label'), /Desk light/);
         assert.equal(await fixtureRoom.locator('.room-count').innerText(), '—');
@@ -902,7 +909,7 @@ try {
         const oldHeight = (await fixtureRoom.boundingBox()).height;
         await statusPage.evaluate(() => window.bayitTest.setRoomState('timer.demo_room', 'idle'));
         await active.locator('ha-icon[icon="mdi:air-conditioner"]').waitFor();
-        assert.match(await active.innerText(), /26°C/);
+        assert.match(await active.innerText(), /26°(?!C)/);
         assert.equal((await fixtureRoom.boundingBox()).height, oldHeight);
         await statusPage.evaluate(() => window.bayitTest.setRoomState('cover.demo_window', 'closed'));
         await fixtureRoom.locator('.quick-button[data-entity="cover.demo_window"][data-tone="quiet"]').waitFor();
@@ -910,9 +917,9 @@ try {
         await strip.locator('[data-badge="availability"]').waitFor({ state: 'hidden' });
         assert.equal(await fixtureRoom.locator('.room-count').innerText(), '1');
         await statusPage.evaluate(() => window.bayitTest.setRoomState('sensor.demo_temperature', 'unavailable'));
-        await strip.locator('[data-badge="temperature"]').filter({ hasText: '19°C' }).waitFor();
+        await strip.locator('[data-badge="temperature"]').filter({ hasText: '19°' }).waitFor();
         await strip.locator('[data-badge="availability"]:not([hidden])').waitFor();
-        assert.match(await active.innerText(), /26°C/);
+        assert.match(await active.innerText(), /26°(?!C)/);
         for (const width of [320, 391, 430]) {
           await statusPage.setViewportSize({ width, height: 845 });
           const arrangement = await fixtureRoom.evaluate(room => {
@@ -2384,16 +2391,21 @@ try {
       const roomName = roomSetup.getByLabel('Room display name', { exact: true });
       await roomName.fill('Guest room');
       await roomName.press('Enter');
+      const nameBreak = roomSetup.getByLabel('Room name line break in classic layout', { exact: true });
+      await nameBreak.selectOption('1');
       const moveUp = roomSetup.getByRole('button', { name: 'Move up · Guest room', exact: true });
       await moveUp.press('Enter');
       assert.equal(await moveUp.evaluate(control => control.getRootNode().activeElement === control), true);
       await saveRoomConfig(roomSetup);
       await selectedRoomsPage.getByRole('button', { name: 'Guest room', exact: true }).waitFor();
+      const guestTitle = selectedRoomsPage.locator('.room[data-room=spare] .room-name');
+      assert.equal(await guestTitle.textContent(), 'Guest\nroom');
       assert.deepEqual(await roomOrder(selectedRoomsPage), ['lounge', 'spare', 'studio']);
       assert.deepEqual(await selectionSettings(selectedRoomsPage), {
         area_ids: ['lounge', 'spare', 'studio'], room_selection: 'manual',
       });
       await selectedRoomsPage.getByRole('button', { name: 'Guest room', exact: true }).tap();
+      await selectedRoomsPage.getByRole('dialog', { name: 'Guest room', exact: true }).waitFor();
       await selectedRoomsPage.getByText('No devices in this room.', { exact: true }).waitFor();
       await selectedRoomsPage.goto(roomConfigUrl + '&member');
       await selectedRoomsPage.getByRole('button', { name: 'Guest room', exact: true }).waitFor();

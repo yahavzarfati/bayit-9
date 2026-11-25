@@ -166,6 +166,13 @@ export function normalizeRoomControlName(value) {
   return value.trim().slice(0, 80) || undefined;
 }
 
+export function classicRoomTitle(name, breakAfter) {
+  if (!Number.isInteger(breakAfter) || breakAfter < 1) return undefined;
+  const words = name.trim().split(/\s+/u);
+  if (breakAfter >= words.length) return undefined;
+  return words.slice(0, breakAfter).join(' ') + '\n' + words.slice(breakAfter).join(' ');
+}
+
 export function usesAutomaticRoomDevices(override, sections, custom) {
   return !custom && (override.device_selection === 'auto' ||
     (!Array.isArray(override.entities) && !sections?.length));
@@ -189,6 +196,7 @@ function dashboardAreas(config, hass) {
       : Array.isArray(override.entities) ? idList(override.entities) : idList(sections?.flatMap(section => section.entities));
     areas.set(id, {
       name: name || area?.name,
+      classicTitleBreak: override.classic_title_break,
       icon: ROOM_ICON.test(icon) ? icon : area?.icon ?? 'mdi:home-outline',
       entityIds,
       sections,
@@ -381,6 +389,7 @@ export function discoverRooms(config, hass, locale) {
       }
     }
     const room = { id, name: area.name, icon: area.icon, entities };
+    if (classicRoomTitle(area.name, area.classicTitleBreak)) room.classic_title_break = area.classicTitleBreak;
     if (area.panelHidden?.length) {
       const members = new Set(entities.map(device => device.entity));
       const hidden = area.panelHidden.filter(entity => members.has(entity));
