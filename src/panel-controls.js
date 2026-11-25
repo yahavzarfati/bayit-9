@@ -56,7 +56,7 @@ export function climateOptionLabel(action, value, options, t) {
 export function buildPanelControls(model, {
   make, button, icon, label, t, request, compactTimer = false, compactClimateControls = false,
   timerPreferenceKey, countdownHistory, buildClimateDetail, targetTemperatureInfo,
-  historyFor, historyInfo, usageInfo, canShowUsage, canResetUsage, resetOptIn, unreportedSwingMode,
+  historyFor, historyInfo, usageInfo, canShowUsage, canResetUsage, resetOptIn, unreportedSwingMode, canStopTimed,
 }) {
   const used = new Set();
   const updates = [];
@@ -326,7 +326,7 @@ export function buildPanelControls(model, {
       const stop = button('control-button timer-command', t('stop_timed'), 'mdi:stop', true);
       stop.onclick = () => request('stop_timed', undefined, stop);
       stop.dataset.action = 'stop_timed';
-      buttons.push(stop);
+      updates.push(current => { stop.disabled = !canStopTimed(current); });
       tools.append(stop);
     }
     if (tools.childElementCount) card.append(tools);

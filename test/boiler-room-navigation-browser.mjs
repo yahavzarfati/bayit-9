@@ -12,6 +12,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     const locale = params.get('locale');
     const guardedSchedule = params.has('guarded-schedule');
     const idleZero = params.has('idle-zero');
+    const delayedTimer = params.has('delayed-timer');
     const shared = params.has('shared-preference');
     const preference = 'input_boolean.fixture_boiler_view';
     const hiddenPreference = 'input_boolean.fixture_hidden';
@@ -52,6 +53,8 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     }));
     const requests = [];
     const timerCalls = [];
+    const timerResults = [];
+    const timerAcks = new Map();
     const moreInfo = [];
     const scheduleActions = params.has('schedule-actions') || guardedSchedule;
     const scheduleCalls = [];
@@ -68,6 +71,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
       { id: 'monitor', name: 'Monitor', entities: [{ ...boiler, role: 'status' }], shortcuts: [boiler.entity] },
     ] });
     const services = { simple_timer: { start_timer: {} } };
+    if (delayedTimer) services.simple_timer.cancel_timer = {};
     if (shared) services.input_boolean = { turn_on:{}, turn_off:{} };
     if (!params.has('without-scheduler')) services.scheduler = { add: {} };
     if (scheduleActions) {
@@ -96,6 +100,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
         }
         if (idleZero && request.type === 'call_service' && request.domain === 'simple_timer') {
           timerCalls.push(request);
+          if (delayedTimer) return new Promise(resolve => timerAcks.set(request.service, resolve));
           return Promise.resolve({});
         }
         if ((params.has('stacked') || params.has('schedule-link')) && request.type === 'scheduler') {
@@ -147,6 +152,14 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
       },
     };
     card.hass = hass;
+    if (delayedTimer) {
+      const execute = card.controller.execute;
+      card.controller.execute = async (...args) => {
+        const result = await execute(...args);
+        timerResults.push(result);
+        return result;
+      };
+    }
     card.addEventListener('hass-more-info', event => moreInfo.push(event.detail.entityId));
     if (params.has('editor')) {
       const editor = document.createElement('bayit-9-strategy-editor');
@@ -159,7 +172,12 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
       document.body.append(editor);
     } else document.body.append(card);
     window.fixture = {
-      requests, moreInfo, scheduleCalls, timerCalls, preferenceCalls,
+      requests, moreInfo, scheduleCalls, timerCalls, timerResults, preferenceCalls,
+      acknowledgeTimer(service) { timerAcks.get(service)({}); timerAcks.delete(service); },
+      hideRuntime(hidden) {
+        hass.entities = { ...hass.entities, 'sensor.fixture_runtime': hidden ? { hidden_by:'user' } : {} };
+        card.hass = { ...hass };
+      },
       reportPreference(next) {
         states[preference] = { state:next, attributes:{} };
         card.hass = { ...hass, states:{ ...states } };
@@ -641,6 +659,73 @@ async function assertBoilerScheduleLinks(browser, locale) {
   }
 }
 
+async function assertStopDuringTimerReadback(browser, locale) {
+  for (const [action, service] of [['start_timed', 'start_timer'], ['extend_timed', 'add_timer']]) {
+    const page = await browser.newPage({ viewport:{ width:391, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const url = 'http://127.0.0.1:' + server.address().port + '?compact&stacked&idle-zero&delayed-timer&locale=' + locale;
+    const dialog = page.getByRole('dialog', { name:'Fixture boiler', exact:true });
+    const view = dialog.locator('[data-entity="switch.fixture_boiler"]');
+    const stop = dialog.locator('button[data-action=stop_timed]');
+    const pendingStop = stop.and(page.locator(':disabled'));
+    const enabledStop = stop.and(page.locator(':enabled'));
+    const state = (power, timer) => page.evaluate(([power,timer]) => window.fixture.setupState(power,timer), [power,timer]);
+    const acknowledge = operation => page.evaluate(operation => window.fixture.acknowledgeTimer(operation), operation);
+    const calls = () => page.evaluate(() => window.fixture.timerCalls.map(call => call.service));
+    try {
+      await page.goto(url);
+      await page.locator('[data-room=bath] .quick-button').tap();
+      if (service === 'add_timer') await state('on', 'active');
+      await dialog.locator('button[data-action="' + action + '"]').tap();
+      await page.waitForFunction(() => window.fixture.timerCalls.length === 1);
+      if (service === 'start_timer') await state('off', 'active');
+      await pendingStop.waitFor();
+      await stop.evaluate(control => control.click());
+      assert.deepEqual(await calls(), [service]);
+
+      await acknowledge(service);
+      await enabledStop.waitFor();
+      await enabledStop.evaluate(button => {
+        const card = document.querySelector('bayit-dashboard');
+        const update = card.update;
+        card.update = function (...args) {
+          this.update = update;
+          window.fixture.hideRuntime(true);
+          return update.apply(this, args);
+        };
+        button.click();
+      });
+      await pendingStop.waitFor();
+      assert.deepEqual(await calls(), [service]);
+      await page.evaluate(() => window.fixture.hideRuntime(false));
+      await enabledStop.tap();
+      await page.waitForFunction(() => window.fixture.timerCalls.length === 2);
+      await pendingStop.waitFor();
+
+      // This report would finish Start/Extend if its pending request still owned the timer.
+      await state('on', 'active');
+      const outcome = await page.waitForFunction(action => window.fixture.timerResults.find(result => result.action === action), action);
+      assert.equal((await outcome.jsonValue()).reason, 'superseded');
+      assert.equal(await view.getAttribute('aria-busy'), 'true');
+      assert.equal(await stop.isDisabled(), true);
+      await acknowledge('cancel_timer');
+      await state('on', 'idle');
+      const start = dialog.locator('button[data-action=start_timed]');
+      await start.and(page.locator(':disabled')).waitFor();
+      assert.equal(await view.getAttribute('aria-busy'), 'true');
+
+      await state('off', 'idle');
+      await start.and(page.locator(':enabled')).waitFor();
+      assert.equal(await view.getAttribute('aria-busy'), 'false');
+      assert.deepEqual(await calls(), [service, 'cancel_timer']);
+      assert.deepEqual(await page.evaluate(() => window.fixture.timerCalls[1].service_data),
+        { entity_id:'sensor.fixture_runtime', turn_off_entity:true });
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertRoomBoilerScheduleEntry(browser, locale) {
   const he = locale === 'he';
   const page = await browser.newPage({ viewport:{width:320,height:680}, hasTouch:true, reducedMotion:'reduce' });
@@ -769,6 +854,7 @@ try {
         await assertDedicatedBoilerPresentation(browser, language);
         await assertSharedBoilerView(browser, language);
         await assertIdleZeroBoilerDuration(browser, language);
+        await assertStopDuringTimerReadback(browser, language);
       }
       const routed = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true });
       await routed.goto('http://127.0.0.1:' + server.address().port + '?routed&locale=' + locale);

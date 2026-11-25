@@ -941,6 +941,7 @@ export function createDeviceController({
         }
         if (latest.get(entity) !== token) return result("unconfirmed", "superseded");
         if (reply === REQUEST_TIMED_OUT) return result("unconfirmed", "request_timeout");
+        options?.onAcknowledged?.();
         const windowMs = config.confirmation_ms ?? confirmationTimeoutMs ?? (plan.domain === "cover" ? 45000 : 8000);
         if (!plan.expected || !windowMs) return result("sent");
 

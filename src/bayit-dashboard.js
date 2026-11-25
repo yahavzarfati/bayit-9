@@ -2705,7 +2705,8 @@ export class BayitDashboard extends HTMLElement {
             control.classList.contains('target-reading')) continue;
         const id = control.dataset.action;
         const requiresConnection = id && id !== 'more_info';
-        control.disabled = (requiresConnection && !commandsReady) || !coverVisible || !this.canRequest(view.config.entity, id) ||
+        control.disabled = (requiresConnection && !commandsReady) || !coverVisible ||
+          !this.canRequest(view.config.entity, id, view.config) ||
           (id === 'locate' && !model.actions.locate) ||
           (view.compactCover && !allowsCoverRailAction(model, id));
       }
@@ -3029,6 +3030,8 @@ export class BayitDashboard extends HTMLElement {
       canShowUsage: entity => this.canShowTimerUsage(entity),
       canResetUsage: entity => this.canResetTimerUsage(entity),
       resetOptIn: timing?.allow_daily_usage_reset === true && !!timing.simple_timer_entity,
+      canStopTimed: current => current.actions.stop_timed && this.deviceActionVisible(view.config, 'stop_timed') &&
+        this.canRequest(view.config.entity, 'stop_timed', view.config),
       buildClimateDetail: this.panel?.type === 'device' ? id => {
         const control = this.buildField(view, model.actions[id], id, model);
         if (!advancedClimate) return control;
@@ -3316,15 +3319,24 @@ export class BayitDashboard extends HTMLElement {
     if (field.output) setText(field.output, input.value + field.unit);
   }
 
-  canRequest(entity, id) {
+  canInterruptTimer(config, pending) {
+    const runtime = config?.timed?.simple_timer_entity;
+    return Boolean(runtime && pending.acknowledged && pending.timer === runtime &&
+      pending.timerTarget === (config.timed.simple_timer_target ?? config.entity) &&
+      this.entityVisible(runtime) && Object.hasOwn(this._hass?.services?.simple_timer ?? {}, 'cancel_timer') &&
+      this.model(config).actions.stop_timed);
+  }
+
+  canRequest(entity, id, config) {
     const previous = this.pending.get(entity);
-    return !previous || (id === 'stop' && movement.has(previous.id));
+    return !previous || (id === 'stop' && movement.has(previous.id)) ||
+      (id === 'stop_timed' && this.canInterruptTimer(config, previous));
   }
 
   requestAction(config, id, value, source, { confirmShortcut = false, compactCover = false, compactDevice = false,
     roomPowerTile = false, shortcutCurrent } = {}) {
     if (!this.deviceActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
-        !this.canRequest(config.entity, id)) return;
+        !this.canRequest(config.entity, id, config)) return;
     const roomBoilerQuickPower = roomPowerTile && config.room_boiler_quick_power === true;
     const model = this.model(config, { roomBoilerQuickPower });
     const action = model.actions[id];
@@ -3362,10 +3374,16 @@ export class BayitDashboard extends HTMLElement {
 
   async send(config, id, value, { confirmed = false, roomBoilerQuickPower = false, shortcutCurrent } = {}) {
     if (!this.deviceActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
-        !this.canRequest(config.entity, id)) return;
+        !this.canRequest(config.entity, id, config)) return;
     const model = this.model(config, { roomBoilerQuickPower });
     if (this.staleScriptAction(id, model.actions[id], value) || this.staleUsageReset(config, id, model.actions[id], value) || !model.actions[id]) return;
     const token = { id, value };
+    const interruptedTimer = id === 'stop_timed' ? this.pending.get(config.entity) : undefined;
+    const timer = config.timed?.simple_timer_entity;
+    if (timer && (id === 'start_timed' || id === 'extend_timed')) {
+      token.timer = timer;
+      token.timerTarget = config.timed.simple_timer_target ?? config.entity;
+    }
     if (model.domain === 'cover' && movement.has(id)) {
       if (id === 'open') token.coverDirection = 'opening';
       if (id === 'close') token.coverDirection = 'closing';
@@ -3382,11 +3400,21 @@ export class BayitDashboard extends HTMLElement {
     this.update();
     let confirmedByHomeAssistant = false;
     try {
-      if (!this.deviceActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent())) {
+      if (!this.deviceActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
+          (interruptedTimer && !this.canInterruptTimer(config, interruptedTimer))) {
         this.announce(this.t('unavailable'));
+        if (interruptedTimer && this.pending.get(config.entity) === token) {
+          this.pending.set(config.entity, interruptedTimer);
+          if (this.isConnected) this.update();
+        }
         return;
       }
-      const result = await this.controller.execute(config, id, value, { confirmed, roomBoilerQuickPower });
+      const onAcknowledged = token.timer ? () => {
+        if (this.pending.get(config.entity) !== token) return;
+        token.acknowledged = true;
+        if (this.isConnected) this.update();
+      } : undefined;
+      const result = await this.controller.execute(config, id, value, { confirmed, roomBoilerQuickPower, onAcknowledged });
       if (this.pending.get(config.entity) !== token) return;
       const key = ['confirmed','sent','unconfirmed'].includes(result?.status) ? result.status : 'sent';
       let status = key === 'confirmed' ? ({preselect_heating_level: 'heating_preselect_saved',
