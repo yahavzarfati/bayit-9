@@ -5,7 +5,8 @@ import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isC
   overviewSectionOptions, ROOM_PANEL_KINDS, roomShortcutDevices, STRATEGY_NAME, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
-import { createDeviceController, getDeviceModel, roomShutdownTargets, simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
+import { allowsCoverRailAction, createDeviceController, getDeviceModel, roomShutdownTargets,
+  simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupHistory, normalizePopupAliases, popupRouteFragment, resolvePopupRoute } from './popup-routes.js';
 import { preserveMoreInfoReturn } from './native-more-info.js';
@@ -816,7 +817,7 @@ export class BayitDashboard extends HTMLElement {
     else if (domain === 'lock') action = state === 'locked' ? 'unlock' : state === 'unlocked' ? 'lock' : undefined;
     else if (powerDomains.has(domain) && !config.kind) action = state === 'off' ? 'turn_on' : 'turn_off';
     if (action && model.actions[action]) {
-      this.requestAction(config, action, undefined, source, domain === 'lock');
+      this.requestAction(config, action, undefined, source, { confirmShortcut: domain === 'lock' });
     } else if (details) this.openDeviceDetails(config, source, room);
   }
 
@@ -1619,7 +1620,8 @@ export class BayitDashboard extends HTMLElement {
       view.item.setAttribute('aria-busy', String(!!pending));
       for (const control of view.group.querySelectorAll('button,input,select')) {
         if (control.dataset.lightMode) continue;
-        control.disabled = !this.canRequest(view.config.entity, control.dataset.action);
+        const id = control.dataset.action;
+        control.disabled = !this.canRequest(view.config.entity, id) || (view.compactCover && !allowsCoverRailAction(model, id));
       }
       view.special.update(model, pending);
       view.effectGallery?.update(model, this.canRequest(view.config.entity, 'set_effect'));
@@ -1854,7 +1856,7 @@ export class BayitDashboard extends HTMLElement {
       const control = button('control-button', name, (curtain && curtainControlIcons[id]) || controlIcons[id]);
       label(control, name);
       control.dataset.action = id;
-      control.onclick = () => this.requestAction(view.config, id, undefined, control);
+      control.onclick = () => this.requestAction(view.config, id, undefined, control, { compactCover: view.compactCover });
       basic.append(control);
     }
     if (view.effectGallery) organizeLightModes(complex, view.lightMode, mode => { view.lightMode = mode; },
@@ -2004,13 +2006,14 @@ export class BayitDashboard extends HTMLElement {
     return !previous || (id === 'stop' && movement.has(previous.id));
   }
 
-  requestAction(config, id, value, source, confirmShortcut = false) {
+  requestAction(config, id, value, source, { confirmShortcut = false, compactCover = false } = {}) {
     if (!this.canRequest(config.entity, id)) return;
     const model = this.model(config);
     const action = model.actions[id];
-    if (this.staleScriptAction(id, action, value) || this.staleUsageReset(config, id, action, value) || !action) return;
+    if (this.staleScriptAction(id, action, value) || this.staleUsageReset(config, id, action, value) || !action ||
+        (compactCover && !allowsCoverRailAction(model, id))) return;
     if (!action.requiresConfirmation && !confirmShortcut) return action.requiresCode ? this.moreInfo(config, source) : this.send(config, id, value);
-    this.confirming = { config, id, value, source, native: action.requiresCode };
+    this.confirming = { config, id, value, source, compactCover, native: action.requiresCode };
     const n = this.nodes;
     const prompt = id === 'reset_daily_usage' ? this.t('timer_reset_confirm').replace('{name}', model.name)
       : this.t('confirm_action').replace('{name}', model.name).replace('{action}', this.actionLabel(id));
@@ -2023,6 +2026,7 @@ export class BayitDashboard extends HTMLElement {
     const request = this.confirming;
     if (!request || !this.nodes.confirm.open) return;
     this.nodes.confirm.close();
+    if (request.compactCover && !allowsCoverRailAction(this.model(request.config), request.id)) return;
     if (request.native) return this.moreInfo(request.config, request.source);
     return this.send(request.config, request.id, request.value, true);
   }

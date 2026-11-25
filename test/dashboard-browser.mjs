@@ -654,7 +654,7 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
   toolbar:[
     ...(query.has('security-cover-rail') ? [
       {id:'fixture-security',kind:'security',sections:[{kind:'covers',entities:[
-        {entity:'cover.demo_security_first',role:'cover'},
+        {entity:'cover.demo_security_first',role:'cover', ...query.has('cover-rail-confirm') && {confirmation:true}},
         {entity:'cover.demo_security_second',role:'cover'},
         {entity:'cover.demo_security_passive',role:'status'},
       ]}]},
@@ -2315,8 +2315,41 @@ try {
         const curtain = dialog.locator('[data-entity="cover.demo_curtain"]');
         assert.equal(await curtain.locator('[data-action="open"] ha-icon').getAttribute('icon'), 'mdi:arrow-expand-horizontal');
         assert.equal(await curtain.locator('[data-action="close"] ha-icon').getAttribute('icon'), 'mdi:arrow-collapse-horizontal');
-        assert.equal(await dialog.locator('[data-entity="cover.demo_shade"] [data-action="open"] ha-icon').getAttribute('icon'), 'mdi:arrow-up');
+        const shade = dialog.locator('[data-entity="cover.demo_shade"]');
+        assert.equal(await shade.locator('[data-action="open"] ha-icon').getAttribute('icon'), 'mdi:arrow-up');
+        assert.equal(await shade.locator('[data-action="close"]').isDisabled(), true);
+        assert.equal(await shade.locator('[data-action="stop"]').isEnabled(), true);
         if (width === 375) {
+          const setShade = async (state, attributes, [open, close]) => {
+            await coverGridPage.evaluate(([state, attributes]) => {
+              const entity = 'cover.demo_shade';
+              window.bayitTest.setFixtureAttributes(entity, { current_position: null, assumed_state: false, ...attributes });
+              window.bayitTest.setRoomState(entity, state);
+            }, [state, attributes]);
+            await shade.locator('[data-action="open"]' + (open ? ':enabled' : ':disabled')).waitFor();
+            await shade.locator('[data-action="close"]' + (close ? ':enabled' : ':disabled')).waitFor();
+            assert.equal(await shade.locator('[data-action="stop"]').isEnabled(), true);
+          };
+          await setShade('open', { current_position: 25 }, [true,true]);
+          await setShade('open', { current_position: 100 }, [false,true]);
+          await setShade('opening', { current_position: 0 }, [false,false]);
+          await setShade('closing', { current_position: 100 }, [false,false]);
+          await setShade('opening', { current_position: 25 }, [false,true]);
+          await setShade('closing', { current_position: 75 }, [true,false]);
+          await setShade('closed', {}, [true,false]);
+          await setShade('open', {}, [false,true]);
+          await setShade('closed', { current_position: 0, assumed_state: true }, [true,true]);
+          await setShade('open', { current_position: 45 }, [true,true]);
+          const staleOpened = await shade.locator('[data-action="open"]').evaluate(button => {
+            const enabled = !button.disabled;
+            window.bayitTest.setFixtureAttributes('cover.demo_shade', { current_position: 100 });
+            window.bayitTest.setRoomState('cover.demo_shade', 'open');
+            button.click();
+            return enabled;
+          });
+          assert.equal(staleOpened, true, 'Render still sees the previous eligible state when the click is dispatched');
+          assert.deepEqual(await coverGridPage.evaluate(() => window.bayitTest.calls), []);
+          await setShade('closed', { current_position: 0 }, [true,false]);
           const name = 'Long living room curtain';
           const header = curtain.getByRole('button', { name: name + ' · Device controls', exact: true });
           const details = coverGridPage.getByRole('dialog', { name, exact: true });
@@ -3499,6 +3532,10 @@ try {
         assert.ok(layout.bounds.every(({ width, height }) => width >= 44 && height >= 44));
         const west = securityDialog.locator('[data-entity="cover.demo_security_first"]');
         const east = securityDialog.locator('[data-entity="cover.demo_security_second"]');
+        assert.equal(await west.locator('[data-action=close]').isDisabled(), true);
+        assert.equal(await west.locator('[data-action=stop]').isEnabled(), true);
+        assert.equal(await east.locator('[data-action=open]').isDisabled(), true);
+        assert.equal(await east.locator('[data-action=close]').isEnabled(), true);
         const westHeader = west.getByRole('button', { name: 'West shade · More info', exact: true });
         const eastHeader = east.getByRole('button', { name: 'East curtain · More info', exact: true });
         await westHeader.tap();
@@ -3518,6 +3555,7 @@ try {
         assert.equal(await securityDialog.getByRole('button', { name: /^Status shade/ }).count(), 1);
         await west.locator('[data-action=open]').tap();
         await west.locator('.device-panel-launch').getByText(/100%/).waitFor();
+        assert.equal(await west.locator('[data-action=open]').isDisabled(), true);
         await east.locator('[data-action=stop]').tap();
         await west.locator('[data-action=close]').tap();
         assert.deepEqual(await securityCalls(), [
@@ -3536,7 +3574,29 @@ try {
         assert.equal(await unmodifiedPanel.locator('[data-cover-rail]').count(), 0);
         await securityPage.close();
       }
-      console.log(engine + ': Security cover rails at 320–390 px, exact native details and independent controls');
+      const guardedRail = await browser.newPage({ viewport: { width: 320, height: 812 }, hasTouch: true });
+      await guardedRail.goto(base + '/fixture-home/home?toolbar-panels&security-cover-rail&cover-rail-confirm');
+      await guardedRail.getByRole('button', { name: 'Security', exact: true }).tap();
+      const coverRail = guardedRail.getByRole('dialog', { name: 'Security', exact: true })
+        .locator('[data-entity="cover.demo_security_first"]');
+      const railConfirmation = guardedRail.getByRole('dialog', { name: 'Confirm action', exact: true });
+      const acceptRail = railConfirmation.getByRole('button', { name: 'Confirm', exact: true });
+      await coverRail.locator('[data-action=open]').tap();
+      await railConfirmation.waitFor();
+      await guardedRail.evaluate(() => {
+        window.bayitTest.setFixtureAttributes('cover.demo_security_first', { current_position: 100 });
+        window.bayitTest.setRoomState('cover.demo_security_first', 'open');
+      });
+      await acceptRail.tap();
+      await railConfirmation.waitFor({ state: 'hidden' });
+      assert.deepEqual(await guardedRail.evaluate(() => window.bayitTest.calls), []);
+      await coverRail.locator('[data-action=close]').tap();
+      await acceptRail.tap();
+      assert.deepEqual(await guardedRail.evaluate(() => window.bayitTest.calls), [
+        { type:'call_service',domain:'cover',service:'close_cover',service_data:{},target:{entity_id:'cover.demo_security_first'} },
+      ]);
+      await guardedRail.close();
+      console.log(engine + ': Security cover rails at 320–390 px, exact native details, endpoint and latest confirmation');
 
       const groupOffPage = await browser.newPage({ viewport:{width:320,height:845}, hasTouch:true, reducedMotion:'reduce' });
       groupOffPage.setDefaultTimeout(8000);

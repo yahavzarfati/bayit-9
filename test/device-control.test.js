@@ -1,11 +1,38 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDeviceController, DeviceControlError, getDeviceModel, planDeviceAction, roomShutdownTargets } from "../src/device-control.mjs";
+import { allowsCoverRailAction, createDeviceController, DeviceControlError, getDeviceModel, planDeviceAction, roomShutdownTargets } from "../src/device-control.mjs";
 
 const entity = (state, attributes = {}) => ({ state, attributes });
 const config = (id, fields) => ({ entity: id, ...fields });
 const code = value => error => error instanceof DeviceControlError && error.code === value;
 const actionIds = model => Object.keys(model.actions).sort();
+
+test("compact cover rails honor reported endpoints, direction and assumed state", () => {
+  const device = config("cover.shade");
+  const scenarios = [
+    ["closed", { current_position: 0 }, [true, false]],
+    ["open", { current_position: 100 }, [false, true]],
+    ["open", { current_position: 24 }, [true, true]],
+    ["opening", { current_position: 0 }, [false, false]],
+    ["closing", { current_position: 100 }, [false, false]],
+    ["opening", { current_position: 25 }, [false, true]],
+    ["closing", { current_position: 75 }, [true, false]],
+    ["closed", {}, [true, false]],
+    ["open", { current_position: null }, [false, true]],
+    ["closed", { current_position: -1 }, [true, false]],
+    ["opening", { current_position: 100, assumed_state: true }, [true, true]],
+    ["closed", { current_position: 0, assumed_state: true }, [true, true]],
+  ];
+  for (const [state, attributes, allowed] of scenarios) {
+    const model = getDeviceModel(device, { [device.entity]: entity(state, { supported_features: 15, ...attributes }) });
+    assert.deepEqual(["open", "close"].map(action => allowsCoverRailAction(model, action)), allowed, state);
+    assert.equal(allowsCoverRailAction(model, "stop"), true, state);
+    assert.ok(model.actions.set_position, "Dedicated position control remains available");
+  }
+  const unavailable = getDeviceModel(device, { [device.entity]: entity("unavailable", { supported_features: 15 }) });
+  assert.equal(allowsCoverRailAction(unavailable, "open"), false);
+  assert.equal(allowsCoverRailAction(unavailable, "stop"), false);
+});
 
 test("room shutdown uses one exact native off target list and skips protected or unsupported controls", async () => {
   const devices = [config("light.desk"), config("switch.outlet"), config("light.offline"),

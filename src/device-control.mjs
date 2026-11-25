@@ -421,6 +421,17 @@ export function getDeviceModel(config, states, nowMs = Date.now()) {
   return deviceModel(normalizedConfig(config), states, nowMs);
 }
 
+export function allowsCoverRailAction(model, action) {
+  if (!model.available) return false;
+  if ((action !== "open" && action !== "close") || model.attributes.assumed_state === true) return true;
+
+  const opening = action === "open";
+  if (model.state === (opening ? "opening" : "closing")) return false;
+  const position = model.attributes.current_position;
+  if (Number.isFinite(position) && position >= 0 && position <= 100) return position !== (opening ? 100 : 0);
+  return model.state !== (opening ? "open" : "closed");
+}
+
 export function supportsRoomShutdown(entity) {
   return isEntity(entity) && ROOM_SHUTDOWN_DOMAINS.has(entity.split(".")[0]);
 }
