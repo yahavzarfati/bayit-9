@@ -120,6 +120,9 @@ export function normalizeProfile(value) {
   const timer = simpleTimer ? undefined : idForDomain(timed.timer_entity, 'timer');
   const dailyUsage = idForDomain(timed.daily_usage_entity, 'sensor');
   if (!startScript && !simpleTimer && !timer && !stopScript) return profile;
+  if (profile.kind === 'boiler' && value.boiler_timer_with_details === true && (simpleTimer || timer)) {
+    profile.boiler_timer_with_details = true;
+  }
   const min = numberOr(timed.min_minutes, 15);
   const max = Math.max(min, numberOr(timed.max_minutes, 60));
   const step = Math.min(max - min || 1, numberOr(timed.step_minutes, 15));
@@ -333,6 +336,7 @@ function presentEntity(entity, state, registry, profile) {
     ...(profile?.level_preselect_entity && { level_preselect_entity: profile.level_preselect_entity }),
     ...(profile?.timed && { timed: profile.timed }),
     ...(profile?.schedule && { schedule: profile.schedule }),
+    ...(profile?.boiler_timer_with_details && { boiler_timer_with_details: true }),
   };
 }
 

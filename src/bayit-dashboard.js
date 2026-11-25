@@ -231,6 +231,11 @@ function normalizeEntity(item) {
       /^input_number\.[a-z0-9_]+$/.test(item.level_preselect_entity ?? '')) {
     entry.level_preselect_entity = item.level_preselect_entity;
   }
+  if (entry.kind === 'boiler' && item.boiler_timer_with_details === true &&
+      (/^sensor\.[a-z0-9_]+$/.test(entry.timed?.simple_timer_entity ?? '') ||
+       /^timer\.[a-z0-9_]+$/.test(entry.timed?.timer_entity ?? ''))) {
+    entry.boiler_timer_with_details = true;
+  }
   if (entry.kind === 'boiler' && item.schedule && typeof item.schedule === 'object') {
     entry.schedule = Object.fromEntries(['save_script', 'delete_script'].flatMap(key =>
       /^script\.[a-z0-9_]+$/.test(item.schedule[key] ?? '') ? [[key, item.schedule[key]]] : []));
@@ -1546,44 +1551,57 @@ export class BayitDashboard extends HTMLElement {
         return {update:schedule.update,dispose:schedule.destroy};
       }});
     }
-    const compactNavigation = !!(config.timed?.simple_timer_entity ||
+    const stacked = config.boiler_timer_with_details === true;
+    const compactNavigation = !stacked && !!(config.timed?.simple_timer_entity ||
       (config.timed?.start_script && config.timed.timer_entity));
-    const [timer] = choices;
+    const [timer, ...secondary] = choices;
+    const selectable = stacked ? secondary : choices;
+    const detailPreference = this.config.storageKey + ':boiler-detail:' + config.entity;
+    let active = timer;
     let returnButton;
     let timerScroll = 0;
-    for (const item of choices) {
+    const activate = (item, remember = false) => {
+      if (active === item) return;
+      if (compactNavigation && active === timer) {
+        returnButton = item.tab;
+        timerScroll = this.nodes.modalBody.scrollTop;
+      }
+      panel?.dispose();
+      active = item;
+      for (const choice of selectable) {
+        choice.element.hidden = choice !== item;
+        choice.tab.setAttribute('aria-pressed', String(choice === item));
+      }
+      panel = item.open?.();
+      panel?.update(this._hass);
+      if (compactNavigation) {
+        const returning = item === timer;
+        timer.tab.hidden = returning;
+        this.nodes.modalBody.scrollTop = returning ? timerScroll : 0;
+        if (returning) returnButton?.focus({ preventScroll: true });
+      }
+      if (stacked && remember) {
+        try { localStorage.setItem(detailPreference, item.label); } catch {}
+      }
+    };
+    for (const item of selectable) {
       const tab = button('control-button', this.t(item.label), item.icon);
       tab.hidden = compactNavigation && item === timer;
-      tab.setAttribute('aria-pressed', String(!item.element.hidden));
+      tab.setAttribute('aria-pressed', String(item === active));
+      tab.onclick = () => activate(item, true);
       tabs.append(tab);
       item.tab = tab;
-      tab.onclick = () => {
-        if (!item.element.hidden) return;
-        if (compactNavigation && !timer.element.hidden) {
-          returnButton = tab;
-          timerScroll = this.nodes.modalBody.scrollTop;
-        }
-        panel?.dispose();
-        panel = undefined;
-        for (const choice of choices) {
-          choice.element.hidden = choice !== item;
-          choice.tab.setAttribute('aria-pressed', String(choice === item));
-        }
-        panel = item.open?.();
-        panel?.update(this._hass);
-        if (compactNavigation) {
-          const returning = item === timer;
-          timer.tab.hidden = returning;
-          this.nodes.modalBody.scrollTop = returning ? timerScroll : 0;
-          if (returning) returnButton?.focus({ preventScroll: true });
-        }
-      };
     }
     content.className = 'boiler-panel';
-    const secondaryPanes = choices.slice(1).map(item => item.element);
-    if (compactNavigation) content.append(controls, tabs, ...secondaryPanes);
+    const secondaryPanes = secondary.map(item => item.element);
+    if (stacked || compactNavigation) content.append(controls, tabs, ...secondaryPanes);
     else content.append(tabs, controls, ...secondaryPanes);
     this.boilerView = {update:hass=>panel?.update(hass), dispose:()=>panel?.dispose()};
+    if (stacked) {
+      let saved;
+      try { saved = localStorage.getItem(detailPreference); } catch {}
+      activate(secondary.find(item => item.label === saved) ?? secondary[0]);
+    }
   }
 
   canShowTimerUsage(entity) {

@@ -13,6 +13,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     const timing = params.has('compact') ? { min_minutes: 1, max_minutes: 300, step_minutes: 1, presets: [] }
       : { min_minutes: 15, max_minutes: 60, step_minutes: 15 };
     const boiler = { entity: 'switch.fixture_boiler', name: 'Fixture boiler', kind: 'boiler',
+      ...(params.has('stacked') && { boiler_timer_with_details: true }),
       ...(!params.has('untimed') && { timed: { simple_timer_entity: 'sensor.fixture_runtime', ...timing } }) };
     const sensors = Array.from({ length: 12 }, (_, index) => ({
       entity: 'sensor.fixture_' + index, name: 'Fixture reading ' + index,
@@ -24,6 +25,13 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
         entry_id: 'fixture-runtime', switch_entity_id: boiler.entity, timer_state: 'idle', device_active: false,
       } },
     };
+    const schedules = ['Morning', 'Evening'].map((name, index) => ({
+      schedule_id: 'fixture' + index, entity_id: 'switch.schedule_fixture' + index, name, enabled: true,
+      weekdays: ['daily'], repeat_type: 'repeat', start_date: null, end_date: null, tags: [],
+      timeslots: [{ start: index ? '17:30:00' : '07:30:00', stop: null, conditions: [],
+        condition_type: null, track_conditions: false, actions: [{ service: 'simple_timer.start_timer',
+          entity_id: null, service_data: { entry_id: 'fixture-runtime', duration: 30 } }] }],
+    }));
     const requests = [];
     const moreInfo = [];
     const card = document.createElement('bayit-dashboard');
@@ -32,13 +40,25 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
       { id: 'bath', name: 'Bath', entities: [boiler], shortcuts: [boiler.entity] },
       { id: 'monitor', name: 'Monitor', entities: [{ ...boiler, role: 'status' }], shortcuts: [boiler.entity] },
     ] });
+    const services = { simple_timer: { start_timer: {} } };
+    if (!params.has('without-scheduler')) services.scheduler = { add: {} };
     const hass = {
-      user: { is_admin: true }, states, services: { scheduler: { add: {} }, simple_timer: { start_timer: {} } },
-      callWS(request) { requests.push(request.type); return Promise.resolve(request.type === 'history/history_during_period' ? {} : []); },
+      user: { is_admin: true }, states, services,
+      callWS(request) {
+        requests.push(request.type);
+        if (params.has('stacked') && request.type === 'scheduler') return Promise.resolve(schedules);
+        return Promise.resolve(request.type === 'history/history_during_period' ? {} : []);
+      },
     };
     card.hass = hass;
     card.addEventListener('hass-more-info', event => moreInfo.push(event.detail.entityId));
-    document.body.append(card);
+    if (params.has('editor')) {
+      const editor = document.createElement('bayit-9-strategy-editor');
+      editor.setConfig({ type: 'custom:bayit-9', locale, profiles: [boiler] });
+      editor.hass = hass;
+      editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
+      document.body.append(editor);
+    } else document.body.append(card);
     window.fixture = {
       requests, moreInfo,
       setupState(deviceState, timerState) {
@@ -229,11 +249,97 @@ try {
       assert.equal(await compact.evaluate(() => window.fixture.requests.includes('call_service')), false);
       await compact.close();
 
+      const stackedPage = await browser.newPage({ viewport: { width: 320, height: 680 }, hasTouch: true });
+      const stackedUrl = 'http://127.0.0.1:' + server.address().port + '?compact&stacked&locale=' + locale;
+      const stackedShortcut = stackedPage.locator('[data-room="bath"] .quick-button[data-entity="switch.fixture_boiler"]');
+      const stackedDialog = stackedPage.getByRole('dialog', { name: 'Fixture boiler', exact: true });
+      const stackedStart = stackedDialog.locator('[data-action="start_timed"]');
+      const stackedSchedule = stackedDialog.getByRole('button', { name: words.schedule, exact: true });
+      const stackedHistory = stackedDialog.getByRole('button', { name: words.history, exact: true });
+      const stackedRange = stackedDialog.locator('.timer-range');
+      const scheduleRows = stackedDialog.locator('.schedule-list');
+      const historyPane = stackedDialog.locator('.boiler-history-host');
+      await stackedPage.goto(stackedUrl);
+      await stackedShortcut.tap();
+      await stackedStart.waitFor();
+      await scheduleRows.waitFor();
+      await scheduleRows.getByText('Morning', { exact: true }).waitFor();
+      await scheduleRows.getByText('Evening', { exact: true }).waitFor();
+      assert.equal(await stackedSchedule.getAttribute('aria-pressed'), 'true');
+      const [railBox, scheduleLink, historyLink] = await stackedDialog.evaluate(dialog => {
+        const box = selector => {
+          const item = dialog.querySelector(selector);
+          const bounds = item.getBoundingClientRect();
+          return { y: bounds.y, bottom: bounds.bottom, height: item.offsetHeight };
+        };
+        return [box('.device-timer'), box('.boiler-tabs button:first-child'), box('.boiler-tabs button:last-child')];
+      });
+      assert.ok(railBox.bottom <= scheduleLink.y && Math.abs(scheduleLink.y - historyLink.y) < 1);
+      assert.ok(scheduleLink.height >= 44 && historyLink.height >= 44);
+      assert.equal(await historyPane.isHidden(), true);
+      assert.equal(await stackedDialog.locator('.boiler-tabs button').count(), 2);
+      await stackedRange.press('ArrowLeft');
+      const duration = await stackedRange.inputValue();
+      assert.equal(duration, '299');
+      await stackedHistory.tap();
+      await stackedPage.waitForFunction(() => window.fixture.requests.includes('history/history_during_period'));
+      await historyPane.waitFor();
+      assert.equal(await stackedStart.isVisible(), true);
+      assert.equal(await stackedRange.inputValue(), duration);
+      assert.equal(await stackedHistory.getAttribute('aria-pressed'), 'true');
+      await scheduleRows.waitFor({ state: 'hidden' });
+
+      await stackedDialog.getByRole('button', { name: words.close, exact: true }).tap();
+      await stackedDialog.waitFor({ state: 'hidden' });
+      await stackedShortcut.tap();
+      await historyPane.waitFor();
+      assert.equal(await stackedStart.isVisible(), true);
+      await stackedSchedule.tap();
+      await scheduleRows.waitFor();
+      await stackedPage.goto(stackedUrl + '&without-scheduler');
+      await stackedShortcut.tap();
+      await historyPane.waitFor();
+      assert.equal(await stackedSchedule.count(), 0);
+      assert.equal(await stackedStart.isVisible(), true);
+      await stackedPage.goto(stackedUrl);
+      await stackedShortcut.tap();
+      await scheduleRows.waitFor();
+      assert.equal(await stackedSchedule.getAttribute('aria-pressed'), 'true');
+      assert.equal(await stackedPage.evaluate(() => window.fixture.requests.includes('call_service')), false);
+
+      const editorWords = locale === 'he' ? {
+        profiles: 'שליטה בדוד ובתנורים', edit: 'עריכה', save: 'שמירת בקר',
+        option: 'הצגת טיימר הדוד לצד התזמון או ההיסטוריה', kind: 'סוג בקר',
+      } : {
+        profiles: 'Boiler and heater controls', edit: 'Edit', save: 'Save profile',
+        option: 'Show the boiler timer with schedule or history', kind: 'Control profile',
+      };
+      await stackedPage.goto(stackedUrl + '&editor');
+      await stackedPage.getByText(editorWords.profiles, { exact: true }).click();
+      await stackedPage.getByRole('button', { name: editorWords.edit, exact: true }).click();
+      const layout = stackedPage.getByRole('checkbox', { name: editorWords.option, exact: true });
+      await layout.waitFor();
+      assert.equal(await layout.isChecked(), true);
+      await layout.uncheck();
+      await stackedPage.getByRole('button', { name: editorWords.save, exact: true }).click();
+      assert.equal(await stackedPage.evaluate(() => window.latest.profiles[0].boiler_timer_with_details), undefined);
+      await stackedPage.getByRole('button', { name: editorWords.edit, exact: true }).click();
+      await layout.check();
+      await stackedPage.getByRole('button', { name: editorWords.save, exact: true }).click();
+      assert.equal(await stackedPage.evaluate(() => window.latest.profiles[0].boiler_timer_with_details), true);
+      await stackedPage.getByRole('button', { name: editorWords.edit, exact: true }).click();
+      await stackedPage.getByLabel(editorWords.kind, { exact: true }).selectOption('heater');
+      await layout.waitFor({ state: 'hidden' });
+      await stackedPage.getByRole('button', { name: editorWords.save, exact: true }).click();
+      assert.equal(await stackedPage.evaluate(() => window.latest.profiles[0].boiler_timer_with_details), undefined);
+      assert.equal(await stackedPage.evaluate(() => window.fixture.requests.includes('call_service')), false);
+      await stackedPage.close();
+
       const { requests, moreInfo } = await page.evaluate(() => window.fixture);
       assert.equal(requests.includes('call_service'), false);
       assert.deepEqual(moreInfo, []);
       assert.deepEqual(errors, []);
-      console.log(launcher.name() + ' at 320–375 px: compact idle boiler, guarded state transitions, schedule/history return, native shortcuts and zero power calls');
+      console.log(launcher.name() + ' at 320–375 px: compact idle boiler, guarded states, combined timer with schedule/history, saved editor option and zero power calls');
     } finally { await browser.close(); }
   }
 } finally { server.close(); }

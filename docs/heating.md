@@ -20,6 +20,8 @@ Open the dedicated boiler panel to see the last seven days of usage. Home Assist
 
 When Scheduler is installed, a bound Simple Timer boiler profile can list and manage simple schedules that belong to that boiler. Complex schedules can be viewed in Scheduler. Optional `schedule.save_script` and `schedule.delete_script` enable server-side revision checks for existing schedules. Choose those scripts only when they are configured for this boiler’s scheduler records and return a success response.
 
+In a timed boiler profile, enable **Show the boiler timer with schedule or history** to keep the timer visible above those views. Set `boiler_timer_with_details: true` in YAML. Bayit 9 remembers the chosen view in the browser. The schedule is available when the timer and Scheduler support it.
+
 The usage history keeps the source recorded by Home Assistant when it is available. A timer run without a recorded user is marked **Matches schedule** when it started on the same local weekday and minute as a currently enabled recurring schedule for that boiler. The label describes a time match. A past schedule may have changed since the run.
 
 ## Using native Home Assistant timers

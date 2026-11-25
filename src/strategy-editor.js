@@ -68,6 +68,7 @@ const WORDS = {
     discovery: 'Automatic device selection', controls: 'Controls only', allDevices: 'All supported devices',
     appearance: 'Appearance', background: 'Wallpaper', layout: 'Room titles', shape: 'Button shape',
     toolbar: 'Toolbar and extra screens', fullscreen: 'Hide Home Assistant chrome on this dashboard',
+    boilerTimerWithDetails: 'Show the boiler timer with schedule or history',
     scheduleSave: 'Boiler schedule save script (optional)', scheduleDelete: 'Boiler schedule delete script (optional)',
     classic: 'Alongside the controls', header: 'At the top', soft: 'Rounded', circle: 'Circle', square: 'Square',
     devices: 'Device visibility', hidden: 'Hide devices', included: 'Add other entities',
@@ -151,6 +152,7 @@ const WORDS = {
     discovery: 'בחירת מכשירים אוטומטית', controls: 'מכשירים נשלטים בלבד', allDevices: 'כל המכשירים הנתמכים',
     appearance: 'מראה', background: 'רקע', layout: 'שמות חדרים', shape: 'צורת כפתורים',
     toolbar: 'סרגל ומסכים נוספים', fullscreen: 'הסתרת סרגל Home Assistant בדשבורד הזה',
+    boilerTimerWithDetails: 'הצגת טיימר הדוד לצד התזמון או ההיסטוריה',
     scheduleSave: 'סקריפט לשמירת תזמון הדוד (אופציונלי)', scheduleDelete: 'סקריפט למחיקת תזמון הדוד (אופציונלי)',
     classic: 'לצד הכפתורים', header: 'בראש הכרטיס', soft: 'מעוגל', circle: 'עיגול', square: 'ריבוע',
     devices: 'הצגת מכשירים', hidden: 'הסתרת מכשירים', included: 'הוספת ישויות נוספות',
@@ -1434,6 +1436,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const resetUsageInput = node('input', { type: 'checkbox', checked: timed.allow_daily_usage_reset === true });
     const resetUsage = node('label', { className: 'check' }, [resetUsageInput, words.allowDailyUsageReset]);
     const simpleFields = node('div', { className: 'stack' }, [field(words.simpleTimerDevice, simple), targetField, resetUsage]);
+    const boilerDetailsInput = node('input', { type: 'checkbox', checked: current.boiler_timer_with_details === true });
+    const boilerDetails = node('label', { className: 'check' }, [boilerDetailsInput, words.boilerTimerWithDetails]);
     const usage = entityInput('sensor', timed.daily_usage_entity);
     const presets = node('input', {
       value: Array.isArray(timed.presets) ? timed.presets.join(', ') : '',
@@ -1459,6 +1463,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       simpleFields.hidden = !usingSimple;
       resetUsage.hidden = !simple.value || Boolean(usage.value && usage.value !== simple.value);
       schedule.hidden = kind.value !== 'boiler' || !usingSimple;
+      boilerDetails.hidden = kind.value !== 'boiler' || !(usingSimple ? simple.value : timer.value);
       const prefix = kind.value === 'climate' && domain === 'climate' ? 'input_boolean.' : fanHeater ? 'switch.' : '';
       const linked = attributesFor(simple.value)?.switch_entity_id ?? (simple.value === timed.simple_timer_entity ? timed.simple_timer_target : undefined);
       const compatible = prefix && typeof linked === 'string' && linked.startsWith(prefix) && linked !== entity.value;
@@ -1472,13 +1477,13 @@ export class Bayit9StrategyEditor extends HTMLElement {
       if (entity.value.split('.')[0] === 'climate' && entity.value !== current.entity) kind.value = 'climate';
       sync();
     });
-    for (const control of [kind, level, timerSource, simple, usage]) control.addEventListener('change', sync);
+    for (const control of [kind, level, timerSource, simple, timer, usage]) control.addEventListener('change', sync);
     sync();
 
     children.push(
       field(words.entity, entity), field(words.kind, kind), field(words.displayName, title), swingField,
       field(words.level, level), fanLevels,
-      field(words.timerSource, timerSource), serverFields, simpleFields, schedule,
+      field(words.timerSource, timerSource), serverFields, simpleFields, boilerDetails, schedule,
       field(words.dailyUsage, usage), field(words.presets, presets),
       node('div', { className: 'grid' }, [field(words.min, min), field(words.max, max), field(words.step, step)]),
       error,
@@ -1500,6 +1505,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
             entity: entity.value, kind: kind.value, name: title.value, level_entity: level.value,
             level_steps: levelSteps.valueAsNumber, level_read_entity: levelRead.value, level_select_script: levelSelectId,
             level_preselect_entity: nextLevelId, unreported_swing_mode: swingMode,
+            boiler_timer_with_details: !boilerDetails.hidden && boilerDetailsInput.checked,
             schedule: {save_script:scheduleSave.value,delete_script:scheduleDelete.value},
             timed: {
               ...(usingSimple

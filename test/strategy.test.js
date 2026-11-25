@@ -443,6 +443,24 @@ test('maps local timer and scripts to the configured heating entity', () => {
   assert.equal(normalizeProfile({ entity: 'switch.demo_bad', kind: 'vacuum' }), null);
 });
 
+test('only an opted-in timed boiler projects the combined timer and detail layout', () => {
+  const profile = {
+    entity: 'switch.demo_boiler', kind: 'boiler', boiler_timer_with_details: true,
+    timed: { simple_timer_entity: 'sensor.demo_timer' },
+  };
+  const projected = discoverRooms({ profiles: [profile] }, home(), 'en')
+    .flatMap(room => room.entities).find(entity => entity.entity === profile.entity);
+  assert.equal(projected.boiler_timer_with_details, true);
+  assert.equal(normalizeProfile({ ...profile, timed: { timer_entity: 'timer.demo_boiler' } })
+    .boiler_timer_with_details, true);
+  assert.equal(normalizeProfile({ ...profile, kind: 'heater' }).boiler_timer_with_details, undefined);
+  assert.equal(normalizeProfile({ ...profile, timed: { start_script: 'script.demo_start' } })
+    .boiler_timer_with_details, undefined);
+  assert.equal(normalizeProfile({ ...profile, timed: { simple_timer_entity: 'input_boolean.demo_timer' } })
+    .boiler_timer_with_details, undefined);
+  assert.equal(normalizeProfile({ ...profile, boiler_timer_with_details: 'true' }).boiler_timer_with_details, undefined);
+});
+
 test('resolves appearance and filters unknown options', () => {
   const configured = generateDashboard({
     locale: 'en', title: ' Demo ', background: 'lagoon',
