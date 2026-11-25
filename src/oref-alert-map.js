@@ -8,8 +8,8 @@ export const OREF_MAP_DEFAULTS = Object.freeze({
 const TAG = 'oref-alert-map';
 const READ_SERVICES = ['last_update', 'areas_status'];
 const RETRY_DELAYS = [1500, 4000, 10000];
-// Home Assistant's frontend forwards the websocket connection-loss result.
-const CONNECTION_LOST_CODES = new Set([3, 'connection_lost']);
+// Home Assistant can report a dropped connection or an explicit read timeout.
+const TRANSIENT_READ_CODES = new Set([3, 'connection_lost', 'timeout']);
 const EMPTY = Object.freeze({});
 // A regional view of Israel, independent of Home Assistant's configured location.
 const REGION = Object.freeze({
@@ -120,7 +120,7 @@ export function createOrefMap({ slot, dialog, fallback, loadingText, options }) 
       if (!reachable()) return;
       remove();
       const code = error?.error?.code ?? error?.code ?? error;
-      if (!CONNECTION_LOST_CODES.has(code) || attempts >= RETRY_DELAYS.length || !ready()) {
+      if (!TRANSIENT_READ_CODES.has(code) || attempts >= RETRY_DELAYS.length || !ready()) {
         failed = true;
         return;
       }

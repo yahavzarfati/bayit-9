@@ -27,9 +27,12 @@ const hass = {
   callService(...args) {
     tracker.calls.push(args);
     if (options.has('read-fails')) return Promise.reject(new Error('Fixture blocked read'));
+    if (options.has('late-timeout')) return new Promise((_, reject) => {
+      tracker.rejectLateRead = () => reject({ code: 'timeout' });
+    });
     if (failure && (failuresAt.has(tracker.calls.length) || options.has('repeat'))) {
-      const error = failure === 'socket'
-        ? { type: 'result', success: false, error: { code: 3, message: 'Connection lost' } }
+      const error = ['socket', 'timeout'].includes(failure)
+        ? { type: 'result', success: false, error: { code: failure === 'socket' ? 3 : 'timeout', message: 'Fixture read failure' } }
         : { code: failure };
       return Promise.reject(error);
     }
@@ -269,19 +272,21 @@ try {
         window.dispatchEvent(new CustomEvent('location-changed'));
       });
 
-      await startWithFailedMap('?failure=socket');
-      await refreshSnapshot();
-      await refreshSnapshot();
-      await page.clock.fastForward(500);
-      assert.equal(await factories(), 1);
-      assert.equal(await fallback.isVisible(), true);
-      await page.clock.fastForward(1300);
-      await map.waitFor();
-      assert.equal(await fallback.isVisible(), false);
-      assert.equal(await factories(), 2);
-      assert.equal(await readCount(), 2);
-      await page.clock.fastForward(20000);
-      assert.equal(await factories(), 2);
+      for (const code of ['socket', 'timeout']) {
+        await startWithFailedMap('?failure=' + code);
+        await refreshSnapshot();
+        await refreshSnapshot();
+        await page.clock.fastForward(500);
+        assert.equal(await factories(), 1);
+        assert.equal(await fallback.isVisible(), true);
+        await page.clock.fastForward(1300);
+        await map.waitFor();
+        assert.equal(await fallback.isVisible(), false);
+        assert.equal(await factories(), 2);
+        assert.equal(await readCount(), 2);
+        await page.clock.fastForward(20000);
+        assert.equal(await factories(), 2);
+      }
 
       await openFixture('?failure=socket&fail-at=2,4,6,8');
       await security();
@@ -299,26 +304,39 @@ try {
       assert.deepEqual(await page.evaluate(() => tracker.calls.map(args => args[1])),
         Array.from({ length: 4 }, () => ['last_update', 'areas_status']).flat());
 
-      await startWithFailedMap('?failure=connection_lost&repeat');
-      for (const [delay, expected] of [[1800, 2], [4300, 3], [10300, 4]]) {
-        await page.clock.fastForward(delay);
-        await page.waitForFunction(total => tracker.detached === total, expected);
-        await refreshSnapshot();
-        assert.equal(await factories(), expected);
-        assert.equal(await readCount(), expected);
-        assert.equal(await fallback.isVisible(), true);
-        assert.equal(await map.count(), 0);
+      for (const code of ['connection_lost', 'timeout']) {
+        await startWithFailedMap('?failure=' + code + '&repeat');
+        for (const [delay, expected] of [[1800, 2], [4300, 3], [10300, 4]]) {
+          await page.clock.fastForward(delay);
+          await page.waitForFunction(total => tracker.detached === total, expected);
+          await refreshSnapshot();
+          assert.equal(await factories(), expected);
+          assert.equal(await readCount(), expected);
+          assert.equal(await fallback.isVisible(), true);
+          assert.equal(await map.count(), 0);
+        }
+        await page.clock.fastForward(30000);
+        assert.equal(await factories(), 4);
+        assert.equal(await readCount(), 4);
       }
-      await page.clock.fastForward(30000);
-      assert.equal(await factories(), 4);
-      assert.equal(await readCount(), 4);
 
-      for (const code of ['forbidden', 'not_found']) {
+      for (const code of ['forbidden', 'not_found', 'unknown_error']) {
         await startWithFailedMap('?failure=' + code);
         await refreshSnapshot();
         await page.clock.fastForward(30000);
         assert.equal(await readCount(), 1);
       }
+
+      await openFixture('?late-timeout');
+      await security();
+      await page.waitForFunction(() => tracker.rejectLateRead);
+      await close();
+      await map.waitFor({ state: 'detached' });
+      await page.evaluate(() => tracker.rejectLateRead());
+      await page.clock.fastForward(30000);
+      assert.equal(await factories(), 1);
+      assert.equal(await readCount(), 1);
+      assert.equal(await map.count(), 0);
 
       for (const end of [close, leaveDashboard, () => page.evaluate(() => tracker.setMapServices(false))]) {
         await startWithFailedMap('?failure=socket');
