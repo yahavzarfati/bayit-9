@@ -1197,6 +1197,10 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   @media (hover: hover) {
     [data-overview-active-rows] > .toolbar-section-items > .tile-row:hover { background: var(--glass); }
   }
+  .vacuum-map-preview {
+    display: block; inline-size: 100%; max-block-size: 360px; object-fit: contain; border-radius: 8px;
+  }
+  .vacuum-map-preview[hidden] { display: none; }
   .native-panel-card { min-width: 0; --ha-card-background: transparent; --ha-card-box-shadow: none;
     --ha-card-border-color: var(--soft-line); --primary-text-color: var(--ink); --secondary-text-color: var(--secondary); }
   .energy-reading, .reading-native-card { display: grid; min-width: 0; grid-template-columns: minmax(0,1fr); }

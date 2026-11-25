@@ -3,6 +3,18 @@ const ENTITY = /^[a-z_][a-z0-9_]*\.[a-z0-9_]+$/;
 const ROOM = /^[1-9][0-9]{0,5}$/;
 const SECTION_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const unavailable = new Set(['unavailable', 'unknown']);
+const floorChangesByView = new WeakMap();
+
+function sharedFloorChange(view, { vacuum, selector }) {
+  let changes = floorChangesByView.get(view);
+  if (!changes) {
+    changes = new Map();
+    floorChangesByView.set(view, changes);
+  }
+  const key = JSON.stringify([vacuum, selector]);
+  if (!changes.has(key)) changes.set(key, { listeners: new Set(), attempt: undefined });
+  return changes.get(key);
+}
 
 const domain = id => id.split('.')[0];
 const validId = (id, domains) => typeof id === 'string' && ENTITY.test(id) && domains.includes(domain(id));
@@ -155,11 +167,17 @@ export function createVacuumMap({ host, dialog, config, context }) {
   const { make, button, t, request, pending, locale } = context;
   const view = host.ownerDocument.defaultView;
   const pathname = view.location.pathname;
+  const floorChange = sharedFloorChange(view, config);
+  const updateViews = () => { for (const update of floorChange.listeners) update(); };
   const controls = make('div', 'weather-tabs');
   const status = make('p', 'empty');
   status.setAttribute('role', 'status');
   const slot = make('div', 'native-panel-card');
-  host.append(controls, status, slot);
+  const preview = make('img', 'vacuum-map-preview');
+  preview.alt = t('vacuum_map_preview');
+  preview.referrerPolicy = 'no-referrer';
+  preview.hidden = true;
+  host.append(controls, status, preview, slot);
   const choices = config.floors.map(floor => {
     const choice = button('control-button', floor.name ?? floor.option);
     choice.onclick = () => selectFloor(floor);
@@ -169,7 +187,6 @@ export function createVacuumMap({ host, dialog, config, context }) {
   const events = new view.AbortController();
   const observer = new view.MutationObserver(sync);
   let hass;
-  let selection;
   let attached;
   let loading;
   let failedKey;
@@ -191,25 +208,31 @@ export function createVacuumMap({ host, dialog, config, context }) {
     attached = undefined;
   }
 
+  function showPreview(map) {
+    preview.hidden = !map;
+    if (!map) preview.removeAttribute('src');
+    else if (preview.getAttribute('src') !== map.picture) preview.src = map.picture;
+  }
+
   function keyFor(map) {
-    return JSON.stringify([map.floor.image, map.calibration, map.rooms]);
+    return JSON.stringify([map.floor.option, map.floor.image, map.calibration, map.rooms]);
   }
 
   async function selectFloor(floor) {
-    if (!active() || selection?.working || pending(config.selector) || !view.customElements.get(TAG)) return;
+    if (!active() || floorChange.attempt?.working || pending(config.selector) || !view.customElements.get(TAG)) return;
     const current = snapshot();
     if (current.selected === floor.option || !current.choices.includes(floor)) return;
     const attempt = { option: floor.option, working: true };
-    selection = attempt;
-    sync();
+    floorChange.attempt = attempt;
+    updateViews();
     try {
       await request({ entity: config.selector }, 'select_option', floor.option);
     } catch {
       // No map commands resume until Home Assistant reports the requested option.
     } finally {
-      if (selection === attempt) {
+      if (floorChange.attempt === attempt) {
         attempt.working = false;
-        if (!disposed) sync();
+        updateViews();
       }
     }
   }
@@ -226,7 +249,8 @@ export function createVacuumMap({ host, dialog, config, context }) {
       localize: (...args) => hass.localize?.(...args),
       hassUrl: path => path === map.picture ? path : '',
       async callService(domain, service, data, target) {
-        const now = active() && attached?.card === element && !selection && !pending(config.selector) && snapshot().map;
+        const now = active() && attached?.card === element && !floorChange.attempt &&
+          !pending(config.selector) && snapshot().map;
         const payload = now && keyFor(now) === key && commandFor(config.vacuum, now.rooms, domain, service, data, target);
         if (!payload || typeof hass?.callWS !== 'function') throw new Error(t('vacuum_map_unconfirmed'));
         return await hass.callWS({ type: 'call_service', domain, service, service_data: payload,
@@ -236,19 +260,30 @@ export function createVacuumMap({ host, dialog, config, context }) {
   }
 
   function sync() {
-    if (!active()) { remove(); return; }
+    if (!active()) { remove(); showPreview(); return; }
     const current = snapshot();
-    if (selection && selection.option === current.selected && !pending(config.selector)) selection = undefined;
+    const busy = pending(config.selector);
+    let selection = floorChange.attempt;
+    if (selection && !selection.working && !busy && selection.option === current.selected && current.map) {
+      selection = floorChange.attempt = undefined;
+    }
     const ready = Boolean(view.customElements.get(TAG)) && typeof view.loadCardHelpers === 'function';
     for (const { choice, floor } of choices) {
       choice.setAttribute('aria-pressed', String(!selection && current.selected === floor.option));
-      choice.disabled = !ready || selection?.working || pending(config.selector) ||
+      choice.disabled = !ready || selection?.working || busy ||
         current.selected === floor.option || !current.choices.includes(floor);
     }
-    status.textContent = t(selection ? selection.working ? 'vacuum_map_waiting' : 'vacuum_map_unconfirmed'
-      : ready ? 'vacuum_map_unavailable' : 'vacuum_map_dependency');
+    const readOnlyMap = selection && !selection.working && !busy ? current.map : undefined;
+    showPreview(readOnlyMap);
+    if (readOnlyMap) {
+      status.textContent = t('vacuum_map_read_only').replace('{floor}', readOnlyMap.floor.name ?? readOnlyMap.floor.option);
+    } else {
+      const message = !ready ? 'vacuum_map_dependency' : selection?.working ? 'vacuum_map_waiting'
+        : selection && current.selected ? 'vacuum_map_unconfirmed' : 'vacuum_map_unavailable';
+      status.textContent = t(message);
+    }
     status.hidden = false;
-    if (!ready || !current.map || selection || pending(config.selector)) { remove(); return; }
+    if (!ready || !current.map || selection || busy) { remove(); return; }
     const key = keyFor(current.map);
     if (attached?.key === key) {
       status.hidden = true;
@@ -265,7 +300,7 @@ export function createVacuumMap({ host, dialog, config, context }) {
     const attempt = { key };
     loading = attempt;
     const matches = () => {
-      const live = active() && !selection && snapshot().map;
+      const live = active() && !floorChange.attempt && !pending(config.selector) && snapshot().map;
       return loading === attempt && live && keyFor(live) === key ? live : null;
     };
     void (async () => {
@@ -296,9 +331,17 @@ export function createVacuumMap({ host, dialog, config, context }) {
     view.addEventListener(event, sync, { signal: events.signal });
   }
   view.navigation?.addEventListener('currententrychange', sync, { signal: events.signal });
+  floorChange.listeners.add(sync);
   observer.observe(dialog, { attributes: true, attributeFilter: ['open', 'data-closing'] });
   return {
     update(state) { hass = state; sync(); },
-    dispose() { disposed = true; events.abort(); observer.disconnect(); remove(); },
+    dispose() {
+      disposed = true;
+      floorChange.listeners.delete(sync);
+      events.abort();
+      observer.disconnect();
+      remove();
+      showPreview();
+    },
   };
 }

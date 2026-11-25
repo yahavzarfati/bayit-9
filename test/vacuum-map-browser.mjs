@@ -51,7 +51,10 @@ const hass = {
     'image.hidden': { hidden: true } },
   callWS(message) {
     tracker.calls.push(message);
-    if (options.has('reject-floor') && message.domain === 'select') return Promise.reject(new Error('Fixture refused floor switch'));
+    if (message.domain === 'select') {
+      if (options.has('reject-floor')) return Promise.reject(new Error('Fixture refused floor switch'));
+      if (options.has('request-timeout')) return new Promise(() => {});
+    }
     return Promise.resolve({});
   },
 };
@@ -135,12 +138,101 @@ if (options.has('editor')) {
 window.tracker = tracker;
 </script>`;
 const server = http.createServer((request, response) => {
+  if (request.url.startsWith('/api/image_proxy/')) {
+    response.writeHead(200, { 'content-type':'image/svg+xml' });
+    return response.end('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 60"><rect x="5" y="5" width="70" height="50" fill="silver"/></svg>');
+  }
   const script = request.url === '/bayit-9.js';
   response.writeHead(200, { 'content-type': script ? 'text/javascript' : 'text/html' });
   response.end(script ? bundle : fixture);
 });
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
+
+async function assertVacuumFloorRecovery(browser) {
+  for (const [flags, locale] of [['reject-floor','en'],['state-timeout','he'],['request-timeout','en']]) {
+    const hebrew = locale === 'he';
+    const page = await browser.newPage({ viewport:{width:390,height:844},hasTouch:true,reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    const base = 'http://127.0.0.1:' + server.address().port + '/fixture-home/home';
+    const name = hebrew ? 'שואב' : 'Robot vacuum';
+    const panel = page.getByRole('dialog',{name,exact:true});
+    const map = panel.locator('xiaomi-vacuum-map-card');
+    const preview = panel.getByRole('img',{name:hebrew ? 'מפת קומה לצפייה בלבד' : 'Read-only floor map',exact:true});
+    const select = panel.getByRole('button',{name:'Lower floor',exact:true});
+    const unavailable = hebrew ? 'מפת הקומה אינה זמינה.' : 'The floor map is unavailable.';
+    const expected = { type:'call_service',domain:'select',service:'select_option',
+      service_data:{option:'Lower'},target:{entity_id:'select.fixture'} };
+    const commands = () => page.evaluate(() => tracker.calls);
+    const open = () => page.getByRole('button',{name,exact:true}).tap();
+    const close = async () => {
+      await panel.getByRole('button',{name:hebrew ? 'סגירה' : 'Close',exact:true}).tap();
+      await panel.waitFor({state:'hidden'});
+    };
+    const oldMapBlocked = () => page.evaluate(async () => {
+      try {
+        await tracker.hass[0].callService('roborock','set_vacuum_goto_position',{entity_id:'vacuum.fixture',x:1,y:2});
+        return false;
+      } catch { return true; }
+    });
+    try {
+      if (flags !== 'reject-floor') await page.clock.install();
+      await page.goto(base + '?' + flags + '&locale=' + locale);
+      await open();
+      await map.waitFor();
+      assert.deepEqual(await commands(),[]);
+      await select.tap();
+      await map.waitFor({state:'detached'});
+      assert.deepEqual(await commands(),[expected]);
+      assert.equal(await oldMapBlocked(),true);
+      if (flags !== 'reject-floor') {
+        assert.equal(await preview.isVisible(),false);
+        await close();
+        await open();
+        assert.equal(await map.count(),0);
+        assert.equal(await preview.isVisible(),false);
+        await page.clock.fastForward(11000);
+      }
+      await preview.waitFor();
+      assert.match(await preview.getAttribute('src'),/\/api\/image_proxy\/image\.upper\?token=fixture$/);
+      assert.ok(await preview.evaluate(async image => {
+        await image.decode();
+        return image.naturalWidth > 0;
+      }));
+      assert.equal(await map.count(),0);
+      await panel.getByText(hebrew ? 'הפקודות מהמפה מושהות.' : 'Map commands are paused.',{exact:false}).waitFor();
+      await close();
+      await open();
+      await preview.waitFor();
+      assert.equal(await map.count(),0);
+      assert.equal(await oldMapBlocked(),true);
+      assert.deepEqual(await commands(),[expected]);
+
+      await page.evaluate(() => tracker.floor('unavailable'));
+      await preview.waitFor({state:'hidden'});
+      await panel.getByText(unavailable,{exact:false}).waitFor();
+      assert.equal(await map.count(),0);
+      assert.equal(await select.isDisabled(),true);
+
+      await page.evaluate(() => tracker.floor('Upper'));
+      await preview.waitFor();
+      assert.equal(await map.count(),0);
+      assert.equal(await select.isEnabled(),true);
+      await page.evaluate(() => tracker.floor('Lower'));
+      await map.waitFor();
+      await preview.waitFor({state:'hidden'});
+      assert.equal(await page.evaluate(() => tracker.configs.at(-1).map_source.camera),'image.lower');
+      assert.equal(await oldMapBlocked(),true);
+      await page.evaluate(() => tracker.hass.at(-1).callService('roborock','set_vacuum_goto_position',
+        {entity_id:'vacuum.fixture',x:1,y:2}));
+      assert.deepEqual(await commands(),[expected,{type:'call_service',domain:'roborock',
+        service:'set_vacuum_goto_position',service_data:{x:1,y:2},target:{entity_id:'vacuum.fixture'}}]);
+      assert.deepEqual(errors,[]);
+    } finally { await page.close(); }
+  }
+}
 
 async function assertCompactVacuumMap(browser) {
   for (const locale of ['en', 'he']) {
@@ -323,7 +415,7 @@ try {
       await open();
       await map.waitFor();
       await page.getByRole('button', {name:'Lower floor'}).click();
-      await page.getByText('The vacuum has not confirmed this floor.', {exact:false}).waitFor();
+      await page.getByText('The vacuum has not confirmed the change.', {exact:false}).waitFor();
       assert.equal(await map.count(),0);
       assert.equal(await page.evaluate(() => tracker.calls.length),1);
       await page.evaluate(() => tracker.floor('Lower'));
@@ -456,6 +548,8 @@ try {
       assert.equal(await labels.getAttribute('aria-invalid'), 'true');
       assert.deepEqual(await readoutDraft(), saved);
       assert.deepEqual(errors, []);
+      await assertVacuumFloorRecovery(browser);
+      console.log(name + ': rejected and timed-out floor changes stay read-only through reopening until HA confirms a calibrated floor');
       await assertCompactVacuumMap(browser);
       console.log(name + ': calibrated map placement, compact mobile layout, explicit selection, and scoped program commands');
     } finally {
