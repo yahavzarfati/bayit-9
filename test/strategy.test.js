@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverOverviewEntities, discoverRooms, generateDashboard,
-  normalizeOverviewDiscovery, normalizeProfile, normalizeShortcutDetailRoutes, roomPanelOptions,
+  normalizeOverviewDiscovery, normalizeProfile, normalizeRoomVacuumSummary, normalizeShortcutDetailRoutes, roomPanelOptions, roomVacuumSummary,
   selectableRoomEntities, shortcutDetailPanels, suggestedDashboard,
 } from '../src/strategy-model.js';
 import { getDeviceModel } from '../src/device-control.mjs';
@@ -277,6 +277,37 @@ test('room temperature choice and optional climate fallback require valid visibl
   assert.equal(project(sensor, climate, [humidity, climate]).room_temperature_entity, undefined);
   hass.states[sensor] = { state: 'unavailable', attributes: {} };
   assert.equal(project(sensor, climate).room_temperature_fallback_entity, climate);
+});
+
+test('room vacuum readouts respect domains, reported activity, exact labels and percent bounds', () => {
+  const bindings = {
+    status_entity:'sensor.fixture_robot_status', battery_entity:'sensor.fixture_battery',
+    progress_entity:'sensor.fixture_progress', cleaning_entity:'binary_sensor.fixture_cleaning',
+  };
+  assert.deepEqual(normalizeRoomVacuumSummary({ ...bindings, cleaning_entity: 'switch.unrelated' }, id => id !== bindings.battery_entity),
+    { status_entity: bindings.status_entity, progress_entity: bindings.progress_entity });
+  const records = {
+    [bindings.status_entity]: { state:'zoned_mopping' },
+    [bindings.battery_entity]: { state:'41.6', attributes:{unit_of_measurement:'%'} },
+    [bindings.progress_entity]: { state:'0' },
+    [bindings.cleaning_entity]: { state:'off' },
+  };
+  const labels = { zoned_mopping:'Mopping the selected area', unavailable:'Invalid label' };
+  const summary = state => roomVacuumSummary(bindings, id => records[id], state, labels);
+  assert.deepEqual(summary('idle'), {status:'Mopping the selected area', battery:42, progress:0});
+  records[bindings.status_entity].state = 'charging';
+  assert.equal(summary('idle').progress, undefined);
+  records[bindings.cleaning_entity].state = 'on';
+  assert.equal(summary('idle').progress, 0);
+  for (const bad of ['101','-1','0x10','','unknown','Infinity']) {
+    records[bindings.progress_entity].state = bad;
+    assert.equal(summary('cleaning').progress, undefined);
+  }
+  records[bindings.status_entity].state = 'unavailable';
+  records[bindings.progress_entity].state = '100';
+  records[bindings.battery_entity].attributes.unit_of_measurement = 'kWh';
+  records[bindings.cleaning_entity].state = 'off';
+  assert.deepEqual(summary('cleaning'), {status:undefined, battery:undefined, progress:100});
 });
 
 test('keeps explicit vacuum floor bindings and excludes card config and geometry', () => {

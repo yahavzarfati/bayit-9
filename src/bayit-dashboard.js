@@ -3,8 +3,8 @@ import { languages } from './bayit-dashboard-i18n.js';
 import { classicRoomTitle, DEVICE_ICONS, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isToolbarReadouts, isVacuumProgramAction,
   isEnergyReadingCards, isWeatherReadingsList,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
-  normalizeToolbarReadout, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
-  ROOM_PANEL_KINDS, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, supportsRoomTemperatureSource, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
+  normalizeRoomVacuumSummary, normalizeToolbarReadout, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
+  ROOM_PANEL_KINDS, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
   sensorComparisonOptions, sensorSeriesColor, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
@@ -262,6 +262,8 @@ function normalizeEntity(item) {
       if (item.room_vacuum_panel_on_hold === true) entry.room_vacuum_panel_on_hold = true;
       const display = roomVacuumPresentation(item.room_vacuum_presentation);
       if (display) entry.room_vacuum_presentation = display;
+      const summary = normalizeRoomVacuumSummary(item.room_vacuum_summary);
+      if (summary) entry.room_vacuum_summary = summary;
     }
   }
   if (entity.startsWith('light.') && entry.role !== 'status') {
@@ -1467,8 +1469,12 @@ export class BayitDashboard extends HTMLElement {
     const compactHeater = !!(titleInDialog || room) && config.kind === 'heater' && !!config.timed && config.role !== 'status';
     item.toggleAttribute('data-compact-heater', compactHeater);
     const standaloneBoiler = titleInDialog && config.kind === 'boiler' && config.role !== 'status';
+    const vacuumSummary = panelTarget && panelKind === 'vacuum' && vacuumDisplay !== 'tile' ? config.room_vacuum_summary : undefined;
+    const vacuumStatusLabels = vacuumSummary?.status_entity && panelTarget.sections?.flatMap(section => section.entities)
+      .find(entry => entry.entity === vacuumSummary.status_entity && entry.readout?.state_labels)?.readout.state_labels;
     const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactHeater,
-      standaloneBoiler, compactCover: cover, vacuumCleaningControls: vacuumDisplay === 'cleaning-controls' };
+      standaloneBoiler, compactCover: cover, vacuumCleaningControls: vacuumDisplay === 'cleaning-controls',
+      vacuumSummary, vacuumStatusLabels };
     const bindPanelLaunch = source => {
       const targetName = panelTarget.label || this.t(panelKind);
       const hint = panelOpensOnTap ? this.t('vacuum_room_hold') : this.t('room_panel_hold').replace('{name}', targetName);
@@ -1759,7 +1765,19 @@ export class BayitDashboard extends HTMLElement {
         if (observed) action.setAttribute('aria-description', this.t('climate_current_preset').replace('{preset}', this.presetName(active)));
         else action.removeAttribute('aria-description');
       }
-      setText(view.state, (feedback?.requestLabel || this.stateLabel(model, view.inlineClimate ? 'inline-climate' : undefined)) + (media ? ' · ' + media : ''));
+      const deviceStatus = feedback?.requestLabel || this.stateLabel(model, view.inlineClimate ? 'inline-climate' : undefined);
+      if (view.vacuumSummary) {
+        const stateFor = id => id && isVisibleEntity(id, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities)
+          ? this._hass.states[id] : undefined;
+        const summary = roomVacuumSummary(view.vacuumSummary, stateFor, model.state, view.vacuumStatusLabels);
+        const parts = [summary.status ?? deviceStatus];
+        if (summary.battery !== undefined) parts.push(this.t('vacuum_room_battery').replace('{value}', ltr(summary.battery + '%')));
+        if (summary.progress !== undefined) parts.push(this.t('vacuum_room_progress').replace('{value}', ltr(summary.progress + '%')));
+        const reading = parts.join(' · ');
+        setText(view.state, reading);
+        const description = view.panelLaunch.hint + ' · ' + reading;
+        if (view.more.getAttribute('aria-description') !== description) view.more.setAttribute('aria-description', description);
+      } else setText(view.state, deviceStatus + (media ? ' · ' + media : ''));
       view.state.dataset.tone = feedback ? 'moving' : this.tone(model);
       if (view.tile && !view.panelLaunch) {
         const actionId = model.state === 'off' ? 'turn_on' : 'turn_off';

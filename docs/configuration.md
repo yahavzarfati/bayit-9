@@ -155,6 +155,8 @@ For a calibrated Roborock map, edit a **Robot vacuum** button in **Toolbar and e
 
 For a linked vacuum in **Rooms**, **Vacuum controls in the room** can use a **Status tile** or show only **Cleaning controls** such as start, pause, stop and return to dock. The panel gestures apply in every presentation. In YAML, map the vacuum entity ID to `tile` or `cleaning-controls` under `vacuum_panel_presentation` in the room override.
 
+Under **Vacuum status readings** in **Rooms**, a linked vacuum can show an external status, battery and cleaning progress in its room header. Progress appears during a reported cleaning job. Choose only the sources available in your home. The YAML room override `vacuum_panel_summary` maps the vacuum entity ID to optional `status_entity`, `battery_entity`, `progress_entity` and `cleaning_entity` bindings.
+
 Select **Readings** in the **Robot vacuum** editor and enable **Show compact read-only status tiles** to show vacuum status, battery, selected map, current room or maintenance sensors. Sensor and select labels can use the exact reported value. Sensor numbers can use a custom display unit or zero to three decimal places. The selected map readout displays the reported floor and the map buttons handle floor changes.
 
 For YAML, add `layout: readouts` to the vacuum's `kind: readings` section. A sensor can use `readout: { state_labels: { docked: At dock }, precision: 0, unit: h }`. Every setting is optional. State labels match case and leave unknown and unavailable states to the dashboard. Omit `unit` to keep the Home Assistant entity unit.

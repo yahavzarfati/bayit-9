@@ -636,6 +636,12 @@ if (query.has('toolbar-panels')) {
     'vacuum.demo_robot': {state:'idle',attributes:{friendly_name:'Robot',
       supported_features:query.has('vacuum-room-display-test') ? 8244 | 8 | 512 : 8244,fan_speed_list:['silent','normal']}},
     'button.demo_filter': {state:'unknown',attributes:{friendly_name:'Reset filter'}},
+    ...(query.has('vacuum-room-summary') && {
+      'sensor.demo_robot_status': {state:'segment_cleaning',attributes:{friendly_name:'Robot state'}},
+      'sensor.demo_robot_battery': {state:'43',attributes:{friendly_name:'Robot battery',unit_of_measurement:'%'}},
+      'sensor.demo_robot_progress': {state:'28',attributes:{friendly_name:'Robot progress',unit_of_measurement:'%'}},
+      'binary_sensor.demo_robot_cleaning': {state:'off',attributes:{friendly_name:'Robot running'}},
+    }),
     'calendar.demo_household': {state:'off',attributes:{friendly_name:'Household'}},
     'calendar.demo_birthdays': {state:'off',attributes:{friendly_name:'Birthdays'}},
   });
@@ -828,6 +834,10 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     vacuum_panel_links:{'vacuum.demo_robot':'vacuum-panel'},
     ...(query.has('vacuum-panel-hold') && {vacuum_panel_hold_entities:['vacuum.demo_robot']}),
     ...(query.has('vacuum-room-display') && {vacuum_panel_presentation:{'vacuum.demo_robot':query.get('vacuum-room-display')}}),
+    ...(query.has('vacuum-room-summary') && {vacuum_panel_summary:{'vacuum.demo_robot':{
+      status_entity:'sensor.demo_robot_status',battery_entity:'sensor.demo_robot_battery',
+      progress_entity:'sensor.demo_robot_progress',cleaning_entity:'binary_sensor.demo_robot_cleaning',
+    }}}),
   } } }),
   toolbar:[
     ...(query.has('security-cover-rail') ? [
@@ -898,6 +908,11 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     {id:'vacuum-panel',kind:'vacuum',placement:linkedPanels ? 'linked' : 'settings',
       ...(linkedPanels && { label:hass.locale.language === 'he' ? 'שואב מקושר' : 'Linked Vacuum' }),
       sections:[{kind:'vacuum',entities:[{entity:'vacuum.demo_robot',role:'device'}]},
+      ...(query.has('vacuum-room-summary') ? [{kind:'readings',layout:'readouts',entities:[{
+        entity:'sensor.demo_robot_status',role:'status',readout:{state_labels:{
+          segment_cleaning:hass.locale.language === 'he' ? 'מנקה חדר נבחר' : 'Cleaning selected room',
+        }},
+      }]}] : []),
       {kind:'actions',entities:[{entity:'button.demo_filter',role:'action',confirmation:'Reset the filter?'}]}]},
     ...(!query.has('linked-only-fallback') ? [
       {id:'sensors-panel',kind:'sensors',placement:'settings',sections:[{kind:'readings',entities:[
@@ -2524,6 +2539,54 @@ async function assertRoomVacuumPresentation(browser) {
   }
 }
 
+async function assertRoomVacuumSummary(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const url = base + '?toolbar-panels&room-link&vacuum-room-summary&locale=' + locale;
+    const open = async flags => {
+      await page.goto(url + flags);
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+    };
+    const header = page.getByRole('dialog',{name:'Studio',exact:true}).locator('[data-entity="vacuum.demo_robot"] .current');
+    const state = (entity,value) => page.evaluate(([id,value]) => window.bayitTest.setRoomState(id,value), [entity,value]);
+    try {
+      await open('&vacuum-room-display=cleaning-controls&vacuum-panel-hold');
+      await header.getByText(he ? /מנקה חדר נבחר/ : /Cleaning selected room/).waitFor();
+      assert.match(await header.textContent(),/43%/);
+      assert.match(await header.textContent(),/28%/);
+      await state('sensor.demo_robot_status','charging');
+      await header.getByText(/28%/).waitFor({state:'hidden'});
+      await state('binary_sensor.demo_robot_cleaning','on');
+      await header.getByText(/28%/).waitFor();
+      await state('sensor.demo_robot_progress','101');
+      await header.getByText(/28%/).waitFor({state:'hidden'});
+      assert.doesNotMatch(await header.textContent(),/101%/);
+      await state('sensor.demo_robot_battery','unavailable');
+      await state('sensor.demo_robot_status','unknown');
+      await header.getByText(he ? /בהמתנה/ : /Idle/).waitFor();
+      assert.doesNotMatch(await header.textContent(),/43%/);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls),[]);
+
+      await open('&vacuum-room-display=tile');
+      assert.doesNotMatch(await header.textContent(),/43%|28%/);
+
+      await page.goto(url + '&editor');
+      await page.getByText(he ? 'חדרים' : 'Rooms',{exact:true}).tap();
+      await page.getByLabel(he ? 'חדר להתאמה אישית' : 'Room to customize',{exact:true}).selectOption('studio');
+      const battery = page.getByLabel(he ? 'חיישן סוללה' : 'Battery sensor',{exact:true});
+      assert.equal(await battery.inputValue(),'sensor.demo_robot_battery');
+      await battery.selectOption('');
+      const summary = await page.evaluate(() => window.latest.room_overrides.studio.vacuum_panel_summary['vacuum.demo_robot']);
+      assert.equal(summary.battery_entity, undefined);
+      assert.equal(summary.progress_entity,'sensor.demo_robot_progress');
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
@@ -3088,6 +3151,7 @@ try {
       console.log(engine + ': curated media and vacuum controls, Now Playing, and the original room shortcuts');
       await assertRoomVacuumGestures(browser);
       await assertRoomVacuumPresentation(browser);
+      await assertRoomVacuumSummary(browser);
       console.log(engine + ': room-specific linked vacuum tap/hold, keyboard and native focus restoration');
 
       for (const locale of ['en','he']) {

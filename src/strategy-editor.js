@@ -3,8 +3,8 @@ import {
   BACKGROUNDS, classicRoomTitle, CUSTOM_ROOM_PREFIX, dashboardRoomMemberships, dashboardRoomOptions, DEVICE_ICONS, discoverRooms,
   isVisibleEntity, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
   normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeRoomIcon, normalizeShortcutDetailEntities, normalizeShortcutDetailRoutes,
-  normalizeUnreportedSwingMode,
-  PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, roomShortcutDevices, roomVacuumPresentation,
+  normalizeRoomVacuumSummary, normalizeUnreportedSwingMode,
+  PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, roomShortcutDevices, roomVacuumPresentation, ROOM_VACUUM_SUMMARY_DOMAINS,
   selectableRoomEntities, selectedRoomIds,
   shortcutPanelOptions, STRATEGY_NAME, supportsNativeShortcutDetails, supportsShortcutWithoutDetails,
   supportsRoomTemperatureSource, usesAutomaticRoomDevices,
@@ -67,6 +67,9 @@ const WORDS = {
     roomVacuumGesture: 'Open the vacuum panel with', roomVacuumTap: 'Tap', roomVacuumHold: 'Press and hold',
     roomVacuumDisplay: 'Vacuum controls in the room', roomVacuumAll: 'All available controls',
     roomVacuumCleaning: 'Cleaning controls', roomVacuumTile: 'Status tile',
+    roomVacuumSummary: 'Vacuum status readings', roomVacuumNoReading: 'None',
+    roomVacuumReadings: {status_entity:'Status sensor', battery_entity:'Battery sensor',
+      progress_entity:'Progress sensor', cleaning_entity:'Cleaning indicator'},
     sections: 'Room sections', sectionMode: 'Section arrangement', automaticSections: 'Automatic grouping',
     manualSections: 'Arrange sections manually',
     editSection: 'Section to customize', addSection: 'Add section', removeSection: 'Delete section',
@@ -162,6 +165,9 @@ const WORDS = {
     roomVacuumGesture: 'פתיחת חלונית השואב באמצעות', roomVacuumTap: 'לחיצה', roomVacuumHold: 'לחיצה ארוכה',
     roomVacuumDisplay: 'פקדי השואב בחדר', roomVacuumAll: 'כל הפקדים הזמינים',
     roomVacuumCleaning: 'פקדי ניקוי', roomVacuumTile: 'אריח מצב',
+    roomVacuumSummary: 'נתוני מצב השואב', roomVacuumNoReading: 'ללא',
+    roomVacuumReadings: {status_entity:'חיישן מצב', battery_entity:'חיישן סוללה',
+      progress_entity:'חיישן התקדמות', cleaning_entity:'חיווי ניקוי פעיל'},
     sections: 'קבוצות בחדר', sectionMode: 'סידור הקבוצות', automaticSections: 'קיבוץ אוטומטי',
     manualSections: 'סידור ידני של הקבוצות',
     editSection: 'קבוצה לעריכה', addSection: 'הוספת קבוצה', removeSection: 'מחיקת קבוצה',
@@ -1006,6 +1012,13 @@ export class Bayit9StrategyEditor extends HTMLElement {
         if (Object.keys(displays).length) next.vacuum_panel_presentation = displays;
         else delete next.vacuum_panel_presentation;
       };
+      const setSummary = (next, summary) => {
+        const summaries = { ...override.vacuum_panel_summary };
+        if (summary) summaries[id] = summary;
+        else delete summaries[id];
+        if (Object.keys(summaries).length) next.vacuum_panel_summary = summaries;
+        else delete next.vacuum_panel_summary;
+      };
       const input = select(panelOptions, targets.some(target => target.id === chosenPanel) ? chosenPanel : '');
       const focusKey = 'room-panel-' + id;
       input.dataset.roomFocus = focusKey;
@@ -1019,6 +1032,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         if (vacuum && !input.value) {
           setHold(next, false);
           setDisplay(next);
+          setSummary(next);
         }
         this.#setRoomOverride(room.id, next, focusKey);
       });
@@ -1043,6 +1057,28 @@ export class Bayit9StrategyEditor extends HTMLElement {
           this.#setRoomOverride(room.id, next, display.dataset.roomFocus);
         });
         options.push(field(words.roomVacuumDisplay + ' · ' + name, display));
+        if (display.value !== 'tile') {
+          const summary = normalizeRoomVacuumSummary(override.vacuum_panel_summary?.[id]);
+          const candidates = (available ? [...available.values()] : selectableRoomEntities(this.#config, this.#hass));
+          const readings = Object.entries(ROOM_VACUUM_SUMMARY_DOMAINS).map(([key, domain]) => {
+            const choices = candidates.filter(item => item.entity.startsWith(domain + '.'))
+              .map(item => [item.entity, item.name || item.entity])
+              .sort((a, b) => a[1].localeCompare(b[1], language));
+            const selected = summary?.[key];
+            if (selected && !choices.some(([entity]) => entity === selected)) choices.push([selected, selected + ' · ' + words.missing]);
+            const source = select([['', words.roomVacuumNoReading], ...choices], selected || '');
+            source.dataset.roomFocus = 'room-vacuum-reading-' + id + '-' + key;
+            source.addEventListener('change', () => {
+              const next = { ...override };
+              setSummary(next, normalizeRoomVacuumSummary({ ...summary, [key]: source.value }));
+              this.#setRoomOverride(room.id, next, source.dataset.roomFocus);
+            });
+            return field(words.roomVacuumReadings[key], source);
+          });
+          options.push(node('details', { open: !!summary }, [
+            node('summary', { textContent: words.roomVacuumSummary + ' · ' + name }), ...readings,
+          ]));
+        }
       }
     }
     if (!manual) return [...children, ...options];
@@ -1067,7 +1103,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         next[key] = next[key].filter(id => entities.includes(id));
         if (!next[key].length) delete next[key];
       }
-      for (const key of ['climate_preset_shortcuts', 'shortcut_detail_routes', 'vacuum_panel_presentation',
+      for (const key of ['climate_preset_shortcuts', 'shortcut_detail_routes', 'vacuum_panel_presentation', 'vacuum_panel_summary',
         ...[...ROOM_PANEL_KINDS.values()].map(kind => kind + '_panel_links')]) {
         if (!next[key]) continue;
         next[key] = Object.fromEntries(Object.entries(next[key]).filter(([id]) => entities.includes(id)));

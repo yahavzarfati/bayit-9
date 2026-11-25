@@ -42,6 +42,45 @@ export function roomVacuumPresentation(value) {
   return value === 'tile' || value === 'cleaning-controls' ? value : undefined;
 }
 
+export const ROOM_VACUUM_SUMMARY_DOMAINS = Object.freeze({
+  status_entity: 'sensor', battery_entity: 'sensor', progress_entity: 'sensor', cleaning_entity: 'binary_sensor',
+});
+
+export function normalizeRoomVacuumSummary(value, visible = () => true) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+  const sources = Object.fromEntries(Object.entries(ROOM_VACUUM_SUMMARY_DOMAINS).flatMap(([key, domain]) => {
+    const id = value[key];
+    return idForDomain(id, domain) && visible(id) ? [[key, id]] : [];
+  }));
+  return Object.keys(sources).length ? sources : undefined;
+}
+
+const vacuumActiveJob = new Set([
+  'starting', 'cleaning', 'mopping', 'paused', 'returning', 'returning_home', 'going_to_target', 'docking',
+  'spot_cleaning', 'zoned_cleaning', 'zoned_mopping', 'segment_cleaning', 'segment_mopping',
+  'clean_mop_cleaning', 'clean_mop_mopping', 'segment_clean_mop_cleaning', 'segment_clean_mop_mopping',
+  'zoned_clean_mop_cleaning', 'zoned_clean_mop_mopping',
+]);
+
+export function roomVacuumSummary(sources, stateFor, ownState, labels) {
+  const reported = readoutText(stateFor(sources.status_entity)?.state, 80);
+  const status = reported && !['unknown', 'unavailable'].includes(reported.toLowerCase()) ? reported : undefined;
+  const percent = id => {
+    const record = stateFor(id);
+    const raw = record?.state;
+    const unit = record?.attributes?.unit_of_measurement;
+    if ((unit && unit !== '%') || typeof raw !== 'string' || !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(raw.trim())) return;
+    const value = Number(raw);
+    if (Number.isFinite(value) && value >= 0 && value <= 100) return Math.round(value);
+  };
+  const active = stateFor(sources.cleaning_entity)?.state === 'on' || vacuumActiveJob.has(status ?? ownState);
+  return {
+    status: status && (labels && Object.hasOwn(labels, status) ? labels[status] : status.replaceAll('_', ' ')),
+    battery: percent(sources.battery_entity),
+    progress: active ? percent(sources.progress_entity) : undefined,
+  };
+}
+
 export const ROOM_PANEL_KINDS = new Map([['media_player', 'media'], ['vacuum', 'vacuum']]);
 export const DEVICE_ICONS = {
   light:'mdi:lightbulb-outline', switch:'mdi:toggle-switch-outline', fan:'mdi:fan',
@@ -333,6 +372,7 @@ function dashboardAreas(config, hass) {
       activities: override.activities,
       vacuumPanelHolds: new Set(idList(override.vacuum_panel_hold_entities)),
       vacuumPanelPresentations: override.vacuum_panel_presentation,
+      vacuumPanelSummaries: override.vacuum_panel_summary,
       panelLinks: Object.fromEntries([...ROOM_PANEL_KINDS.values()].flatMap(kind => {
         const links = override[kind + '_panel_links'];
         return links && typeof links === 'object' && !Array.isArray(links) ? [[kind, links]] : [];
@@ -611,6 +651,8 @@ export function discoverRooms(config, hass, locale) {
             if (area.vacuumPanelHolds?.has(device.entity)) device.room_vacuum_panel_on_hold = true;
             const display = roomVacuumPresentation(area.vacuumPanelPresentations?.[device.entity]);
             if (display) device.room_vacuum_presentation = display;
+            const summary = normalizeRoomVacuumSummary(area.vacuumPanelSummaries?.[device.entity], visible);
+            if (summary) device.room_vacuum_summary = summary;
           }
         }
       }
