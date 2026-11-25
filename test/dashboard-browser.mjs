@@ -4892,7 +4892,8 @@ async function assertCompactClimateRail(browser) {
               matches: label.textContent === control.selectedOptions[0].textContent,
               fits: lines.every(line => line.left >= caption.left - 1 && line.right <= caption.right + 1 &&
                 line.top >= bounds.top && line.bottom <= bounds.bottom),
-              lineCount: lines.length,
+              lines: [...new Set(lines.map(line => Math.round(line.bottom)))],
+              captionWidth: caption.width,
               hit: hit.width >= 44 && hit.height >= 44,
               labelClear: chevron.getBoundingClientRect().left >= caption.right &&
                 (!visible || glyph.getBoundingClientRect().right <= caption.left),
@@ -4903,7 +4904,10 @@ async function assertCompactClimateRail(browser) {
             assert.equal(field.visible,width !== 375, JSON.stringify({locale,width,surface,...field}));
             assert.ok(field.matches && field.fits && field.hit && field.labelClear, JSON.stringify({locale,width,surface,...field}));
           }
-          if (he && width >= 390) assert.equal(fields[2].lineCount,2);
+          if (he && width >= 390) {
+            const swingField = fields[2];
+            assert.equal(swingField.lines.length,2, JSON.stringify({locale,width,surface,...swingField}));
+          }
           const power = page.locator('dialog[open] .room-climate-power:enabled');
           assert.equal(await power.count(),1);
           assert.equal(await power.locator('ha-icon').getAttribute('icon'),'mdi:air-conditioner');
