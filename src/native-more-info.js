@@ -16,6 +16,7 @@ export function sameMoreInfoPage(left, right) {
 export function preserveMoreInfoReturn(view, { event, source, body, active, stopped }) {
   const href = view.location.href;
   const scroll = body?.scrollTop;
+  const underlyingDialog = body?.closest('dialog');
   const abort = new view.AbortController();
   source.focus({ preventScroll: true });
   let nativeDialog;
@@ -45,14 +46,17 @@ export function preserveMoreInfoReturn(view, { event, source, body, active, stop
     if (stillOnPage()) nativeDialog ??= opened.composedPath().find(node => node?.localName === MORE_INFO_DIALOG);
   }, options);
   view.addEventListener('dialog-closed', closed => {
-    if (!nativeDialog || closed.detail?.dialog !== MORE_INFO_DIALOG || closed.composedPath()[0] !== nativeDialog) return;
+    const dialog = closed.composedPath()[0];
+    if (closed.detail?.dialog !== MORE_INFO_DIALOG || dialog?.localName !== MORE_INFO_DIALOG ||
+        (nativeDialog && nativeDialog !== dialog)) return;
     if (!stillOnPage()) { stop(); return; }
     frame = view.requestAnimationFrame(() => {
       // Restore the source after the native backdrop clears, unless focus has moved to a new control.
       afterRender = view.setTimeout(() => {
         const root = source.getRootNode();
         const focused = root.activeElement;
-        if (stillOnPage() && (!focused || focused === source || focused === root.body)) {
+        const focusNeedsReturn = !focused || focused === source || focused === root.body || focused === underlyingDialog;
+        if (stillOnPage() && focusNeedsReturn) {
           if (source.isConnected && !source.disabled && !source.closest('[hidden]')) source.focus({ preventScroll: true });
           if (body) body.scrollTop = scroll;
         }

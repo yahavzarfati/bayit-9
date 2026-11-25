@@ -70,13 +70,22 @@ if (query.has('native-more-info')) document.addEventListener('hass-more-info', e
   modal.addEventListener('close', () => {
     const ownedEntry = history.state?.dialog === tag && location.pathname === previous.pathname && location.hash === previous.hash;
     if (ownedEntry) history.replaceState(history.state, '', previous.href);
+    if (query.has('native-focus-anchor')) {
+      const underlay = document.querySelector('bayit-dashboard').shadowRoot.querySelector('.modal[open]');
+      if (underlay) {
+        underlay.tabIndex = -1;
+        underlay.focus();
+      }
+    }
     host.dispatchEvent(new CustomEvent('dialog-closed', { detail: { dialog: tag }, composed: true, bubbles: true }));
     if (ownedEntry) history.back();
     if (launcher?.[Symbol.for('HA focus target')]) requestAnimationFrame(() => setTimeout(() => launcher.focus(), 0));
     host.remove();
   }, { once: true });
   modal.showModal();
-  modal.dispatchEvent(new CustomEvent('opened', { composed: true, bubbles: true }));
+  if (!query.has('native-focus-anchor')) {
+    modal.dispatchEvent(new CustomEvent('opened', { composed: true, bubbles: true }));
+  }
 });
 if (query.has('entrance-popup-position')) {
   states['sensor.demo_entry_temperature'] = { state: '24', attributes: { friendly_name: 'טמפרטורה', unit_of_measurement: '°C' } };
@@ -1148,7 +1157,7 @@ async function assertNativeRoomCoverHeader(browser) {
 async function assertNativeRoomLightHold(browser) {
   const page = await browser.newPage({ viewport: { width: 320, height: 780 }, hasTouch: true, reducedMotion: 'reduce' });
   try {
-    await page.goto(base + '/fixture-home/home?configuration&room-control-names&native-more-info=modern');
+    await page.goto(base + '/fixture-home/home?configuration&room-control-names&native-more-info=modern&native-focus-anchor');
     await page.getByRole('button', { name: 'Appearance', exact: true }).tap();
     await page.getByRole('button', { name: 'Customize home', exact: true }).tap();
     const editor = page.getByRole('dialog', { name: 'Customize home', exact: true });
