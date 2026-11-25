@@ -3403,8 +3403,8 @@ async function assertAdditionalAutomaticRoomDevices(browser) {
 
 async function assertRoomMirrorPlacement(browser) {
   const rooms = [
-    { locale:'en', id:'bayit_room_1', name:'Reading nook', appearance:'Appearance', setup:'Customize home', rooms:'Rooms',
-      create:'New dashboard-only room', newName:'New room name', addRoom:'Create room',
+    { locale:'en', name:'Reading nook', appearance:'Appearance', setup:'Customize home', rooms:'Rooms',
+      create:'New dashboard-only room', newName:'New room name', addRoom:'Create room', room:'Room to customize',
       picker:'Available devices', add:'Add device', keep:'Keep in the automatic room too', save:'Save dashboard',
       moveHint:'After saving, the device will move from Lounge to this room on the dashboard.',
       keepHint:'After saving, the device will also appear here and stay in Lounge.' },
@@ -3428,7 +3428,7 @@ async function assertRoomMirrorPlacement(browser) {
       await page.goto(base + '/fixture-home/home?configuration&room-selection&locale=' + words.locale);
       const shortcut = room => page.locator('.room[data-room="' + room + '"] .quick-button[data-entity="' + entity + '"]');
       const original = shortcut('lounge');
-      const mirrored = shortcut(words.id);
+      let roomId = words.id;
       await original.waitFor();
       const readRegistry = () => page.locator('bayit-dashboard').evaluate(card => {
         const { areas, devices, entities } = card._hass;
@@ -3444,7 +3444,9 @@ async function assertRoomMirrorPlacement(browser) {
         await setup.getByText(words.create, { exact:true }).tap();
         await setup.getByLabel(words.newName, { exact:true }).fill(words.name);
         await setup.getByRole('button', { name:words.addRoom, exact:true }).tap();
-      } else await setup.getByLabel(words.room, { exact:true }).selectOption(words.id);
+        roomId = await setup.getByLabel(words.room, { exact:true }).inputValue();
+      } else await setup.getByLabel(words.room, { exact:true }).selectOption(roomId);
+      const mirrored = shortcut(roomId);
       const picker = setup.getByLabel(words.picker, { exact:true });
       const keep = setup.getByRole('checkbox', { name:words.keep, exact:true });
       assert.equal(await keep.isVisible(), false);
@@ -3465,7 +3467,7 @@ async function assertRoomMirrorPlacement(browser) {
       await setup.waitFor({ state:'hidden' });
       await original.waitFor();
       await mirrored.waitFor();
-      const saved = await page.evaluate(id => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.room_overrides[id], words.id);
+      const saved = await page.evaluate(id => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.room_overrides[id], roomId);
       assert.deepEqual(saved.entities, words.create ? [entity] : ['switch.demo_heater', entity]);
       assert.deepEqual(saved.keep_in_automatic_room_entities, [entity]);
       assert.deepEqual(await readRegistry(), registryBefore);
@@ -3475,6 +3477,106 @@ async function assertRoomMirrorPlacement(browser) {
       await original.waitFor();
       await mirrored.waitFor();
       assert.deepEqual(await readRegistry(), registryBefore);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+
+async function assertRetiredRoomLinks(browser) {
+  const identities = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', create:'New dashboard-only room',
+      newName:'New room name', add:'Create room', choose:'Room to customize', name:'Room display name',
+      remove:'Delete dashboard room', save:'Save dashboard' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים', create:'חדר חדש לדשבורד',
+      newName:'שם החדר החדש', add:'יצירת חדר', choose:'חדר להתאמה אישית', name:'שם החדר לתצוגה',
+      remove:'מחיקת חדר מהדשבורד', save:'שמירת הדשבורד' },
+  ];
+  for (const words of identities) {
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      const legacy = 'bayit_room_1';
+      const retained = 'bayit_room_archive';
+      const legacyName = 'Legacy fixture room';
+      const retainedName = 'Archive fixture room';
+      const aliases = { '#fixture-retired-room':'#room-' + legacy, '#fixture-retired-device':'#device/' + legacy + '/light.demo_lamp',
+        '#fixture-retained-room':'#room-' + retained };
+      const strategy = { type:'custom:bayit-9', show_unassigned:false, room_overrides:{
+        [legacy]:{ name:legacyName, entities:['light.demo_lamp'] },
+        [retained]:{ name:retainedName, entities:[] },
+      }, popup_aliases:aliases };
+      await page.addInitScript(value => {
+        const key = 'bayit9-browser-fixture';
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy:value }));
+      }, strategy);
+      const url = base + '/fixture-home/home?configuration&room-selection&locale=' + words.locale;
+      const stored = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      const dialog = title => page.getByRole('dialog', { name:title, exact:true });
+      const setup = dialog(words.setup);
+      const chooser = setup.getByLabel(words.choose, { exact:true });
+      const openRooms = async () => {
+        await page.getByRole('button', { name:words.appearance, exact:true }).tap();
+        await page.getByRole('button', { name:words.setup, exact:true }).tap();
+        await setup.getByText(words.rooms, { exact:true }).tap();
+      };
+      const create = async name => {
+        await setup.getByText(words.create, { exact:true }).tap();
+        await setup.getByLabel(words.newName, { exact:true }).fill(name);
+        await setup.getByRole('button', { name:words.add, exact:true }).tap();
+        const id = await chooser.inputValue();
+        assert.match(id, /^bayit_room_[a-f0-9]{24}$/);
+        return id;
+      };
+      const save = async () => {
+        await setup.getByRole('button', { name:words.save, exact:true }).tap();
+        await setup.waitFor({ state:'hidden' });
+      };
+
+      await page.goto(url + '#fixture-retired-room');
+      await dialog(legacyName).waitFor();
+      await page.goto(url);
+      await openRooms();
+      const created = await create('New fixture room');
+      const rename = setup.getByLabel(words.name, { exact:true });
+      await rename.fill('Renamed fixture room');
+      await rename.press('Enter');
+      assert.equal(await chooser.inputValue(), created);
+      await save();
+      await page.reload();
+      assert.equal((await stored()).room_overrides[created].name, 'Renamed fixture room');
+      assert.deepEqual((await stored()).popup_aliases, aliases);
+      await page.goto(url + '#room-' + created);
+      await dialog('Renamed fixture room').waitFor();
+      await page.goto(url);
+
+      await openRooms();
+      for (const id of [legacy, created]) {
+        await chooser.selectOption(id);
+        await setup.getByRole('button', { name:words.remove, exact:true }).tap();
+      }
+      const replacementName = 'Replacement fixture room';
+      const replacement = await create(replacementName);
+      assert.notEqual(replacement, legacy);
+      assert.notEqual(replacement, created);
+      await save();
+      await page.reload();
+      const current = await stored();
+      assert.deepEqual(current.room_overrides, {
+        [retained]:{ name:retainedName, entities:[] },
+        [replacement]:{ name:replacementName, entities:[] },
+      });
+      assert.deepEqual(current.popup_aliases, { '#fixture-retained-room':'#room-' + retained });
+      for (const hash of ['#fixture-retired-room', '#fixture-retired-device', '#room-' + legacy, '#room-' + created]) {
+        await page.goto(url + hash);
+        await page.getByRole('button', { name:replacementName, exact:true }).waitFor();
+        assert.equal(await page.locator('dialog[open]').count(), 0, hash);
+      }
+      await page.goto(url + '#fixture-retained-room');
+      await dialog(retainedName).waitFor();
+      await page.goto(url + '#room-' + replacement);
+      await dialog(replacementName).waitFor();
     } finally {
       await page.close();
     }
@@ -8923,6 +9025,7 @@ try {
       }
       console.log(engine + ' 320: device placement preview reflects automatic moves and stays local until saved');
       await assertRoomMirrorPlacement(browser);
+      await assertRetiredRoomLinks(browser);
       console.log(engine + ' 320: optional mirrored room placement, saved reload and native registry unchanged');
       await assertAdditionalAutomaticRoomDevices(browser);
       console.log(engine + ' 320: additional devices keep automatic Room discovery and existing placement');

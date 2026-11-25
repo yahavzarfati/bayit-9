@@ -15,7 +15,7 @@ import { buildToolbarEditor } from './toolbar-editor.js';
 import { activityKinds, activitySources, normalizeRoomActivities } from './room-appliance.mjs';
 import { getDeviceModel, supportsRoomShutdown } from './device-control.mjs';
 import { normalizeLightEffectFavoriteLights, normalizeLightEffectGroups } from './light-effects.js';
-import { isPopupFragment, normalizePopupAliases } from './popup-routes.js';
+import { isPopupFragment, normalizePopupAliases, parsePopupRoute } from './popup-routes.js';
 
 const WORDS = {
   en: {
@@ -1459,9 +1459,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
       if (!text) return;
       const used = new Set([...rooms.map(room => room.id), ...configuredIds(this.#config.area_ids),
         ...Object.keys(this.#config.room_overrides ?? {})]);
-      let serial = 1;
-      while (used.has(CUSTOM_ROOM_PREFIX + serial)) serial++;
-      const id = CUSTOM_ROOM_PREFIX + serial;
+      // Room IDs identify saved links, so a deleted room's ID cannot be reused.
+      let id;
+      do {
+        const entropy = crypto.getRandomValues(new Uint32Array(3));
+        id = CUSTOM_ROOM_PREFIX + Array.from(entropy, part => part.toString(16).padStart(8, '0')).join('');
+      } while (used.has(id));
       const change = { room_overrides: { ...this.#config.room_overrides, [id]: { name: text, entities: [] } } };
       if (selection !== null) {
         change.room_selection = 'manual';
@@ -1664,12 +1667,20 @@ export class Bayit9StrategyEditor extends HTMLElement {
           delete after[active.id];
           const shortcuts = { ...this.#config.room_shortcuts };
           delete shortcuts[active.id];
+          const aliases = { ...this.#config.popup_aliases };
+          let aliasesChanged = false;
+          for (const [alias, target] of Object.entries(aliases)) {
+            if (parsePopupRoute(target)?.room !== active.id) continue;
+            delete aliases[alias];
+            aliasesChanged = true;
+          }
           this.#roomEditing = undefined;
           this.#roomDeviceQuery = '';
           this.#commitRooms({
             room_overrides: after,
             ...(customSelection && { room_selection: 'manual', area_ids: selected.filter(id => id !== active.id) }),
             room_shortcuts: shortcuts,
+            ...(aliasesChanged && { popup_aliases: aliases }),
           }, 'room-mode');
         });
         remove.className = 'room-danger';
