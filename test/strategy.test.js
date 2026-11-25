@@ -1264,6 +1264,37 @@ test('Security readouts require the explicit status layout and supported source 
   assert.ok(allSections.slice(1).flatMap(section => section.entities).every(item => !Object.hasOwn(item, 'readout')));
 });
 
+test('Vacuum readouts retain only validated settings on explicit readings sections', () => {
+  const hass = home();
+  for (const entity of ['sensor.fixture_state', 'sensor.fixture_invalid', 'select.fixture_floor', 'binary_sensor.fixture_dock',
+    'switch.fixture_power', 'sensor.fixture_graph']) {
+    hass.states[entity] = { state: 'unknown', attributes: {} };
+    hass.entities[entity] = {};
+  }
+  const section = { kind: 'readings', layout: 'readouts', entities: [
+    { entity: 'sensor.fixture_state', role: 'status', readout: { state_labels: {
+      Docked: ' At dock ', docked: 'On dock', 'Current room': ' Office ', 'malformed\u202ekey': 'Hidden',
+      unknown: 'Ready', Unavailable: 'Ready', harmless: 'unsafe\nlabel', 'spaced ': 'Trailing',
+    }, precision: 0, unit: ' % ', danger_on: true } },
+    { entity: 'sensor.fixture_invalid', readout: { state_labels: ['Invalid'], precision: 1.5, unit: 'a'.repeat(13) } },
+    { entity: 'select.fixture_floor', role: 'status', readout: { state_labels: { Upper: 'Second floor' }, precision: 2, unit: 'h' } },
+    { entity: 'binary_sensor.fixture_dock', readout: { state_labels: { on: 'In use', error: 'Error' }, precision: 3, danger_on: true } },
+    { entity: 'switch.fixture_power', role: 'status', readout: { state_labels: { off: 'Off' } } },
+    { entity: 'sensor.fixture_graph', role: 'graph', readout: { unit: 'h' } },
+  ] };
+  const { toolbar } = generateDashboard({ toolbar: [
+    { kind: 'vacuum', sections: [section, { ...section, layout: undefined }, { ...section, kind: 'status' }] },
+    { kind: 'sensors', sections: [section] },
+  ] }, hass).views[0].cards[0];
+  const [compact, ...others] = toolbar.flatMap(entry => entry.sections);
+  assert.equal(compact.layout, 'readouts');
+  assert.deepEqual(compact.entities.map(item => item.readout), [
+    { state_labels: { Docked: 'At dock', docked: 'On dock', 'Current room': 'Office' }, precision: 0, unit: '%' },
+    undefined, { state_labels: { Upper: 'Second floor' } }, { state_labels: { on: 'In use' } }, undefined, undefined,
+  ]);
+  assert.ok(others.every(section => section.layout === undefined && section.entities.every(item => item.readout === undefined)));
+});
+
 test('only selected vacuum action buttons can retain one-tap program behavior', () => {
   const hass = home();
   const item = { entity: 'button.fixture_clean', role: 'action', command: 'vacuum_program', confirmation: 'Start now?' };

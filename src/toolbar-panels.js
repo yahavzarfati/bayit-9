@@ -1,8 +1,8 @@
 import { createOrefMap } from './oref-alert-map.js';
 import { createVacuumMap } from './vacuum-map.js';
 import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
-import { discoverOverviewEntities, isActiveOverviewEntity, isCompactToolbarStatus, isSecurityReadouts, isToolbarLightTile,
-  isVisibleEntity, isWeatherReadingsList, securityReadoutLabelStates } from './strategy-model.js';
+import { discoverOverviewEntities, isActiveOverviewEntity, isCompactToolbarStatus,
+  isToolbarLightTile, isToolbarReadoutEntity, isToolbarReadouts, isVisibleEntity, isWeatherReadingsList } from './strategy-model.js';
 import { mediaServiceRegistered } from './media-device-support.mjs';
 import { roomShutdownTargets } from './device-control.mjs';
 import { calendarAgendaStyles, createCalendarAgenda } from './calendar-agenda.js';
@@ -200,26 +200,35 @@ export function createToolbarPanel(kind, configuration, context) {
     return row;
   }
 
-  function renderSecurityReadout(item) {
+  function renderReadout(item) {
     const glyph = icon('mdi:information-outline');
     glyph.setAttribute('aria-hidden', 'true');
     const name = make('span', 'tile-label');
     const state = make('span', 'tile-state');
     state.dir = 'auto';
-    const tile = make('div', 'security-readout');
+    const vacuum = kind === 'vacuum';
+    const tile = make('div', vacuum ? 'toolbar-readout' : 'toolbar-readout security-readout');
+    const { state_labels: labels, unit, precision, danger_on: danger } = item.readout ?? {};
+    const numericFormat = precision === undefined ? null : new Intl.NumberFormat(context.locale, {
+      minimumFractionDigits: precision, maximumFractionDigits: precision, useGrouping: false,
+    });
     tile.append(glyph, name, state);
     handlers.push(() => {
       const model = modelFor(item);
       const raw = model.state;
-      const labels = item.readout?.state_labels;
-      const key = typeof raw === 'string' ? raw.toLowerCase() : '';
+      const key = vacuum ? raw : typeof raw === 'string' ? raw.toLowerCase() : '';
       const custom = model.available && labels && Object.hasOwn(labels, key) ? labels[key] : undefined;
-      const unit = item.readout?.unit;
-      const numeric = model.available && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw) && Number.isFinite(Number(raw));
       glyph.setAttribute('icon', model.icon || 'mdi:information-outline');
       name.textContent = model.name;
-      state.textContent = raw === 'unknown' ? t('unknown') : custom ?? (unit && numeric ? raw + ' ' + unit : stateLabel(model));
-      tile.toggleAttribute('data-danger', model.available && raw === 'on' && item.readout?.danger_on === true);
+      if (raw === 'unknown') state.textContent = t('unknown');
+      else if (custom) state.textContent = custom;
+      else if (model.available && (unit || numericFormat) &&
+          /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw) && Number.isFinite(Number(raw))) {
+        const value = numericFormat ? numericFormat.format(Number(raw)) : raw;
+        const suffix = unit ?? model.attributes.unit_of_measurement;
+        state.textContent = suffix ? value + ' ' + suffix : value;
+      } else state.textContent = stateLabel(model);
+      tile.toggleAttribute('data-danger', model.available && raw === 'on' && danger === true);
     });
     return tile;
   }
@@ -565,7 +574,7 @@ export function createToolbarPanel(kind, configuration, context) {
     const panel = make('section', 'toolbar-section');
     panel.dataset.section = section.kind;
     const compactStatus = isCompactToolbarStatus(kind, section);
-    const readouts = isSecurityReadouts(kind, section);
+    const readouts = isToolbarReadouts(kind, section);
     const weatherReadings = isWeatherReadingsList(kind, section);
     if (compactStatus || readouts || weatherReadings) panel.dataset.layout = section.layout;
     if (kind === 'overview' && !compactStatus && section.filter === 'active' &&
@@ -589,7 +598,7 @@ export function createToolbarPanel(kind, configuration, context) {
       const pairs = section.entities.filter(item=>!calendarItems.length || domain(item)!=='calendar')
         .map(item => {
           if (weatherReadings && isPassiveWeatherReading(item)) return { item, node: renderWeatherReading(item) };
-          if (readouts && securityReadoutLabelStates(item).length) return { item, node: renderSecurityReadout(item) };
+          if (readouts && isToolbarReadoutEntity(kind, item)) return { item, node: renderReadout(item) };
           return { item, node: render(item, section.kind, compactStatus) };
         });
       items.append(...pairs.map(pair=>pair.node));
@@ -752,15 +761,15 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
     --readout-width: calc((100% - 18px) / 4);
     grid-template-columns: repeat(auto-fit,minmax(min(100%,max(60px,var(--readout-width))),1fr)); gap: 6px;
   }
-  .toolbar-section[data-layout=readouts] > .toolbar-section-items > :not(.security-readout) { grid-column: 1 / -1; }
-  .security-readout {
+  .toolbar-section[data-layout=readouts] > .toolbar-section-items > :not(.toolbar-readout) { grid-column: 1 / -1; }
+  .toolbar-readout {
     display: grid; box-sizing: border-box; justify-items: center; align-content: center; gap: 3px; min-width: 0; min-height: 62px;
     padding: 5px 4px; border: 1px solid var(--soft-line); border-radius: 8px; background: var(--control); text-align: center;
   }
-  .security-readout ha-icon { display: block; --mdc-icon-size: 18px; width: 18px; height: 18px; color: var(--secondary); }
-  .security-readout :is(.tile-label,.tile-state) { font-size: 11px; line-height: 1.15; }
-  .security-readout[data-danger] { border-color: rgba(255,187,187,.42); background: rgba(255,146,151,.16); }
-  .security-readout[data-danger] :is(ha-icon,.tile-state) { color: var(--critical); }
+  .toolbar-readout ha-icon { display: block; --mdc-icon-size: 18px; width: 18px; height: 18px; color: var(--secondary); }
+  .toolbar-readout :is(.tile-label,.tile-state) { font-size: 11px; line-height: 1.15; }
+  .toolbar-readout[data-danger] { border-color: rgba(255,187,187,.42); background: rgba(255,146,151,.16); }
+  .toolbar-readout[data-danger] :is(ha-icon,.tile-state) { color: var(--critical); }
   @media (max-width: 350px) {
     .toolbar-section[data-layout=readouts] > .toolbar-section-items { --readout-width: calc((100% - 6px) / 2); }
   }

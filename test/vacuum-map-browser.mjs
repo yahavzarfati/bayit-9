@@ -37,7 +37,9 @@ const hass = {
     'button.fixture_night': { state:'unknown', attributes:{ friendly_name:'Night cleaning' } },
     'button.fixture_reset': { state:'unknown', attributes:{ friendly_name:'Reset counter' } },
     'button.fixture_other': { state:'unknown', attributes:{ friendly_name:'Other button' } },
-    'sensor.fixture_reading': { state:'47', attributes:{ friendly_name:'Vacuum battery' } },
+    'sensor.fixture_reading': { state:'47', attributes:{ friendly_name:'Vacuum battery', unit_of_measurement:'%' } },
+    'sensor.fixture_status': { state:'Docked', attributes:{ friendly_name:'Robot status' } },
+    'sensor.fixture_maintenance': { state:'54.64', attributes:{ friendly_name:'Filter', unit_of_measurement:'h' } },
   },
   areas: {}, devices: {},
   entities: { [vacuum]: { di:'robot' }, [selector]: { di:'robot' }, 'select.wrong': { di:'other' },
@@ -74,8 +76,13 @@ const config = { type: 'custom:bayit-9', toolbar: [
         {entity:'button.fixture_night',role:'action',command:'vacuum_program',confirmation:'Start night cleaning?'},
         {entity:'button.fixture_other',role:'action'},
       ]},
-      {id:'status',kind:'readings',title:'Status and maintenance',entities:[
+      {id:'status',kind:'readings',title:'Status and maintenance',...(options.has('readouts') && { layout:'readouts' }),entities:[
         {entity:'sensor.fixture_reading',role:'status'},
+        ...(options.has('readouts') ? [
+          {entity:'sensor.fixture_status',role:'status',readout:{state_labels:{Docked:'At dock',unknown:'Misleading label',unavailable:'Also misleading'}}},
+          {entity:selector,role:'status',readout:{state_labels:{Upper:'Second floor'}}},
+          {entity:'sensor.fixture_maintenance',role:'status',readout:{precision:0}},
+        ] : []),
       ]},
       {id:'resets',kind:'actions',title:'Maintenance resets',entities:[
         {entity:'button.fixture_reset',role:'action',confirmation:'Reset the counter?'},
@@ -93,10 +100,11 @@ const dashboard = document.createElement('bayit-dashboard');
 dashboard.setConfig(Strategy.generate(config, hass).views[0].cards[0]);
 dashboard.hass = hass;
 document.querySelector('main').append(dashboard);
-tracker.floor = value => {
-  hass.states[selector] = { ...hass.states[selector], state: value };
+tracker.setState = (entity, value) => {
+  hass.states[entity] = { ...hass.states[entity], state: value };
   dashboard.hass = { ...hass, states: { ...hass.states } };
 };
+tracker.floor = value => tracker.setState(selector, value);
 tracker.hideImage = id => {
   hass.entities[id] = { hidden: true };
   dashboard.hass = { ...hass, entities: { ...hass.entities } };
@@ -247,6 +255,7 @@ try {
       const callLog = () => page.evaluate(() => tracker.calls);
       const dialog = page.getByRole('dialog', { name:'Robot vacuum', exact:true });
       const confirm = page.locator('dialog.confirm[open]');
+      assert.equal(await dialog.getByRole('button', { name:'Vacuum battery', exact:false }).count(), 1);
       const expected = entity_id => ({ type:'call_service', domain:'button', service:'press', service_data:{}, target:{entity_id} });
       await dialog.getByRole('button', { name:'Daily cleaning', exact:true }).click();
       assert.equal(await confirm.count(), 0);
@@ -263,6 +272,26 @@ try {
       await dialog.getByRole('button', { name:'Night cleaning', exact:true }).click();
       await confirm.getByRole('button', { name:'Confirm', exact:true }).click();
       assert.deepEqual(await callLog(), [expected('button.fixture_daily'), expected('button.fixture_night')]);
+
+      await openFixture('?programs&readouts&before=status');
+      await open();
+      await map.waitFor();
+      const readings = dialog.locator('[data-section=readings]');
+      const tiles = readings.locator('.toolbar-readout');
+      const values = () => tiles.locator('.tile-state').allTextContents();
+      assert.deepEqual(await values(), ['\u206647 %\u2069', 'At dock', 'Second floor', '55 h']);
+      const positions = await tiles.evaluateAll(items => items.map(item => Math.round(item.getBoundingClientRect().top)));
+      assert.equal(new Set(positions).size, 1);
+      assert.equal(await readings.getByRole('button').count(), 0);
+      await page.evaluate(() => tracker.setState('sensor.fixture_status', 'docked'));
+      await page.evaluate(() => tracker.setState('sensor.fixture_maintenance', 'unavailable'));
+      await tiles.getByText('Unavailable', { exact:true }).waitFor();
+      assert.deepEqual((await values()).slice(1), ['Docked', 'Second floor', 'Unavailable']);
+      await page.evaluate(() => tracker.setState('sensor.fixture_status', 'unknown'));
+      await tiles.getByText('Unknown state', { exact:true }).waitFor();
+      assert.deepEqual((await values()).slice(1), ['Unknown state', 'Second floor', 'Unavailable']);
+      assert.deepEqual(await callLog(), []);
+      await close();
 
       await openFixture('?editor&programs&before=status');
       await page.getByText('Toolbar and extra screens', { exact:true }).click();
@@ -283,6 +312,26 @@ try {
       assert.equal((await programDraft()).confirmation, true);
       await programConfirm.selectOption({ label:'Automatic' });
       assert.equal((await programDraft()).command, undefined);
+      await page.getByRole('button', { name:'Status and maintenance', exact:true }).click();
+      await page.getByLabel('Show compact read-only status tiles').check();
+      await page.locator('#editor').getByRole('button', { name:'Vacuum battery', exact:true }).click();
+      const decimalPlaces = page.getByLabel('Decimal places (0–3)');
+      await decimalPlaces.fill('0');
+      await decimalPlaces.press('Tab');
+      const unit = page.getByLabel('Display unit for numeric readings');
+      await unit.fill('percent');
+      await unit.press('Tab');
+      const labels = page.getByLabel('Labels for reported values');
+      await labels.fill('Full = Charged\nEmpty = Needs charge');
+      await labels.press('Tab');
+      const readoutDraft = () => page.evaluate(() => tracker.draft.toolbar[0].sections.find(section => section.id === 'status'));
+      const saved = await readoutDraft();
+      assert.equal(saved.layout, 'readouts');
+      assert.deepEqual(saved.entities[0].readout, { precision:0, unit:'percent', state_labels:{Full:'Charged', Empty:'Needs charge'} });
+      await labels.fill('unknown = Misleading');
+      await labels.press('Tab');
+      assert.equal(await labels.getAttribute('aria-invalid'), 'true');
+      assert.deepEqual(await readoutDraft(), saved);
       assert.deepEqual(errors, []);
       console.log(name + ': calibrated map placement, explicit selection, and scoped program commands');
     } finally {

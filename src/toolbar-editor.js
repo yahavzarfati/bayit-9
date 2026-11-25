@@ -1,9 +1,8 @@
 import {
   discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactToolbarStatus, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
-  isSecurityReadouts, isWeatherReadingsList, normalizeOverviewDiscovery, normalizeSecurityReadout, overviewSectionOptions, roomPanelOptions,
+  isToolbarReadoutEntity, isToolbarReadouts, isWeatherReadingsList, normalizeOverviewDiscovery, normalizeToolbarReadout, overviewSectionOptions, roomPanelOptions,
   securityReadoutLabelStates, selectableRoomEntities,
-  supportsCompactToolbarStatus, supportsOverviewLightsOff, supportsSecurityReadouts, supportsWeatherReadingsList,
-  TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
+  supportsCompactToolbarStatus, supportsOverviewLightsOff, supportsToolbarReadouts, supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
 } from './strategy-model.js';
@@ -60,9 +59,12 @@ const WORDS = {
     calendarAccent: 'Calendar accent', calendarInvalidAccent: 'Enter a six-digit color such as #80BFFF.',
     compactStatus: 'Show status items side by side',
     weatherReadingsList: 'Show readings as a compact read-only list',
-    securityReadouts: 'Show compact read-only status tiles', readoutOn: 'Label for on', readoutOff: 'Label for off',
+    compactReadouts: 'Show compact read-only status tiles', readoutOn: 'Label for on', readoutOff: 'Label for off',
     readoutSafe: 'Label for safe', readoutOk: 'Label for ok',
     readoutDanger: 'Highlight the on state in red', readoutUnit: 'Display unit for numeric readings',
+    readoutLabels: 'Labels for reported values', readoutLabelsHint: 'One value = label pair per line, matching the state exactly.',
+    readoutLabelsError: 'Enter each reported value once. Unknown and unavailable have built-in labels.',
+    readoutPrecision: 'Decimal places (0–3)',
     activity: 'Activity', automations: 'Automations', security: 'Security', presence: 'Presence',
     weather: 'Weather', energy: 'Energy', settings: 'Settings', overview: 'Overview',
     sensors: 'Sensors', media: 'Media', vacuum: 'Vacuum', calendar: 'Calendar', link: 'Local link',
@@ -118,9 +120,12 @@ const WORDS = {
     calendarAccent: 'צבע היומן', calendarInvalidAccent: 'הזינו צבע בן שש ספרות, למשל ‎#80BFFF‎.',
     compactStatus: 'הצגת פריטי הסטטוס זה לצד זה',
     weatherReadingsList: 'הצגת המדדים ברשימה קומפקטית לקריאה בלבד',
-    securityReadouts: 'הצגת אריחי מצב קומפקטיים לקריאה בלבד', readoutOn: 'תווית למצב פעיל', readoutOff: 'תווית למצב כבוי',
+    compactReadouts: 'הצגת אריחי מצב קומפקטיים לקריאה בלבד', readoutOn: 'תווית למצב פעיל', readoutOff: 'תווית למצב כבוי',
     readoutSafe: 'תווית למצב בטוח', readoutOk: 'תווית למצב תקין',
     readoutDanger: 'הדגשת מצב פעיל באדום', readoutUnit: 'יחידת תצוגה לערך מספרי',
+    readoutLabels: 'תוויות לערכים שמדווחים מהמכשיר', readoutLabelsHint: 'כתבו ערך = תווית בכל שורה, עם הערך המדויק שהמכשיר מדווח.',
+    readoutLabelsError: 'הזינו כל ערך מדווח פעם אחת. הערכים לא ידוע ולא זמין מקבלים תוויות מובנות.',
+    readoutPrecision: 'ספרות אחרי הנקודה (0–3)',
     activity: 'פעילות', automations: 'אוטומציות', security: 'אבטחה', presence: 'נוכחות',
     weather: 'מזג אוויר', energy: 'אנרגיה', settings: 'הגדרות', overview: 'סקירה',
     sensors: 'חיישנים', media: 'מדיה', vacuum: 'שואב רובוטי', calendar: 'יומן', link: 'קישור מקומי',
@@ -387,27 +392,60 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       iconField(record.icon, value => save({ icon: value || undefined })),
     ];
     const kind = toolbar[entryIndex].kind;
-    const labelStates = isSecurityReadouts(kind, section) ? securityReadoutLabelStates(record) : [];
-    if (labelStates.length) {
-      let settings = normalizeSecurityReadout(kind, section, record) ?? {};
+    if (isToolbarReadouts(kind, section) && isToolbarReadoutEntity(kind, record)) {
+      let settings = normalizeToolbarReadout(kind, section, record) ?? {};
       const updateReadout = edits => {
-        const readout = normalizeSecurityReadout(kind, section, { ...record, readout: patch(settings, edits) });
+        const readout = normalizeToolbarReadout(kind, section, { ...record, readout: patch(settings, edits) });
         settings = readout ?? {};
         save({ readout });
       };
-      const captions = { on: words.readoutOn, off: words.readoutOff, safe: words.readoutSafe, ok: words.readoutOk };
-      for (const state of labelStates) {
-        fields.push(textField(captions[state], settings.state_labels?.[state], value => {
-          updateReadout({ state_labels: patch(settings.state_labels ?? {}, { [state]: value || undefined }) });
-        }, { maxLength: 48 }).field);
+      if (kind === 'security' || domain === 'binary_sensor') {
+        const captions = { on: words.readoutOn, off: words.readoutOff, safe: words.readoutSafe, ok: words.readoutOk };
+        for (const state of securityReadoutLabelStates(record)) {
+          fields.push(textField(captions[state], settings.state_labels?.[state], value => {
+            updateReadout({ state_labels: patch(settings.state_labels ?? {}, { [state]: value || undefined }) });
+          }, { maxLength: 48 }).field);
+        }
+      } else {
+        const labels = node('textarea', { rows: 3, dir: 'auto',
+          value: Object.entries(settings.state_labels ?? {}).map(([state, label]) =>
+            state + (state.includes(' = ') ? '\t' : ' = ') + label).join('\n') });
+        const hint = node('small', { id: 'bayit-readout-labels-' + ++fieldId, textContent: words.readoutLabelsHint });
+        labels.setAttribute('aria-describedby', hint.id);
+        const error = node('span', { hidden: true, className: 'toolbar-editor-error', textContent: words.readoutLabelsError });
+        error.setAttribute('role', 'status');
+        labels.addEventListener('change', () => {
+          const pairs = labels.value.trim().split('\n').map(line => line.trim()).filter(Boolean).map(line => {
+            const delimiter = line.includes('\t') ? '\t' : ' = ';
+            const position = line.indexOf(delimiter);
+            return position < 0 ? ['', ''] : [line.slice(0, position).trim(), line.slice(position + delimiter.length).trim()];
+          });
+          const state_labels = Object.fromEntries(pairs);
+          const savedLabels = normalizeToolbarReadout(kind, section, { ...record, readout: { state_labels } })?.state_labels;
+          error.hidden = pairs.length === Object.keys(savedLabels ?? {}).length;
+          labels.setAttribute('aria-invalid', String(!error.hidden));
+          if (error.hidden) updateReadout({ state_labels });
+        });
+        const labelField = field(words.readoutLabels, labels);
+        labelField.append(hint, error);
+        fields.push(labelField);
       }
-      if (domain === 'binary_sensor') {
+      if (kind === 'security' && domain === 'binary_sensor') {
         const danger = node('input', { type: 'checkbox', checked: settings.danger_on === true });
         danger.addEventListener('change', () => updateReadout({ danger_on: danger.checked || undefined }));
         fields.push(node('label', { className: 'check' }, [danger, words.readoutDanger]));
-      } else {
+      }
+      if (domain === 'sensor') {
         fields.push(textField(words.readoutUnit, settings.unit,
           value => updateReadout({ unit: value || undefined }), { maxLength: 12 }).field);
+        if (kind === 'vacuum') {
+          const precision = node('input', { type: 'number', min: '0', max: '3', step: '1',
+            value: settings.precision === undefined ? '' : String(settings.precision) });
+          precision.addEventListener('change', () => {
+            if (precision.validity.valid) updateReadout({ precision: precision.value === '' ? undefined : precision.valueAsNumber });
+          });
+          fields.push(field(words.readoutPrecision, precision));
+        }
       }
     }
     if (record.role === 'graph') {
@@ -596,12 +634,12 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       compact.addEventListener('change', () => changeSection({ layout: compact.checked ? 'compact' : undefined }));
       fields.push(node('label', { className: 'check' }, [compact, words.compactStatus]));
     }
-    if (supportsSecurityReadouts(kind, active)) {
-      const readouts = node('input', { type: 'checkbox', checked: isSecurityReadouts(kind, active) });
+    if (supportsToolbarReadouts(kind, active)) {
+      const readouts = node('input', { type: 'checkbox', checked: isToolbarReadouts(kind, active) });
       readouts.dataset.toolbarFocus = 'security-readouts';
       readouts.addEventListener('change', () =>
         changeSection({ layout: readouts.checked ? 'readouts' : undefined }, true, 'security-readouts'));
-      fields.push(node('label', { className: 'check' }, [readouts, words.securityReadouts]));
+      fields.push(node('label', { className: 'check' }, [readouts, words.compactReadouts]));
     }
     if (supportsWeatherReadingsList(kind, active)) {
       const readings = node('input', { type: 'checkbox', checked: isWeatherReadingsList(kind, active) });

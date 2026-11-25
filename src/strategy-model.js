@@ -646,12 +646,13 @@ export function isCompactToolbarStatus(kind, section) {
   return supportsCompactToolbarStatus(kind, section) && section.layout === 'compact';
 }
 
-export function supportsSecurityReadouts(kind, section) {
-  return kind === 'security' && section?.kind === 'status';
+export function supportsToolbarReadouts(kind, section) {
+  return (kind === 'security' && section?.kind === 'status') ||
+    (kind === 'vacuum' && section?.kind === 'readings');
 }
 
-export function isSecurityReadouts(kind, section) {
-  return supportsSecurityReadouts(kind, section) && section.layout === 'readouts';
+export function isToolbarReadouts(kind, section) {
+  return supportsToolbarReadouts(kind, section) && section.layout === 'readouts';
 }
 
 export function supportsWeatherReadingsList(kind, section) {
@@ -670,26 +671,39 @@ export function securityReadoutLabelStates(item) {
   return Object.hasOwn(securityReadoutStates, domainOf(entity)) ? securityReadoutStates[domainOf(entity)] : [];
 }
 
+export function isToolbarReadoutEntity(kind, item) {
+  if (kind === 'security') return securityReadoutLabelStates(item).length > 0;
+  if (kind !== 'vacuum' || (item?.role !== undefined && item.role !== 'status')) return false;
+  const entity = typeof item === 'string' ? item : item?.entity;
+  return typeof entity === 'string' && ENTITY_ID.test(entity) && ['sensor', 'binary_sensor', 'select'].includes(domainOf(entity));
+}
+
 function readoutText(value, limit) {
   const text = typeof value === 'string' ? value.trim() : '';
   return text && text.length <= limit && !/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(text) ? text : undefined;
 }
 
-export function normalizeSecurityReadout(kind, section, item) {
-  if (!isSecurityReadouts(kind, section) || !item?.readout || Array.isArray(item.readout) || typeof item.readout !== 'object') return;
-  const states = securityReadoutLabelStates(item);
-  if (!states.length) return;
-  const source = item.readout;
-  const stateLabels = Object.fromEntries(states.flatMap(state => {
-    const text = readoutText(source.state_labels && Object.hasOwn(source.state_labels, state) ? source.state_labels[state] : undefined, 48);
-    return text ? [[state, text]] : [];
-  }));
+export function normalizeToolbarReadout(kind, section, item) {
+  const source = item?.readout;
+  if (!isToolbarReadouts(kind, section) || !isToolbarReadoutEntity(kind, item) ||
+      !source || Array.isArray(source) || typeof source !== 'object') return;
   const binary = domainOf(item.entity) === 'binary_sensor';
-  const unit = !binary && readoutText(source.unit, 12);
+  const numeric = kind === 'security' ? !binary : domainOf(item.entity) === 'sensor';
+  const labels = source.state_labels;
+  const states = kind === 'security' || binary ? securityReadoutLabelStates(item)
+    : labels && !Array.isArray(labels) && typeof labels === 'object' ? Object.keys(labels) : [];
+  const stateLabels = Object.fromEntries(states.flatMap(state => {
+    if (readoutText(state, 80) !== state || ['unknown', 'unavailable'].includes(state.toLowerCase())) return [];
+    const text = readoutText(labels && Object.hasOwn(labels, state) ? labels[state] : undefined, 48);
+    return text ? [[state, text]] : [];
+  }).slice(0, 128));
+  const unit = numeric && readoutText(source.unit, 12);
+  const precision = source.precision;
   const settings = {
     ...(Object.keys(stateLabels).length && { state_labels: stateLabels }),
-    ...(binary && source.danger_on === true && { danger_on: true }),
+    ...(kind === 'security' && binary && source.danger_on === true && { danger_on: true }),
     ...(unit && { unit }),
+    ...(kind === 'vacuum' && numeric && Number.isInteger(precision) && precision >= 0 && precision <= 3 && { precision }),
   };
   return Object.keys(settings).length ? settings : undefined;
 }
@@ -730,7 +744,7 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
       const graphRoom = linkedGraph && roomIds?.has(item.graph_room_id) ? item.graph_room_id : undefined;
       const vacuumPanel = linkedGraph && !graphRoom && vacuumPanels.has(item.vacuum_panel_id) ? item.vacuum_panel_id : undefined;
       const accent = kind === 'calendar' && domain === 'calendar' ? calendarAccent(item.accent_color) : undefined;
-      const readout = normalizeSecurityReadout(kind, section, item);
+      const readout = normalizeToolbarReadout(kind, section, item);
       return [{ ...descriptor, ...(name && { name }), ...(ROOM_ICON.test(icon) && { icon }),
         ...(role && { role }), ...(command && { command }),
         ...(confirmation !== undefined && { confirmation }), ...(hasGraphHours && { graph_hours: graphHours }),
@@ -739,7 +753,7 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
     });
     return [{ id, kind: section.kind, ...(title !== undefined && { title }),
       ...(isCompactToolbarStatus(kind, section) && { layout: 'compact' }),
-      ...(isSecurityReadouts(kind, section) && { layout: 'readouts' }),
+      ...(isToolbarReadouts(kind, section) && { layout: 'readouts' }),
       ...(isWeatherReadingsList(kind, section) && { layout: 'readings-list' }),
       ...(section.filter === 'active' && { filter:'active' }), ...overview, entities }];
   });

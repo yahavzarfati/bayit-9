@@ -210,7 +210,7 @@ const CSS = '\
 :host { display: block; color: var(--primary-text-color); }\
 form { display: grid; gap: 14px; padding-block: 8px; }\
 label.field { display: grid; gap: 6px; min-width: 0; font-weight: 600; }\
-input:not([type=checkbox]),select { width: 100%; box-sizing: border-box; min-height: 44px; border: 1px solid var(--divider-color,#999); border-radius: 8px; padding: 8px 10px; font: inherit; color: inherit; background: var(--card-background-color,#fff); }\
+input:not([type=checkbox]),select,textarea { width: 100%; box-sizing: border-box; min-height: 44px; border: 1px solid var(--divider-color,#999); border-radius: 8px; padding: 8px 10px; font: inherit; color: inherit; background: var(--card-background-color,#fff); }\
 input[type=checkbox] { inline-size: 18px; block-size: 18px; flex: none; margin-inline: 0 9px; }\
 input,select,button,summary { accent-color: var(--primary-color,#03a9f4); }\
 select[multiple] { min-height: 106px; }\

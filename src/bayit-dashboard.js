@@ -1,9 +1,9 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
-import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isSecurityReadouts,
-  isVacuumProgramAction, isWeatherReadingsList,
+import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isToolbarReadouts, isVacuumProgramAction,
+  isWeatherReadingsList,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
-  normalizeSecurityReadout, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
+  normalizeToolbarReadout, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
   ROOM_PANEL_KINDS, roomShortcutDevices, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
   supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
@@ -363,7 +363,7 @@ export function normalizeDashboardConfig(config = {}) {
           const entity = normalizeEntity(raw);
           if (isAutomationScriptToggle(item.kind, section.kind, raw)) entity.command = 'toggle_script';
           if (isVacuumProgramAction(item.kind, section.kind, raw)) entity.command = 'vacuum_program';
-          const readout = normalizeSecurityReadout(item.kind, section, raw);
+          const readout = normalizeToolbarReadout(item.kind, section, raw);
           if (readout) entity.readout = readout;
           if (item.kind === 'sensors' && section.kind !== 'series' && entity.role === 'graph' &&
               domainFor(entity) === 'sensor' && known.has(raw.graph_room_id)) entity.graph_room_id = raw.graph_room_id;
@@ -371,7 +371,7 @@ export function normalizeDashboardConfig(config = {}) {
         });
         return [{ id: text(section.id), kind: text(section.kind), title: typeof section.title === 'string' ? section.title : undefined,
           ...(isCompactToolbarStatus(item.kind, section) && { layout: 'compact' }),
-          ...(isSecurityReadouts(item.kind, section) && { layout: 'readouts' }),
+          ...(isToolbarReadouts(item.kind, section) && { layout: 'readouts' }),
           ...(isWeatherReadingsList(item.kind, section) && { layout: 'readings-list' }),
           ...(section.filter === 'active' && {filter:'active'}), ...overview, entities: members }];
       }) }) }];
