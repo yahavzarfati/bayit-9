@@ -2,6 +2,7 @@ import {
   BACKGROUNDS, CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverRooms, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
   normalizeRoomControlName,
   PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomPanelOptions, roomSections, selectableRoomEntities, selectedRoomIds, STRATEGY_NAME,
+  usesAutomaticRoomDevices,
 } from './strategy-model.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { buildToolbarEditor } from './toolbar-editor.js';
@@ -41,7 +42,7 @@ const WORDS = {
     roomMediaLink: 'Open on media press and hold', roomMediaNone: 'No panel', roomMediaDefault: 'Media',
     roomVacuumLink: 'Open on vacuum tap', roomVacuumDefault: 'Robot vacuum',
     sections: 'Room sections', sectionMode: 'Section arrangement', automaticSections: 'Automatic grouping',
-    manualSections: 'Arrange sections manually', automaticDevicesAndSections: 'Automatic devices and sections',
+    manualSections: 'Arrange sections manually',
     editSection: 'Section to customize', addSection: 'Add section', removeSection: 'Delete section',
     sectionType: 'Section type', sectionTitle: 'Section heading', sectionDevice: 'Room device',
     addToSection: 'Move to this section', removeFromSection: 'Remove from section', sectionEmpty: 'No devices in this section.',
@@ -107,7 +108,7 @@ const WORDS = {
     roomMediaLink: 'פתיחה בלחיצה ארוכה על מכשיר מדיה', roomMediaNone: 'ללא חלונית', roomMediaDefault: 'מדיה',
     roomVacuumLink: 'פתיחה בלחיצה על השואב', roomVacuumDefault: 'שואב',
     sections: 'קבוצות בחדר', sectionMode: 'סידור הקבוצות', automaticSections: 'קיבוץ אוטומטי',
-    manualSections: 'סידור ידני של הקבוצות', automaticDevicesAndSections: 'בחירה אוטומטית של מכשירים וקבוצות',
+    manualSections: 'סידור ידני של הקבוצות',
     editSection: 'קבוצה לעריכה', addSection: 'הוספת קבוצה', removeSection: 'מחיקת קבוצה',
     sectionType: 'סוג הקבוצה', sectionTitle: 'כותרת הקבוצה', sectionDevice: 'מכשיר בחדר',
     addToSection: 'העברה לקבוצה זו', removeFromSection: 'הסרה מהקבוצה', sectionEmpty: 'אין מכשירים בקבוצה זו.',
@@ -432,8 +433,9 @@ export class Bayit9StrategyEditor extends HTMLElement {
   }
 
   #roomMembership(room, override, sections, language) {
-    if (Array.isArray(override.entities)) return configuredIds(override.entities);
-    if (sections?.length) return configuredIds(sections.flatMap(section => section.entities));
+    if (!usesAutomaticRoomDevices(override, sections, room.custom)) {
+      return configuredIds(Array.isArray(override.entities) ? override.entities : sections?.flatMap(section => section.entities));
+    }
     // Resolve the visible room with other rooms' explicit assignments in scope.
     const visible = discoverRooms(this.#config, this.#hass, language).find(item => item.id === room.id);
     return visible?.entities.map(item => item.entity) ?? [];
@@ -441,25 +443,29 @@ export class Bayit9StrategyEditor extends HTMLElement {
 
   #roomSectionsPanel(room, override, words, language) {
     const sections = roomSections(override.sections);
+    const autoDevices = usesAutomaticRoomDevices(override, sections, room.custom);
+    const saveSections = (items, focusKey) => {
+      const next = { ...override };
+      if (items) next.sections = items;
+      else delete next.sections;
+      if (autoDevices) {
+        delete next.entities;
+        if (items) next.device_selection = 'auto';
+        else delete next.device_selection;
+      } else if (items || !Array.isArray(next.entities)) {
+        next.entities = this.#roomMembership(room, override, sections, language);
+      }
+      this.#setRoomOverride(room.id, next, focusKey);
+    };
     const mode = select([['auto', words.automaticSections], ['manual', words.manualSections]], sections ? 'manual' : 'auto');
     mode.dataset.roomFocus = 'room-section-mode';
     const children = [field(words.sectionMode, mode)];
-    mode.addEventListener('change', () => {
-      const next = { ...override };
-      if (mode.value === 'auto') {
-        if (sections?.length && !Array.isArray(override.entities)) {
-          next.entities = this.#roomMembership(room, override, sections, language);
-        }
-        delete next.sections;
-      } else next.sections = [];
-      this.#setRoomOverride(room.id, next, 'room-section-mode');
-    });
+    mode.addEventListener('change', () => saveSections(mode.value === 'auto' ? undefined : [], 'room-section-mode'));
     const body = () => disclosure(words.sections, this.#open.sections, open => { this.#open.sections = open; },
       [node('div', { className: 'stack' }, children)]);
     if (!sections) return body();
 
     const chosen = this.#roomMembership(room, override, sections, language);
-    const apply = (items, focusKey) => this.#setRoomOverride(room.id, { ...override, entities: chosen, sections: items }, focusKey);
     const dictionary = languages[language];
     const typeTitle = kind => dictionary['room_' + kind];
     const sectionName = section => section.title || typeTitle(section.kind);
@@ -469,7 +475,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     }));
     const sectionById = new Map(sections.map(section => [section.id, section]));
     if (sections.length) {
-      children.push(orderedList(sectionRecords, (items, focusKey) => apply(items.map(item => sectionById.get(item.id)), focusKey),
+      children.push(orderedList(sectionRecords, (items, focusKey) => saveSections(items.map(item => sectionById.get(item.id)), focusKey),
         words, words.removeSection, false, 'sections'));
     }
 
@@ -478,7 +484,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       while (sectionById.has('section-' + serial)) serial++;
       const id = 'section-' + serial;
       this.#sectionEditing = { roomId: room.id, id };
-      apply([...sections, { id, kind: 'devices', entities: [] }], 'room-section-title');
+      saveSections([...sections, { id, kind: 'devices', entities: [] }], 'room-section-title');
     });
     add.dataset.roomFocus = 'room-section-add';
     children.push(node('div', { className: 'actions' }, [add]));
@@ -492,7 +498,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       this.render();
       this.shadowRoot.querySelector('[data-room-focus="room-section-edit"]')?.focus({ preventScroll: true });
     });
-    const update = (section, focusKey) => apply(sections.map(item => item.id === active.id ? section : item), focusKey);
+    const update = (section, focusKey) => saveSections(sections.map(item => item.id === active.id ? section : item), focusKey);
     const kind = select(ROOM_SECTION_TYPES.map(type => [type, typeTitle(type)]), active.kind);
     kind.dataset.roomFocus = 'room-section-kind';
     kind.addEventListener('change', () => update({ ...active, kind: kind.value }, 'room-section-kind'));
@@ -524,7 +530,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const candidates = chosen.filter(entity => !activeMembers.has(entity));
     if (candidates.length) {
       const picker = addPicker(words.sectionDevice, candidates.map(entity => [entity, entityName(entity)]), words.addToSection, words.choose, entity => {
-        apply(sections.map(section => section.id === active.id
+        saveSections(sections.map(section => section.id === active.id
           ? { ...section, entities: [...section.entities, entity] }
           : { ...section, entities: section.entities.filter(id => id !== entity) }), 'room-section-device');
       });
@@ -635,16 +641,19 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #roomDevicePanel(room, words, language, areas) {
     const override = this.#roomOverride(room.id);
     const sections = roomSections(override.sections);
-    const manual = room.custom || Array.isArray(override.entities) || Boolean(sections?.length);
-    const choice = select([['auto', sections?.length ? words.automaticDevicesAndSections : words.automaticDevices],
-      ['manual', words.manualDevices]], manual ? 'manual' : 'auto');
+    const manual = !usesAutomaticRoomDevices(override, sections, room.custom);
+    const choice = select([['auto', words.automaticDevices], ['manual', words.manualDevices]], manual ? 'manual' : 'auto');
     choice.dataset.roomFocus = 'room-device-mode';
     choice.addEventListener('change', () => {
       const next = { ...override };
       if (choice.value === 'auto') {
         delete next.entities;
-        delete next.sections;
-      } else next.entities = this.#roomMembership(room, override, sections, language);
+        if (sections) next.device_selection = 'auto';
+        else delete next.device_selection;
+      } else {
+        delete next.device_selection;
+        next.entities = this.#roomMembership(room, override, sections, language);
+      }
       this.#setRoomOverride(room.id, next, 'room-device-mode');
     });
     const children = room.custom

@@ -600,6 +600,31 @@ test('derives room membership from sections when flat membership is omitted', ()
   assert.equal(discoverRooms({}, hass, 'en')[0].sections, undefined);
 });
 
+test('keeps automatic room membership independent from section layout without changing legacy/manual membership', () => {
+  const hass = home();
+  hass.entities['light.demo_lamp'] = {area_id:'studio'};
+  for (const [entity, area_id] of [['light.later','studio'], ['light.foreign','lounge'], ['light.hidden','studio']]) {
+    hass.states[entity] = {state: 'off', attributes: {friendly_name: entity}};
+    hass.entities[entity] = {area_id, ...(entity === 'light.hidden' && {hidden_by:'user'})};
+  }
+  const sections = [{kind:'lights', title:'Custom fixtures', entities:['light.demo_lamp','light.foreign','light.hidden']}];
+  const build = override => discoverRooms({
+    room_selection:'manual', area_ids:['studio','lounge'], show_unassigned:false,
+    room_overrides:{studio:{sections,...override}},
+  }, hass, 'en');
+  const [automatic, autoLounge] = build({device_selection:'auto'});
+  assert.ok(automatic.entities.some(item => item.entity === 'light.later'));
+  assert.deepEqual(automatic.sections[0].entities.map(item => item.entity), ['light.demo_lamp']);
+  assert.equal(automatic.sections[0].title,'Custom fixtures');
+  assert.ok(autoLounge.entities.some(item => item.entity === 'light.foreign'));
+  assert.equal(build({ device_selection:'auto', entities:[] })[0].entities.length, automatic.entities.length);
+  const [legacy, legacyLounge] = build({});
+  assert.deepEqual(legacy.entities.map(item => item.entity), ['light.demo_lamp','light.foreign']);
+  assert.ok(!legacyLounge.entities.some(item => item.entity === 'light.foreign'));
+  assert.deepEqual(build({entities:[]})[0].entities,[]);
+  assert.deepEqual(build({entities:['light.foreign']})[0].entities.map(item => item.entity), ['light.foreign']);
+});
+
 test('emits ordered toolbar entries, protects visibility, and limits navigation to local rooted paths', () => {
   const hass = home();
   for (const [entity, area_id] of [['automation.visible', 'studio'], ['automation.excluded', 'lounge'],

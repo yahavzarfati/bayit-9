@@ -314,6 +314,10 @@ if (query.has('large-setup')) {
     states[id] = {state:'off', attributes:{friendly_name:'Scale entity ' + index}};
   }
 }
+if (query.has('section-discovery') && stored().strategy.room_overrides?.studio?.sections?.length) {
+  states['light.demo_after_sections'] = {state:'off', attributes:{friendly_name:'New lamp after layout', supported_color_modes:['onoff']}};
+  hass.entities['light.demo_after_sections'] = {area_id:'studio'};
+}
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
 const selected = query.has('configuration') ? stored().strategy : query.has('popup-routes') ? {
   room_overrides: { studio: { entities: ['light.demo_lamp', 'switch.demo_heater'],
@@ -1798,6 +1802,48 @@ try {
       assert.equal(await rtlEffects.getByLabel('קטגוריה', { exact: true }).locator('option:checked').innerText(), 'ערב');
       assert.equal(await rtlEffects.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       await rtlEffects.close();
+
+      const sectionDiscoveryPage = await browser.newPage({ viewport:{width:390,height:844}, hasTouch:true, reducedMotion:'reduce' });
+      const openSectionSetup = async () => {
+        await sectionDiscoveryPage.getByRole('button',{name:'Appearance',exact:true}).tap();
+        await sectionDiscoveryPage.getByRole('button',{name:'Customize home',exact:true}).tap();
+        const panel = sectionDiscoveryPage.getByRole('dialog',{name:'Customize home',exact:true});
+        await panel.getByText('Rooms',{exact:true}).tap();
+        return panel;
+      };
+      await sectionDiscoveryPage.goto(base + '/fixture-home/home?configuration&section-discovery');
+      const sectionSetup = await openSectionSetup();
+      const deviceMode = sectionSetup.getByLabel('Devices in this room',{exact:true});
+      const sectionArrangement = sectionSetup.getByLabel('Section arrangement',{exact:true});
+      const currentHeading = sectionSetup.getByLabel('Section heading',{exact:true});
+      assert.equal(await deviceMode.inputValue(),'auto');
+      await sectionSetup.getByText('Room sections',{exact:true}).tap();
+      await sectionArrangement.selectOption('manual');
+      await sectionSetup.getByRole('button',{name:'Add section',exact:true}).tap();
+      await currentHeading.fill('My fixtures');
+      await currentHeading.press('Enter');
+      await sectionSetup.getByLabel('Room device',{exact:true}).selectOption('light.demo_lamp');
+      await sectionSetup.getByRole('button',{name:'Move to this section',exact:true}).tap();
+      assert.equal(await deviceMode.inputValue(),'auto');
+      await sectionSetup.getByRole('button',{name:'Save dashboard',exact:true}).tap();
+      await sectionDiscoveryPage.getByRole('button',{name:'Studio',exact:true}).tap();
+      const regeneratedRoom = sectionDiscoveryPage.getByRole('dialog',{name:'Studio',exact:true});
+      await regeneratedRoom.getByRole('heading',{name:'My fixtures',exact:true}).waitFor();
+      await regeneratedRoom.getByText('New lamp after layout',{exact:true}).waitFor();
+      const saved = await sectionDiscoveryPage.evaluate(() =>
+        JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.room_overrides.studio);
+      assert.equal(saved.device_selection,'auto');
+      assert.equal(saved.entities,undefined);
+      assert.deepEqual(saved.sections[0].entities,['light.demo_lamp']);
+      await sectionDiscoveryPage.keyboard.press('Escape');
+      await regeneratedRoom.waitFor({state:'hidden'});
+      await openSectionSetup();
+      await sectionSetup.getByText('Room sections',{exact:true}).tap();
+      await deviceMode.selectOption('manual');
+      assert.equal(await currentHeading.inputValue(),'My fixtures');
+      await deviceMode.selectOption('auto');
+      assert.equal(await currentHeading.inputValue(),'My fixtures');
+      await sectionDiscoveryPage.close();
 
       const setupPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
       await setupPage.goto(base + '/fixture-home/home?configuration&large-setup');

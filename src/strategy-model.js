@@ -166,6 +166,11 @@ export function normalizeRoomControlName(value) {
   return value.trim().slice(0, 80) || undefined;
 }
 
+export function usesAutomaticRoomDevices(override, sections, custom) {
+  return !custom && (override.device_selection === 'auto' ||
+    (!Array.isArray(override.entities) && !sections?.length));
+}
+
 function dashboardAreas(config, hass) {
   const areas = new Map(Object.entries(hass.areas ?? {}).map(([id, area]) => [
     area.area_id ?? id,
@@ -180,8 +185,8 @@ function dashboardAreas(config, hass) {
     const entityIcons = override.entity_icons;
     const entityNames = override.entity_names;
     const sections = roomSections(override.sections);
-    const entityIds = Array.isArray(override.entities) ? idList(override.entities)
-      : sections?.length ? idList(sections.flatMap(section => section.entities)) : area ? undefined : [];
+    const entityIds = usesAutomaticRoomDevices(override, sections, !area) ? undefined
+      : Array.isArray(override.entities) ? idList(override.entities) : idList(sections?.flatMap(section => section.entities));
     areas.set(id, {
       name: name || area?.name,
       icon: ROOM_ICON.test(icon) ? icon : area?.icon ?? 'mdi:home-outline',
