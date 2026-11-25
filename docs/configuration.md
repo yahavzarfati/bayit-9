@@ -41,6 +41,8 @@ For a manually arranged covers section, choose **Cover card layout → Two colum
 
 Use **Device card layout → Two columns when there is room** in a manually arranged devices section to place compact device cards and tiles together. Standard device cards occupy a full row. In YAML, set `columns: 2` on the `devices` section.
 
+Enable **Show tile status only when pending or unavailable** in an authored devices section to show compact tiles with just their icons and names during ordinary operation. Tiles still show when a command is pending or a device is unavailable, and reported states remain accessible. In YAML, set `tile_status: attention` on the `devices` section.
+
 In **Rooms → Device display**, a temperature sensor can use **Compact temperature graph** and a custom line color. The tile shows the reported temperature and the last 24 hours. Select it to open the sensor's Home Assistant details. In YAML, map each sensor to a six-digit hex color under `room_temperature_graph_colors` in its room override.
 
 In **Customize home → Appearance**, **Align dashboard to the left on wide screens** places the toolbar and room grid together on the left on tablets and desktop. In YAML, set `wide_alignment: left`.

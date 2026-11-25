@@ -367,6 +367,7 @@ export function normalizeDashboardConfig(config = {}) {
       parsed.sections = room.sections.filter(section => roomSectionKinds.has(section?.kind)).map(section => ({
         id: text(section.id), kind: section.kind, title: typeof section.title === 'string' ? section.title : undefined,
         ...(supportsRoomSectionColumns(section.kind) && section.columns === 2 && { columns: 2 }),
+        ...(section.kind === 'devices' && section.tile_status === 'attention' && { tileStatus: 'attention' }),
         entities: [...new Set((Array.isArray(section.entities) ? section.entities : []).map(item => item?.entity ?? item))]
           .map(entity => unique.get(entity)).filter(Boolean),
       }));
@@ -1687,7 +1688,7 @@ export class BayitDashboard extends HTMLElement {
       const configured = new Set(explicit.flatMap(section => section.entities.map(device => device.entity)));
       const ungrouped = entities.filter(device => shown(device) && !configured.has(device.entity));
       const groups = [...explicit, ...this.defaultRoomSections(ungrouped)];
-      for (const { key, title, columns, entities: members } of groups) {
+      for (const { key, title, columns, tileStatus, entities: members } of groups) {
         if (!members.length) continue;
         const group = make('section', 'device-group');
         group.dataset.group = key;
@@ -1702,7 +1703,7 @@ export class BayitDashboard extends HTMLElement {
           const temperature = (key === 'room_sensors' || key === 'room_weather') &&
             (config.room_temperature_graph_color || isTemperatureSensor(domainFor(config), this._hass?.states?.[config.entity]?.attributes));
           if (!temperature) {
-            this.buildDevice(config, group, room, key, { inlineClimate });
+            this.buildDevice(config, group, room, key, { inlineClimate, tileStatus });
             continue;
           }
           this.roomGraphs ??= createRoomGraphs(content, this._hass, {
@@ -1733,6 +1734,7 @@ export class BayitDashboard extends HTMLElement {
 
   buildDevice(config, parent, room, groupKey, {
     titleInDialog = false, inlineClimate = false, toolbarLightTile = false, toolbarCoverRail = false, showRoomPreset = false,
+    tileStatus,
   } = {}) {
     const item = make('section', 'device');
     const domain = domainFor(config);
@@ -1823,6 +1825,10 @@ export class BayitDashboard extends HTMLElement {
           else if (isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities,
             this.config.hiddenEntities)) this.moreInfo(config, tile);
         });
+      }
+      if (tileStatus === 'attention') {
+        tile.setAttribute('data-attention-status', '');
+        view.tileHint = tile.getAttribute('aria-description');
       }
       view.tile = tile;
       item.append(tile);
@@ -2168,8 +2174,19 @@ export class BayitDashboard extends HTMLElement {
         view.item.dataset.lockState = model.available ? model.state : '';
       }
       view.state.dataset.tone = feedback ? 'moving' : this.tone(model);
+      const powerTileAction = view.roomPowerTile && !pending && this.roomPowerTileAction(view.config, model);
+      if (view.tileHint !== undefined) {
+        const sending = pending && model.available ? this.t('sending').replace('{name}', labelName) : '';
+        const attention = model.available ? sending : deviceStatus;
+        view.state.hidden = !attention;
+        if (attention) setText(view.state, attention);
+        // Power tiles with no available action already include the reported state in their label.
+        const reported = view.roomPowerTile && !powerTileAction ? '' : deviceStatus;
+        const description = [view.tileHint, reported, sending].filter(Boolean).join(' · ');
+        if (view.tile.getAttribute('aria-description') !== description) view.tile.setAttribute('aria-description', description);
+      }
       if (view.roomPowerTile) {
-        const action = !pending && this.roomPowerTileAction(view.config, model);
+        const action = powerTileAction;
         if (action) view.tile.dataset.action = action;
         else delete view.tile.dataset.action;
         const actionLabel = action === 'stop_timed' ? this.t('boiler_room_stop') : action ? this.t(action) : deviceStatus;

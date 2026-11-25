@@ -33,6 +33,7 @@ let finishPreselect;
 let finishClimatePreset;
 let finishUsageReset;
 let finishRoomOff;
+let finishApplianceCommand;
 let scriptSerial = 0;
 function observeScript(state) {
   const id = 'script.demo_toggle';
@@ -342,6 +343,9 @@ const hass = {
         request.service_data?.entity_id === 'sensor.demo_boiler_runtime')) {
       rejectQuickBoiler = false;
       return Promise.reject(new Error('Fixture rejected boiler action'));
+    }
+    if (query.has('hold-appliance-command') && request.target?.entity_id === 'switch.demo_oven') {
+      return new Promise(resolve => { finishApplianceCommand = resolve; });
     }
     if (request.domain === 'light') {
       if (rejectInlineLight) {
@@ -1134,6 +1138,7 @@ window.bayitTest = {
   },
   rejectNextSetupSave() { rejectSetupSave = true; },
   rejectNextBoilerAction() { rejectQuickBoiler = true; },
+  finishApplianceCommand() { finishApplianceCommand({}); },
   holdNextSetupSave() { holdSetupSave = true; },
   finishHeldSetupSave() { finishSetupSave(); },
   remountDashboardBeforeSaveResult() {
@@ -5169,7 +5174,7 @@ async function assertAuthoredKitchenDeviceGrid(browser) {
     const he = locale === 'he';
     const title = he ? 'מכשירים' : 'Appliances';
     const page = await browser.newPage({viewport:{width:391,height:844},hasTouch:true,reducedMotion:'reduce'});
-    const url = base + '/fixture-home/home?configuration&toolbar-panels&appliance-tile-test&boiler-quick-test&native-more-info=modern&locale=' + locale;
+    const url = base + '/fixture-home/home?configuration&toolbar-panels&appliance-tile-test&boiler-quick-test&hold-appliance-command&native-more-info=modern&locale=' + locale;
     const room = page.getByRole('dialog',{name:'Studio',exact:true});
     const group = room.locator('[data-group=room_devices]');
     await page.addInitScript(({members,title}) => {
@@ -5179,7 +5184,7 @@ async function assertAuthoredKitchenDeviceGrid(browser) {
       sessionStorage.setItem(key,JSON.stringify({strategy:{type:'custom:bayit-9',area_ids:['studio'],show_unassigned:false,
         profiles:[{entity:boiler,kind:'boiler',timed:{simple_timer_entity:'sensor.demo_boiler_runtime'}}],
         toolbar:[{kind:'vacuum',id:'vacuum-panel',label:'Robot vacuum',placement:'settings',entities:[robot]},{kind:'settings'}],
-        room_overrides:{studio:{entities:members,sections:[{kind:'devices',title,columns:2,entities:members}],
+        room_overrides:{studio:{entities:members,sections:[{kind:'devices',title,columns:2,tile_status:'attention',entities:members}],
           vacuum_panel_links:{[robot]:'vacuum-panel'},vacuum_panel_presentation:{[robot]:'tile'},
           appliance_tile_entities:[oven,hob],boiler_quick_power_entities:[boiler],read_only_entities:[hob],
         }},
@@ -5222,11 +5227,41 @@ async function assertAuthoredKitchenDeviceGrid(browser) {
       }
       await page.setViewportSize({width:391,height:844});
       await open();
-      await tile(members[2]).tap();
-      assert.equal(await tile(members[2]).getAttribute('data-action'),null);
-      await page.evaluate(()=>window.bayitTest.setRoomState('switch.demo_oven','on'));
-      await tile(members[1]).and(page.locator('[aria-pressed=true][data-action=turn_off]')).waitFor();
-      await tile(members[0]).tap();
+      const vacuumTile = tile(members[0]);
+      const ovenTile = tile(members[1]);
+      const hobTile = tile(members[2]);
+      const current = entity => tile(entity).locator('.current');
+      assert.equal(await group.locator('.device-tile .current:not([hidden])').count(),0);
+      const vacuumState = await current(members[0]).textContent();
+      assert.ok((await vacuumTile.getAttribute('aria-description')).includes(vacuumState));
+      assert.ok((await vacuumTile.getAttribute('aria-description')).includes(he?'לחיצה ארוכה':'Press and hold'));
+      assert.ok((await hobTile.getAttribute('aria-label')).includes(await current(members[2]).textContent()));
+      assert.ok((await hobTile.getAttribute('aria-description')).includes(he?'לחיצה ארוכה':'Press and hold'));
+      await hobTile.tap();
+      assert.equal(await hobTile.getAttribute('data-action'),null);
+      assert.deepEqual(await calls(),[]);
+
+      await ovenTile.tap();
+      const ovenStatus = current(members[1]);
+      await ovenStatus.waitFor();
+      assert.match(await ovenStatus.textContent(),he?/שולח פקודה/:/Sending/);
+      assert.equal(await ovenTile.getAttribute('aria-busy'),'true');
+      assert.equal(await ovenTile.getAttribute('aria-pressed'),'false');
+      await page.evaluate(()=>{
+        window.bayitTest.setRoomState('switch.demo_oven','on');
+        window.bayitTest.finishApplianceCommand();
+      });
+      await ovenTile.and(page.locator('[aria-busy=false][aria-pressed=true][data-action=turn_off]')).waitFor();
+      await ovenStatus.waitFor({state:'hidden'});
+      assert.ok((await ovenTile.getAttribute('aria-description')).includes(await ovenStatus.textContent()));
+
+      await page.evaluate(()=>window.bayitTest.setRoomState('switch.demo_oven','unavailable'));
+      await ovenStatus.waitFor();
+      assert.equal(await ovenStatus.textContent(),he?'לא זמין':'Unavailable');
+      assert.equal(await ovenTile.getAttribute('data-action'),null);
+      assert.ok((await ovenTile.getAttribute('aria-label')).includes(await ovenStatus.textContent()));
+      await ovenTile.tap();
+      await vacuumTile.tap();
       const robot = page.getByRole('dialog',{name:'Robot vacuum',exact:true});
       await robot.getByRole('button',{name:he?'חזרה לחדר':'Back to room',exact:true}).tap();
       await group.waitFor();
@@ -5234,7 +5269,7 @@ async function assertAuthoredKitchenDeviceGrid(browser) {
       const boilerDetails = page.getByRole('dialog',{name:'Quick boiler',exact:true});
       await boilerDetails.getByRole('button',{name:he?'חזרה לחדר':'Back to room',exact:true}).tap();
       await group.waitFor();
-      assert.deepEqual(await calls(),[]);
+      assert.deepEqual(await calls(),[{type:'call_service',domain:'switch',service:'turn_on',service_data:{},target:{entity_id:'switch.demo_oven'}}]);
       await close();
 
       await page.getByRole('button',{name:he?'מראה':'Appearance',exact:true}).tap();
@@ -5245,6 +5280,10 @@ async function assertAuthoredKitchenDeviceGrid(browser) {
       await setup.getByText(he?'קבוצות בחדר':'Room sections',{exact:true}).tap();
       const columns = setup.getByLabel(he?'פריסת כרטיסי המכשירים':'Device card layout',{exact:true});
       assert.equal(await columns.inputValue(),'2');
+      const attention = setup.getByRole('checkbox',{name:he?'הצגת מצב בכרטיס רק בזמן שליחת פקודה או כשהמכשיר לא זמין':
+        'Show tile status only when pending or unavailable',exact:true});
+      assert.equal(await attention.isChecked(),true);
+      await attention.uncheck();
       await columns.selectOption('auto');
       await setup.getByRole('button',{name:he?'שמירת הדשבורד':'Save dashboard',exact:true}).tap();
       await setup.waitFor({state:'hidden'});
@@ -5252,6 +5291,9 @@ async function assertAuthoredKitchenDeviceGrid(browser) {
       const [vacuum,oven,hob,boiler] = await geometry();
       assert.ok(vacuum.y<oven.y && oven.y===hob.y && hob.y<boiler.y);
       assert.ok(vacuum.width>oven.width && boiler.width>hob.width);
+      await current(members[0]).waitFor();
+      await current(members[2]).waitFor();
+      assert.equal(await tile(members[0]).getAttribute('aria-description'),he?'לחיצה ארוכה פותחת מידע נוסף':'Press and hold for more info');
     } finally {
       await page.close();
     }

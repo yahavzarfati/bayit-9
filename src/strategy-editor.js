@@ -93,6 +93,7 @@ const WORDS = {
     sectionType: 'Section type', sectionTitle: 'Section heading', sectionDevice: 'Room device',
     coverSectionLayout: 'Cover card layout', deviceSectionLayout: 'Device card layout',
     sectionColumnsAuto: 'Automatic', sectionColumnsTwo: 'Two columns when there is room',
+    sectionTileStatusAttention: 'Show tile status only when pending or unavailable',
     addToSection: 'Move to this section', removeFromSection: 'Remove from section', sectionEmpty: 'No devices in this section.',
     noDevices: 'No devices selected.', noMatches: 'No matching devices', missing: 'Unavailable',
     discovery: 'Automatic device selection', controls: 'Controls only', allDevices: 'All supported devices',
@@ -220,6 +221,7 @@ const WORDS = {
     sectionType: 'סוג הקבוצה', sectionTitle: 'כותרת הקבוצה', sectionDevice: 'מכשיר בחדר',
     coverSectionLayout: 'פריסת כרטיסי התריסים', deviceSectionLayout: 'פריסת כרטיסי המכשירים',
     sectionColumnsAuto: 'אוטומטית', sectionColumnsTwo: 'שני טורים כשיש מקום',
+    sectionTileStatusAttention: 'הצגת מצב בכרטיס רק בזמן שליחת פקודה או כשהמכשיר לא זמין',
     addToSection: 'העברה לקבוצה זו', removeFromSection: 'הסרה מהקבוצה', sectionEmpty: 'אין מכשירים בקבוצה זו.',
     noDevices: 'לא נבחרו מכשירים.', noMatches: 'לא נמצאו מכשירים מתאימים', missing: 'לא זמין',
     discovery: 'בחירת מכשירים אוטומטית', controls: 'מכשירים נשלטים בלבד', allDevices: 'כל המכשירים הנתמכים',
@@ -696,6 +698,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     kind.addEventListener('change', () => {
       const next = { ...active, kind: kind.value };
       if (!supportsRoomSectionColumns(next.kind)) delete next.columns;
+      if (next.kind !== 'devices') delete next.tile_status;
       update(next, 'room-section-kind');
     });
     const title = node('input', { value: active.title ?? '', placeholder: typeTitle(active.kind), maxLength: 80 });
@@ -725,6 +728,16 @@ export class Bayit9StrategyEditor extends HTMLElement {
         update(next, 'room-section-columns');
       });
       children.push(field(active.kind === 'covers' ? words.coverSectionLayout : words.deviceSectionLayout, columns));
+    }
+    if (active.kind === 'devices') {
+      const attention = checkbox(words.sectionTileStatusAttention, active.tile_status === 'attention', checked => {
+        const next = { ...active };
+        if (checked) next.tile_status = 'attention';
+        else delete next.tile_status;
+        update(next, 'room-section-tile-status');
+      });
+      attention.firstElementChild.dataset.roomFocus = 'room-section-tile-status';
+      children.push(attention);
     }
 
     const entityName = entity => this.#hass.states?.[entity]?.attributes?.friendly_name || entity;

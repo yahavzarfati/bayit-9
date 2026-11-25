@@ -255,7 +255,9 @@ export function roomSections(value) {
     const id = layoutId(section.id, 'section-' + (index + 1), seen);
     const title = typeof section.title === 'string' ? section.title.trim().slice(0, 80) : undefined;
     return [{ id, kind: section.kind, ...(title !== undefined && { title }),
-      ...(supportsRoomSectionColumns(section.kind) && section.columns === 2 && { columns: 2 }), entities: idList(section.entities) }];
+      ...(supportsRoomSectionColumns(section.kind) && section.columns === 2 && { columns: 2 }),
+      ...(section.kind === 'devices' && section.tile_status === 'attention' && { tile_status: 'attention' }),
+      entities: idList(section.entities) }];
   });
 }
 

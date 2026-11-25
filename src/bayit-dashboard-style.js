@@ -770,7 +770,7 @@ export const styles = `
     border-color: rgba(255,215,147,.35);
   }
   .device-tile .current { margin: 0; font-weight: 600; }
-  .device-tile[aria-pressed] .current { display: none; }
+  .device-tile[aria-pressed]:not([data-attention-status]) .current { display: none; }
   .device-tile .device-name { font-size: 13px; font-weight: 700; }
   .device[data-inline-light] .device-tile {
     min-height: 44px; height: auto;

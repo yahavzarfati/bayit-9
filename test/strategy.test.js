@@ -1285,17 +1285,19 @@ test('keeps configured room section order, roles and empty headings without chan
 
 test('passes explicit columns through supported room sections only', () => {
   const config = { room_overrides:{ lounge:{ sections:[
-    { kind:'covers', columns:2, entities:['cover.example'] },
+    { kind:'covers', columns:2, tile_status:'attention', entities:['cover.example'] },
     { kind:'covers', columns:'2', entities:['cover.example'] },
     { kind:'covers', columns:3, entities:['cover.example'] },
-    { kind:'devices', columns:2, entities:['cover.example'] },
+    { kind:'devices', columns:2, tile_status:'attention', entities:['cover.example'] },
+    { kind:'devices', tile_status:'show-everything', entities:['cover.example'] },
     { kind:'lights', columns:2, entities:['light.demo_lamp'] },
   ] } } };
   const hass = home();
   hass.states['cover.example'] = { state:'closed', attributes:{ supported_features:15 } };
   hass.entities['cover.example'] = { area_id:'lounge' };
   const [room] = generateDashboard(config, hass).views[0].cards[0].rooms.filter(({id}) => id === 'lounge');
-  assert.deepEqual(room.sections.map(section => section.columns), [2, undefined, undefined, 2, undefined]);
+  assert.deepEqual(room.sections.map(section => section.columns), [2, undefined, undefined, 2, undefined, undefined]);
+  assert.deepEqual(room.sections.map(section => section.tile_status), [undefined, undefined, undefined, 'attention', undefined, undefined]);
   assert.deepEqual(room.sections[0].entities.map(device => device.entity), ['cover.example']);
 });
 
