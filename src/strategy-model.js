@@ -433,6 +433,7 @@ function dashboardAreas(config, hass) {
       shortcutDetailEntities: override.shortcut_detail_entities,
       shortcutDetailRoutes: override.shortcut_detail_routes,
       inlineLights: new Set(idList(override.inline_light_entities)),
+      compactInlineLights: new Set(idList(override.compact_inline_light_entities)),
       dualLightDetails: new Set(idList(override.dual_light_detail_entities)),
       compactLightReadings: new Set(idList(override.compact_light_reading_entities)),
       nativeCoverHeaders: new Set(idList(override.native_cover_header_entities)),
@@ -791,7 +792,10 @@ export function discoverRooms(config, hass, locale) {
           !room.panel_hidden_entities?.includes(device.entity) && roomLightTilePlacement(device.entity, area.sections)) {
         device.room_light_native_hold = true;
       }
-      if (area.inlineLights?.has(device.entity)) device.room_light_controls = true;
+      if (area.inlineLights?.has(device.entity)) {
+        device.room_light_controls = true;
+        if (area.compactInlineLights?.has(device.entity)) device.room_light_controls_compact = true;
+      }
       if (area.dualLightDetails?.has(device.entity)) device.room_dual_light_detail = true;
       if (area.compactLightReadings?.has(device.entity)) device.room_compact_light_reading = true;
       const refreshButton = config.light_status_refresh_buttons?.[device.entity];

@@ -43,6 +43,7 @@ const WORDS = {
     roomControlShow: 'Show name in this room', roomDeviceIcon: 'Icon in this room', roomDeviceIconDefault: 'Use default icon',
     roomPanelIconOptions: 'Separate room panel icon', roomPanelIcon: 'Icon in the room panel', roomPanelIconDefault: 'Use shared icon',
     roomInlineLight: 'Show brightness and temperature in this room',
+    roomCompactInlineLight: 'Use a compact light-control row',
     roomNativeCoverHeader: 'Open Home Assistant details from the cover header',
     roomDualLightDetail: 'Show both sliders in light details',
     roomCompactLightReading: 'Show reported values in compact light controls',
@@ -185,6 +186,7 @@ const WORDS = {
     roomControlShow: 'הצגת שם המכשיר בחדר הזה', roomDeviceIcon: 'סמל המכשיר בחדר הזה', roomDeviceIconDefault: 'שימוש בסמל ברירת המחדל',
     roomPanelIconOptions: 'סמל נפרד לחלונית החדר', roomPanelIcon: 'סמל בחלונית החדר', roomPanelIconDefault: 'שימוש בסמל המשותף',
     roomInlineLight: 'הצגת בהירות וגוון אור בתוך החדר',
+    roomCompactInlineLight: 'תצוגת בהירות וגוון בשורה אחת',
     roomNativeCoverHeader: 'פתיחת פרטי Home Assistant מכותרת התריס',
     roomDualLightDetail: 'הצגת שני המחוונים בפרטי התאורה',
     roomCompactLightReading: 'הצגת ערכים מדווחים בפקדי תאורה קומפקטיים',
@@ -1222,6 +1224,22 @@ export class Bayit9StrategyEditor extends HTMLElement {
           inline.firstElementChild.dataset.roomFocus = 'room-inline-light';
           fields.append(inline);
         }
+        const compactInlineLight = configuredIds(override.compact_inline_light_entities).includes(id);
+        if (inlineLight && !configuredIds(override.read_only_entities).includes(id) &&
+            (compactInlineLight || lightActions?.set_brightness && lightActions.set_color_temp_kelvin &&
+              (lightActions.set_light_color || lightActions.set_effect))) {
+          const compact = checkbox(words.roomCompactInlineLight, compactInlineLight, checked => {
+            const next = { ...this.#roomOverride(room.id) };
+            const lights = new Set(configuredIds(next.compact_inline_light_entities));
+            if (checked) lights.add(id);
+            else lights.delete(id);
+            if (lights.size) next.compact_inline_light_entities = [...lights];
+            else delete next.compact_inline_light_entities;
+            this.#setRoomOverride(room.id, next, 'room-compact-inline-light');
+          });
+          compact.firstElementChild.dataset.roomFocus = 'room-compact-inline-light';
+          fields.append(compact);
+        }
         const dualLight = configuredIds(override.dual_light_detail_entities).includes(id);
         if (lightActions && !configuredIds(override.read_only_entities).includes(id) &&
             (dualLight || lightActions.set_brightness && lightActions.set_color_temp_kelvin && !lightActions.set_light_color && !lightActions.set_effect)) {
@@ -1507,7 +1525,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
       }
       for (const key of ['keep_in_automatic_room_entities', 'read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
         'room_activity_badge_excluded_entities',
-        'inline_light_entities', 'dual_light_detail_entities', 'compact_light_reading_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details', 'shortcut_power_entities',
+        'inline_light_entities', 'compact_inline_light_entities', 'dual_light_detail_entities', 'compact_light_reading_entities',
+        'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details', 'shortcut_power_entities',
         'vacuum_panel_hold_entities', 'climate_power_entities', 'media_compact_entities', 'appliance_tile_entities',
         'boiler_quick_power_entities', 'compact_device_entities', 'compact_climate_controls_entities']) {
         if (!Array.isArray(next[key])) continue;

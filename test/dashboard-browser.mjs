@@ -3343,6 +3343,110 @@ async function assertCompactInlineLightLayout(browser) {
   }
 }
 
+async function assertAuthoredCompactInlineColorLight(browser) {
+  const labels = {
+    en: { appearance:'Appearance', setup:'Customize home', rooms:'Rooms', room:'Room to customize',
+      display:'Device display', device:'Device to customize', compact:'Use a compact light-control row',
+      save:'Save dashboard', brightness:'Brightness', temperature:'White temperature', effects:'Effects' },
+    he: { appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים', room:'חדר להתאמה אישית',
+      display:'תצוגת מכשירים', device:'מכשיר להתאמה אישית', compact:'תצוגת בהירות וגוון בשורה אחת',
+      save:'שמירת הדשבורד', brightness:'בהירות', temperature:'גוון לבן', effects:'אפקטים' },
+  };
+  const lamp = 'light.demo_pendant';
+  const ordinary = 'light.demo_wall';
+  const other = 'bayit_room_inline_light_fixture';
+  const roomConfig = { entities:[ordinary,lamp], inline_light_entities:[lamp], compact_light_reading_entities:[lamp] };
+  const strategy = { type:'custom:bayit-9', area_ids:['studio', other], show_unassigned:false,
+    room_overrides:{ studio:roomConfig, [other]:{ name:'Second room', ...roomConfig } },
+    light_effect_groups:{ [lamp]:[{ title:'Scenes', effects:['Color loop','Slow pulse'] }] },
+  };
+  for (const locale of Object.keys(labels)) {
+    const words = labels[locale];
+    for (const width of [320,391]) {
+      const page = await browser.newPage({ viewport:{ width, height:844 }, hasTouch:true, isMobile:true, reducedMotion:'reduce' });
+      page.setDefaultTimeout(8000);
+      try {
+        await page.addInitScript(strategy => {
+          const key = 'bayit9-browser-fixture';
+          if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy }));
+        }, strategy);
+        await page.goto(base + '/fixture-home/home?configuration&room-grid&compact-color-palette&locale=' + locale);
+        const dialog = name => page.getByRole('dialog', { name, exact:true });
+        const openRoom = async name => {
+          await page.getByRole('button', { name, exact:true }).tap();
+          await dialog(name).waitFor();
+        };
+        const closeRoom = async name => {
+          await page.keyboard.press('Escape');
+          await dialog(name).waitFor({ state:'hidden' });
+        };
+        const tile = name => dialog(name).locator('.device[data-entity="' + lamp + '"]');
+        const group = name => dialog(name).locator('[data-group=room_lights]');
+        await openRoom('Studio');
+        assert.equal(await tile('Studio').getByRole('slider').count(), 2);
+        const stack = await group('Studio').boundingBox();
+        await closeRoom('Studio');
+
+        await page.getByRole('button', { name:words.appearance, exact:true }).tap();
+        await page.getByRole('button', { name:words.setup, exact:true }).tap();
+        const setup = dialog(words.setup);
+        await setup.getByText(words.rooms, { exact:true }).tap();
+        await setup.getByLabel(words.room, { exact:true }).selectOption('studio');
+        await setup.getByText(words.display, { exact:true }).tap();
+        await setup.getByLabel(words.device, { exact:true }).selectOption(lamp);
+        await setup.getByRole('checkbox', { name:words.compact, exact:true }).check();
+        await Promise.all([page.waitForEvent('load'), setup.getByRole('button', { name:words.save, exact:true }).tap()]);
+        const persisted = await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+        assert.deepEqual(persisted.room_overrides.studio.compact_inline_light_entities,[lamp]);
+        assert.equal(persisted.room_overrides[other].compact_inline_light_entities,undefined);
+
+        await openRoom('Studio');
+        const card = tile('Studio');
+        const control = card.locator('.compact-light-controls');
+        const slider = control.getByRole('slider', { name:words.brightness, exact:true });
+        const temperature = control.getByRole('slider', { name:words.temperature, exact:true });
+        const mode = control.locator('button[data-light-mode]');
+        await slider.waitFor();
+        assert.equal(await control.getByRole('slider').count(),1);
+        assert.equal(await control.locator('output:visible').count(),0);
+        assert.equal(await mode.getAttribute('aria-label'),words.temperature);
+        const [rail, toggle, compact, height, regular] = await Promise.all([
+          slider.boundingBox(), mode.boundingBox(), group('Studio').boundingBox(),
+          card.boundingBox(), dialog('Studio').locator('.device[data-entity="' + ordinary + '"]').boundingBox(),
+        ]);
+        assert.ok(rail.width >= 44 && rail.height >= 44, JSON.stringify(rail));
+        assert.ok(toggle.width >= 44 && toggle.height >= 44, JSON.stringify(toggle));
+        assert.ok(rail.x + rail.width <= toggle.x, 'The rail and mode button have separate touch targets');
+        assert.ok(height.height >= 108 && height.height <= 116, JSON.stringify(height));
+        assert.equal(height.height,regular.height);
+        assert.ok(compact.height <= 163 && compact.height < stack.height - 45, JSON.stringify({compact,stack}));
+        assert.ok(await card.evaluate(el=>el.scrollWidth <= el.clientWidth));
+
+        const roomRoute = new URL(page.url()).hash;
+        await mode.tap();
+        await temperature.waitFor();
+        assert.equal(await control.getByRole('slider').count(),1);
+        assert.equal(await mode.getAttribute('aria-label'),words.brightness);
+        assert.equal(new URL(page.url()).hash,roomRoute);
+        await mode.press('Enter');
+        await slider.waitFor();
+        assert.equal((await group('Studio').boundingBox()).height,compact.height);
+        await card.locator('.device-tile').press('Shift+Enter');
+        const full = dialog('Pendant lamp');
+        await full.getByRole('button', { name:words.effects, exact:true }).waitFor();
+        assert.equal(await full.locator('[data-inline-light-compact]').count(),0);
+        await closeRoom('Pendant lamp');
+        if (await dialog('Studio').isVisible()) await closeRoom('Studio');
+        await openRoom('Second room');
+        assert.equal(await tile('Second room').getByRole('slider').count(),2);
+        assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+      } finally {
+        await page.close();
+      }
+    }
+  }
+}
+
 async function assertSharedHeaterLevelInterop(browser) {
   for (const locale of ['en','he']) {
     const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
@@ -8275,6 +8379,7 @@ try {
       await assertHomeShortcutPower(browser);
       await assertHomeHeaterShortcut(browser);
       await assertCompactInlineLightLayout(browser);
+      await assertAuthoredCompactInlineColorLight(browser);
       await assertTimerHistory(browser);
       await assertHeatingProfileTargetsStayDistinct(browser);
       await assertStandaloneTimedHeater(browser);

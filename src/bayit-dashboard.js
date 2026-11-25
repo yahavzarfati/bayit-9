@@ -229,7 +229,10 @@ function normalizeEntity(item) {
   if (roomName !== undefined) entry.room_name = roomName;
   const roomIcon = normalizeRoomIcon(item.room_icon);
   if (roomIcon) entry.room_icon = roomIcon;
-  if (item.room_light_controls === true && entity.startsWith('light.')) entry.room_light_controls = true;
+  if (item.room_light_controls === true && entity.startsWith('light.')) {
+    entry.room_light_controls = true;
+    if (item.room_light_controls_compact === true) entry.room_light_controls_compact = true;
+  }
   if (item.room_dual_light_detail === true && entity.startsWith('light.')) entry.room_dual_light_detail = true;
   if (item.room_compact_light_reading === true && entity.startsWith('light.')) entry.room_compact_light_reading = true;
   if (iconPattern.test(text(item.icon))) entry.icon = item.icon;
@@ -1835,13 +1838,14 @@ export class BayitDashboard extends HTMLElement {
     const name = make(tileMode || launchFromHeader ? 'span' : room ? 'h4' : 'h3', 'device-name');
     const state = make('span', 'current');
     const inlineLight = tileMode && domain === 'light' && config.role !== 'status' && config.room_light_controls === true;
+    const compactInlineLight = inlineLight && config.room_light_controls_compact === true;
     const compactHeater = !!(titleInDialog || room) && config.kind === 'heater' && !!config.timed && config.role !== 'status';
     item.toggleAttribute('data-compact-heater', compactHeater);
     const standaloneBoiler = titleInDialog && config.kind === 'boiler' && config.role !== 'status';
     const vacuumSummary = panelTarget && panelKind === 'vacuum' && vacuumDisplay !== 'tile' ? config.room_vacuum_summary : undefined;
     const vacuumStatusLabels = vacuumSummary?.status_entity && panelTarget.sections?.flatMap(section => section.entities)
       .find(entry => entry.entity === vacuumSummary.status_entity && entry.readout?.state_labels)?.readout.state_labels;
-    const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactHeater, toolbarVacuumCompact,
+    const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactInlineLight, compactHeater, toolbarVacuumCompact,
       compactClimateControls: Boolean(room || showRoomPreset) && config.room_climate_controls_compact === true,
       standaloneBoiler, compactCover: cover, vacuumCleaningControls: vacuumDisplay === 'cleaning-controls',
       vacuumSummary, vacuumStatusLabels, roomPowerTile, compactDevice,
@@ -2440,8 +2444,9 @@ export class BayitDashboard extends HTMLElement {
       const compactCommands = view.compactDevice && this.roomCompactCommands(model);
       const mutePlaceholder = view.compactDevice && view.compactMedia && compactMediaMutePlaceholder(model);
       const lightModes = model.attributes.supported_color_modes;
-      view.filledWhiteLightRail = Boolean(view.lightPower && view.compactLightReading && !view.dualLightDetail &&
-        model.actions.set_color_temp_kelvin && Array.isArray(lightModes) && lightModes.every(mode => whiteLightModes.has(mode)));
+      const filledStandaloneRail = view.lightPower && view.compactLightReading && !view.dualLightDetail &&
+        Array.isArray(lightModes) && lightModes.every(mode => whiteLightModes.has(mode));
+      view.filledWhiteLightRail = Boolean((view.compactInlineLight || filledStandaloneRail) && model.actions.set_color_temp_kelvin);
       const signature = JSON.stringify([actionsInOrder.map(id => model.actions[id] || null), timerLayout,
         model.levelAction, coverClass, hideIdleTimedOff, compactCommands, mutePlaceholder, mutePlaceholder && model.attributes.is_volume_muted === true,
         view.filledWhiteLightRail, view.onlyPresetShortcut]);
@@ -2734,7 +2739,8 @@ export class BayitDashboard extends HTMLElement {
     const advancedVacuum = view.toolbarVacuumCompact ? make('details', 'vacuum-extra-controls') : undefined;
     const { actions } = model;
     view.compactLight = !!((view.lightPower || view.inlineLight) && actions.set_brightness && actions.set_color_temp_kelvin &&
-      actions.turn_on && actions.turn_off && !actions.set_light_color && !actions.set_effect);
+      actions.turn_on && actions.turn_off && (view.compactInlineLight || !actions.set_light_color && !actions.set_effect));
+    view.item.toggleAttribute('data-inline-light-compact', view.compactInlineLight && view.compactLight);
     view.compactColorLight = Boolean(view.lightPower && view.compactLightReading && actions.set_brightness &&
       actions.turn_on && actions.turn_off && (actions.set_light_color || actions.set_effect));
     const compactLightPower = view.compactLight || view.compactColorLight;
@@ -2883,7 +2889,10 @@ export class BayitDashboard extends HTMLElement {
       const showTemperature = view.compactTemperature === true;
       brightness.hidden = showTemperature;
       temperature.hidden = !showTemperature;
-      mode.setAttribute('aria-pressed', String(showTemperature));
+      if (view.compactInlineLight) {
+        setIcon(mode.firstElementChild, showTemperature ? 'mdi:brightness-4' : 'mdi:thermometer');
+        label(mode, this.t(showTemperature ? 'set_brightness' : 'set_color_temp_kelvin'));
+      } else mode.setAttribute('aria-pressed', String(showTemperature));
     };
     mode.onclick = () => {
       view.compactTemperature = !view.compactTemperature;
@@ -2913,7 +2922,7 @@ export class BayitDashboard extends HTMLElement {
     const compactRange = view.compactLight && inlineLightActions.has(id);
     const dualLightRange = compactRange && view.dualLightDetail;
     const compactLightReading = compactBrightness || (compactRange && !dualLightRange && view.compactLightReading);
-    const reportedLightRange = dualLightRange || compactLightReading;
+    const reportedLightRange = dualLightRange || compactLightReading || (compactRange && view.compactInlineLight);
     const minimumBrightness = compactLightReading && id === 'set_brightness';
     const range = minimumBrightness ? { ...action, min: 1 } : action;
     const directRange = view.inlineLight || compactBrightness || (compactRange && !dualLightRange);

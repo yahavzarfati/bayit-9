@@ -895,7 +895,7 @@ export const styles = `
   .compact-light-controls[data-filled-white-rail] > .round-action { border-radius: 8px; }
   .compact-light-controls[data-filled-white-rail] input[type=range] {
     --white-rail-fill: var(--white-rail-color, var(--warm));
-    --white-rail-base: color-mix(in srgb,var(--white-rail-fill) 25%,var(--control));
+    --white-rail-base: var(--inline-light-rail-base,color-mix(in srgb,var(--white-rail-fill) 25%,var(--control)));
     --white-rail-background: linear-gradient(to right,var(--white-rail-fill) var(--white-rail-progress),
       var(--white-rail-base) var(--white-rail-progress));
     appearance: none; -webkit-appearance: none; margin: 0;
@@ -938,6 +938,10 @@ export const styles = `
     .compact-light-controls > .round-action { border-radius: 12px; }
   }
   .shell[dir=rtl] .device[data-inline-light][data-compact-light] .device-name { direction: rtl; }
+  .device[data-inline-light-compact] .device-tile { min-height: 52px; padding-inline: 9px; }
+  .device[data-inline-light-compact] .action-list { padding: 0 9px 8px; }
+  .device[data-inline-light-compact] .compact-light-controls { gap: 4px; --inline-light-rail-base: var(--room-command-fill); }
+  .device[data-inline-light-compact] .compact-light-controls output { display: none; }
   .action-list, .basic-actions { display: grid; gap: 7px; }
   .action-list:empty { display: none; }
   .action-list { margin-block-start: 8px; }
