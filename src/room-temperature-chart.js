@@ -164,12 +164,12 @@ export const roomTemperatureChartStyles = `
     width:100%; min-width:0; text-align:start; padding:8px 1px 2px; border:0;
     border-radius:10px; color:var(--ink); background:transparent;
   }
-  .room-temperature-chart > ha-icon { margin-inline-start:12px; }
+  .room-temperature-chart > ha-icon { margin-inline-start:17px; }
   .room-temperature-reading {
     display:flex; align-items:baseline; align-self:center; gap:3px;
-    margin-inline-start:14px; font-variant-numeric:tabular-nums;
+    margin-inline-start:21px; font-variant-numeric:tabular-nums;
   }
-  .room-temperature-value { font-size:22px; line-height:1.2; font-weight:500; }
+  .room-temperature-value { font-size:22px; line-height:1.2; font-weight:300; }
   .room-temperature-unit { color:var(--secondary); font-size:12px; }
   .room-temperature-chart svg { display:block; width:100%; height:44px; overflow:hidden; }
   .room-temperature-chart stop { stop-color:var(--room-chart-color); }
