@@ -1101,7 +1101,8 @@ async function assertNativeRoomCoverHeader(browser) {
       await native.waitFor({ state: 'hidden' });
       await page.waitForFunction(() => {
         const root = document.querySelector('bayit-dashboard').shadowRoot;
-        return root.activeElement?.getAttribute('aria-label') === 'Long living room curtain · More info' &&
+        return history.state?.dialog !== 'ha-more-info-dialog' &&
+          root.activeElement?.getAttribute('aria-label') === 'Long living room curtain · More info' &&
           location.hash === '#room-studio' && !new URL(location.href).searchParams.has('more-info-entity-id');
       });
     }
@@ -1370,8 +1371,8 @@ async function assertShortcutDetailRoutes(browser) {
     await native.getByRole('button', { name: 'Close native details', exact: true }).tap();
     await native.waitFor({ state: 'hidden' });
     await page.waitForURL(url);
-    await page.waitForFunction(() => document.querySelector('bayit-dashboard')
-      .shadowRoot.activeElement?.dataset.entity === 'cover.demo_route_shade');
+    await page.waitForFunction(() => history.state?.dialog !== 'ha-more-info-dialog' &&
+      document.querySelector('bayit-dashboard').shadowRoot.activeElement?.dataset.entity === 'cover.demo_route_shade');
 
     const otherCover = page.locator('.room[data-room="bayit_room_den"] .quick-button[data-entity="cover.demo_route_shade"]');
     await otherCover.press('Shift+Enter');
