@@ -169,6 +169,13 @@ export function createToolbarPanel(kind, configuration, context) {
 
   function renderTile(item, itemKind, register = update => handlers.push(update), canActivate) {
     const tile = button('tile-row');
+    const securityAction = kind === 'security' && itemKind === 'action';
+    const securityVisible = () => {
+      const { states = {}, entities } = context.getHass() ?? {};
+      return isVisibleEntity(item.entity, states, entities, context.hiddenEntities);
+    };
+    const shortcutCurrent = securityAction ? () => live && dialog?.open && !dialog.hasAttribute('data-closing') &&
+      tile.isConnected && host.contains(tile) && securityVisible() : undefined;
     const compactPerson = itemKind === 'compact-person';
     tile.toggleAttribute('data-compact-person', compactPerson);
     const visual = make('span', 'tile-mark');
@@ -194,11 +201,12 @@ export function createToolbarPanel(kind, configuration, context) {
     tile.append(visual, name, state);
     let action;
     tile.onclick = () => {
-      if (canActivate && !canActivate(item.entity)) return;
-      if (action) request(item, action, undefined, tile);
+      if ((canActivate && !canActivate(item.entity)) || (shortcutCurrent && !shortcutCurrent())) return;
+      if (action) request(item, action, undefined, tile, shortcutCurrent ? { shortcutCurrent } : undefined);
       else moreInfo(item, tile);
     };
     register(() => {
+      const visible = !securityAction || securityVisible();
       const value = amount(item);
       const model = value.model;
       name.textContent = model.name;
@@ -210,20 +218,23 @@ export function createToolbarPanel(kind, configuration, context) {
         else if (model.domain === 'lock') action = model.state === 'locked' ? 'unlock' : model.state === 'unlocked' ? 'lock' : undefined;
         else if (model.actions.turn_on && model.actions.turn_off) action = model.state === 'on' ? 'turn_off' : 'turn_on';
       }
-      const showState = itemKind !== 'action' || !['script', 'button', 'input_button'].includes(model.domain) || (!model.available && !action);
-      state.textContent = showState ? value.state : '';
+      const showState = !visible || itemKind !== 'action' || !['script', 'button', 'input_button'].includes(model.domain) ||
+        (!model.available && !action);
+      const status = visible ? value.state : t('unavailable');
+      state.textContent = showState ? status : '';
       state.hidden = !showState;
-      tile.dataset.tone = model.state === 'home' ? 'home' : model.state === 'on' ? 'active' : '';
+      tile.dataset.tone = !visible ? '' : model.state === 'home' ? 'home' : model.state === 'on' ? 'active' : '';
       if (useLockPalette && model.domain === 'lock') paintLockStatus(tile, model);
       if (kind === 'automations' && itemKind === 'action' && model.domain === 'lock') {
         tile.toggleAttribute('data-automation-unlocked', model.available && model.state === 'unlocked');
       }
       if (kind === 'security' && item.action_appearance === 'danger') {
-        tile.toggleAttribute('data-security-danger', action === 'run_script' && model.actions.run_script.requiresConfirmation === true);
+        tile.toggleAttribute('data-security-danger', visible && action === 'run_script' &&
+          model.actions.run_script.requiresConfirmation === true);
       }
-      tile.disabled = (itemKind === 'action' && pending(item.entity)) || (!action && !model.actions.more_info);
+      tile.disabled = !visible || (itemKind === 'action' && pending(item.entity)) || (!action && !model.actions.more_info);
       tile.setAttribute('aria-busy', String(pending(item.entity)));
-      label(tile, model.name + (showState ? ' · ' + value.state : ''));
+      label(tile, model.name + (showState ? ' · ' + status : ''));
       if (badge) {
         const presence = !model.available ? 'unknown' : model.state === 'home' ? 'home' : model.state === 'not_home' ? 'away' : 'zone';
         tile.dataset.presenceStatus = presence;

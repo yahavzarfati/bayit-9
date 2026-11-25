@@ -127,6 +127,23 @@ tracker.setState = (entity, state) => {
   hass.states[entity] = { ...hass.states[entity], state };
   dashboard.hass = { ...hass, states: { ...hass.states } };
 };
+tracker.setRegistry = (entity, info) => {
+  hass.entities = { ...hass.entities, [entity]:info };
+  dashboard.hass = { ...hass };
+};
+tracker.hideBeforeDispatch = entity => {
+  const update = dashboard.update;
+  dashboard.update = function (...args) {
+    this.update = update;
+    tracker.setRegistry(entity,{disabled_by:'user'});
+    return update.apply(this,args);
+  };
+};
+tracker.removeSecureAction = () => {
+  config.toolbar[0].sections[0].entities = config.toolbar[0].sections[0].entities
+    .filter(item => item.entity !== 'script.fixture_secure');
+  dashboard.setConfig(Strategy.generate(config,hass).views[0].cards[0]);
+};
 tracker.setMapServices = available => {
   hass.services = available ? mapServices : {};
   dashboard.hass = { ...hass };
@@ -395,13 +412,64 @@ try {
         assert.deepEqual(await page.evaluate(() => tracker.calls), []);
         await prompt.getByRole('button', { name: he ? 'ביטול' : 'Cancel', exact: true }).click();
         assert.deepEqual(await page.evaluate(() => tracker.calls), []);
+        const accept = prompt.getByRole('button', { name: he ? 'אישור' : 'Confirm', exact: true });
+        const script = 'script.fixture_secure';
+        const unavailable = he ? 'לא זמין' : 'Unavailable';
+        const disabled = page.getByRole('button', { name:'Secure fixture · ' + unavailable, exact:true });
+        const restore = async () => {
+          await page.evaluate(script => tracker.setRegistry(script,{}),script);
+          await action.waitFor();
+        };
+        await action.evaluate((tile,id) => {
+          tracker.setRegistry(id,{hidden_by:'user'});
+          tile.click();
+        }, script);
+        await disabled.waitFor();
+        assert.equal(await disabled.isDisabled(),true);
+        assert.equal(await prompt.isVisible(),false);
+        assert.deepEqual(await page.evaluate(() => tracker.calls), []);
+        await restore();
+
         await action.click();
-        await prompt.getByRole('button', { name: he ? 'אישור' : 'Confirm', exact: true }).click();
+        await prompt.waitFor();
+        await page.evaluate(script => tracker.setRegistry(script,{hidden:true}),script);
+        await accept.click();
+        await prompt.waitFor({state:'hidden'});
+        await disabled.waitFor();
+        assert.equal(await disabled.isDisabled(),true);
+        assert.deepEqual(await page.evaluate(() => tracker.calls), []);
+        await restore();
+
+        await action.click();
+        await prompt.waitFor();
+        await page.evaluate(script => tracker.hideBeforeDispatch(script),script);
+        await accept.click();
+        await prompt.waitFor({state:'hidden'});
+        await disabled.waitFor();
+        assert.deepEqual(await page.evaluate(() => tracker.calls), []);
+        await restore();
+
+        await action.click();
+        await accept.click();
+        await prompt.waitFor({state:'hidden'});
+        await page.evaluate(() => document.querySelector('bayit-dashboard').shadowRoot.querySelector('[data-role=accept]').click());
         await page.waitForFunction(() => tracker.calls.length === 1);
         assert.deepEqual(await page.evaluate(() => tracker.calls),
           [{ type:'call_service', domain:'script', service:'turn_on', service_data:{}, target:{ entity_id:'script.fixture_secure' } }]);
         await page.evaluate(() => tracker.setState('script.fixture_secure', 'unavailable'));
         await page.locator('[data-security-danger]').waitFor({ state:'detached' });
+        await disabled.click();
+        assert.deepEqual(await page.evaluate(() => tracker.details.map(item=>item.entityId)),['script.fixture_secure']);
+        await page.evaluate(script => tracker.setState(script,'off'),script);
+        await action.waitFor();
+        const stale = await action.elementHandle();
+        await action.click();
+        await prompt.waitFor();
+        await page.evaluate(() => tracker.removeSecureAction());
+        await prompt.waitFor({state:'hidden'});
+        await stale.evaluate(item => item.click());
+        assert.equal(await prompt.isVisible(),false);
+        assert.equal(await page.evaluate(() => tracker.calls.length),1);
 
         await openFixture('?danger-action&disabled&editor' + localeFlag);
         const editor = page.locator('#editor');
