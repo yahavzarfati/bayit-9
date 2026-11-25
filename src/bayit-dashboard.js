@@ -2559,7 +2559,7 @@ export class BayitDashboard extends HTMLElement {
       if (view.vacuumSummary) {
         const stateFor = id => id && isVisibleEntity(id, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities)
           ? this._hass.states[id] : undefined;
-        const vacuumReady = !view.config.vacuum_summary || (model.available && this.shortcutEntityVisible(model.entity));
+        const vacuumReady = !view.config.vacuum_summary || (model.available && this.entityVisible(model.entity));
         const summary = vacuumReady ? roomVacuumSummary(view.vacuumSummary, stateFor, model.state, view.vacuumStatusLabels) : undefined;
         const parts = [summary?.status ?? (vacuumReady ? deviceStatus : this.t('unavailable'))];
         if (summary?.battery !== undefined) parts.push(this.t('vacuum_room_battery').replace('{value}', ltr(summary.battery + '%')));
