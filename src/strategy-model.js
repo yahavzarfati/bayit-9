@@ -1187,7 +1187,7 @@ export function popupAliasDestinations(config, hass = {}) {
     { kind:'room', room:room.id, name:room.name },
     ...room.entities.flatMap(item => {
       const device = { kind:'device', room:room.id, entity:item.entity,
-        name:item.name || item.entity, roomName:room.name };
+        name:item.popup_name || item.name || item.entity, roomName:room.name };
       return canOpenBoilerSchedule(item, hass, hidden) ? [device, { ...device, detail:'schedule' }] : [device];
     }),
   ]);

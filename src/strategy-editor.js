@@ -479,10 +479,10 @@ function entityArea(hass, id) {
   return entry?.area_id ?? entry?.ai ?? device?.area_id ?? device?.ai;
 }
 
-function roomEditorLabels(rooms, areaNames) {
+function distinctEditorLabels(items, identifiers) {
   const groups = new Map();
   const labels = new Map();
-  for (const { id, name } of rooms) {
+  for (const { id, name } of items) {
     labels.set(id, name);
     if (!groups.has(name)) groups.set(name, []);
     groups.get(name).push(id);
@@ -491,10 +491,10 @@ function roomEditorLabels(rooms, areaNames) {
   for (const name of [...groups.keys()].sort()) {
     const ids = groups.get(name);
     if (ids.length < 2) continue;
-    // Use immutable room IDs so the suffixes stay the same after reordering or reloading.
+    // Use immutable IDs so suffixes stay the same after reordering or reloading.
     for (const id of ids.sort()) {
-      const area = areaNames.get(id);
-      const base = area && area !== name ? name + ' · ' + area : name;
+      const identifier = identifiers.get(id);
+      const base = identifier && identifier !== name ? name + ' · ' + identifier : name;
       let label = base;
       for (let number = 1; used.has(label); number++) label = base + ' · ' + number;
       labels.set(id, label);
@@ -592,6 +592,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #roomEditing;
   #roomControlEditing = new Map();
   #sectionEditing;
+  #manualSectionDrafts = new Map();
+  #editedSectionHeading;
   #applianceRooms = new Map();
   #roomDeviceQuery = '';
   #newRoomName = '';
@@ -629,6 +631,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const serialized = JSON.stringify(this.#config);
     if (serialized !== this.#lastConfig) {
       this.#appearanceHelperDrafts.clear();
+      this.#manualSectionDrafts.clear();
       this.#lastConfig = serialized;
       this.render();
     }
@@ -695,6 +698,16 @@ export class Bayit9StrategyEditor extends HTMLElement {
       if (Object.hasOwn(current, key)) next[key] = current[key];
       else delete next[key];
     }
+    const heading = this.#editedSectionHeading;
+    // The control that caused the heading to blur can still hold the previous section list.
+    if (heading?.room === room && Array.isArray(next.sections)) {
+      next.sections = roomSections(next.sections);
+      const section = next.sections.find(item => item.id === heading.section);
+      if (section) {
+        if (heading.value) section.title = heading.value;
+        else delete section.title;
+      }
+    }
     this.#commitRoomOverride(room, next);
     this.#renderRoomChange(focusKey);
   }
@@ -731,8 +744,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #roomSectionsPanel(room, override, words, language) {
     const sections = roomSections(override.sections);
     const autoDevices = usesAutomaticRoomDevices(override, sections, room.custom);
-    const saveSections = (items, focusKey) => {
-      const next = { ...override };
+    const sectionOverride = items => {
+      const next = { ...this.#roomOverride(room.id) };
       if (items) next.sections = items;
       else delete next.sections;
       if (autoDevices) {
@@ -741,12 +754,22 @@ export class Bayit9StrategyEditor extends HTMLElement {
       } else if (items || !Array.isArray(next.entities)) {
         next.entities = this.#roomMembership(room, override, sections, language);
       }
-      this.#setRoomOverride(room.id, next, focusKey);
+      return next;
     };
+    const saveSections = (items, focusKey) => this.#setRoomOverride(room.id, sectionOverride(items), focusKey);
     const mode = select([['auto', words.automaticSections], ['manual', words.manualSections]], sections ? 'manual' : 'auto');
     mode.dataset.roomFocus = 'room-section-mode';
     const children = [field(words.sectionMode, mode)];
-    mode.addEventListener('change', () => saveSections(mode.value === 'auto' ? undefined : [], 'room-section-mode'));
+    mode.addEventListener('change', () => {
+      if (mode.value === 'auto') {
+        if (sections) this.#manualSectionDrafts.set(room.id, sections);
+        saveSections(undefined, 'room-section-mode');
+      } else {
+        const manual = this.#manualSectionDrafts.get(room.id) ?? [];
+        this.#manualSectionDrafts.delete(room.id);
+        saveSections(manual, 'room-section-mode');
+      }
+    });
     const body = () => disclosure(words.sections, this.#open.sections, open => { this.#open.sections = open; },
       [node('div', { className: 'stack' }, children)]);
     if (!sections) return body();
@@ -760,10 +783,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
       secondary: section.title ? typeTitle(section.kind) : '',
     }));
     const sectionById = new Map(sections.map(section => [section.id, section]));
-    if (sections.length) {
-      children.push(orderedList(sectionRecords, (items, focusKey) => saveSections(items.map(item => sectionById.get(item.id)), focusKey),
-        words, words.removeSection, false, 'sections'));
-    }
+    const order = sections.length && orderedList(sectionRecords,
+      (items, focusKey) => saveSections(items.map(item => sectionById.get(item.id)), focusKey),
+      words, words.removeSection, false, 'sections');
+    if (order) children.push(order);
 
     const add = button(words.addSection, () => {
       let serial = 1;
@@ -794,14 +817,30 @@ export class Bayit9StrategyEditor extends HTMLElement {
     });
     const title = node('input', { value: active.title ?? '', placeholder: typeTitle(active.kind), maxLength: 80 });
     title.dataset.roomFocus = 'room-section-title';
+    const sectionIndex = sections.indexOf(active);
+    const previewTitle = () => {
+      const text = title.value.trim();
+      const record = sectionRecords[sectionIndex];
+      const name = text || typeTitle(active.kind);
+      const secondary = text ? typeTitle(active.kind) : '';
+      if (record.name === name && record.secondary === secondary) return;
+      Object.assign(record, { name, secondary });
+      sectionPicker.options[sectionIndex].textContent = name;
+      const row = order.children[sectionIndex];
+      row.querySelector('.room-entry-name').replaceChildren(name,
+        ...(secondary ? [node('small', { textContent: secondary })] : []));
+      for (const action of row.querySelectorAll('button')) action.setAttribute('aria-label', action.title + ' · ' + name);
+    };
     const saveTitle = () => {
       const text = title.value.trim();
+      if (title.value !== text) title.value = text;
       if (text === (active.title ?? '')) return;
-      const next = { ...active };
-      if (text) next.title = text;
-      else delete next.title;
-      update(next, 'room-section-title');
+      if (text) active.title = text;
+      else delete active.title;
+      this.#editedSectionHeading = { room: room.id, section: active.id, value: text };
+      this.#commitRoomOverride(room.id, sectionOverride(sections));
     };
+    title.addEventListener('input', previewTitle);
     title.addEventListener('change', saveTitle);
     title.addEventListener('keydown', event => {
       if (event.key !== 'Enter' || event.isComposing) return;
@@ -1530,6 +1569,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
     });
     const change = (items, focusKey) => {
       const entities = items.map(item => item.id);
+      const removed = new Set(memberIds.filter(id => !entities.includes(id)));
+      const withoutRemoved = items => items.map(section => ({
+        ...section, entities: section.entities.filter(id => !removed.has(id)),
+      }));
+      const manualDraft = this.#manualSectionDrafts.get(room.id);
+      if (manualDraft && removed.size) this.#manualSectionDrafts.set(room.id, withoutRemoved(manualDraft));
       if (!focusKey) {
         const removedIndex = memberIds.findIndex((id, index) => id !== entities[index]);
         const nextDevice = entities[Math.min(removedIndex, entities.length - 1)];
@@ -1570,11 +1615,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         if (Object.keys(detailEntities).length) next.shortcut_detail_entities = detailEntities;
         else delete next.shortcut_detail_entities;
       }
-      if (sections && entities.length < chosen.length) {
-        const kept = new Set(entities);
-        const removed = new Set(chosen.filter(entity => !kept.has(entity)));
-        next.sections = sections.map(section => ({ ...section, entities: section.entities.filter(entity => !removed.has(entity)) }));
-      }
+      if (sections && removed.size) next.sections = withoutRemoved(sections);
       this.#setRoomOverride(room.id, next, focusKey);
     };
     const membership = records.length ? orderedList(records, change, words, words.remove, false, 'devices', manual)
@@ -1767,7 +1808,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const rooms = dashboardRoomOptions(this.#config, this.#hass).sort((a, b) => a.name.localeCompare(b.name, language));
     const byId = new Map(rooms.map(room => [room.id, room]));
     const areaNames = new Map(Object.entries(this.#hass.areas ?? {}).map(([id, area]) => [area.area_id ?? id, area.name ?? id]));
-    const names = roomEditorLabels(rooms, areaNames);
+    const names = distinctEditorLabels(rooms, areaNames);
     const selection = selectedRoomIds(this.#config);
     const selected = selection ?? [];
     const customSelection = selection !== null;
@@ -1841,7 +1882,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       titleBreak.dataset.roomFocus = 'room-title-break';
       const titleBreakField = field(words.roomTitleBreak, titleBreak);
       const refreshRoomLabels = () => {
-        const updated = roomEditorLabels(rooms, areaNames);
+        const updated = distinctEditorLabels(rooms, areaNames);
         for (const input of [picker, availablePicker]) {
           for (const item of input?.options ?? []) {
             const label = updated.get(item.value);
@@ -2885,9 +2926,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
           const entries = destinations.filter(item => item.kind === kind).map(item => {
             const name = item.kind === 'panel' ? item.name || languages[language][item.panelKind] : item.name;
             const caption = item.roomName ? name + ' · ' + item.roomName : name;
-            return option(item.fragment, item.detail === 'schedule' ? languages[language].boiler_schedule + ' · ' + caption : caption);
+            return { id: item.fragment, identifier: item.entity ?? item.room ?? item.panel,
+              name: item.detail === 'schedule' ? languages[language].boiler_schedule + ' · ' + caption : caption };
           });
-          return entries.length ? [node('optgroup', { label }, entries)] : [];
+          if (!entries.length) return [];
+          const names = distinctEditorLabels(entries, new Map(entries.map(item => [item.id, item.identifier])));
+          return [node('optgroup', { label }, entries.map(item => option(item.id, names.get(item.id))))];
         });
         if (unavailable) choices.push(option(unavailable, words.popupLinkUnavailable + ' · ' + unavailable));
         target.replaceChildren(option('', words.popupLinkChoose), ...choices);
@@ -2951,6 +2995,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
   render() {
     if (!this.isConnected) return;
     this.#registryRefreshPending = false;
+    this.#editedSectionHeading = undefined;
     const language = languageFor(this.#config.locale, this.#hass);
     const words = WORDS[language];
     const title = node('input', { value: this.#config.title ?? '', maxLength: 80 });

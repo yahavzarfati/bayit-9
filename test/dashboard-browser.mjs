@@ -4731,6 +4731,94 @@ async function assertPopupAliasEditing(browser) {
   }
 }
 
+async function assertRoomSectionsAndPopupLabels(browser) {
+  for (const [locale, words] of Object.entries({
+    en: { appearance:'Appearance', setup:'Customize home', rooms:'Rooms', sections:'Room sections',
+      mode:'Section arrangement', heading:'Section heading', add:'Add section', choose:'Section to customize',
+      toolbar:'Toolbar and extra screens', links:'Popup links', destination:'Popup destination', save:'Save dashboard' },
+    he: { appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים', sections:'קבוצות בחדר',
+      mode:'סידור הקבוצות', heading:'כותרת הקבוצה', add:'הוספת קבוצה', choose:'קבוצה לעריכה',
+      toolbar:'סרגל ומסכים נוספים', links:'קישורים לחלוניות', destination:'יעד הקישור', save:'שמירת הדשבורד' },
+  })) {
+    const page = await browser.newPage({ viewport:{ width:320, height:700 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const lamp = 'light.demo_lamp', dimmer = 'light.demo_dimmer', switchId = 'switch.demo_heater';
+    const authored = [
+      { id:'reading', kind:'lights', title:'Reading', entities:[lamp] },
+      { id:'storage', kind:'devices', title:'Storage', entities:[dimmer,switchId] },
+    ];
+    const url = base + '/fixture-home/home?configuration&shortcut-detail-target&locale=' + locale;
+    const stored = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+    const dialog = page.getByRole('dialog', { name:words.setup, exact:true });
+    const openSetup = async () => {
+      await page.getByRole('button', { name:words.appearance, exact:true }).tap();
+      await page.getByRole('button', { name:words.setup, exact:true }).tap();
+    };
+    const openSections = async () => {
+      await dialog.getByText(words.rooms, { exact:true }).tap();
+      await dialog.getByText(words.sections, { exact:true }).tap();
+    };
+    const save = async () => {
+      await dialog.getByRole('button', { name:words.save, exact:true }).tap();
+      await dialog.waitFor({ state:'hidden' });
+    };
+    const mode = dialog.getByLabel(words.mode, { exact:true });
+    const title = dialog.getByLabel(words.heading, { exact:true });
+    const sections = dialog.getByLabel(words.choose, { exact:true });
+    const add = dialog.getByRole('button', { name:words.add, exact:true });
+    try {
+      await page.addInitScript(strategy => {
+        const key = 'bayit9-browser-fixture';
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy }));
+      }, { type:'custom:bayit-9', locale, area_ids:['studio'], show_unassigned:false,
+        room_overrides:{ studio:{ entities:[lamp,dimmer,switchId], sections:authored,
+          device_popup_names:{ [lamp]:'East reading lamp', [dimmer]:'Cabinet controls', [switchId]:'Cabinet controls' } } } });
+      await page.goto(url);
+      await openSetup();
+      await openSections();
+      await title.fill('Reading corner');
+      await add.scrollIntoViewIfNeeded();
+      const bounds = await add.boundingBox();
+      await page.touchscreen.tap(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+      await sections.locator('option').nth(2).waitFor({state:'attached'});
+      assert.equal(await sections.locator('option').count(), 3);
+      assert.equal(await sections.locator('option').first().innerText(), 'Reading corner');
+      assert.deepEqual((await stored()).room_overrides.studio.sections, authored);
+
+      await mode.selectOption('auto');
+      assert.equal(await sections.count(), 0);
+      await mode.selectOption('manual');
+      assert.equal(await sections.locator('option').count(), 3);
+      await sections.selectOption('storage');
+      await title.fill('');
+      await title.press('Enter');
+      await save();
+      const saved = (await stored()).room_overrides.studio.sections;
+      assert.deepEqual(saved.slice(0,2), [
+        { ...authored[0], title:'Reading corner' }, { id:'storage', kind:'devices', entities:[dimmer,switchId] },
+      ]);
+      assert.equal(saved.length, 3);
+
+      await openSetup();
+      await dialog.getByText(words.toolbar, { exact:true }).tap();
+      await dialog.getByText(words.links, { exact:true }).tap();
+      const destination = dialog.getByLabel(words.destination, { exact:true });
+      const caption = id => destination.locator('option[value="#device/studio/' + id + '"]').textContent();
+      assert.equal(await caption(lamp), 'East reading lamp · Studio');
+      assert.equal(await caption(dimmer), 'Cabinet controls · Studio · ' + dimmer);
+      assert.equal(await caption(switchId), 'Cabinet controls · Studio · ' + switchId);
+      await dialog.getByText(words.rooms, { exact:true }).tap();
+      await dialog.getByText(words.sections, { exact:true }).tap();
+      await mode.selectOption('auto');
+      assert.deepEqual((await stored()).room_overrides.studio.sections, saved);
+      await save();
+      assert.equal((await stored()).room_overrides.studio.sections, undefined);
+      await page.waitForFunction(() => window.bayitTest);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service')), []);
+    } finally { await page.close(); }
+  }
+}
+
 async function assertWeatherSurvivesRegistryReplay(browser) {
   const page = await browser.newPage({ viewport:{ width:392, height:846 }, hasTouch:true });
   try {
@@ -9236,6 +9324,10 @@ try {
 
     await run('Standalone heater icon power and native details', async () => {
       await assertStandaloneHeaterQuickPower(browser);
+    });
+
+    await run('Room section edits and popup destination labels', async () => {
+      await assertRoomSectionsAndPopupLabels(browser);
     });
 
     await run('Native room gestures and device icons', async () => {

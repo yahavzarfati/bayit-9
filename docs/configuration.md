@@ -64,6 +64,8 @@ Entity-level room assignment takes precedence over device-level assignment. Home
 
 Each room section has a `kind`, optional `id` and `title`, and an ordered list of `entities`. Available kinds are `lights`, `covers`, `climate`, `heating`, `sensors`, `devices`, `garage`, `weather`, `security`, `media`, `vacuum` and `laundry`. Use an empty title to hide the heading. Devices without an assigned section follow the default grouping.
 
+While **Customize home** is open, switching to **Automatic grouping** keeps your manual room sections available if you switch back before saving. **Save dashboard** applies the selected arrangement.
+
 For a manually arranged covers section, choose **Cover card layout → Two columns when there is room** to keep the second column even when the section has one cover. In YAML, set `columns: 2` on that section. On narrow screens the covers use one column so the open, stop and close buttons have room.
 
 Use **Device card layout → Two columns when there is room** in a manually arranged devices section to place compact device cards and tiles together. Standard device cards occupy a full row. In YAML, set `columns: 2` on the `devices` section.
