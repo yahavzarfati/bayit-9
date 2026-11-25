@@ -7778,6 +7778,59 @@ async function assertClimateTargetNativeDetails(browser) {
   }
 }
 
+async function assertCompactRoomClimateTimer(browser) {
+  for (const locale of ['en', 'he']) {
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    const url = base + '/fixture-home/home?device-panel&preset-shortcut&timer-history&timer-usage' +
+      '&usage-view-only&room-climate-power&climate-power-test&locale=' + locale;
+    const room = '#room-studio';
+    const detail = '#device/studio/climate.demo_air';
+    const timer = page.locator('dialog[open] .device-timer');
+    try {
+      for (const [width, route, optIn, compact] of [
+        [320, room, true, false], [375, room, true, true], [391, room, true, true],
+        [391, detail, true, false], [391, room, false, false],
+      ]) {
+        await page.setViewportSize({ width, height:844 });
+        await page.goto(url + (optIn ? '&compact-climate-controls' : '') + route);
+        await timer.locator('.timer-usage:visible').waitFor();
+        const geometry = await timer.evaluate(element => {
+          const countdown = element.querySelector('.timer-clock-history');
+          const usage = element.querySelector('.timer-usage');
+          const row = element.querySelector('.timer-clock-row').getBoundingClientRect();
+          const history = element.querySelector('.timer-history');
+          const a = countdown.getBoundingClientRect();
+          const b = usage.getBoundingClientRect();
+          const inside = el => {
+            const rect = el.getBoundingClientRect();
+            return rect.left >= row.left - .5 && rect.right <= row.right + .5;
+          };
+          return {
+            oneRow: Math.abs((a.top + a.bottom) - (b.top + b.bottom)) <= 1 &&
+              (a.right <= b.left || b.right <= a.left),
+            height: row.height,
+            fits: [countdown, usage, history].every(inside),
+            visibleAndReachable: [countdown, usage, history].every(button =>
+              !button.hidden && !button.disabled && button.tabIndex === 0),
+            usableCommands: [...element.querySelectorAll('.timer-command, .timer-preset, .timer-history')].every(button => {
+              const { width, height } = button.getBoundingClientRect();
+              return width >= 43.9 && height >= 43.9;
+            }),
+          };
+        });
+        const context = JSON.stringify({ locale, width, route, optIn, geometry });
+        assert.equal(geometry.oneRow, compact, context);
+        assert.ok(geometry.fits && geometry.visibleAndReachable && geometry.usableCommands, context);
+        if (compact) assert.ok(geometry.height <= 44.5, context);
+        assert.equal(await timer.locator('.timer-preset:visible').count(), 4, context);
+        assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service')), []);
+      }
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertCompactClimateRail(browser) {
   for (const locale of ['en','he']) {
     const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
@@ -11703,6 +11756,7 @@ try {
       const presetPage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
       await assertRoomClimatePower(browser);
       await assertCompactClimateRail(browser);
+      await assertCompactRoomClimateTimer(browser);
       await assertStandaloneTimedClimate(browser);
       await assertClimateTargetNativeDetails(browser);
       const presetURL = base + '?device-panel&preset-shortcut';

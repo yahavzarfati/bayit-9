@@ -530,6 +530,16 @@ export const panelControlStyles = `
   .device-timer[data-compact] {
     --timer-rail: color-mix(in srgb,var(--ink) 10%,transparent);
   }
+  .device[data-inline-climate] > .action-list:has(.compact-climate-rail) {
+    container: bayit-inline-climate / inline-size;
+  }
+  @container bayit-inline-climate (min-width: 280px) {
+    .device-timer[data-compact]:has(.timer-usage:not([hidden])) { padding-block-start: 3px; }
+    .device-timer[data-compact] .timer-clock-readings:has(.timer-usage:not([hidden])) {
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .device-timer[data-compact]:has(.timer-usage:not([hidden])) .timer-tools { margin-block: 1px 3px; }
+  }
   .device[data-compact-heater] .device-timer { --timer-thumb: var(--warm); }
   :is(.device[data-treatment=boiler],.modal[data-standalone-heater] .device) .device-timer[data-compact] {
     --timer-thumb: var(--boiler-heat);
