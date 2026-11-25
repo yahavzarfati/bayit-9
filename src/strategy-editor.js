@@ -46,6 +46,9 @@ const WORDS = {
     automaticDevices: 'Automatic', manualDevices: 'Choose devices and order',
     roomDevices: 'Devices in this room', deviceToAdd: 'Available devices', addDevice: 'Add device',
     roomDeviceSearch: 'Find a device to add',
+    roomDeviceMove: 'After saving, the device will move from {room} to this room on the dashboard.',
+    roomDeviceKeep: 'After saving, the device will also appear here and stay in {rooms}.',
+    roomDeviceEmpty: 'The previous room will be hidden while empty.',
     readOnlyRoom: 'Show status only for selected room devices',
     applianceBadges: 'Appliance activity badges', applianceKind: 'Appliance', saveAppliance: 'Save badge', removeAppliance: 'Remove badge',
     applianceMissing: 'Choose the required sources to save this badge.',
@@ -125,6 +128,9 @@ const WORDS = {
     automaticDevices: 'בחירה אוטומטית', manualDevices: 'בחירת מכשירים וסדר',
     roomDevices: 'מכשירים בחדר', deviceToAdd: 'מכשירים זמינים', addDevice: 'הוספת מכשיר',
     roomDeviceSearch: 'חיפוש מכשיר להוספה',
+    roomDeviceMove: 'לאחר השמירה המכשיר יעבור בדשבורד מחדר {room} לחדר הזה.',
+    roomDeviceKeep: 'לאחר השמירה המכשיר יישאר ב־{rooms} ויופיע גם בחדר הזה.',
+    roomDeviceEmpty: 'החדר הקודם יוסתר כל עוד הוא ריק.',
     readOnlyRoom: 'הצגת מצב בלבד למכשירים שנבחרו',
     applianceBadges: 'חיווי פעילות מכשירים', applianceKind: 'מכשיר', saveAppliance: 'שמירת חיווי', removeAppliance: 'הסרת חיווי',
     applianceMissing: 'בחרו את מקורות הנתונים הנדרשים לשמירת החיווי.',
@@ -226,6 +232,8 @@ const ROOM_CSS = `
 .room-entry-buttons button:disabled, .room-add button:disabled { cursor: default; opacity: .45; }
 .room-add { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; align-items: end; }
 .room-add button { min-block-size: 44px; }
+.room-add-hint { overflow-wrap: anywhere; }
+.room-add-hint:not(:empty) { margin-block-start: 6px; }
 .room-choice-heading { margin: 3px 0 0; font-size: 1em; }
 .room-icon-field { display: grid; grid-template-columns: minmax(0,1fr) 44px; gap: 8px; align-items: end; }
 .room-icon-preview { box-sizing: border-box; inline-size: 44px; block-size: 44px; display: grid; place-items: center; border: 1px solid var(--divider-color,#999); border-radius: 8px; }
@@ -885,8 +893,31 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const nameCounts = new Map();
     for (const device of devices) nameCounts.set(device.name, (nameCounts.get(device.name) ?? 0) + 1);
 
-    const picker = addPicker(words.deviceToAdd, [], words.addDevice, words.choose, id => {
-      this.#setRoomOverride(room.id, { ...override, entities: [...chosen, id] }, 'room-device-search');
+    const addition = id => ({ ...override, entities: [...chosen, id] });
+    const picker = addPicker(words.deviceToAdd, [], words.addDevice, words.choose,
+      id => this.#setRoomOverride(room.id, addition(id), 'room-device-search'));
+    const placement = node('p', { className: 'room-add-hint', id: picker.input.getAttribute('aria-labelledby') + '-placement' });
+    placement.setAttribute('role', 'status');
+    picker.action.setAttribute('aria-describedby', placement.id);
+    picker.input.addEventListener('change', () => {
+      placement.textContent = '';
+      const id = picker.input.value;
+      if (!id) return;
+      const contains = candidate => candidate.entities.some(device => device.entity === id);
+      const before = discoverRooms(this.#config, this.#hass, language).filter(candidate => candidate.id !== room.id && contains(candidate));
+      if (!before.length) return;
+      // Preview the same draft edit the Add button will make.
+      const roomOverrides = { ...this.#config.room_overrides, [room.id]: addition(id) };
+      const after = discoverRooms({ ...this.#config, room_overrides: roomOverrides }, this.#hass, language);
+      const others = after.filter(candidate => candidate.id !== room.id && contains(candidate));
+      if (others.length) {
+        const names = new Intl.ListFormat(language).format(others.map(candidate => candidate.name));
+        placement.textContent = words.roomDeviceKeep.replace('{rooms}', () => names);
+      } else {
+        const [source] = before;
+        const move = words.roomDeviceMove.replace('{room}', () => source.name);
+        placement.textContent = after.some(candidate => candidate.id === source.id) ? move : move + ' ' + words.roomDeviceEmpty;
+      }
     });
     const filter = node('input', { type: 'search', value: this.#roomDeviceQuery });
     filter.dataset.roomFocus = 'room-device-search';
@@ -904,10 +935,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
       }));
       picker.input.disabled = !results.length;
       picker.action.disabled = true;
+      placement.textContent = '';
     };
     filter.addEventListener('input', () => { this.#roomDeviceQuery = filter.value; refresh(); });
     refresh();
-    return [...children, field(words.roomDeviceSearch, filter), picker.wrapper, membership, ...options];
+    return [...children, field(words.roomDeviceSearch, filter), node('div', {}, [picker.wrapper, placement]), membership, ...options];
   }
 
   #customRoomForm(rooms, selection, words) {

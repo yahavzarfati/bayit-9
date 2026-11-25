@@ -4924,9 +4924,14 @@ try {
         assert.equal(await removal.count(), empty ? 0 : 1);
         assert.equal(await membershipSetup.getByRole('button', { name: 'Remove · Desk lamp', exact: true }).count(), 0);
         if (!empty) {
+          const placement = membershipSetup.locator('.room-add-hint');
+          await devicePicker.selectOption('light.demo_lamp');
+          assert.equal(await placement.textContent(), 'After saving, the device will also appear here and stay in Lounge.');
           await deviceSearch.fill('Lounge');
+          assert.equal(await placement.textContent(), '');
           assert.deepEqual(await devicePicker.locator('option').evaluateAll(options => options.map(option => option.value)), ['', 'light.demo_lounge']);
           await devicePicker.selectOption('light.demo_lounge');
+          assert.equal(await placement.textContent(), '');
           await membershipSetup.getByRole('button', { name: 'Add device', exact: true }).tap();
           assert.equal(await deviceSearch.inputValue(), 'Lounge');
           assert.equal(await deviceSearch.evaluate(control => control.getRootNode().activeElement === control), true);
@@ -4951,6 +4956,44 @@ try {
         await membershipPage.close();
       }
       console.log(engine + ' 320: automatic device membership preserves existing cross-area placement when edited and reopened');
+
+      for (const [locale, words] of [
+        ['en', { appearance: 'Appearance', setup: 'Customize home', rooms: 'Rooms', room: 'Room to customize',
+          devices: 'Devices in this room', picker: 'Available devices', add: 'Add device', save: 'Save dashboard',
+          hint: 'After saving, the device will move from Lounge to this room on the dashboard. The previous room will be hidden while empty.' }],
+        ['he', { appearance: 'מראה', setup: 'התאמת הבית', rooms: 'חדרים', room: 'חדר להתאמה אישית',
+          devices: 'מכשירים בחדר', picker: 'מכשירים זמינים', add: 'הוספת מכשיר', save: 'שמירת הדשבורד',
+          hint: 'לאחר השמירה המכשיר יעבור בדשבורד מחדר Lounge לחדר הזה. החדר הקודם יוסתר כל עוד הוא ריק.' }],
+      ]) {
+        const placementPage = await newRoomConfigPage();
+        await placementPage.goto(roomConfigUrl + '&locale=' + locale);
+        const source = placementPage.locator('.room[data-room="lounge"]');
+        const moved = placementPage.locator('.room[data-room="studio"] [data-entity="light.demo_lounge"]');
+        await source.locator('[data-entity="light.demo_lounge"]').waitFor();
+        await placementPage.getByRole('button', { name: words.appearance, exact: true }).tap();
+        await placementPage.getByRole('button', { name: words.setup, exact: true }).tap();
+        const setup = placementPage.getByRole('dialog', { name: words.setup, exact: true });
+        await setup.getByText(words.rooms, { exact: true }).tap();
+        await setup.getByLabel(words.room, { exact: true }).selectOption('studio');
+        await setup.getByLabel(words.devices, { exact: true }).selectOption('manual');
+        await setup.getByLabel(words.picker, { exact: true }).selectOption('light.demo_lounge');
+        const hint = setup.getByText(words.hint, { exact: true });
+        assert.equal(await hint.getAttribute('role'), 'status');
+        const add = setup.getByRole('button', { name: words.add, exact: true });
+        assert.equal(await add.getAttribute('aria-describedby'), await hint.getAttribute('id'));
+        await add.tap();
+        assert.equal(await source.locator('[data-entity="light.demo_lounge"]').count(), 1);
+        assert.equal(await moved.count(), 0);
+        assert.equal(await placementPage.evaluate(() => window.bayitTest.calls.filter(call =>
+          call.domain || call.type === 'lovelace/config/save').length), 0);
+        await setup.getByRole('button', { name: words.save, exact: true }).tap();
+        await setup.waitFor({ state: 'hidden' });
+        await moved.waitFor();
+        assert.equal(await source.count(), 0);
+        assert.equal(await placementPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain).length), 0);
+        await placementPage.close();
+      }
+      console.log(engine + ' 320: device placement preview reflects automatic moves and stays local until saved');
 
       const emptyPage = await browser.newPage();
       await emptyPage.goto(base + '?empty');
