@@ -125,6 +125,8 @@ export function normalizeProfile(value) {
     ...(simpleTimer && { simple_timer_entity: simpleTimer }),
     ...(simpleTimerTarget && { simple_timer_target: simpleTimerTarget }),
     ...(dailyUsage && { daily_usage_entity: dailyUsage }),
+    ...(simpleTimer && (!dailyUsage || dailyUsage === simpleTimer) && timed.allow_daily_usage_reset === true &&
+      { allow_daily_usage_reset: true }),
     ...(Array.isArray(timed.presets) && { presets }),
     duration_field: typeof timed.duration_field === 'string' && /^[a-z][a-z0-9_]{0,39}$/.test(timed.duration_field)
       ? timed.duration_field : 'duration',

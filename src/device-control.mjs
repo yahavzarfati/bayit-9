@@ -74,7 +74,7 @@ function timedProfile(profile, domain, kind) {
     throw new DeviceControlError("invalid_config", "A timed profile requires a heating-capable entity.");
   }
   const { start_script, stop_script, timer_entity, simple_timer_entity, simple_timer_target, duration_field = "duration",
-    min_minutes = 1, max_minutes = 60, step_minutes = 1, presets, daily_usage_entity } = profile;
+    min_minutes = 1, max_minutes = 60, step_minutes = 1, presets, daily_usage_entity, allow_daily_usage_reset } = profile;
   if (
     (start_script !== undefined && !isEntity(start_script, "script")) ||
     (stop_script !== undefined && !isEntity(stop_script, "script")) ||
@@ -92,7 +92,9 @@ function timedProfile(profile, domain, kind) {
     throw new DeviceControlError("invalid_config", "The timed profile includes an invalid entity or duration setting.");
   }
   return { start_script, stop_script, timer_entity, simple_timer_entity, simple_timer_target, duration_field,
-    min_minutes, max_minutes, step_minutes, presets, daily_usage_entity };
+    min_minutes, max_minutes, step_minutes, presets, daily_usage_entity,
+    allow_daily_usage_reset: allow_daily_usage_reset === true && !!simple_timer_entity &&
+      (!daily_usage_entity || daily_usage_entity === simple_timer_entity) };
 }
 
 function normalizedConfig(config) {
@@ -179,6 +181,12 @@ function readSimpleTimer(entity, device, states, nowMs) {
     usedSeconds: Number.isFinite(seconds) && seconds >= 0 ? seconds : null,
     reverse: attrs.reverse_mode === true && attrs.timer_state === "active",
   };
+}
+
+export function simpleTimerUsageResetAvailable(hass, sensor) {
+  const entity = hass?.entities?.[sensor];
+  return Object.hasOwn(hass?.services?.simple_timer ?? {}, "reset_daily_usage") &&
+    !entity?.hidden && !entity?.hidden_by && !entity?.disabled_by;
 }
 
 function verifiedLevel(record, steps) {
@@ -322,6 +330,12 @@ function supportedActions(config, states, record, timer, nowMs) {
     add("stop_timed");
     if (timedHeat) delete actions.turn_off;
   }
+  if (timing?.allow_daily_usage_reset && ['active', 'idle'].includes(timer?.state) && Number.isFinite(timer.usedSeconds) && timer.usedSeconds > 0) {
+    const { entry_id: entry, switch_entity_id: linked } = states[timer.entity].attributes;
+    if (typeof entry === "string" && entry.trim() && entry.length <= 128) {
+      add("reset_daily_usage", { requiresConfirmation: true, usageRevision: JSON.stringify([timer.entity, linked, entry]) });
+    }
+  }
   const canSetLevel = !timedStart || (timer?.state === "active" && timer.deadlineMs > nowMs);
   if (config.level_entity && canSetLevel) {
     const level = states?.[config.level_entity];
@@ -363,11 +377,16 @@ function deviceModel(config, states, nowMs) {
   const timer = config.timed?.simple_timer_entity
     ? readSimpleTimer(config.timed.simple_timer_entity, config.timed.simple_timer_target ?? config.entity, states, nowMs)
     : readTimer(config.timed?.timer_entity, states, nowMs);
-  const usage = states?.[config.timed?.daily_usage_entity];
+  const usageEntity = config.timed?.daily_usage_entity;
+  const usage = states?.[usageEntity];
+  let usageSource = Number.isFinite(timer?.usedSeconds) ? timer.entity : undefined;
   if (timer && isAvailable(usage) && usage.state.trim()) {
     const multiplier = { s: 1, min: 60, h: 3600 }[usage.attributes?.unit_of_measurement];
     const seconds = Number(usage.state) * multiplier;
-    if (Number.isFinite(seconds) && seconds >= 0) timer.usedSeconds = seconds;
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      timer.usedSeconds = seconds;
+      usageSource = usageEntity;
+    }
   }
   const level = states?.[config.level_entity ?? config.level_read_entity];
   const preselect = config.level_preselect_entity && record?.state === "off";
@@ -393,6 +412,7 @@ function deviceModel(config, states, nowMs) {
       levelChanging: !!config.level_select_script && states?.[config.level_select_script]?.state === "on",
     }),
     timer,
+    ...(usageSource && { usageSource }),
   };
 }
 
@@ -494,6 +514,9 @@ export function planDeviceAction(config, states, actionId, value, { confirmed = 
   if (action.scriptRevision && value !== action.scriptRevision) {
     throw new DeviceControlError("stale_script_state", "The observed script run changed before the command was sent.");
   }
+  if (action.usageRevision && value !== action.usageRevision) {
+    throw new DeviceControlError("stale_usage_reset", "The observed timer changed before the reset was sent.");
+  }
   if (action.requiresConfirmation && confirmed !== true) {
     throw new DeviceControlError("confirmation_required", "This action requires explicit confirmation.");
   }
@@ -552,6 +575,16 @@ export function planDeviceAction(config, states, actionId, value, { confirmed = 
       kind: "service", domain: "number", service: "set_value",
       target: { entity_id: config.level_entity }, data: { value },
       expected: { entity: config.level_entity, numericState: value },
+    };
+  }
+  if (actionId === "reset_daily_usage") {
+    const entity = config.timed.simple_timer_entity;
+    const attributes = states[entity].attributes;
+    return {
+      kind: "service", domain: "simple_timer", service: "reset_daily_usage", target: null,
+      data: { entry_id: attributes.entry_id },
+      expected: { entity, numericState: 0,
+        attributes: { entry_id: attributes.entry_id, switch_entity_id: attributes.switch_entity_id } },
     };
   }
   if (config.timed?.simple_timer_entity && ["start_timed", "extend_timed", "stop_timed"].includes(actionId)) {
@@ -681,6 +714,9 @@ export function createDeviceController({
       const hass = getHass();
       const plan = planDeviceAction(config, hass?.states, actionId, value, options);
       if (plan.kind === "more_info") return { status: "more_info", entity: plan.entity };
+      if (actionId === "reset_daily_usage" && !simpleTimerUsageResetAvailable(hass, plan.expected.entity)) {
+        throw new DeviceControlError("service_unavailable", "The daily usage reset service or sensor is unavailable.");
+      }
       if (plan.requiresMediaService && !mediaServiceRegistered(hass, plan.service)) {
         throw new DeviceControlError("service_unavailable", "Home Assistant does not publish that media service.");
       }

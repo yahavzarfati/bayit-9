@@ -731,6 +731,12 @@ test('supports explicit native climate timer profiles and never generates two st
   assert.equal(normalizeProfile({ entity: 'switch.demo_boiler', kind: 'boiler', timed: timer })
     .timed.simple_timer_target, undefined);
   assert.deepEqual(normalizeProfile({ ...climate, timed: { ...timer, presets: [] } }).timed.presets, []);
+  assert.equal(normalizeProfile({ ...climate, timed: { ...timer, daily_usage_entity: 'sensor.test_timer',
+    allow_daily_usage_reset: true } }).timed.allow_daily_usage_reset, true);
+  assert.equal(normalizeProfile({ ...climate, timed: { ...timer, daily_usage_entity: 'sensor.separate', allow_daily_usage_reset: true } })
+    .timed.allow_daily_usage_reset, undefined);
+  assert.equal(normalizeProfile({ ...climate, timed: { timer_entity: 'timer.native', allow_daily_usage_reset: true } })
+    .timed.allow_daily_usage_reset, undefined);
   assert.equal(normalizeProfile({ ...climate, entity: 'switch.demo_boiler' }), null);
   assert.equal(normalizeProfile({ ...climate, timed: { simple_timer_entity: 'timer.wrong' } }).timed, undefined);
 });

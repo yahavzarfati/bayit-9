@@ -30,6 +30,7 @@ const coverRequests = [];
 let finishLevel;
 let finishPreselect;
 let finishClimatePreset;
+let finishUsageReset;
 let finishRoomOff;
 let scriptSerial = 0;
 function observeScript(state) {
@@ -192,6 +193,16 @@ const hass = {
         };
       });
     }
+    if (request.domain === 'simple_timer' && request.service === 'reset_daily_usage' && query.has('timer-usage')) {
+      return new Promise(resolve => {
+        finishUsageReset = () => {
+          const id = 'sensor.demo_air_usage';
+          states[id] = { ...states[id], state: '0' };
+          card.hass = { ...hass, states: { ...states } };
+          resolve({});
+        };
+      });
+    }
     if (request.domain === 'simple_timer' && request.service === 'start_timer') {
       const id = request.service_data.entity_id;
       const attrs = states[id].attributes;
@@ -290,6 +301,11 @@ if (query.has('device-panel')) {
   } };
   hass.entities['climate.demo_air'] = { area_id: 'studio' };
   const attributes = states['climate.demo_air'].attributes;
+  if (query.has('timer-usage')) {
+    states['sensor.demo_air_usage'].attributes.entry_id = 'fixture-timer-entry';
+    hass.services = { simple_timer: { reset_daily_usage: {} } };
+    states['sensor.demo_read_only_usage'] = { state: '30', attributes: { unit_of_measurement: 'min' } };
+  }
   if (query.has('preset-shortcut')) {
     Object.assign(attributes, { supported_features: attributes.supported_features | 16,
       preset_modes: ['none', 'eco', 'boost'], preset_mode: 'eco' });
@@ -529,6 +545,8 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
   profiles: [{ entity: 'climate.demo_air', kind: 'climate', timed: {
     simple_timer_entity: 'sensor.demo_air_usage', simple_timer_target: 'input_boolean.demo_air_timer',
     min_minutes: 15, max_minutes: 120, step_minutes: 15, presets: [30,60,90,120],
+    ...(query.has('timer-usage') && { allow_daily_usage_reset: !query.has('usage-view-only') }),
+    ...(query.has('different-usage-source') && { daily_usage_entity: 'sensor.demo_read_only_usage' }),
   } }],
 } : query.has('room-status') ? roomStatusSelected : query.has('heater-level') ? {
   ...(query.has('compact-heater-steps') && { shape: 'circle' }),
@@ -634,7 +652,7 @@ if (query.has('editor')) {
   const editor = Strategy.getConfigElement();
   editor.setConfig({ type: 'custom:bayit-9',
     ...((query.has('toolbar-panels') || query.has('overview-opt-in') || query.has('lighting-count') ||
-      query.has('preset-shortcut') || query.has('entrance-popup-position')) && selected) });
+      query.has('preset-shortcut') || query.has('entrance-popup-position') || query.has('timer-usage')) && selected) });
   editor.hass = hass;
   editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
   document.querySelector('#editor').append(editor);
@@ -674,6 +692,7 @@ window.bayitTest = {
   finishLevel: () => finishLevel(),
   finishPreselect: () => finishPreselect(),
   finishClimatePreset: () => finishClimatePreset(),
+  finishUsageReset: () => finishUsageReset(),
   finishRoomOff: failed => finishRoomOff(failed),
   heatingState: () => [states[heaterFan].state, states[heaterRelay].state, states[heaterTimer].attributes.timer_state],
   setHeaterPower: state => {
@@ -1387,12 +1406,16 @@ try {
       const nextHelper = editorPage.getByLabel('Next-start level helper');
       assert.ok(await nextHelper.getAttribute('aria-describedby'));
       await nextHelper.selectOption('input_number.demo_next_step');
+      const allowUsageReset = editorPage.getByRole('checkbox', { name: 'Allow reset of this daily usage counter', exact: true });
+      assert.equal(await allowUsageReset.isChecked(), false);
+      await allowUsageReset.check();
       await editorPage.getByRole('button', {name: 'Save profile'}).click();
       const heaterProfile = await editorPage.evaluate(() => window.latest.profiles.find(item => item.entity.startsWith('fan.')));
       assert.equal(heaterProfile?.level_select_script, 'script.demo_select_heat_step');
       assert.equal(heaterProfile?.level_read_entity, 'input_number.demo_heat_step');
       assert.equal(heaterProfile?.level_preselect_entity, 'input_number.demo_next_step');
       assert.equal(heaterProfile?.timed.simple_timer_target, 'switch.demo_step_power');
+      assert.equal(heaterProfile?.timed.allow_daily_usage_reset, true);
       assert.equal(await editorPage.evaluate(() => window.bayitTest.calls.length), 0);
       await editorPage.getByLabel('Language').selectOption('he');
       await editorPage.getByLabel('שם הדשבורד').waitFor();
@@ -2301,6 +2324,65 @@ try {
       assert.equal(await presetPage.evaluate(() => window.latest.room_overrides.studio.climate_preset_shortcuts), undefined);
       await presetPage.close();
       console.log(engine + ' 320: room-scoped climate preset, native feedback, capability guards and editor');
+
+      const usagePage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+      const usageURL = base + '?device-panel&timer-usage&locale=' + (rightToLeft ? 'he' : 'en');
+      const openUsage = async flags => {
+        await usagePage.goto(usageURL + flags);
+        await usagePage.locator('.quick-button[data-entity="climate.demo_air"]').press('Shift+Enter');
+        const opened = usagePage.getByRole('dialog', { name: 'Studio air conditioner', exact: true });
+        await opened.waitFor();
+        return opened;
+      };
+      const usedLabel = rightToLeft ? 'שימוש היום' : 'Used today';
+      const moreUsage = rightToLeft ? 'מידע נוסף' : 'More info';
+      const usageButton = (panel, amount) => panel.getByRole('button', { name: usedLabel + ' ' + amount + ' · ' + moreUsage, exact: true });
+      const usageConfirmation = usagePage.getByRole('dialog', { name: rightToLeft ? 'אישור פעולה' : 'Confirm action', exact: true });
+      const cancelUsage = usageConfirmation.getByRole('button', { name: rightToLeft ? 'ביטול' : 'Cancel', exact: true });
+      const confirmUsage = usageConfirmation.getByRole('button', { name: rightToLeft ? 'אישור' : 'Confirm', exact: true });
+      const usePanel = await openUsage('');
+      const reading = usageButton(usePanel, '10:00');
+      await reading.tap();
+      await usePanel.waitFor({ state: 'hidden' });
+      assert.deepEqual(await usagePage.evaluate(() => window.bayitTest.moreInfoCalls), ['sensor.demo_air_usage']);
+      assert.deepEqual(await usagePage.evaluate(() => window.bayitTest.calls), []);
+      await usagePage.locator('.quick-button[data-entity="climate.demo_air"]').press('Shift+Enter');
+      await reading.click({ delay: 620 });
+      await usageConfirmation.waitFor();
+      assert.equal(await usagePage.evaluate(() => window.bayitTest.calls.length), 0);
+      await cancelUsage.tap();
+      await usageConfirmation.waitFor({ state: 'hidden' });
+      await reading.press('Shift+Enter');
+      await usageConfirmation.waitFor();
+      await usagePage.evaluate(async () => {
+        window.bayitTest.setFixtureAttributes('sensor.demo_air_usage', { entry_id: 'fixture-replaced-entry' });
+        await new Promise(requestAnimationFrame);
+      });
+      await confirmUsage.tap();
+      await usageConfirmation.waitFor({ state: 'hidden' });
+      assert.equal(await usagePage.evaluate(() => window.bayitTest.calls.length), 0);
+      await reading.press('Shift+Enter');
+      await usageConfirmation.waitFor();
+      await confirmUsage.tap();
+      await usagePage.waitForFunction(() => window.bayitTest.calls.length === 1);
+      assert.deepEqual(await usagePage.evaluate(() => window.bayitTest.calls), [{
+        type: 'call_service', domain: 'simple_timer', service: 'reset_daily_usage',
+        service_data: { entry_id: 'fixture-replaced-entry' },
+      }]);
+      assert.ok(await reading.isDisabled());
+      await usagePage.evaluate(() => window.bayitTest.finishUsageReset());
+      await usageButton(usePanel, '00:00').waitFor();
+      assert.equal(await usageButton(usePanel, '00:00').getAttribute('aria-keyshortcuts'), null);
+      const viewOnly = await openUsage('&usage-view-only');
+      assert.equal(await usageButton(viewOnly, '10:00').getAttribute('aria-keyshortcuts'), null);
+      const differentReading = await openUsage('&different-usage-source');
+      assert.equal(await usageButton(differentReading, '30:00').getAttribute('aria-keyshortcuts'), null);
+      await usageButton(differentReading, '30:00').tap();
+      await differentReading.waitFor({ state: 'hidden' });
+      assert.deepEqual(await usagePage.evaluate(() => window.bayitTest.moreInfoCalls), ['sensor.demo_read_only_usage']);
+      assert.equal(await usagePage.evaluate(() => window.bayitTest.calls.length), 0);
+      await usagePage.close();
+      console.log(engine + ': native timer usage details, confirmed and stale reset, and alternate usage scope');
 
       const heaterPage = await browser.newPage({ viewport: { width: 375, height: 812 } });
       await heaterPage.goto(base + '?heater-level&locale=' + (rightToLeft ? 'he' : 'en'));

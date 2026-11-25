@@ -72,7 +72,7 @@ const WORDS = {
     climate: 'Air conditioner or thermostat', timerSource: 'Timer source', serverTimer: 'Home Assistant timer or script',
     simpleTimer: 'Simple Timer', simpleTimerDevice: 'Simple Timer sensor', simpleTimerTarget: 'Device linked to Simple Timer',
     timerLinkError: 'Choose a Simple Timer sensor linked to this heating device or its supported proxy.',
-    dailyUsage: 'Daily usage sensor', presets: 'Preset minutes', presetError: 'Use preset minutes within the selected range and step.',
+    dailyUsage: 'Daily usage sensor', allowDailyUsageReset: 'Allow reset of this daily usage counter', presets: 'Preset minutes', presetError: 'Use preset minutes within the selected range and step.',
     levelSteps: 'Number of heating levels', levelRead: 'Heating level feedback', levelSelect: 'Level selection script',
     levelSelectError: 'Set 2–12 heating levels and choose the level feedback helper for this script.',
     levelPreselect: 'Next-start level helper',
@@ -147,7 +147,7 @@ const WORDS = {
     climate: 'מזגן או תרמוסטט', timerSource: 'מקור הטיימר', serverTimer: 'טיימר או סקריפט של Home Assistant',
     simpleTimer: 'Simple Timer', simpleTimerDevice: 'חיישן Simple Timer', simpleTimerTarget: 'המכשיר שמקושר ל־Simple Timer',
     timerLinkError: 'בחרו חיישן Simple Timer שמקושר למכשיר החימום הזה או לפקד שמפעיל אותו.',
-    dailyUsage: 'חיישן שימוש יומי', presets: 'הגדרות דקות מהירות', presetError: 'בחרו דקות בטווח ובמרווח שנקבעו.',
+    dailyUsage: 'חיישן שימוש יומי', allowDailyUsageReset: 'אפשרות לאפס את מונה השימוש היומי הזה', presets: 'הגדרות דקות מהירות', presetError: 'בחרו דקות בטווח ובמרווח שנקבעו.',
     levelSteps: 'מספר דרגות החימום', levelRead: 'משוב על דרגת החימום', levelSelect: 'סקריפט לבחירת עוצמה',
     levelSelectError: 'הגדירו 2–12 דרגות חימום ובחרו את העזר שמדווח על העוצמה עבור הסקריפט.',
     levelPreselect: 'עזר לעוצמה בהפעלה הבאה',
@@ -1256,7 +1256,9 @@ export class Bayit9StrategyEditor extends HTMLElement {
     });
     const target = select([['', words.none]], '');
     const targetField = field(words.simpleTimerTarget, target);
-    const simpleFields = node('div', { className: 'stack' }, [field(words.simpleTimerDevice, simple), targetField]);
+    const resetUsageInput = node('input', { type: 'checkbox', checked: timed.allow_daily_usage_reset === true });
+    const resetUsage = node('label', { className: 'check' }, [resetUsageInput, words.allowDailyUsageReset]);
+    const simpleFields = node('div', { className: 'stack' }, [field(words.simpleTimerDevice, simple), targetField, resetUsage]);
     const usage = entityInput('sensor', timed.daily_usage_entity);
     const presets = node('input', {
       value: Array.isArray(timed.presets) ? timed.presets.join(', ') : '',
@@ -1279,6 +1281,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       levelSelectField.hidden = !usingSimple;
       serverFields.hidden = usingSimple;
       simpleFields.hidden = !usingSimple;
+      resetUsage.hidden = !simple.value || Boolean(usage.value && usage.value !== simple.value);
       schedule.hidden = kind.value !== 'boiler' || !usingSimple;
       const prefix = kind.value === 'climate' && domain === 'climate' ? 'input_boolean.' : fanHeater ? 'switch.' : '';
       const linked = attributesFor(simple.value)?.switch_entity_id ?? (simple.value === timed.simple_timer_entity ? timed.simple_timer_target : undefined);
@@ -1293,7 +1296,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       if (entity.value.split('.')[0] === 'climate' && entity.value !== current.entity) kind.value = 'climate';
       sync();
     });
-    for (const control of [kind, level, timerSource, simple]) control.addEventListener('change', sync);
+    for (const control of [kind, level, timerSource, simple, usage]) control.addEventListener('change', sync);
     sync();
 
     children.push(
@@ -1327,6 +1330,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
                 ? { simple_timer_entity: simple.value, simple_timer_target: target.value }
                 : { start_script: start.value, stop_script: stop.value, timer_entity: timer.value }),
               daily_usage_entity: usage.value, presets: presetValues,
+              allow_daily_usage_reset: usingSimple && !resetUsage.hidden && resetUsageInput.checked,
               duration_field: durationField.value, min_minutes: min.valueAsNumber,
               max_minutes: max.valueAsNumber, step_minutes: step.valueAsNumber,
             },

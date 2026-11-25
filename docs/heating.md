@@ -6,6 +6,10 @@ An existing Simple Timer instance can supply the countdown, preset durations and
 
 Set `timed.min_minutes`, `timed.max_minutes`, and `timed.step_minutes` to match the limits for the installation. `timed.presets` lists the durations shown on the panel. `timed.daily_usage_entity` can read a separate duration sensor that reports seconds, minutes or hours. A profile uses either Simple Timer or the native timer and scripts below.
 
+Tap a timer's **Used today** reading to open details for the sensor supplying that value. For a directly linked Simple Timer, the profile editor also offers **Allow reset of this daily usage counter**. When enabled, press and hold the reading or press Shift+Enter, then confirm to reset that timer’s daily counter. A separate usage sensor can open its details.
+
+In YAML, use `allow_daily_usage_reset: true` under the profile’s `timed` settings. Reset is available for the linked Simple Timer’s own usage reading while it reports a positive value and publishes the reset service.
+
 ## Boiler schedule and usage history
 
 Open the dedicated boiler panel to see the last seven days of usage. Home Assistant Recorder supplies the running intervals, and the Activity log supplies the attributed source when it is available. The list shows confirmed runs of at least two minutes.

@@ -239,6 +239,57 @@ test("water heater exposes supported native power, operation and temperature", (
   assert.deepEqual(planDeviceAction(c, states, "set_operation_mode", "eco").data, { operation_mode: "eco" });
 });
 
+test("daily usage reset is explicitly opted in and targets the same linked Simple Timer entry", async () => {
+  const c = config("climate.fixture", { timed: { simple_timer_entity: "sensor.fixture_timer",
+    simple_timer_target: "input_boolean.fixture_power", allow_daily_usage_reset: true } });
+  const sensor = c.timed.simple_timer_entity;
+  const attrs = { entry_id: "fixture-entry-A", timer_state: "idle",
+    switch_entity_id: c.timed.simple_timer_target, unit_of_measurement: "s" };
+  const states = { [c.entity]: entity("off"), [sensor]: entity("240", attrs) };
+  const action = "reset_daily_usage";
+  const model = getDeviceModel(c, states);
+  assert.equal(model.usageSource, sensor);
+  assert.equal(model.actions[action].requiresConfirmation, true);
+  const token = model.actions[action].usageRevision;
+  assert.throws(() => planDeviceAction(c, states, action, token), code("confirmation_required"));
+  assert.throws(() => planDeviceAction(c, states, action, ["forged"], { confirmed: true }), code("stale_usage_reset"));
+  const replaced = { ...states, [sensor]: entity("240", { ...attrs, entry_id: "fixture-entry-B" }) };
+  assert.throws(() => planDeviceAction(c, replaced, action, token, { confirmed: true }), code("stale_usage_reset"));
+  const noReset = { ...c, timed: { ...c.timed, allow_daily_usage_reset: false } };
+  assert.equal(getDeviceModel(noReset, states).actions[action], undefined);
+  const otherSource = { ...c, timed: { ...c.timed, daily_usage_entity: "sensor.other_usage" } };
+  const different = getDeviceModel(otherSource, { ...states, "sensor.other_usage": entity("1", { unit_of_measurement: "h" }) });
+  assert.equal(different.timer.usedSeconds, 3600);
+  assert.equal(different.usageSource, "sensor.other_usage");
+  assert.equal(different.actions[action], undefined);
+  const brokenLink = { ...states, [sensor]: entity("240", { ...attrs, switch_entity_id: "switch.wrong" }) };
+  assert.equal(getDeviceModel({ ...c, timed: { ...c.timed, daily_usage_entity: sensor } }, brokenLink).actions[action], undefined);
+
+  const calls = [];
+  let acknowledge = false;
+  const hass = { states, services: {}, callWS: req => {
+    calls.push(req);
+    if (acknowledge) hass.states[sensor] = entity("0", attrs);
+  } };
+  const controller = createDeviceController({
+    getHass: () => hass, confirmationTimeoutMs: 3, pollIntervalMs: 1,
+  });
+  await assert.rejects(controller.execute(c, action, token, { confirmed: true }), code("service_unavailable"));
+  hass.services.simple_timer = { reset_daily_usage: {} };
+  hass.entities = { [sensor]: { hidden: true } };
+  await assert.rejects(controller.execute(c, action, token, { confirmed: true }), code("service_unavailable"));
+  assert.equal(calls.length, 0);
+  hass.entities = {};
+  assert.equal((await controller.execute(c, action, token, { confirmed: true })).status, "unconfirmed");
+  acknowledge = true;
+  assert.equal((await controller.execute(c, action, token, { confirmed: true })).status, "confirmed");
+  const expected = { type: "call_service", domain: "simple_timer",
+    service: action, service_data: { entry_id: "fixture-entry-A" } };
+  assert.deepEqual(calls, [expected, expected]);
+  assert.equal(hass.states[c.entity].state, "off");
+  assert.equal(getDeviceModel(c, hass.states).actions[action], undefined);
+});
+
 test("a linked climate timer has a compact timer model and uses exactly the verified Simple Timer target", () => {
   const c = config("climate.fixture", { timed: { simple_timer_entity: "sensor.runtime", simple_timer_target: "input_boolean.fixture_timer",
     min_minutes: 15, max_minutes: 120, step_minutes: 15, presets: [30, 60, 90, 120] } });

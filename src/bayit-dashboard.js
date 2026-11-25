@@ -4,7 +4,7 @@ import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isC
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName,
   overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
-import { createDeviceController, getDeviceModel, roomShutdownTargets, supportsRoomShutdown } from './device-control.mjs';
+import { createDeviceController, getDeviceModel, roomShutdownTargets, simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupHistory, normalizePopupAliases, popupRouteFragment, resolvePopupRoute } from './popup-routes.js';
 import { buildPanelControls, climateOptionLabel, panelControlStyles } from './panel-controls.js';
@@ -432,6 +432,7 @@ export class BayitDashboard extends HTMLElement {
     });
     n.modal.addEventListener('close', () => this.closePanel());
     n.confirm.addEventListener('close', () => {
+      if (n.confirm.open) return;
       const source = this.confirming?.source;
       this.confirming = null;
       if (source?.isConnected && !source.disabled) source.focus({ preventScroll: true });
@@ -1487,6 +1488,15 @@ export class BayitDashboard extends HTMLElement {
     this.boilerView = {update:hass=>panel?.update(hass), dispose:()=>panel?.dispose()};
   }
 
+  canShowTimerUsage(entity) {
+    return typeof entity === 'string' &&
+      isVisibleEntity(entity, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities);
+  }
+
+  canResetTimerUsage(entity) {
+    return this.canShowTimerUsage(entity) && simpleTimerUsageResetAvailable(this._hass, entity);
+  }
+
   presetName(preset) {
     return preset === 'none' ? this.t('climate_preset_none')
       : preset === 'eco' ? this.t('climate_preset_eco') : preset;
@@ -1749,6 +1759,10 @@ export class BayitDashboard extends HTMLElement {
       (timing.simple_timer_entity ?? timing.timer_entity ?? view.config.entity);
     view.special = buildPanelControls(model, { make, button, icon, label, t: key => this.t(key),
       compactTimer: view.inlineClimate, timerPreferenceKey,
+      usageInfo: entity => { if (this.canShowTimerUsage(entity)) this.moreInfo({ entity }); },
+      canShowUsage: entity => this.canShowTimerUsage(entity),
+      canResetUsage: entity => this.canResetTimerUsage(entity),
+      resetOptIn: timing?.allow_daily_usage_reset === true && !!timing.simple_timer_entity,
       buildClimateDetail: this.panel?.type === 'device' ? id => this.buildField(view, model.actions[id], id, model) : undefined,
       request: (id, value, control) => this.requestAction(view.config, id, value, control) });
     for (const id of actionsInOrder) {
@@ -1897,12 +1911,13 @@ export class BayitDashboard extends HTMLElement {
     if (!this.canRequest(config.entity, id)) return;
     const model = this.model(config);
     const action = model.actions[id];
-    if (this.staleScriptAction(id, action, value) || !action) return;
+    if (this.staleScriptAction(id, action, value) || this.staleUsageReset(config, id, action, value) || !action) return;
     if (!action.requiresConfirmation && !confirmShortcut) return action.requiresCode ? this.moreInfo(config) : this.send(config, id, value);
     this.confirming = { config, id, value, source, native: action.requiresCode };
     const n = this.nodes;
-    const prompt = this.t('confirm_action').replace('{name}', model.name).replace('{action}', this.actionLabel(id));
-    setText(n.confirmText, (id !== 'stop_script' && action.confirmationText) || prompt);
+    const prompt = id === 'reset_daily_usage' ? this.t('timer_reset_confirm').replace('{name}', model.name)
+      : this.t('confirm_action').replace('{name}', model.name).replace('{action}', this.actionLabel(id));
+    setText(n.confirmText, (!['stop_script', 'reset_daily_usage'].includes(id) && action.confirmationText) || prompt);
     if (!n.confirm.open) n.confirm.showModal();
     n.abort.focus({ preventScroll: true });
   }
@@ -1918,7 +1933,7 @@ export class BayitDashboard extends HTMLElement {
   async send(config, id, value, confirmed = false) {
     if (!this.canRequest(config.entity, id)) return;
     const model = this.model(config);
-    if (this.staleScriptAction(id, model.actions[id], value) || !model.actions[id]) return;
+    if (this.staleScriptAction(id, model.actions[id], value) || this.staleUsageReset(config, id, model.actions[id], value) || !model.actions[id]) return;
     const token = { id, value };
     if (model.domain === 'cover' && movement.has(id)) {
       if (id === 'open') token.coverDirection = 'opening';
@@ -1938,7 +1953,8 @@ export class BayitDashboard extends HTMLElement {
       const result = await this.controller.execute(config, id, value, { confirmed });
       if (this.pending.get(config.entity) !== token) return;
       const key = ['confirmed','sent','unconfirmed'].includes(result?.status) ? result.status : 'sent';
-      const status = key === 'confirmed' && id === 'preselect_heating_level' ? 'heating_preselect_saved' : key;
+      const status = key === 'confirmed' ? ({preselect_heating_level: 'heating_preselect_saved',
+        reset_daily_usage: 'timer_usage_reset'}[id] ?? key) : key;
       this.announce(this.t(status).replace('{name}', model.name));
       confirmedByHomeAssistant = result?.status === 'confirmed';
     } catch (error) {
@@ -1961,6 +1977,13 @@ export class BayitDashboard extends HTMLElement {
         if (this.isConnected) this.update();
       }
     }
+  }
+
+  staleUsageReset(config, id, action, revision) {
+    if (id !== 'reset_daily_usage' ||
+        (action?.usageRevision === revision && this.canResetTimerUsage(config.timed?.simple_timer_entity))) return false;
+    this.announce(this.t('timer_usage_changed'));
+    return true;
   }
 
   staleScriptAction(id, action, revision) {

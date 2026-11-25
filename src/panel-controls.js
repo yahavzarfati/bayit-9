@@ -1,3 +1,5 @@
+import { bindDeviceDetails } from './popup-motion.js';
+
 function clock(seconds) {
   if (!Number.isFinite(seconds)) return '—';
   const whole = Math.max(0, Math.ceil(seconds));
@@ -49,6 +51,7 @@ export function climateOptionLabel(action, value, options, t) {
 
 export function buildPanelControls(model, {
   make, button, icon, label, t, request, compactTimer = false, timerPreferenceKey, buildClimateDetail,
+  usageInfo, canShowUsage, canResetUsage, resetOptIn,
 }) {
   const used = new Set();
   const updates = [];
@@ -140,13 +143,50 @@ export function buildPanelControls(model, {
     time.setAttribute('aria-label', t('remaining_time'));
     time.dir = 'ltr';
     const today = make('p', 'timer-today');
-    updates.push(current => {
+    const usage = button('timer-today timer-usage');
+    usage.setAttribute('aria-haspopup', 'dialog');
+    let currentUsage;
+    let resetRevision;
+    let gestureRevision;
+    usage.onclick = () => usageInfo(currentUsage);
+    if (resetOptIn) {
+      const capture = () => { gestureRevision = resetRevision; };
+      usage.addEventListener('pointerdown', capture);
+      usage.addEventListener('keydown', capture);
+      bindDeviceDetails(usage, () => {
+        if (gestureRevision && gestureRevision === resetRevision && canResetUsage(currentUsage)) {
+          request('reset_daily_usage', gestureRevision, usage);
+        }
+      });
+    }
+    updates.push((current, pending) => {
       const currentTimer = current.timer;
       time.textContent = currentTimer ? clock(currentTimer.remainingMs === null ? null : currentTimer.remainingMs / 1000) : '00:00';
-      today.hidden = !Number.isFinite(currentTimer?.usedSeconds);
-      if (!today.hidden) today.textContent = t('today_used') + ' ' + clock(currentTimer.usedSeconds);
+      currentUsage = current.usageSource;
+      const hasReading = Number.isFinite(currentTimer?.usedSeconds);
+      const tappable = hasReading && canShowUsage(currentUsage);
+      today.hidden = !hasReading || tappable;
+      usage.hidden = !tappable;
+      usage.disabled = !tappable || pending?.id === 'reset_daily_usage';
+      resetRevision = undefined;
+      if (!hasReading) return;
+      const reading = t('today_used') + ' ' + clock(currentTimer.usedSeconds);
+      if (tappable) {
+        if (usage.textContent !== reading) usage.textContent = reading;
+        label(usage, reading + ' · ' + t('more_info'));
+      } else if (today.textContent !== reading) today.textContent = reading;
+      resetRevision = tappable && canResetUsage(currentUsage) ? current.actions.reset_daily_usage?.usageRevision : undefined;
+      if (resetRevision) {
+        usage.setAttribute('aria-keyshortcuts', 'Shift+Enter Shift+Space Shift+F10 ContextMenu');
+        usage.setAttribute('aria-description', t('timer_reset_hint'));
+        usage.title = t('timer_reset_hint');
+      } else {
+        usage.removeAttribute('aria-keyshortcuts');
+        usage.removeAttribute('aria-description');
+        usage.title = t('more_info');
+      }
     });
-    card.append(time, today);
+    card.append(time, today, usage);
     const tools = make('div', 'timer-tools');
     let input;
     if (duration) {
@@ -271,6 +311,10 @@ export const panelControlStyles = `
   .device-timer, .heat-level { min-width: 0; text-align: center; border-top: 1px solid var(--soft-line); padding-top: 6px; }
   .timer-clock { margin: 1px 0 0; font-size: 18px; font-weight: 780; font-variant-numeric: tabular-nums; }
   .timer-today, .heat-level-title { margin: 0; font-size: 12px; font-weight: 740; color: var(--secondary); }
+  .timer-usage {
+    min-height: 32px; padding: 0 7px; background: transparent; border: 0; border-radius: 8px;
+    text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
+  }
   .timer-tools { display: flex; align-items: center; justify-content: center; gap: 8px; margin-block: 2px 5px; direction: ltr; }
   .timer-range { flex: 1; width: 0; min-width: 50px; min-height: 44px; margin: 0;
     direction: ltr; accent-color: var(--moving); }
