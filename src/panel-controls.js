@@ -25,8 +25,9 @@ const selectors = {
 
 const namedFanModes = new Set(['sleep', 'quiet', 'health', 'natural', 'strong', 'medium low', 'medium high']);
 const swingPosition = /^(fixed|swing)_(upper(?:_middle)?|middle|lower(?:_middle)?)$/;
+const horizontalSwingModes = new Set(['default', 'left', 'left_center', 'center', 'right_center', 'right']);
 
-function climateOptionLabel(action, value, options, t) {
+export function climateOptionLabel(action, value, options, t) {
   if (action === 'set_fan_mode' && namedFanModes.has(value)) return t('climate_fan_' + value.replace(' ', '_'));
   if (action === 'set_swing_mode') {
     if (value === 'full_swing') return t('climate_swing_full');
@@ -39,10 +40,16 @@ function climateOptionLabel(action, value, options, t) {
       return movement + ' – ' + t('climate_position_' + position[2]);
     }
   }
+  if (action === 'set_swing_horizontal_mode') {
+    if (value === 'full_swing') return t('climate_swing_full');
+    if (horizontalSwingModes.has(value)) return t('climate_horizontal_' + value);
+  }
   return t(value);
 }
 
-export function buildPanelControls(model, { make, button, icon, label, t, request, compactTimer = false, timerPreferenceKey }) {
+export function buildPanelControls(model, {
+  make, button, icon, label, t, request, compactTimer = false, timerPreferenceKey, buildClimateDetail,
+}) {
   const used = new Set();
   const updates = [];
   const content = [];
@@ -113,6 +120,11 @@ export function buildPanelControls(model, { make, button, icon, label, t, reques
       row.append(field);
     }
     if (row.childElementCount) content.push(row);
+    const horizontalSwing = 'set_swing_horizontal_mode';
+    if (actions[horizontalSwing]) {
+      used.add(horizontalSwing);
+      if (buildClimateDetail) content.push(buildClimateDetail(horizontalSwing));
+    }
   }
 
   const running = ['active', 'paused'].includes(model.timer?.state);

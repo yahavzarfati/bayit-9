@@ -10,7 +10,7 @@ const HVAC_MODES = ["off", "heat", "cool", "heat_cool", "auto", "dry", "fan_only
 const LIGHT_EFFECT = 4;
 const COVER = { open: 1, close: 2, position: 4, stop: 8 };
 const FAN = { speed: 1, preset: 8, off: 16, on: 32 };
-const CLIMATE = { temperature: 1, range: 2, fan: 8, preset: 16, swing: 32, off: 128, on: 256 };
+const CLIMATE = { temperature: 1, range: 2, fan: 8, preset: 16, swing: 32, off: 128, on: 256, horizontalSwing: 512 };
 const WATER_HEATER = { temperature: 1, operation: 2, power: 8 };
 
 const SERVICES = {
@@ -36,6 +36,7 @@ const PARAMETER = {
   set_hvac_mode: "hvac_mode",
   set_fan_mode: "fan_mode",
   set_swing_mode: "swing_mode",
+  set_swing_horizontal_mode: "swing_horizontal_mode",
   set_preset_mode: "preset_mode",
   set_operation_mode: "operation_mode",
   set_temperature: "temperature",
@@ -267,6 +268,9 @@ function supportedActions(config, states, record, timer, nowMs) {
       if (supports(CLIMATE.range)) temperature("set_temperature_range");
       if (supports(CLIMATE.fan)) options("set_fan_mode", attributes.fan_modes);
       if (supports(CLIMATE.swing)) options("set_swing_mode", attributes.swing_modes);
+      if (supports(CLIMATE.horizontalSwing) && Array.isArray(attributes.swing_horizontal_modes)) {
+        options("set_swing_horizontal_mode", attributes.swing_horizontal_modes.filter(value => typeof value === "string" && value.trim()));
+      }
       if (supports(CLIMATE.preset)) options("set_preset_mode", attributes.preset_modes);
       break;
     case "water_heater":
@@ -299,7 +303,8 @@ function supportedActions(config, states, record, timer, nowMs) {
       }
     }
     for (const action of ["turn_on", "set_hvac_mode", "set_operation_mode", "set_percentage",
-      "set_temperature", "set_temperature_range", "set_fan_mode", "set_swing_mode", "set_preset_mode"]) {
+      "set_temperature", "set_temperature_range", "set_fan_mode", "set_swing_mode",
+      "set_swing_horizontal_mode", "set_preset_mode"]) {
       delete actions[action];
     }
   }
@@ -437,6 +442,7 @@ function expectedState(config, action, value, states) {
       return state(value);
     case "set_fan_mode":
     case "set_swing_mode":
+    case "set_swing_horizontal_mode":
     case "set_preset_mode":
     case "set_temperature":
       return attribute(PARAMETER[action], value, 1e-6);

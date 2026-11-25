@@ -5,7 +5,7 @@ import { loadConfiguration, saveConfiguration } from './dashboard-configuration.
 import { createDeviceController, getDeviceModel } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupHistory, normalizePopupAliases, popupRouteFragment, resolvePopupRoute } from './popup-routes.js';
-import { buildPanelControls, panelControlStyles } from './panel-controls.js';
+import { buildPanelControls, climateOptionLabel, panelControlStyles } from './panel-controls.js';
 import { lightColorHex, parseLightColor } from './light-color.mjs';
 import { activityKinds, applianceActivity, normalizeRoomActivities } from './room-appliance.mjs';
 import { createLightEffectGallery, lightEffectStyles, normalizeLightEffectGroups, organizeLightModes } from './light-effects.js';
@@ -72,12 +72,14 @@ const stateKeys = {
   set_position: 'current_position', set_percentage: 'percentage', set_brightness: 'brightness',
   set_color_temp_kelvin: 'color_temp_kelvin', set_effect: 'effect',
   set_temperature: 'temperature', set_fan_mode: 'fan_mode', set_preset_mode: 'preset_mode',
-  set_operation_mode: 'operation_mode', set_swing_mode: 'swing_mode', select_source: 'source', set_fan_speed: 'fan_speed',
+  set_operation_mode: 'operation_mode', set_swing_mode: 'swing_mode', set_swing_horizontal_mode: 'swing_horizontal_mode',
+  select_source: 'source', set_fan_speed: 'fan_speed',
 };
 const actionsInOrder = ['turn_on', 'turn_off', 'open', 'stop', 'close', 'lock', 'unlock',
   'set_position', 'set_brightness', 'set_color_temp_kelvin', 'set_light_color', 'set_effect',
   'set_percentage', 'set_hvac_mode', 'set_temperature',
-  'set_temperature_range', 'set_fan_mode', 'set_swing_mode', 'set_preset_mode', 'set_operation_mode', 'set_heating_level',
+  'set_temperature_range', 'set_fan_mode', 'set_swing_mode', 'set_swing_horizontal_mode', 'set_preset_mode',
+  'set_operation_mode', 'set_heating_level',
   'preselect_heating_level',
   'start_timed', 'extend_timed', 'stop_timed', 'run_script', 'press_button',
   'media_previous_track','media_play','media_pause','media_next_track','media_stop',
@@ -1602,6 +1604,7 @@ export class BayitDashboard extends HTMLElement {
       (timing.simple_timer_entity ?? timing.timer_entity ?? view.config.entity);
     view.special = buildPanelControls(model, { make, button, icon, label, t: key => this.t(key),
       compactTimer: view.inlineClimate, timerPreferenceKey,
+      buildClimateDetail: this.panel?.type === 'device' ? id => this.buildField(view, model.actions[id], id, model) : undefined,
       request: (id, value, control) => this.requestAction(view.config, id, value, control) });
     for (const id of actionsInOrder) {
       const action = model.actions[id];
@@ -1655,14 +1658,16 @@ export class BayitDashboard extends HTMLElement {
     const field = { action, id };
     if (action.options) {
       field.input = make('select');
-      if (id === 'set_effect') {
+      if (id === 'set_effect' || id === 'set_swing_horizontal_mode') {
+        field.valid = Boolean;
         const placeholder = make('option', '', this.t('available_option'));
         placeholder.value = '';
         placeholder.disabled = true;
         field.input.append(placeholder);
       }
       for (const value of action.options) {
-        const op = make('option', '', id === 'set_effect' ? value : this.t(value));
+        const localized = id === 'set_effect' ? value : climateOptionLabel(id, value, action.options, key => this.t(key));
+        const op = make('option', '', localized);
         op.value = value;
         field.input.append(op);
       }
@@ -1671,7 +1676,6 @@ export class BayitDashboard extends HTMLElement {
       field.input.type = 'color';
       field.valid = parseLightColor;
     } else field.input = this.numberInput(action, isRange ? 'range' : 'number');
-    if (id === 'set_effect') field.valid = Boolean;
     field.input.dataset.action = id;
     if (view.inlineLight || id === 'set_color_temp_kelvin') field.input.setAttribute('aria-label', title);
     caption.append(field.input);
@@ -1803,11 +1807,12 @@ export class BayitDashboard extends HTMLElement {
       if (this.pending.get(config.entity) === token) {
         this.pending.delete(config.entity);
         for (const view of this.deviceViews) {
-          if (view.config.entity !== config.entity || (!confirmedByHomeAssistant && !view.inlineLight)) continue;
+          const syncImmediately = view.inlineLight || id === 'set_swing_horizontal_mode';
+          if (view.config.entity !== config.entity || (!confirmedByHomeAssistant && !syncImmediately)) continue;
           for (const field of view.fields) {
             if (field.id !== id) continue;
             field.dirty = false;
-            if (view.inlineLight) this.syncField(field, this.model(view.config), true);
+            if (syncImmediately) this.syncField(field, this.model(view.config), true);
           }
         }
         if (this.isConnected) this.update();

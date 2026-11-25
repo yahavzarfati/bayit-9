@@ -420,6 +420,47 @@ function harness(states, setup = {}) {
   return { controller, calls, setHass: next => { hass = next; } };
 }
 
+test("horizontal climate swing uses only its advertised feature, mode, target and feedback", async () => {
+  const c = config("climate.fixture");
+  const attrs = { supported_features: 512 | 32, swing_modes: ["off", "vertical"], swing_mode: "off",
+    swing_horizontal_modes: ["off", "Left position", "Left position", " ", null], swing_horizontal_mode: null };
+  const states = { [c.entity]: entity("cool", attrs) };
+  const h = harness(states, { onSleep(elapsed, hass) {
+    if (elapsed >= 20) hass.states[c.entity] = entity("cool", { ...attrs, swing_horizontal_mode: "Left position" });
+  } });
+  const action = "set_swing_horizontal_mode";
+  assert.deepEqual(getDeviceModel(c, states).actions[action].options, ["off", "Left position"]);
+  assert.equal(getDeviceModel(c, states).attributes.swing_horizontal_mode, null);
+  assert.throws(() => planDeviceAction(c, states, action, "left position"), code("invalid_value"));
+  assert.throws(() => planDeviceAction(c, states, action, "vertical"), code("invalid_value"));
+  assert.throws(() => planDeviceAction(c, states, action, ""), code("invalid_value"));
+  assert.equal(h.calls.length, 0);
+  assert.equal((await h.controller.execute(c, action, "Left position")).status, "confirmed");
+  assert.deepEqual(h.calls, [{ type: "call_service", domain: "climate", service: action,
+    target: { entity_id: c.entity }, service_data: { swing_horizontal_mode: "Left position" } }]);
+  assert.equal(states[c.entity].attributes.swing_mode, "off");
+
+  const verticalOnly = harness({ [c.entity]: entity("cool", attrs) }, { onSleep(_elapsed, hass) {
+    hass.states[c.entity] = entity("cool", { ...attrs, swing_mode: "vertical" });
+  } });
+  assert.equal((await verticalOnly.controller.execute(c, action, "Left position")).reason, "state_timeout");
+
+  for (const unsupported of [{ supported_features: 32 }, { swing_horizontal_modes: [] },
+    { swing_horizontal_modes: undefined }, { swing_horizontal_modes: "Left position" }]) {
+    const withoutHorizontal = { [c.entity]: entity("cool", { ...attrs, ...unsupported }) };
+    assert.equal(getDeviceModel(c, withoutHorizontal).actions[action], undefined);
+    assert.ok(getDeviceModel(c, withoutHorizontal).actions.set_swing_mode);
+  }
+  const withoutVertical = { [c.entity]: entity("cool", { ...attrs, supported_features: 512 }) };
+  assert.ok(getDeviceModel(c, withoutVertical).actions[action]);
+  assert.equal(getDeviceModel(c, withoutVertical).actions.set_swing_mode, undefined);
+  assert.throws(() => planDeviceAction({ ...c, role: "status" }, states, action, "Left position"), code("action_unavailable"));
+  assert.throws(() => planDeviceAction(c, { [c.entity]: entity("unavailable", attrs) }, action, "Left position"),
+    code("action_unavailable"));
+  const scriptGuarded = config(c.entity, { kind: "heater", timed: { start_script: "script.fixture_start" } });
+  assert.throws(() => planDeviceAction(scriptGuarded, states, action, "Left position"), code("action_unavailable"));
+});
+
 test("heater script feedback has to confirm both level and unchanged device linkage and power", async () => {
   const c = levelSelector;
   const afterFeedback = (alter = () => {}) => harness(selectorStates(), { onSleep: (elapsed, hass) => {
