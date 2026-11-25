@@ -171,6 +171,39 @@ test("remote power issues an explicit supported command according to reported me
   })));
 });
 
+test("room climate power confirms reported mode and guards exact capability, current state and service", async () => {
+  const climate = config('climate.fixture_room', {room_climate_power:true});
+  const states = { [climate.entity]: entity('off', {supported_features:384,hvac_modes:['off','cool','heat']}) };
+  const calls = [];
+  const services = {climate:{turn_on:{},turn_off:{}}};
+  let clock = 0;
+  let report = false;
+  const hass = {states,services,callWS:async request => {
+    calls.push(request);
+    if (report) states[climate.entity].state = request.service === 'turn_on' ? 'cool' : 'off';
+  }};
+  const controller = createDeviceController({getHass:()=>hass,confirmationTimeoutMs:5,pollIntervalMs:1,
+    now:()=>clock,sleep:async delay => {clock += delay;}});
+  assert.deepEqual(planDeviceAction(climate,states,'turn_on').expected.anyState,['heat','cool','heat_cool','auto','dry','fan_only']);
+  await assert.rejects(controller.execute(climate,'turn_off'),code('action_unavailable'));
+  delete services.climate.turn_on;
+  await assert.rejects(controller.execute(climate,'turn_on'),code('service_unavailable'));
+  services.climate.turn_on = {};
+  assert.deepEqual(calls,[]);
+  assert.equal((await controller.execute(climate,'turn_on')).reason,'state_timeout');
+  assert.equal(states[climate.entity].state,'off');
+  report = true;
+  assert.equal((await controller.execute(climate,'turn_on')).status,'confirmed');
+  assert.equal((await controller.execute(climate,'turn_off')).status,'confirmed');
+  states[climate.entity].attributes.supported_features = 128;
+  await assert.rejects(controller.execute(climate,'turn_on'),code('action_unavailable'));
+  states[climate.entity].state = 'weird_mode';
+  await assert.rejects(controller.execute(climate,'turn_off'),code('action_unavailable'));
+  assert.deepEqual(calls,['turn_on','turn_on','turn_off'].map(service => ({
+    type:'call_service',domain:'climate',service,service_data:{},target:{entity_id:climate.entity},
+  })));
+});
+
 test("light brightness appears only when the light supports it", () => {
   const dim = config("light.task");
   const simple = config("light.basic");

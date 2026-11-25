@@ -593,6 +593,13 @@ export const styles = `
   .device-state-head:has(> .climate-preset-shortcut:not([hidden])) {
     grid-template-columns: minmax(0,1fr) 44px 44px;
   }
+  .device .device-head:has(> .room-climate-power) {
+    grid-template-columns: 44px minmax(0,1fr) 44px;
+  }
+  .device .device-head:has(> .room-climate-power):has(> .climate-preset-shortcut:not([hidden])) {
+    grid-template-columns: 44px minmax(0,1fr) 44px 44px;
+  }
+  .room-climate-power[aria-pressed=true] { color: var(--moving); }
   .climate-preset-shortcut {
     width: 44px; height: 44px; grid-template-rows: 16px 11px; align-content: center; gap: 2px;
     color: var(--secondary);

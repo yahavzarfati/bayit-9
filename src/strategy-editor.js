@@ -36,6 +36,7 @@ const WORDS = {
     roomInlineLight: 'Show brightness and temperature in this room',
     roomNativeCoverHeader: 'Open Home Assistant details from the cover header',
     roomNativeLightHold: 'Open Home Assistant details with a long press on this light',
+    roomClimatePower: 'Show quick power for this climate device',
     climatePresetShortcut: 'Preset shortcut', climatePresetNone: 'No shortcut', climatePresetLabel: 'Shortcut label',
     climatePresetIcon: 'Shortcut icon', climatePresetHighlight: 'Highlight when this preset is reported',
     climatePresetHighlightDefault: 'When the shortcut preset is active', climatePresetUnavailable: 'Unavailable preset',
@@ -135,6 +136,7 @@ const WORDS = {
     roomInlineLight: 'הצגת בהירות וגוון אור בתוך החדר',
     roomNativeCoverHeader: 'פתיחת פרטי Home Assistant מכותרת התריס',
     roomNativeLightHold: 'פתיחת פרטי Home Assistant בלחיצה ארוכה על התאורה',
+    roomClimatePower: 'הצגת כפתור הפעלה וכיבוי מהיר למזגן',
     climatePresetShortcut: 'קיצור לתוכנית מזגן', climatePresetNone: 'ללא קיצור', climatePresetLabel: 'שם הקיצור',
     climatePresetIcon: 'סמל הקיצור', climatePresetHighlight: 'הדגשה כשהמזגן מדווח על תוכנית זו',
     climatePresetHighlightDefault: 'כשתוכנית הקיצור פעילה', climatePresetUnavailable: 'תוכנית לא זמינה',
@@ -835,7 +837,17 @@ export class Bayit9StrategyEditor extends HTMLElement {
         fields.replaceChildren(showDevice, show, field(words.roomControlName, input), deviceIcon);
         if (id.startsWith('climate.') && !configuredIds(override.read_only_entities).includes(id) &&
             !['heater', 'boiler'].includes(profile?.kind)) {
-          fields.append(...this.#climatePresetFields(room, profile ?? { entity: id }, words));
+          const power = checkbox(words.roomClimatePower, configuredIds(override.climate_power_entities).includes(id), checked => {
+            const next = { ...this.#roomOverride(room.id) };
+            const ids = new Set(configuredIds(next.climate_power_entities));
+            if (checked) ids.add(id);
+            else ids.delete(id);
+            if (ids.size) next.climate_power_entities = [...ids];
+            else delete next.climate_power_entities;
+            this.#setRoomOverride(room.id, next, 'room-climate-power');
+          });
+          power.firstElementChild.dataset.roomFocus = 'room-climate-power';
+          fields.append(power, ...this.#climatePresetFields(room, profile ?? { entity: id }, words));
         }
         if (id.startsWith('cover.') && !configuredIds(override.read_only_entities).includes(id)) {
           const native = checkbox(words.roomNativeCoverHeader,
@@ -1107,7 +1119,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       }
       for (const key of ['read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
         'inline_light_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details',
-        'vacuum_panel_hold_entities']) {
+        'vacuum_panel_hold_entities', 'climate_power_entities']) {
         if (!Array.isArray(next[key])) continue;
         next[key] = next[key].filter(id => entities.includes(id));
         if (!next[key].length) delete next[key];

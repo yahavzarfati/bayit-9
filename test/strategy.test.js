@@ -245,6 +245,24 @@ test('a vacuum link opens on hold only for the selected vacuum and its valid roo
   assert.equal(get('porch').room_vacuum_presentation, undefined);
 });
 
+test('only the selected visible ordinary climate in the room receives its quick power flag', () => {
+  const hass = home();
+  const ac = 'climate.fixture_room';
+  const hidden = 'climate.fixture_hidden';
+  const other = 'climate.fixture_other';
+  for (const entity of [ac,hidden,other]) {
+    hass.states[entity] = {state:'off',attributes:{}};
+    hass.entities[entity] = {};
+  }
+  const base = {entities:[ac,hidden,other]};
+  const {rooms} = generateDashboard({area_ids:['studio','lounge','porch'],show_unassigned:false,room_overrides:{
+    studio:{...base,climate_power_entities:[ac,hidden,other],panel_hidden_entities:[hidden],read_only_entities:[other]},
+    lounge:base,
+    porch:{...base,climate_power_entities:[other]},
+  }},hass).views[0].cards[0];
+  assert.deepEqual(rooms.map(room=>room.entities.filter(item=>item.room_climate_power).map(item=>item.entity)),[[ac],[],[other]]);
+});
+
 test('room temperature choice and optional climate fallback require valid visible members', () => {
   const hass = home();
   const sensor = 'sensor.fixture_temperature';

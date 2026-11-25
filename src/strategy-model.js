@@ -370,6 +370,7 @@ function dashboardAreas(config, hass) {
       temperatureFallback: typeof override.room_temperature_fallback_entity === 'string' ? override.room_temperature_fallback_entity : undefined,
       shutdown: idList(override.turn_off_entities).filter(supportsRoomShutdown),
       activities: override.activities,
+      climatePower: new Set(idList(override.climate_power_entities)),
       vacuumPanelHolds: new Set(idList(override.vacuum_panel_hold_entities)),
       vacuumPanelPresentations: override.vacuum_panel_presentation,
       vacuumPanelSummaries: override.vacuum_panel_summary,
@@ -640,6 +641,10 @@ export function discoverRooms(config, hass, locale) {
           !room.panel_hidden_entities?.includes(device.entity) && area.presetShortcuts && Object.hasOwn(area.presetShortcuts, device.entity)) {
         const shortcut = normalizeClimatePresetShortcut(area.presetShortcuts[device.entity]);
         if (shortcut) device.room_climate_preset = shortcut;
+      }
+      if (domainOf(device.entity) === 'climate' && device.role !== 'status' && !['heater', 'boiler'].includes(device.kind) &&
+          area.climatePower?.has(device.entity) && !room.panel_hidden_entities?.includes(device.entity)) {
+        device.room_climate_power = true;
       }
       const panelKind = ROOM_PANEL_KINDS.get(domainOf(device.entity));
       const links = area.panelLinks?.[panelKind];

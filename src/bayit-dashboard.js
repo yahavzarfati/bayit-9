@@ -8,7 +8,7 @@ import { classicRoomTitle, DEVICE_ICONS, hasDynamicPresenceIcon, isAutomationScr
   sensorComparisonOptions, sensorSeriesColor, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
-import { allowsCoverRailAction, createDeviceController, getDeviceModel, roomShutdownTargets,
+import { allowsCoverRailAction, climatePowerServiceRegistered, createDeviceController, getDeviceModel, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
   simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupHistory, normalizePopupAliases, popupRouteFragment, resolvePopupRoute } from './popup-routes.js';
@@ -245,6 +245,7 @@ function normalizeEntity(item) {
     entry.room_light_native_hold = true;
   }
   if (domain === 'climate' && entry.role !== 'status' && !['heater', 'boiler'].includes(entry.kind)) {
+    if (item.room_climate_power === true) entry.room_climate_power = true;
     const shortcut = normalizeClimatePresetShortcut(item.room_climate_preset);
     if (shortcut) entry.room_climate_preset = shortcut;
     const unreported = item.kind === 'climate' && normalizeUnreportedSwingMode(item.unreported_swing_mode);
@@ -1596,6 +1597,20 @@ export class BayitDashboard extends HTMLElement {
           head.append(power);
           view.lightPower = power;
         }
+        if ((room || showRoomPreset) && config.room_climate_power === true) {
+          const power = button('round-action room-climate-power', this.t('climate_power'), 'mdi:power', true);
+          glyph.hidden = true;
+          head.append(power);
+          const visible = () => isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities);
+          power.onclick = () => {
+            const action = roomClimatePowerAction(this.model(config));
+            if (visible() && action === power.dataset.action && climatePowerServiceRegistered(this._hass, action)) {
+              this.requestAction(config, action, undefined, power);
+            }
+          };
+          bindDeviceDetails(power, () => { if (visible()) this.moreInfo(config, power); });
+          view.climatePower = power;
+        }
         head.append(glyph, details);
         const shortcut = (room || showRoomPreset) && config.room_climate_preset;
         if (shortcut) {
@@ -1802,6 +1817,18 @@ export class BayitDashboard extends HTMLElement {
         ? model.attributes.media_title.trim().slice(0, 160) : '';
       const pending = this.pending.get(view.config.entity);
       const feedback = this.coverFeedback(model, pending);
+      if (view.climatePower) {
+        const power = view.climatePower;
+        const action = roomClimatePowerAction(model);
+        power.dataset.action = action ?? '';
+        power.disabled = !!pending || !climatePowerServiceRegistered(this._hass, action) ||
+          !isVisibleEntity(model.entity, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities);
+        const powered = roomClimatePowerState(model);
+        label(power, this.t('climate_power') + ' · ' + labelName);
+        if (powered !== undefined) power.setAttribute('aria-pressed', String(powered));
+        else power.removeAttribute('aria-pressed');
+        power.setAttribute('aria-busy', String(!!pending));
+      }
       if (view.presetShortcut) {
         const action = view.presetShortcut;
         const shortcut = view.config.room_climate_preset;
@@ -2151,6 +2178,7 @@ export class BayitDashboard extends HTMLElement {
       } : undefined,
       request: (id, value, control) => this.requestAction(view.config, id, value, control) });
     for (const id of actionsInOrder) {
+      if (view.climatePower && (id === 'turn_on' || id === 'turn_off')) continue;
       if (view.vacuumCleaningControls && !roomVacuumCleaningActions.has(id)) continue;
       const action = actions[id];
       if (!action || view.special.used.has(id) || (view.compactCover && id === 'set_position')) continue;

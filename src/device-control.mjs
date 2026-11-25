@@ -456,6 +456,22 @@ function validNumber(value, { min, max, step }) {
   return value === max || Math.abs(increments - Math.round(increments)) < 1e-7;
 }
 
+export function roomClimatePowerState(model) {
+  if (model.domain === 'climate' && model.available && HVAC_MODES.includes(model.state)) return model.state !== 'off';
+}
+
+export function roomClimatePowerAction(model) {
+  const powered = roomClimatePowerState(model);
+  if (powered === undefined) return;
+  const action = powered ? 'turn_off' : 'turn_on';
+  if (model.actions[action]) return action;
+}
+
+export function climatePowerServiceRegistered(hass, action) {
+  const services = hass?.services?.climate;
+  return !!action && !!services && Object.hasOwn(services, action);
+}
+
 function expectedState(config, action, value, states) {
   const attribute = (name, target, tolerance) => ({
     entity: config.entity, attributes: { [name]: target }, tolerance,
@@ -463,6 +479,9 @@ function expectedState(config, action, value, states) {
   const state = target => ({ entity: config.entity, state: target });
   switch (action) {
     case "turn_on":
+      if (config.domain === 'climate' && config.room_climate_power === true) {
+        return { entity: config.entity, anyState: HVAC_MODES.slice(1) };
+      }
       return ["light", "switch", "fan", "automation"].includes(config.domain) ? state("on") : null;
     case "turn_off":
     case "stop_script":
@@ -527,6 +546,11 @@ export function planDeviceAction(config, states, actionId, value, { confirmed = 
   const model = deviceModel(config, states, Date.now());
   const action = typeof actionId === "string" && Object.hasOwn(model.actions, actionId) && model.actions[actionId];
   if (!action) throw new DeviceControlError("action_unavailable", "This entity does not currently support that action.");
+  const climatePower = config.domain === 'climate' && config.room_climate_power === true &&
+    (actionId === 'turn_on' || actionId === 'turn_off');
+  if (climatePower && roomClimatePowerAction(model) !== actionId) {
+    throw new DeviceControlError("action_unavailable", "The climate power state changed before the command was sent.");
+  }
   if (action.scriptRevision && value !== action.scriptRevision) {
     throw new DeviceControlError("stale_script_state", "The observed script run changed before the command was sent.");
   }
@@ -656,6 +680,7 @@ export function planDeviceAction(config, states, actionId, value, { confirmed = 
     domain: model.domain,
     service: action.service ?? SERVICES[actionId] ?? actionId,
     ...(action.requiresMediaService && { requiresMediaService: true }),
+    ...(climatePower && { requiresClimatePowerService: true }),
     target: { entity_id: config.entity },
     data,
     expected,
@@ -732,6 +757,9 @@ export function createDeviceController({
       if (plan.kind === "more_info") return { status: "more_info", entity: plan.entity };
       if (actionId === "reset_daily_usage" && !simpleTimerUsageResetAvailable(hass, plan.expected.entity)) {
         throw new DeviceControlError("service_unavailable", "The daily usage reset service or sensor is unavailable.");
+      }
+      if (plan.requiresClimatePowerService && !climatePowerServiceRegistered(hass, plan.service)) {
+        throw new DeviceControlError("service_unavailable", "Home Assistant does not publish that climate service.");
       }
       if (plan.requiresMediaService && !mediaServiceRegistered(hass, plan.service)) {
         throw new DeviceControlError("service_unavailable", "Home Assistant does not publish that media service.");

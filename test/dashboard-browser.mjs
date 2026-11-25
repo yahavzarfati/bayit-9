@@ -504,6 +504,10 @@ if (query.has('device-panel')) {
       preset_modes: ['none', 'eco', 'boost'], preset_mode: 'eco' });
     hass.services = { climate: query.has('missing-preset-service') ? {} : { set_preset_mode: {} } };
   }
+  if (query.has('climate-power-test')) {
+    hass.services.climate = { ...hass.services.climate, turn_off: {},
+      ...(!query.has('missing-climate-on-service') && {turn_on:{}}) };
+  }
   if (query.has('compact-climate-summary')) {
     hass.config = { unit_system: { temperature: '°C' } };
     Object.assign(attributes, { current_temperature: 22.5, temperature: 23.5 });
@@ -777,7 +781,9 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
   room_shortcuts: { studio: ['light.demo_lamp', 'climate.demo_air'],
     ...(query.has('preset-shortcut') && { bayit_room_other_preset: ['climate.demo_air'] }) },
   ...(query.has('preset-shortcut') && { area_ids: ['studio', 'bayit_room_other_preset'], room_overrides: {
-    studio: { entities: ['light.demo_lamp', 'climate.demo_air'], climate_preset_shortcuts: {
+    studio: { entities: ['light.demo_lamp', 'climate.demo_air'],
+      ...(query.has('room-climate-power') && {climate_power_entities:['climate.demo_air']}),
+      climate_preset_shortcuts: {
       'climate.demo_air': { preset: 'none', label: 'SE', icon: 'mdi:leaf', highlight_when: 'eco' },
     } },
     bayit_room_other_preset: { name: 'Second room', entities: ['climate.demo_air'] },
@@ -987,6 +993,9 @@ window.bayitTest = {
   setRoomState(entity, state) {
     states[entity] = { ...states[entity], state };
     card.hass = { ...hass, states: { ...states } };
+  },
+  setClimatePowerSnapshot(state) {
+    states['climate.demo_air'].state = state;
   },
   setMediaPowerSnapshot({ state = 'standby', features = 384, hidden = false, registered = true } = {}) {
     const entity = 'media_player.demo_screen';
@@ -2794,6 +2803,95 @@ async function assertHomeMaterial(browser) {
   }
 }
 
+async function assertRoomClimatePower(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const url = base + '/fixture-home/home?device-panel&preset-shortcut&climate-power-test&locale=' + locale;
+    const openRoom = async flags => {
+      await page.goto(url + flags);
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+    };
+    const room = page.getByRole('dialog',{name:'Studio',exact:true});
+    const climate = page.getByRole('dialog',{name:'Studio air conditioner',exact:true});
+    const entity = 'climate.demo_air';
+    const state = value => page.evaluate(value => window.bayitTest.setRoomState('climate.demo_air',value),value);
+    const power = panel => panel.locator('.room-climate-power');
+    const ready = (panel, active) => panel.locator('.room-climate-power[aria-pressed="'+active+'"]:enabled');
+    const calls = () => page.evaluate(() => window.bayitTest.calls);
+    try {
+      await openRoom('&room-climate-power&native-more-info=modern');
+      await ready(room,false).waitFor();
+      assert.equal(await power(room).count(),1);
+      assert.ok(await power(room).evaluate(button => {
+        const parent = button.parentElement;
+        return button.offsetWidth >= 44 && button.offsetHeight >= 44 && parent.scrollWidth <= parent.clientWidth;
+      }));
+      await power(room).evaluate(button => {
+        window.bayitTest.setClimatePowerSnapshot('cool');
+        button.click();
+        window.bayitTest.setClimatePowerSnapshot('off');
+      });
+      assert.deepEqual(await calls(),[]);
+      await power(room).tap();
+      await page.waitForFunction(() => window.bayitTest.calls.length === 1);
+      assert.equal(await power(room).getAttribute('aria-pressed'),'false');
+      assert.equal(await power(room).getAttribute('aria-busy'),'true');
+      await power(room).evaluate(button => button.click());
+      assert.equal((await calls()).length,1);
+      await state('cool');
+      await ready(room,true).waitFor();
+      await power(room).press('Shift+Enter');
+      const native = page.getByRole('dialog',{name:'Native entity details',exact:true});
+      await native.waitFor();
+      assert.equal(new URL(page.url()).searchParams.get('more-info-entity-id'),entity);
+      await native.getByRole('button',{name:'Close native details',exact:true}).tap();
+      await native.waitFor({state:'hidden'});
+      assert.ok(await power(room).evaluate(button => button.getRootNode().activeElement === button));
+      await power(room).tap();
+      await page.waitForFunction(() => window.bayitTest.calls.length === 2);
+      assert.equal(await power(room).getAttribute('aria-pressed'),'true');
+      await state('off');
+      await ready(room,false).waitFor();
+      assert.deepEqual(await calls(), ['turn_on','turn_off'].map(service => ({
+        type:'call_service',domain:'climate',service,service_data:{},target:{entity_id:entity},
+      })));
+
+      await page.goto(url + '&room-climate-power#device/studio/climate.demo_air');
+      await ready(climate,false).waitFor();
+      assert.equal(await power(climate).count(),1);
+      await page.evaluate(() => window.bayitTest.setFixtureAttributes('climate.demo_air',{supported_features:128}));
+      await climate.locator('.room-climate-power:disabled').waitFor();
+      await state('unknown');
+      await climate.locator('.room-climate-power:not([aria-pressed])').waitFor();
+      assert.deepEqual(await calls(),[]);
+
+      await openRoom('&room-climate-power&missing-climate-on-service');
+      await room.locator('.room-climate-power:disabled').waitFor();
+      assert.deepEqual(await calls(),[]);
+      await openRoom('');
+      assert.equal(await power(room).count(),0);
+
+      await page.goto(url + '&room-climate-power&editor');
+      await page.getByText(he ? 'חדרים' : 'Rooms',{exact:true}).tap();
+      await page.getByLabel(he ? 'חדר להתאמה אישית' : 'Room to customize',{exact:true}).selectOption('studio');
+      await page.getByText(he ? 'תצוגת מכשירים' : 'Device display',{exact:true}).tap();
+      await page.getByLabel(he ? 'מכשיר להתאמה אישית' : 'Device to customize',{exact:true}).selectOption(entity);
+      const toggle = page.getByRole('checkbox',{name:he ? 'הצגת כפתור הפעלה וכיבוי מהיר למזגן' : 'Show quick power for this climate device',exact:true});
+      assert.equal(await toggle.isChecked(),true);
+      const setting = () => page.evaluate(() => window.latest.room_overrides.studio.climate_power_entities);
+      await toggle.uncheck();
+      assert.equal(await setting(),undefined);
+      await toggle.check();
+      assert.deepEqual(await setting(),[entity]);
+      assert.deepEqual(await calls(),[]);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
@@ -4521,6 +4619,7 @@ try {
       console.log(engine + ' 320: unreported vertical swing is a distinct placeholder with one explicit native command and profile editing');
 
       const presetPage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+      await assertRoomClimatePower(browser);
       const presetURL = base + '?device-panel&preset-shortcut';
       const presetName = rightToLeft ? 'SE · בחירת תוכנית ברירת מחדל' : 'SE · Set preset to Default';
       const preset = panel => panel.getByRole('button', { name: presetName, exact: true });
