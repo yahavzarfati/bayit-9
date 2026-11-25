@@ -74,9 +74,9 @@ const hass = {
 };
 card.hass = hass;
 document.body.append(card);
-window.changeFixture = (id, state) => {
+window.changeFixture = (id, state, attributes) => {
   if (id.includes('sensor.')) states[id] = { ...states[id], attributes: { ...states[id].attributes, timer_state: state } };
-  else states[id] = { ...states[id], state };
+  else states[id] = { ...states[id], state, attributes: { ...states[id].attributes, ...attributes } };
   card.hass = { ...hass, states: { ...states } };
 };
 </script>`;
@@ -140,10 +140,27 @@ try {
           });
         });
         assert.ok(uncut, 'Room badges must fit above the six shortcuts at 320px');
+        await page.evaluate(() => window.changeFixture('climate.bedroom', 'heat_cool', {
+          temperature: null, target_temp_low: 21.5, target_temp_high: 26,
+        }));
+        await expectVisible(activities(bedroom), 'mdi:air-conditioner', /Bedroom AC.*21\.5–26°C/, /21\.5–26°/);
+        const range = activities(bedroom).filter({ hasText: /21\.5–26°/ });
+        assert.ok(await range.evaluate(chip => {
+          const bounds = chip.getBoundingClientRect();
+          const strip = chip.parentElement.getBoundingClientRect();
+          const text = chip.querySelector('span');
+          return bounds.left >= strip.left - 1 && bounds.right <= strip.right + 1 && text.scrollWidth <= text.clientWidth;
+        }), 'The valid climate range remains readable at 320px');
+        await page.evaluate(() => window.changeFixture('climate.bedroom', 'heat_cool', { target_temp_high: null }));
+        await expectVisible(activities(bedroom), 'mdi:air-conditioner', /Bedroom AC/,
+          locale === 'he' ? /חימום \/ קירור/ : /Heat \/ cool/);
         await page.evaluate(() => window.changeFixture('sensor.boiler_timer', 'idle'));
         await expectVisible(activities(bathroom), 'mdi:water-boiler', /Boiler/, locale === 'he' ? /פועל/ : /On/);
+        await page.evaluate(() => window.changeFixture('sensor.boiler_timer', 'active'));
+        await expectVisible(activities(bathroom), 'mdi:water-boiler', /Boiler/, /40:00/);
         await page.evaluate(() => window.changeFixture('switch.boiler', 'unavailable'));
-        await expectVisible(activities(bathroom), 'mdi:timer-outline', /Bathroom heater/, /18:00/);
+        await activities(bathroom).filter({ has: page.locator('ha-icon[icon="mdi:water-boiler"]') }).waitFor({ state: 'hidden' });
+        await expectVisible(activities(bathroom), 'mdi:radiator', /Bathroom heater/, /18:00/);
         assert.equal(await activities(bathroom).count(), 1, 'An unavailable boiler must leave no running badge');
         await page.evaluate(() => window.changeFixture('timer.solo', 'idle'));
         await expectVisible(activities(solo), 'mdi:air-conditioner', /Solo AC/, /24/);
@@ -157,11 +174,11 @@ try {
       const kitchen = elapsedPage.locator('.room[data-room="kitchen"]');
       await expectVisible(activities(bathroom), 'mdi:water-boiler', /Boiler · Time running/, /00:12/);
       await expectVisible(activities(bathroom), 'mdi:radiator', /Bathroom heater/, /18:00/);
-      await expectVisible(activities(kitchen), 'mdi:timer-outline', /Kitchen boiler · Time remaining/, /40:00/);
+      await expectVisible(activities(kitchen), 'mdi:water-boiler', /Kitchen boiler · Time remaining/, /40:00/);
       assert.equal(await activities(bathroom).count(), 2);
       await elapsedPage.evaluate(() => window.changeFixture('input_datetime.boiler_started', 'unavailable'));
       await expectVisible(activities(bathroom), 'mdi:water-boiler', /Boiler · Time remaining/, /40:00/);
-      await expectVisible(activities(kitchen), 'mdi:timer-outline', /Kitchen boiler · Time remaining/, /40:00/);
+      await expectVisible(activities(kitchen), 'mdi:water-boiler', /Kitchen boiler · Time remaining/, /40:00/);
       console.log(engine + ': boiler elapsed is room scoped and missing helper preserves the native timer');
       await elapsedPage.close();
     } finally {

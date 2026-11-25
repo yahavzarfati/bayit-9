@@ -1323,14 +1323,17 @@ export class BayitDashboard extends HTMLElement {
     return String((record && this._hass?.formatEntityState?.(record)) || state || this.t('unknown'));
   }
 
-  temperatureBadge(value, unit) {
+  temperatureBadge(value, unit, highValue) {
     const temperature = number(value);
-    if (temperature === null) return undefined;
+    const high = number(highValue);
+    if (temperature === null || (highValue !== undefined && (high === null || high < temperature))) return undefined;
     const suffix = unit || this._hass?.config?.unit_system?.temperature || '°';
     const fullUnit = typeof suffix === 'string' && suffix.trim().length <= 3 ? suffix.trim() : '°';
     const compactUnit = fullUnit === '°C' ? '°' : fullUnit;
     const rounded = Number(temperature.toFixed(1));
-    return { text: ltr(rounded + compactUnit), fullText: ltr(rounded + fullUnit) };
+    const upper = high === null ? rounded : Number(high.toFixed(1));
+    const reading = upper === rounded ? String(rounded) : rounded + '–' + upper;
+    return { text: ltr(reading + compactUnit), fullText: ltr(reading + fullUnit) };
   }
 
   selectedTemperatureBadge(value, unit) {
@@ -1348,8 +1351,9 @@ export class BayitDashboard extends HTMLElement {
     };
     if (model.domain !== 'climate' || heating || tone !== 'moving') return undefined;
     const mode = statusNames.has(model.state) ? this.t(model.state) : model.state;
+    const { temperature, target_temp_low: low, target_temp_high: high } = model.attributes;
     const target = ['cool','heat','heat_cool','auto'].includes(model.state)
-      ? this.temperatureBadge(model.attributes?.temperature) : undefined;
+      ? this.temperatureBadge(temperature) ?? this.temperatureBadge(low, undefined, high ?? null) : undefined;
     return {
       text: target?.text || mode,
       label: [model.name, mode, target && this.t('target_short') + ' ' + target.fullText].filter(Boolean).join(' · '),
@@ -1429,12 +1433,15 @@ export class BayitDashboard extends HTMLElement {
         if (elapsed) {
           activities.push({ ...this.applianceBadge('boiler', elapsed, model.name), glyph: activityDeviceIcon(model) });
           if (countMinutes) applianceNext = Math.min(applianceNext, elapsed.nextAt);
-        } else if (model.timer?.state === 'active') {
+        } else if (model.available && model.timer?.state === 'active') {
           countdown = true;
+          const deviceGlyph = activityDeviceIcon(model);
           activities.push({
             text: this.timerLabel(model.timer, true),
             label: model.name + ' · ' + this.t('remaining_time') + ' · ' + this.timerLabel(model.timer),
-            glyph: 'mdi:timer-outline', concurrentGlyph: activityDeviceIcon(model), tone: 'warm',
+            glyph: model.domain === 'climate' ? 'mdi:timer-outline' : deviceGlyph,
+            concurrentGlyph: deviceGlyph,
+            tone: 'warm',
           });
         } else if (model.available) {
           const activity = this.roomClimateBadge(model, tone);
