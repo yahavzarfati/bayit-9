@@ -409,7 +409,10 @@ export function createToolbarPanel(kind, configuration, context) {
       const config = sensorGraphConfig(item);
       const fallback = renderTile(item, 'status');
       const destination = itemKind === 'graph' && graphDestination?.(item);
-      if (compactStatus) config.tap_action = { action: 'more-info' };
+      if (compactStatus || kind === 'weather' && section === 'readings' ||
+          kind === 'energy' && (section === 'electricity' || section === 'water')) {
+        config.tap_action = { action: 'more-info' };
+      }
       if (!destination) return nativeCard(config, fallback);
       config.tap_action = { action: 'fire-dom-event', bayit_graph_link: true };
       config.hold_action = { action: 'none' };

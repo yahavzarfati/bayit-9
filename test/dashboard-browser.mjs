@@ -451,6 +451,7 @@ if (query.has('toolbar-panels')) {
       next_noon:'2026-11-25T04:25:00Z',elevation:15,azimuth:270}},
     'person.demo_friend': {state:'home',attributes:{friendly_name:'Simona'}},
     'sensor.demo_meter': {state:'51',attributes:{friendly_name:'Energy meter',unit_of_measurement:'kWh'}},
+    'sensor.demo_water_meter': {state:'4',attributes:{friendly_name:'Water meter',unit_of_measurement:'m³'}},
     'sensor.demo_studio_temperature': {state:'22.5',attributes:{friendly_name:'Studio temperature',unit_of_measurement:'°C'}},
     'sensor.demo_progress': {state:'40',attributes:{friendly_name:'Cleaning progress',unit_of_measurement:'%'}},
     'media_player.demo_speaker': {state:'playing',attributes:{friendly_name:'Speaker',supported_features:30781,volume_level:.24,
@@ -643,8 +644,14 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
         {kind:'people',entities:[{entity:'person.demo_friend',role:'person'},'person.demo_guest','device_tracker.demo_phone']},
         {kind:'status',entities:[{entity:'sensor.demo_home_text',role:'status'}]},
       ] : [])]},
-    {kind:'weather',sections:[{kind:'forecast',entities:['weather.demo_home']},{kind:'sun',entities:['sun.sun']}]},
-    {kind:'energy',sections:[{kind:'electricity',entities:[{entity:'sensor.demo_meter',role:'graph',graph_hours:168}]}]},
+    {kind:'weather',sections:[{kind:'forecast',entities:['weather.demo_home']},{kind:'sun',entities:['sun.sun']},
+      ...(query.has('utility-graph-details') ? [{kind:'readings',entities:[
+        {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24},
+      ]}] : [])]},
+    {kind:'energy',sections:[{kind:'electricity',entities:[{entity:'sensor.demo_meter',role:'graph',graph_hours:168}]},
+      ...(query.has('utility-graph-details') ? [{kind:'water',entities:[
+        {entity:'sensor.demo_water_meter',role:'graph',graph_hours:168},
+      ]}] : [])]},
     {kind:'settings'},
     {id:'media-panel',kind:'media',placement:linkedPanels ? 'linked' : 'settings',
       ...(linkedPanels && { label:hass.locale.language === 'he' ? 'מדיה מקושרת' : 'Linked Media' }),
@@ -2964,6 +2971,41 @@ try {
       await panelsPage.getByRole('dialog').getByRole('button',{name:'Calendar',exact:true}).click();
       await panelsPage.getByRole('dialog',{name:'Calendar',exact:true}).getByText('2 calendars',{exact:true}).waitFor();
       await panelsPage.close();
+
+      const utilityPage = await browser.newPage({ viewport: { width: 391, height: 845 }, hasTouch: true, reducedMotion: 'reduce' });
+      utilityPage.setDefaultTimeout(8000);
+      await utilityPage.goto(base + '/fixture-home/home?toolbar-panels&utility-graph-details&native-more-info=modern');
+      const utilityDetails = utilityPage.getByRole('dialog', { name:'Native entity details', exact:true });
+      for (const [panelName, sensors] of [
+        ['Energy', [['Energy meter','sensor.demo_meter','168'],['Water meter','sensor.demo_water_meter','168']]],
+        ['Weather', [['Studio temperature','sensor.demo_studio_temperature','24']]],
+      ]) {
+        await utilityPage.getByRole('button', { name:panelName, exact:true }).tap();
+        const panel = utilityPage.getByRole('dialog', { name:panelName, exact:true });
+        const panelHash = new URL(utilityPage.url()).hash;
+        assert.ok(panelHash.startsWith('#panel/'));
+        for (const [caption, entity, hours] of sensors) {
+          const graph = panel.getByRole('button', { name:caption, exact:true });
+          await graph.waitFor();
+          assert.equal(await graph.getAttribute('data-native-type'), 'sensor');
+          assert.equal(await graph.getAttribute('data-graph-hours'), hours);
+          await graph.tap();
+          await utilityDetails.waitFor();
+          assert.equal(new URL(utilityPage.url()).searchParams.get('more-info-entity-id'), entity);
+          assert.equal(new URL(utilityPage.url()).hash, panelHash);
+          assert.equal(await utilityPage.locator('bayit-dashboard dialog.modal[open]').getAttribute('aria-label'), panelName);
+          await utilityDetails.getByRole('button', { name:'Close native details', exact:true }).tap();
+          await utilityPage.waitForFunction(() => !new URL(location.href).searchParams.has('more-info-entity-id'));
+          await panel.waitFor();
+        }
+        await panel.locator('button[data-role=close]').tap();
+        await panel.waitFor({ state:'hidden' });
+      }
+      assert.deepEqual(await utilityPage.evaluate(() => window.bayitTest.moreInfoCalls),
+        ['sensor.demo_meter','sensor.demo_water_meter','sensor.demo_studio_temperature']);
+      assert.deepEqual(await utilityPage.evaluate(() => window.bayitTest.calls),[]);
+      await utilityPage.close();
+      console.log(engine + ': Energy and Weather graph details leave the Bayit popup open underneath');
 
       const sunPage = await browser.newPage({ viewport: { width: 320, height:844 }, hasTouch:true });
       sunPage.setDefaultTimeout(8000);
