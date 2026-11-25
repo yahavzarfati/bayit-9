@@ -473,6 +473,8 @@ export function createToolbarPanel(kind, configuration, context) {
     panel.dataset.section = section.kind;
     const compactStatus = isCompactToolbarStatus(kind, section);
     if (compactStatus) panel.dataset.layout = 'compact';
+    if (kind === 'overview' && !compactStatus && section.filter === 'active' &&
+        ['status', 'covers'].includes(section.kind)) panel.dataset.overviewActiveRows = '';
     const caption = section.title ?? t(sectionKeys[section.kind] ?? 'room_devices');
     if (caption) panel.append(make('h3', 'toolbar-section-title', caption));
     const items = make('div', 'toolbar-section-items');
@@ -637,6 +639,17 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
   .tile-row:is([data-tone=home],[data-tone=active]) .tile-mark { color: var(--warm); }
   .tile-label { font-size: 13px; font-weight: 740; width: 100%; overflow-wrap: anywhere; }
   .tile-state { font-size: 12px; color: var(--secondary); overflow-wrap: anywhere; min-width: 0; }
+  [data-overview-active-rows] > .toolbar-section-items { gap: 4px; }
+  [data-overview-active-rows] > .toolbar-section-items > .tile-row {
+    grid-template-columns: 26px minmax(0,1fr) fit-content(55%); align-items: center; justify-items: start;
+    gap: 8px; min-height: 44px; padding: 5px 8px; border-color: transparent; border-radius: 8px;
+    background: transparent; text-align: start;
+  }
+  [data-overview-active-rows] .tile-mark { width: 26px; height: 26px; background: transparent; }
+  [data-overview-active-rows] .tile-state { justify-self: end; text-align: end; }
+  @media (hover: hover) {
+    [data-overview-active-rows] > .toolbar-section-items > .tile-row:hover { background: var(--glass); }
+  }
   .native-panel-card { min-width: 0; --ha-card-background: transparent; --ha-card-box-shadow: none;
     --ha-card-border-color: var(--soft-line); --primary-text-color: var(--ink); --secondary-text-color: var(--secondary); }
   .toolbar-device, .toolbar-link { min-width: 0; }

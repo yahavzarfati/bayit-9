@@ -625,7 +625,7 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
       {entity:'cover.demo_overview_window',role:'status'}]},
     ...(query.has('overview-cover-discovery') ? [{kind:'status',title:'Discovered covers',include_closing:true,
       discover:{domain:'cover'},entities:[{entity:'cover.demo_overview_window',role:'status'}]}] : []),
-    ...(query.has('overview-readings') ? [{kind:'status',title:'Overview AC status',
+    ...(query.has('overview-readings') ? [{kind:'status',title:'Overview AC status',filter:'active',
       entities:[{entity:'climate.demo_overview_air',role:'status'}]}] : []),
   ]}, ...(query.has('overview-readings') ? [{kind:'security',sections:[{kind:'status',entities:[
     {entity:'light.demo_dining',role:'status'}, {entity:'climate.demo_overview_air',role:'status'},
@@ -3543,6 +3543,10 @@ try {
       const newShade = discoveredCovers.getByRole('button', { name:/^New shade · Opening/ });
       await newShade.waitFor();
       assert.match(await newShade.innerText(), /37%/);
+      const shadeHeight = (await newShade.boundingBox()).height;
+      assert.ok(shadeHeight >= 44 && shadeHeight <= 50);
+      const pitches = await discoveredCovers.locator('.tile-row').evaluateAll(rows => rows.map(row => row.getBoundingClientRect().top));
+      assert.ok(Math.abs(pitches[1] - pitches[0]) >= 48 && Math.abs(pitches[1] - pitches[0]) <= 54);
       assert.equal(await discoveredCovers.locator('[data-action], input, select').count(),0);
       await newShade.tap();
       assert.deepEqual(await coverDiscovery.evaluate(() => window.bayitTest.moreInfoCalls), ['cover.demo_added_later']);
@@ -3644,6 +3648,17 @@ try {
       assert.equal(await read(readingClimate), climateText);
       assert.equal(cleanReading(await readingClimate.getAttribute('aria-label')), 'Overview AC · ' + climateText);
       assert.ok(await readingClimate.evaluate(row => row.scrollWidth <= row.clientWidth));
+      for (const row of [readingLight, readingClimate]) {
+        assert.ok(await row.evaluate(button => {
+          const rect = button.getBoundingClientRect();
+          const [mark, label, state] = [...button.children].map(element => element.getBoundingClientRect());
+          const ordered = getComputedStyle(button).direction === 'rtl' ?
+            mark.left >= label.right && label.left >= state.right :
+            mark.right <= label.left && label.right <= state.left;
+          return rect.height >= 44 && rect.height <= 56 && ordered &&
+            [mark, label, state].every(item => item.top >= rect.top && item.bottom <= rect.bottom);
+        }), 'Active overview rows use horizontal touch targets without overlapping their readings');
+      }
       await updateReadings(242, null, 20);
       assert.equal(await read(readingLight), onName + ' · 95%');
       assert.equal(await read(readingClimate), coolingName + ' · ' + readingRoom + ' 20°F');
@@ -3651,12 +3666,15 @@ try {
       assert.equal(await read(readingLight), onName);
       assert.equal(await read(readingClimate), coolingName);
       await updateReadings(128, 24, 22.5);
+      await readingClimate.tap();
+      assert.deepEqual(await overviewReadings.evaluate(() => window.bayitTest.moreInfoCalls), ['climate.demo_overview_air']);
       await overviewReadings.keyboard.press('Escape');
       await readingsPanel.waitFor({ state: 'hidden' });
       await overviewReadings.getByRole('button', { name: safetyName, exact: true }).tap();
       const safetyPanel = overviewReadings.getByRole('dialog', { name: safetyName, exact: true });
       assert.equal(await read(rowWith(safetyPanel, 'Dining task lamp')), onName);
       assert.equal(await read(rowWith(safetyPanel, 'Overview AC')), coolingName + ' · 22.5 °F');
+      assert.equal(await safetyPanel.locator('[data-overview-active-rows]').count(),0);
       assert.equal(await overviewReadings.evaluate(() => window.bayitTest.calls.filter(call => call.domain).length), 0);
       await overviewReadings.close();
       console.log(engine + ' 320: Overview shows live brightness, HVAC target and ambient without changing other panels');
