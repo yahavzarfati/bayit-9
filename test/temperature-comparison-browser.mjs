@@ -115,6 +115,9 @@ try {
       const strokes = plot.locator('path.comparison-line');
       const range = comparison.getByRole('slider');
       const reading = label => comparison.locator('.comparison-reading').filter({ hasText:label }).locator('.comparison-value');
+      const legend = (label, locale = 'en') => comparison.getByRole('button', {
+        name: (locale === 'he' ? 'הצגה או הסתרה של ' : 'Show or hide ') + label, exact:true,
+      });
       const open = query => page.goto(home + query + hash);
 
       for (const [width, locale] of [[320,'he'],[390,'en'],[900,'en']]) {
@@ -138,7 +141,40 @@ try {
         await range.press('Home');
         assert.equal(await reading('Inside').innerText(), '23 °C');
         await range.press('ArrowRight');
-        assert.notEqual(await range.inputValue(), '0');
+        const selected = await range.inputValue();
+        assert.notEqual(selected, '0');
+        const selectedTime = await comparison.locator('.comparison-selected-time').textContent();
+        const originalScale = await comparison.locator('.comparison-y-axis').textContent();
+        const insideToggle = legend('Inside', locale);
+        const outsideToggle = legend('Outside', locale);
+        assert.equal(await insideToggle.getAttribute('aria-pressed'), 'true');
+        assert.ok((await insideToggle.boundingBox()).height >= 44);
+        await insideToggle.press('Space');
+        assert.equal(await insideToggle.getAttribute('aria-pressed'), 'false');
+        assert.ok(await insideToggle.evaluate(button => button.getRootNode().activeElement === button));
+        assert.deepEqual(await strokes.evaluateAll(nodes => nodes.map(node => node.getAttribute('stroke'))), ['#967000']);
+        assert.notEqual(await comparison.locator('.comparison-y-axis').textContent(), originalScale);
+        assert.equal(await range.inputValue(), selected);
+        assert.equal(await comparison.locator('.comparison-selected-time').textContent(), selectedTime);
+        assert.doesNotMatch(await range.getAttribute('aria-valuetext'), /Inside/);
+        assert.ok(await reading('Inside').isHidden());
+        assert.equal(await outsideToggle.getAttribute('aria-disabled'), 'true');
+        const description = await outsideToggle.evaluate(button => button.getAttribute('aria-describedby').split(' ')
+          .map(id => button.getRootNode().getElementById(id).textContent));
+        assert.deepEqual(description, [
+          await reading('Outside').textContent(),
+          locale === 'he' ? 'לפחות חיישן אחד צריך להישאר מוצג בגרף' : 'Keep at least one sensor visible in the chart',
+        ]);
+        assert.equal(await insideToggle.getAttribute('aria-describedby'), null);
+        await outsideToggle.press('Enter');
+        assert.equal(await outsideToggle.getAttribute('aria-pressed'), 'true');
+        await insideToggle.click();
+        assert.equal(await insideToggle.getAttribute('aria-pressed'), 'true');
+        assert.equal(await outsideToggle.getAttribute('aria-disabled'), 'false');
+        assert.equal(await comparison.locator('.comparison-y-axis').textContent(), originalScale);
+        assert.equal(await range.inputValue(), selected);
+        assert.equal(await comparison.locator('.comparison-selected-time').textContent(), selectedTime);
+        assert.equal(await strokes.count(), 3);
         await range.press('End');
         assert.equal(await reading('Inside').innerText(), '22 °C');
 
@@ -156,8 +192,12 @@ try {
       await page.evaluate(() => tracker.dropInside());
       await range.press('End');
       assert.equal(await reading('Inside').innerText(), '22 °C');
+      await legend('Outside').click();
+      assert.equal(await legend('Outside').getAttribute('aria-pressed'), 'false');
       await page.evaluate(() => tracker.hideInside());
       await comparison.getByText('Inside', { exact:true }).waitFor({ state:'detached' });
+      assert.equal(await legend('Outside').getAttribute('aria-pressed'), 'true');
+      assert.equal(await legend('Outside').getAttribute('aria-disabled'), 'true');
       assert.equal(await strokes.count(),1);
       assert.equal(await page.evaluate(() => tracker.requests.length), 1);
 

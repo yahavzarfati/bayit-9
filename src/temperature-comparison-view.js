@@ -6,6 +6,7 @@ const colors = ['#78A9FF', '#FF91AF', '#C8ACFF', '#78DCA0', '#FFA264', '#F5CC65'
 const plotWidth = 1000;
 const plotHeight = 230;
 const minuteMs = 60000;
+let nextComparisonId = 0;
 const clip = (value, max) => Math.min(max, Math.max(0, value));
 
 function readingUnit(record) {
@@ -84,7 +85,7 @@ function drawPaths(points, x, y) {
 }
 
 export function createTemperatureComparison({ host, dialog, context, sources, settings, visible }) {
-  const { make, t, stateLabel, modelFor, locale } = context;
+  const { make, button, t, stateLabel, modelFor, locale } = context;
   const document = host.ownerDocument;
   const view = document.defaultView;
   const pathname = view.location.pathname;
@@ -121,7 +122,11 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
   picker.append(time, input);
   const readings = make('ul', 'comparison-readings');
   readings.setAttribute('role', 'list');
-  slot.append(message, visual, picker, readings);
+  const readingPrefix = 'bayit-comparison-' + ++nextComparisonId;
+  const keptSeries = make('span', '', t('comparison_keep_series'));
+  keptSeries.id = readingPrefix + '-keep';
+  keptSeries.hidden = true;
+  slot.append(message, visual, picker, readings, keptSeries);
   host.append(slot);
 
   let hass = context.hass;
@@ -131,7 +136,10 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
   let data;
   let failure;
   let key;
+  let readingKey;
   let valueViews = [];
+  const readingViews = new Map();
+  const hiddenSeries = new Set();
   let selectedTimes = [];
   let selectedTime = endMs;
   const fullTime = formatTime(locale, hass, true);
@@ -161,6 +169,7 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
     marker.setAttribute('x2', x(at));
     const output = [];
     for (const item of valueViews) {
+      if (hiddenSeries.has(item.entity)) continue;
       const value = item.points.findLast(point => point.at <= at)?.value;
       const text = Number.isFinite(value) ? valueText(value, item.unit) : t('comparison_no_value');
       item.value.textContent = text;
@@ -169,9 +178,46 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
     input.setAttribute('aria-valuetext', [label, ...output].join(', '));
   }
 
+  function toggleSeries(entity) {
+    if (!active()) return;
+    const sources = activeSources();
+    if (!sources.some(item => item.entity === entity)) return;
+    if (!hiddenSeries.delete(entity)) {
+      if (sources.filter(item => !hiddenSeries.has(item.entity)).length <= 1) return;
+      hiddenSeries.add(entity);
+    }
+    paint();
+  }
+
+  function readingView(item) {
+    if (readingViews.has(item.entity)) return readingViews.get(item.entity);
+    const li = make('li', 'comparison-reading');
+    const control = button('comparison-series');
+    const dot = make('span', 'comparison-swatch');
+    dot.style.setProperty('--series-color', item.color);
+    dot.setAttribute('aria-hidden', 'true');
+    const name = make('span', 'comparison-reading-name', item.name);
+    name.dir = 'auto';
+    const value = make('span', 'comparison-value');
+    value.dir = 'auto';
+    value.id = readingPrefix + '-value-' + readingViews.size;
+    control.setAttribute('aria-label', t('comparison_toggle_series').replace('{name}', item.name));
+    control.onclick = () => toggleSeries(item.entity);
+    control.append(dot, name, value);
+    li.append(control);
+    const result = { li, control, value };
+    readingViews.set(item.entity, result);
+    return result;
+  }
+
   function paint() {
     const selected = activeSources();
-    const selectedKey = selected.map(item => item.entity).join(' ');
+    if (selected.length && selected.every(item => hiddenSeries.has(item.entity))) {
+      hiddenSeries.delete(selected[0].entity);
+    }
+    const sourceKey = selected.map(item => item.entity).join(' ');
+    const shown = selected.filter(item => !hiddenSeries.has(item.entity));
+    const selectedKey = sourceKey + '|' + shown.map(item => item.entity).join(' ');
     if (key === selectedKey) {
       if (visual.hidden) {
         for (const item of valueViews) item.value.textContent = stateLabel(modelFor(item));
@@ -181,23 +227,28 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
     key = selectedKey;
     const series = selected.map(item => ({ ...item,
       points:data?.find(candidate => candidate.entity === item.entity)?.points ?? [] }));
-    const bounds = numericBounds(series);
+    const visibleSeries = series.filter(item => !hiddenSeries.has(item.entity));
+    const bounds = numericBounds(visibleSeries);
     visual.hidden = picker.hidden = !bounds;
     message.hidden = !!bounds;
     message.textContent = t(pending ? 'comparison_loading' : failure ? 'comparison_unavailable' : 'comparison_empty');
     valueViews = series.map(item => {
-      const li = make('li', 'comparison-reading');
-      const dot = make('span', 'comparison-swatch');
-      dot.style.setProperty('--series-color', item.color);
-      dot.setAttribute('aria-hidden', 'true');
-      const name = make('span', 'comparison-reading-name', item.name);
-      name.dir = 'auto';
-      const value = make('span', 'comparison-value', stateLabel(modelFor(item)));
-      value.dir = 'auto';
-      li.append(dot, name, value);
+      const { li, control, value } = readingView(item);
+      const showing = !hiddenSeries.has(item.entity);
+      const lastVisible = showing && shown.length === 1;
+      control.setAttribute('aria-pressed', String(showing));
+      control.setAttribute('aria-disabled', String(lastVisible));
+      if (showing) control.setAttribute('aria-describedby', value.id + (lastVisible ? ' ' + keptSeries.id : ''));
+      else control.removeAttribute('aria-describedby');
+      control.title = lastVisible ? t('comparison_keep_series') : control.getAttribute('aria-label');
+      value.hidden = !showing;
+      value.textContent = stateLabel(modelFor(item));
       return { ...item, li, value };
     });
-    readings.replaceChildren(...valueViews.map(item => item.li));
+    if (readingKey !== sourceKey) {
+      readingKey = sourceKey;
+      readings.replaceChildren(...valueViews.map(item => item.li));
+    }
     if (!bounds) return;
 
     const marks = [0, 1 / 3, 2 / 3, 1];
@@ -207,7 +258,7 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
       { 'class':'comparison-grid', x1:0, x2:plotWidth, y1:plotHeight * mark, y2:plotHeight * mark }));
     const strokes = [];
     const areas = [];
-    for (const item of series) {
+    for (const item of visibleSeries) {
       for (const path of drawPaths(item.points, x, bounds.y)) {
         strokes.push(shape('path', { 'class':'comparison-line', d:path.stroke, stroke:item.color }));
         if (path.area) areas.push(shape('path', { 'class':'comparison-fill', d:path.area, fill:item.color }));
@@ -296,8 +347,13 @@ export const temperatureComparisonStyles = `
   .comparison-selected-time { font-variant-numeric:tabular-nums; }
   .comparison-message { margin:0; color:var(--secondary); text-align:center; padding:8px; }
   .comparison-readings { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,124px),1fr)); gap:6px; list-style:none; margin:0; padding:0; }
-  .comparison-reading { display:grid; grid-template-columns:9px minmax(0,1fr) auto; align-items:center; gap:5px; min-inline-size:0; font-size:12px; }
+  .comparison-series { display:grid; grid-template-columns:9px minmax(0,1fr) auto; align-items:center; gap:5px;
+    inline-size:100%; min-inline-size:0; min-block-size:44px; padding:4px 6px; text-align:start; font-size:12px;
+    border:1px solid var(--soft-line); border-radius:8px; background:transparent; }
+  .comparison-series[aria-disabled=true] { cursor:default; }
   .comparison-swatch { inline-size:8px; block-size:8px; border-radius:50%; background:var(--series-color); }
+  .comparison-series[aria-pressed=false] .comparison-swatch { border:1px solid var(--series-color); background:transparent; }
+  .comparison-series[aria-pressed=false] .comparison-reading-name { text-decoration:line-through; color:var(--secondary); }
   .comparison-reading-name { color:var(--ink); overflow-wrap:anywhere; }
   .comparison-value { color:var(--secondary); font-weight:650; text-align:end;
     max-inline-size:11ch; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
@@ -310,5 +366,6 @@ export const temperatureComparisonStyles = `
     .comparison-grid,.comparison-line,.comparison-marker { stroke:CanvasText; }
     .comparison-fill { display:none; }
     .comparison-swatch { background:CanvasText; }
+    .comparison-series[aria-pressed=false] .comparison-swatch { border-color:CanvasText; }
   }
 `;
