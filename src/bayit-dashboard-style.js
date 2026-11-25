@@ -574,6 +574,11 @@ export const styles = `
       flex-basis: 50px;
       min-block-size: 50px;
     }
+    .shell[data-page=true] .modal[data-standalone-heater] .modal-header { padding-block: 12px 0; }
+    .shell[data-page=true] .modal[data-standalone-heater] .modal-header > [data-role=close] {
+      flex-basis: 44px;
+      min-block-size: 44px;
+    }
   }
   .modal-heading { display: contents; }
   .modal-heading-actions { display: flex; flex: none; }

@@ -4675,12 +4675,19 @@ async function assertStandaloneTimedHeater(browser) {
             return [el.className, rect.width, rect.height];
         });
         const levelButtons = [...panel.querySelectorAll('.heat-level-choice')];
+        const countdown = panel.querySelector('.timer-clock').getBoundingClientRect();
+        const dailyUsage = panel.querySelector('.timer-usage').getBoundingClientRect();
+        const closeButton = panel.querySelector('[data-role=close]').getBoundingClientRect();
+        const body = panel.querySelector('.modal-body');
         return {
             title: describe(title), status: describe(status), glyph: describe(glyph), heading: describe(bounds),
             aligned: Math.abs(title.left - status.left) <= 1 && glyph.right < title.left &&
               status.top >= title.bottom - 1 && title.top >= bounds.top - 1 && status.bottom <= bounds.bottom + 1,
             wrappedTitle: title.height > parseFloat(getComputedStyle(titleNode).lineHeight) * 1.5,
-            fits: [panel.querySelector('.modal-body'), panel.querySelector('.device')].every(el => el.scrollWidth <= el.clientWidth + 1),
+            fits: [body, panel.querySelector('.device')].every(el => el.scrollWidth <= el.clientWidth + 1) &&
+              body.scrollHeight <= body.clientHeight + 1,
+            readingsStacked: dailyUsage.top >= countdown.bottom - 1,
+            closeSize: [closeButton.width, closeButton.height],
             targetSizes, levelCount: levelButtons.length, stepRadius: getComputedStyle(levelButtons[0]).borderTopLeftRadius,
             height: panel.getBoundingClientRect().height,
         };
@@ -4689,11 +4696,13 @@ async function assertStandaloneTimedHeater(browser) {
         await page.setViewportSize({ width, height: 845 });
         const layout = await dialog.evaluate(measureLayout);
         assert.equal(layout.aligned, true, JSON.stringify({ locale, width, layout }));
-        assert.equal(layout.fits, true);
+        assert.equal(layout.fits, true, JSON.stringify({ locale, width, layout }));
+        assert.equal(layout.readingsStacked, true, JSON.stringify({ locale, width, layout }));
+        assert.deepEqual(layout.closeSize, [44, 44], JSON.stringify({ locale, width, layout }));
         assert.ok(layout.targetSizes.every(([, w, h]) => w >= 43.9 && h >= 43.9), JSON.stringify({ locale, width, layout }));
         assert.equal(layout.levelCount, 9);
         assert.equal(layout.stepRadius, '8px');
-        assert.ok(layout.height <= 400, JSON.stringify({ locale, width, layout }));
+        assert.ok(layout.height <= 370, JSON.stringify({ locale, width, layout }));
         assert.equal(await css(range, '--timer-thumb'), '#ff9b69');
       }
       await page.emulateMedia({ contrast: 'more' });

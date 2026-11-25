@@ -633,6 +633,7 @@ export const panelControlStyles = `
   }
   .modal[data-standalone-heater] .device[data-compact-heater]:has(.device-timer[data-compact]) {
     padding: 0; border: 0;
+    .device-timer[data-compact] .timer-tools { margin-block-end: 0; }
   }
   .modal[data-standalone-heater] .device[data-compact-heater] .action-list { margin-block-start: 0; }
   .modal[data-standalone-heater] .device[data-compact-heater] .device-timer[data-compact] {
@@ -660,6 +661,8 @@ export const panelControlStyles = `
     }
   }
   .heat-level-choice[aria-pressed=true] { background: color-mix(in srgb,var(--warm) 16%,var(--control)); }
+  .modal[data-standalone-heater] .heat-level { padding-block-start: 3px; }
+  .modal[data-standalone-heater] .heat-level-options { margin-block-start: 3px; }
   .modal[data-standalone-heater] .heat-level-choice { border-radius: 8px; }
   .modal[data-standalone-heater] .heat-level-choice[aria-pressed=true] {
     background: color-mix(in srgb,var(--boiler-heat) 22%,var(--control));
