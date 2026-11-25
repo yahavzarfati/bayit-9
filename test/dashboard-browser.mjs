@@ -3376,6 +3376,114 @@ async function assertHeaterHomeFeedback(browser) {
   }
 }
 
+async function assertStandaloneTimedHeater(browser) {
+  for (const locale of ['en', 'he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({ viewport: { width: 320, height: 845 }, hasTouch: true, reducedMotion: 'reduce' });
+    page.setDefaultTimeout(8000);
+    const entity = 'fan.demo_step_heater';
+    const runtime = 'sensor.demo_step_runtime';
+    const name = 'Fixture step heater';
+    const dialog = page.getByRole('dialog', { name, exact: true });
+    const close = dialog.getByRole('button', { name: he ? 'סגירה' : 'Close', exact: true });
+    const heater = dialog.locator('.device[data-entity="' + entity + '"]');
+    const range = heater.locator('.timer-range');
+    const info = dialog.locator('.modal-heading').getByRole('button', { name: he ? 'מידע נוסף' : 'More info', exact: true });
+    const history = heater.getByRole('button', { name: he ? 'היסטוריית הטיימר' : 'Timer history', exact: true });
+    const usage = heater.getByRole('button', { name: he ? /^שימוש היום/ : /^Used today/ });
+    const start = heater.locator('.timer-command[data-action="start_timed"]');
+    const native = page.getByRole('dialog', { name: 'Native entity details', exact: true });
+    const state = dialog.locator('.modal-heading .current');
+    const css = (element, property) => element.evaluate((el, name) => getComputedStyle(el).getPropertyValue(name).trim(), property);
+    const finishInfo = async expected => {
+      await native.waitFor();
+      await page.waitForURL(url => url.searchParams.get('more-info-entity-id') === expected);
+      await native.getByRole('button', { name: 'Close native details', exact: true }).tap();
+      await page.waitForURL(url => !url.searchParams.has('more-info-entity-id'));
+      await dialog.waitFor();
+    };
+    try {
+      await page.goto(base + '/fixture-home/home?heater-level&preselect&embedded-heater&native-more-info=modern&native-focus-anchor&locale=' + locale);
+      const shortcut = page.locator('.quick-button[data-entity="' + entity + '"]');
+      await shortcut.tap();
+      await range.waitFor();
+      assert.equal(await dialog.getAttribute('data-standalone-heater'), '');
+      assert.equal(await dialog.getByRole('heading', { name, exact: true }).count(), 1);
+      assert.equal(await heater.locator('.device-head').count(), 0);
+      assert.equal(await state.textContent(), he ? 'כבוי' : 'Off');
+      assert.equal(await info.locator('ha-icon').getAttribute('icon'), await shortcut.locator('ha-icon').getAttribute('icon'));
+      await history.waitFor();
+      await usage.waitFor();
+      for (const width of [320, 391]) {
+        await page.setViewportSize({ width, height: 845 });
+        const layout = await dialog.evaluate(panel => {
+          const heading = panel.querySelector('.modal-heading');
+          const title = heading.querySelector('h2').getBoundingClientRect();
+          const status = heading.querySelector('.current').getBoundingClientRect();
+          const glyph = heading.querySelector('button').getBoundingClientRect();
+          const controls = [...panel.querySelectorAll(
+            '.heater-heading-info, [data-role=close], .timer-usage, .timer-history, .timer-range, .timer-command, .timer-preset, .heat-level-choice'
+          )].filter(el => !el.hidden);
+          const targetSizes = controls.map(el => {
+            const rect = el.getBoundingClientRect();
+            return [el.className, rect.width, rect.height];
+          });
+          const levelButtons = [...panel.querySelectorAll('.heat-level-choice')];
+          return {
+            aligned: title.x === status.x && glyph.x + glyph.width < title.x &&
+              status.top >= title.bottom && status.bottom <= glyph.bottom + 4,
+            fits: [panel.querySelector('.modal-body'),panel.querySelector('.device')].every(el => el.scrollWidth <= el.clientWidth + 1),
+            targetSizes, levelCount: levelButtons.length, stepRadius: getComputedStyle(levelButtons[0]).borderTopLeftRadius,
+            height: panel.getBoundingClientRect().height,
+          };
+        });
+        assert.equal(layout.aligned, true, JSON.stringify({ locale, width, layout }));
+        assert.equal(layout.fits, true);
+        assert.ok(layout.targetSizes.every(([, w, h]) => w >= 43.9 && h >= 43.9), JSON.stringify({ locale, width, layout }));
+        assert.equal(layout.levelCount, 9);
+        assert.equal(layout.stepRadius, '8px');
+        assert.ok(layout.height <= 400, JSON.stringify({ locale, width, layout }));
+        assert.equal(await css(range, '--timer-thumb'), '#ff9b69');
+      }
+      await page.emulateMedia({ contrast: 'more' });
+      if (await page.evaluate(() => matchMedia('(prefers-contrast: more)').matches)) {
+        assert.match(await css(range, '--timer-rail'), /42%/);
+      }
+      await page.emulateMedia({ contrast: 'no-preference', forcedColors: 'active' });
+      if (await page.evaluate(() => matchMedia('(forced-colors: active)').matches)) {
+        assert.equal(await css(range, '--timer-thumb'), 'Highlight');
+        assert.equal(await css(range, '--timer-rail'), 'CanvasText');
+        assert.equal(await css(heater.locator('.heat-level-choice[aria-pressed=true]'), 'outline-style'), 'solid');
+      }
+      await page.emulateMedia({ forcedColors: 'none' });
+      await info.tap();
+      await finishInfo(entity);
+      await page.waitForFunction(() => document.querySelector('bayit-dashboard').shadowRoot.activeElement?.classList.contains('heater-heading-info'));
+      await history.tap();
+      await finishInfo(runtime);
+      await usage.tap();
+      await finishInfo(runtime);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), [entity, runtime, runtime]);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service')), []);
+
+      await page.evaluate(() => window.bayitTest.setHeaterPower('on'));
+      await state.filter({ hasText: he ? /^פועל$/ : /^On$/ }).waitFor();
+      await page.evaluate(() => window.bayitTest.setHeaterPower('off'));
+      await start.waitFor();
+      await page.evaluate(() => window.bayitTest.repointTimer());
+      await start.waitFor({ state: 'detached' });
+      await close.tap();
+      await page.getByRole('button', { name: 'Studio', exact: true }).tap();
+      const room = page.getByRole('dialog', { name: 'Studio', exact: true });
+      await room.getByRole('heading', { name, level: 4, exact: true }).waitFor();
+      assert.equal(await room.getAttribute('data-standalone-heater'), null);
+      assert.equal(await room.locator('.heater-heading-info').count(), 0);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertCompactRoomHeater(browser) {
   for (const [locale, width] of [['en', 320], ['he', 391]]) {
     const page = await browser.newPage({ viewport: { width, height: 845 }, hasTouch: true, reducedMotion: 'reduce' });
@@ -7393,6 +7501,7 @@ try {
       await assertHomeHeaterShortcut(browser);
       await assertCompactInlineLightLayout(browser);
       await assertTimerHistory(browser);
+      await assertStandaloneTimedHeater(browser);
       await assertCompactRoomHeater(browser);
       await assertSharedHeaterLevelInterop(browser);
       await assertHeaterHomeFeedback(browser);
@@ -9275,7 +9384,8 @@ try {
         name: (rightToLeft ? 'עוצמת חימום ' : 'Heating level ') + step, exact: true,
       });
       await level(3).waitFor();
-      await assertDeviceHeading(heaterPanel, 'Fixture step heater');
+      assert.equal(await heaterPanel.getByRole('heading', { name: 'Fixture step heater', exact: true }).count(), 1);
+      await heaterPanel.locator('.modal-heading .current').waitFor();
       assert.equal(await level(3).getAttribute('aria-pressed'), 'true');
       await level(8).click();
       assert.equal(await level(8).getAttribute('data-changing'), '');

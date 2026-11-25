@@ -454,28 +454,28 @@ export const panelControlStyles = `
     --timer-rail: color-mix(in srgb,var(--ink) 10%,transparent);
   }
   .device[data-compact-heater] .device-timer { --timer-thumb: var(--warm); }
-  .device[data-treatment=boiler] .device-timer[data-compact] {
+  :is(.device[data-treatment=boiler],.modal[data-standalone-heater] .device) .device-timer[data-compact] {
     --timer-thumb: var(--boiler-heat);
     --timer-thumb-border: #20100a;
   }
-  .device[data-treatment=boiler] .device-timer[data-compact] .timer-range { accent-color: var(--timer-thumb); }
+  :is(.device[data-treatment=boiler],.modal[data-standalone-heater] .device) .device-timer[data-compact] .timer-range { accent-color: var(--timer-thumb); }
   .device[data-treatment=boiler] .device-timer[data-compact] .timer-command[data-action=stop_timed] {
     background: color-mix(in srgb,var(--boiler-heat) 22%,transparent);
     border-color: color-mix(in srgb,var(--boiler-heat) 48%,transparent);
   }
   @media (prefers-contrast: more) {
-    .device[data-treatment=boiler] .device-timer[data-compact] {
+    :is(.device[data-treatment=boiler],.modal[data-standalone-heater] .device) .device-timer[data-compact] {
       --timer-rail: color-mix(in srgb,var(--ink) 42%,transparent);
     }
   }
   @media (forced-colors: active) {
-    .device[data-treatment=boiler] .device-timer[data-compact] {
+    :is(.device[data-treatment=boiler],.modal[data-standalone-heater] .device) .device-timer[data-compact] {
       --timer-thumb: Highlight;
       --timer-thumb-border: Canvas;
       --timer-rail: CanvasText;
     }
-    .device[data-treatment=boiler] .device-timer[data-compact] .timer-range { forced-color-adjust: none; }
-    .device[data-treatment=boiler] .device-timer[data-compact] .timer-range:focus-visible { outline-color: Highlight; }
+    :is(.device[data-treatment=boiler],.modal[data-standalone-heater] .device) .device-timer[data-compact] .timer-range { forced-color-adjust: none; }
+    :is(.device[data-treatment=boiler],.modal[data-standalone-heater] .device) .device-timer[data-compact] .timer-range:focus-visible { outline-color: Highlight; }
   }
   .device-timer[data-compact] .timer-clock { line-height: 1.2; }
   .device-timer[data-compact] .timer-range {
@@ -539,6 +539,14 @@ export const panelControlStyles = `
       .timer-tools { margin-block: 0 2px; }
     }
   }
+  .modal[data-standalone-heater] .device[data-compact-heater]:has(.device-timer[data-compact]) {
+    padding: 0; border: 0;
+  }
+  .modal[data-standalone-heater] .device[data-compact-heater] .action-list { margin-block-start: 0; }
+  .modal[data-standalone-heater] .device[data-compact-heater] .device-timer[data-compact] {
+    padding-top: 0; border-top: 0;
+  }
+  .modal[data-standalone-heater] .timer-usage { min-height: 44px; }
   .heat-level-options {
     margin-top: 5px;
     grid-template-columns: repeat(auto-fit,minmax(25px,1fr));
@@ -557,6 +565,16 @@ export const panelControlStyles = `
     }
   }
   .heat-level-choice[aria-pressed=true] { background: color-mix(in srgb,var(--warm) 16%,var(--control)); }
+  .modal[data-standalone-heater] .heat-level-choice { border-radius: 8px; }
+  .modal[data-standalone-heater] .heat-level-choice[aria-pressed=true] {
+    background: color-mix(in srgb,var(--boiler-heat) 22%,var(--control));
+    border-color: color-mix(in srgb,var(--boiler-heat) 45%,transparent);
+  }
+  @media (forced-colors: active) {
+    .modal[data-standalone-heater] .heat-level-choice[aria-pressed=true]:not([data-changing]) {
+      outline: 2px solid Highlight; outline-offset: -4px;
+    }
+  }
   .heat-level-choice[data-changing] { outline: 1px dashed currentColor; outline-offset: -4px; }
   .modal[data-kind=device] .device[data-treatment=climate] .device-name { display: none; }
 `;

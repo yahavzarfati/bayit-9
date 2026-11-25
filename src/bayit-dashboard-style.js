@@ -494,14 +494,14 @@ export const styles = `
     direction: ltr;
     align-items: center;
     justify-content: space-between;
-    padding: 15px 15px 11px;
+    padding: 15px 15px var(--modal-header-end,11px);
     gap: 12px;
   }
   .modal-header h2 {
     display: flex;
     align-items: center;
     flex: 1;
-    min-height: 46px;
+    min-height: var(--modal-title-height,46px);
     padding: 6px 11px;
     gap: 8px;
     border: 1px solid var(--soft-line);
@@ -517,12 +517,26 @@ export const styles = `
   .modal-header > .round-action { flex: 0 0 44px; border-radius: 999px; }
   @media (max-width: 420px) {
     .shell[data-page=true] .modal:is([data-kind=room],[data-kind=device],[data-room-position]) { width: calc(100% - 32px); }
-    .shell[data-page=true] .modal:is([data-kind=room],[data-kind=device],[data-room-position]) .modal-header { padding: 17px 17px 11px; }
-    .shell[data-page=true] .modal:is([data-kind=room],[data-kind=device],[data-room-position]) .modal-header h2 { min-height: 50px; }
+    .shell[data-page=true] .modal:is([data-kind=room],[data-kind=device],[data-room-position]) .modal-header { padding: 17px 17px var(--modal-header-end,11px); }
+    .shell[data-page=true] .modal:is([data-kind=room],[data-kind=device],[data-room-position]) .modal-header h2 { min-height: var(--modal-title-height,50px); }
     .shell[data-page=true] .modal:is([data-kind=room],[data-kind=device],[data-room-position]) .modal-header > [data-role=close] {
       flex-basis: 50px;
       min-block-size: 50px;
     }
+  }
+  .modal-heading { display: contents; }
+  .modal[data-standalone-heater] { --modal-header-end: 6px; --modal-title-height: 0px; }
+  .modal[data-standalone-heater] .modal-heading {
+    flex: 1; min-width: 0; display: grid; align-items: center; column-gap: 8px;
+    grid-template-columns: 44px minmax(0,1fr); grid-template-areas: "info title" "info state";
+  }
+  .modal[data-standalone-heater] .modal-heading h2 {
+    grid-area: title; display: block; align-self: end; border: 0; padding: 0;
+  }
+  .heater-heading-info { grid-area: info; place-self: center; }
+  .heater-heading-info > .device-icon { color: inherit; }
+  .modal[data-standalone-heater] .modal-heading .current {
+    grid-area: state; align-self: start; margin: 2px 0 0; direction: inherit; unicode-bidi: plaintext;
   }
   .confirm .modal-header h2 { min-height: 0; padding: 0; border: 0; }
   .modal-body { flex: 1 1 auto; min-height: 0; padding: 0 15px 15px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
