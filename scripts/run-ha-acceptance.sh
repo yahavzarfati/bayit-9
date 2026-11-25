@@ -34,7 +34,7 @@ cleanup() {
 trap cleanup EXIT
 
 cp -- dist/bayit-9.js "$stage/www/bayit-9.js"
-for asset in dist/bayit-wallpaper-*.webp; do
+for asset in dist/bayit9-wallpaper-*.webp; do
   [[ -f "$asset" ]] || continue
   cp -- "$asset" "$stage/www/"
 done

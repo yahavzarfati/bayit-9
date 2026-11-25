@@ -28,7 +28,7 @@ try {
     : RESOURCE_URL;
   const browserModuleUrl = new URL(resourceUrl, base).href;
   const distribution = new URL('../dist/', import.meta.url);
-  const wallpapers = (await readdir(distribution)).filter(name => /^bayit-wallpaper-[a-z0-9-]+\.webp$/.test(name));
+  const wallpapers = (await readdir(distribution)).filter(name => /^bayit9-wallpaper-[a-z0-9-]+-(?:full|preview)-[0-9a-f]{12}\.webp$/.test(name));
   await Promise.all(wallpapers.map(async name => {
     const expected = await readFile(new URL(name, distribution));
     const actual = await fetch(new URL(name, browserModuleUrl), { redirect: 'error', signal: AbortSignal.timeout(15000) });
