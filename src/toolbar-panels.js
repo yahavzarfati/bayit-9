@@ -142,19 +142,27 @@ export function createToolbarPanel(kind, configuration, context) {
 
   function renderTile(item, itemKind, register = update => handlers.push(update), canActivate) {
     const tile = button('tile-row');
+    const compactPerson = itemKind === 'compact-person';
+    tile.toggleAttribute('data-compact-person', compactPerson);
     const visual = make('span', 'tile-mark');
     const glyph = icon('mdi:information-outline');
     const name = make('span', 'tile-label');
     const state = make('span', 'tile-state');
     visual.append(glyph);
     let portrait;
-    if (itemKind === 'person') {
+    if (itemKind === 'person' || compactPerson) {
       portrait = make('img', 'tile-portrait');
       portrait.alt = '';
       portrait.hidden = true;
       portrait.referrerPolicy = 'no-referrer';
       portrait.onerror = () => { portrait.hidden = true; };
       visual.append(portrait);
+    }
+    const badge = compactPerson && icon('mdi:help');
+    if (badge) {
+      badge.classList.add('presence-status-badge');
+      badge.setAttribute('aria-hidden', 'true');
+      visual.append(badge);
     }
     tile.append(visual, name, state);
     let action;
@@ -186,6 +194,11 @@ export function createToolbarPanel(kind, configuration, context) {
       tile.disabled = (itemKind === 'action' && pending(item.entity)) || (!action && !model.actions.more_info);
       tile.setAttribute('aria-busy', String(pending(item.entity)));
       label(tile, model.name + (showState ? ' · ' + value.state : ''));
+      if (badge) {
+        const presence = !model.available ? 'unknown' : model.state === 'home' ? 'home' : model.state === 'not_home' ? 'away' : 'zone';
+        tile.dataset.presenceStatus = presence;
+        badge.setAttribute('icon', { home:'mdi:home', away:'mdi:home-export-outline', zone:'mdi:map-marker-outline', unknown:'mdi:help' }[presence]);
+      }
       if (portrait) {
         const link = localPortrait(model.attributes.entity_picture, view.location.origin);
         if (!link) {
@@ -660,7 +673,9 @@ export function createToolbarPanel(kind, configuration, context) {
 
   function render(item, section, { compactStatus, readingCards, compactActions, compactVacuum }) {
     const itemKind = item.role ?? ({ people: 'person', actions: 'action', forecast: 'forecast', sun: 'sun' }[section]);
-    if (itemKind === 'person' && domain(item) === 'person') return renderTile(item, 'person');
+    if (itemKind === 'person' && domain(item) === 'person') {
+      return renderTile(item, kind === 'presence' && compactStatus ? 'compact-person' : 'person');
+    }
     if (item.command === 'toggle_script') return renderScriptToggle(item, compactActions);
     if (itemKind === 'action' || (section === 'actions' && itemKind === 'lock')) {
       const tile = renderTile(item, 'action');
@@ -1084,6 +1099,31 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .tile-mark { display: grid; place-items: center; position: relative; border-radius: 50%; width: 34px; height: 34px; background: var(--glass); }
   .tile-portrait { position: absolute; inset: 0; object-fit: cover; width: 100%; height: 100%; border-radius: inherit; }
   .tile-row:is([data-tone=home],[data-tone=active]) .tile-mark { color: var(--warm); }
+  .tile-row[data-compact-person] {
+    direction: ltr; min-height: 104px; padding: 8px 10px; gap: 3px 9px;
+    grid-template-columns: 38px minmax(0,1fr); grid-template-areas: "avatar name" "avatar status";
+    justify-items: stretch; align-items: center; text-align: left;
+  }
+  .tile-row[data-compact-person] > .tile-mark {
+    grid-area: avatar; width: 34px; height: 34px; justify-self: start; color: var(--secondary);
+  }
+  .shell[dir=rtl] .toolbar-section[data-layout=compact] > .toolbar-section-items > .tile-row[data-compact-person] {
+    direction: ltr;
+  }
+  .tile-row[data-compact-person] > .tile-label { grid-area: name; }
+  .tile-row[data-compact-person] > .tile-state { grid-area: status; }
+  .shell[dir=rtl] .tile-row[data-compact-person] > :is(.tile-label,.tile-state) { direction: rtl; }
+  .presence-status-badge {
+    position: absolute; inset-block-end: -1px; inset-inline-end: -3px;
+    display: inline-grid; place-items: center; box-sizing: border-box;
+    width: 19px; height: 19px; --mdc-icon-size: 12px; border-radius: 50%;
+    background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+  }
+  [data-presence-status=home] .presence-status-badge { background: #266443; color: #fff; }
+  [data-presence-status=zone] .presence-status-badge { color: var(--moving); }
+  @media (forced-colors: active) {
+    .tile-row[data-compact-person] .presence-status-badge { background: Canvas; color: CanvasText; border-color: CanvasText; }
+  }
   .modal[data-wallpaper-ink=dark] {
     --lock-locked-ink: var(--moving); --lock-unlocked-ink: var(--critical); --lock-pending-ink: var(--warm);
   }

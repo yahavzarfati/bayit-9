@@ -66,6 +66,7 @@ const WORDS = {
     calendarWeather: 'Daily forecast beside dates', calendarNoWeather: 'No forecast',
     calendarAccent: 'Calendar accent', calendarInvalidAccent: 'Enter a six-digit color such as #80BFFF.',
     compactStatus: 'Show status items side by side', compactSecurityLocks: 'Show compact lock controls',
+    compactPeople: 'Show compact presence cards',
     compactAutomationActions: 'Show compact action buttons',
     weatherReadingsList: 'Show readings as a compact read-only list',
     readingChartCards: 'Show readings as chart cards',
@@ -142,6 +143,7 @@ const WORDS = {
     calendarWeather: 'תחזית יומית ליד התאריך', calendarNoWeather: 'ללא תחזית',
     calendarAccent: 'צבע היומן', calendarInvalidAccent: 'הזינו צבע בן שש ספרות, למשל ‎#80BFFF‎.',
     compactStatus: 'הצגת פריטי הסטטוס זה לצד זה', compactSecurityLocks: 'הצגת פקדי נעילה קומפקטיים',
+    compactPeople: 'הצגת כרטיסי נוכחות קומפקטיים',
     compactAutomationActions: 'הצגת כפתורי פעולה קומפקטיים',
     weatherReadingsList: 'הצגת המדדים ברשימה קומפקטית לקריאה בלבד',
     readingChartCards: 'הצגת המדדים ככרטיסי גרף',
@@ -690,7 +692,8 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     if (supportsCompactToolbarStatus(kind, active)) {
       const compact = node('input', { type: 'checkbox', checked: isCompactToolbarStatus(kind, active) });
       compact.addEventListener('change', () => changeSection({ layout: compact.checked ? 'compact' : undefined }));
-      fields.push(node('label', { className:'check' }, [compact, kind === 'security' ? words.compactSecurityLocks : words.compactStatus]));
+      const title = { security: words.compactSecurityLocks, presence: words.compactPeople }[kind] ?? words.compactStatus;
+      fields.push(node('label', { className:'check' }, [compact, title]));
     }
     if (supportsToolbarReadouts(kind, active)) {
       const readouts = node('input', { type: 'checkbox', checked: isToolbarReadouts(kind, active) });

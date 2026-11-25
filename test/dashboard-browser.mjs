@@ -1061,7 +1061,10 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
       ...(query.has('presence-custom') && {icon:'mdi:account-heart-outline'}),
       ...(query.has('presence-opt-in') && {presence_dynamic_icon:true}),
       ...(query.has('presence-fixed') && {presence_dynamic_icon:false}),
-      sections:[{kind:'people',entities:['person.demo_friend']}, ...(query.has('presence-icons') ? [
+      sections: query.has('presence-compact-proof') ? [{id:'people',kind:'people',title:'Fixture household',
+        ...(query.has('presence-compact-cards') && {layout:'compact'}),
+        entities:[{entity:'person.demo_friend',role:'person'},'person.demo_guest'],
+      }] : [{kind:'people',entities:['person.demo_friend']}, ...(query.has('presence-icons') ? [
         {kind:'people',entities:[{entity:'person.demo_friend',role:'person'},'person.demo_guest','device_tracker.demo_phone']},
         {kind:'status',entities:[{entity:'sensor.demo_home_text',role:'status'}]},
       ] : [])]},
@@ -5142,6 +5145,85 @@ async function assertRetiredRoomLinks(browser) {
   }
 }
 
+async function assertCompactPresenceCards(browser) {
+  for (const locale of ['en','he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({viewport:{width:391,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const url = base + '/fixture-home/home?toolbar-panels&presence-icons&presence-compact-proof&native-more-info=modern&locale=' + locale;
+    const popup = page.getByRole('dialog',{name:he ? 'מי בבית' : 'People at home',exact:true});
+    const tiles = popup.locator('.tile-row');
+    const entries = popup.locator('[data-compact-person]');
+    const symbols = entries.locator('.presence-status-badge');
+    const state = (entity, value) => page.evaluate(([entity,value])=>window.bayitTest.setRoomState(entity,value),[entity,value]);
+    const open = async flags => {
+      await page.goto(url + flags);
+      await page.locator('button[data-role=presence]').tap();
+      await tiles.nth(1).waitFor();
+    };
+    const layout = () => tiles.evaluateAll(cards => cards.map(card => {
+      const {x,y,width,height} = card.getBoundingClientRect();
+      const title = card.querySelector('.tile-label');
+      const avatar = card.querySelector('.tile-mark');
+      return {x,y,width,height,title:title.textContent,textDirection:getComputedStyle(title).direction,
+        textFits:title.scrollWidth <= title.clientWidth+1,
+        avatarBeforeTitle:avatar.getBoundingClientRect().right < title.getBoundingClientRect().left};
+    }));
+    try {
+      await open('');
+      const [a,b] = await layout();
+      assert.ok(he ? a.x > b.x : a.x < b.x);
+      assert.equal(await entries.count(),0);
+
+      await open('&presence-compact-cards');
+      for (const width of [320,391]) {
+        await page.setViewportSize({width,height:844});
+        const ordered = await layout();
+        const [first,second] = ordered;
+        assert.ok(first.x < second.x && first.y === second.y,JSON.stringify({locale,width,ordered}));
+        assert.deepEqual(ordered.map(card=>card.title),['Simona','Noa']);
+        assert.ok(ordered.every(card=>card.textDirection === (he ? 'rtl' : 'ltr') &&
+          card.textFits && card.avatarBeforeTitle && card.width >= 44 && card.height >= 44),JSON.stringify({locale,width,ordered}));
+      }
+
+      await state('person.demo_friend','home');
+      await entries.first().and(popup.locator('[data-presence-status=home]')).waitFor();
+      assert.deepEqual(await symbols.evaluateAll(icons=>icons.map(icon=>[icon.getAttribute('icon'),icon.getAttribute('aria-hidden')])),
+        [['mdi:home','true'],['mdi:home-export-outline','true']]);
+      assert.equal(await entries.first().locator('.tile-state').textContent(),he ? 'בבית' : 'Home');
+      assert.equal(await entries.nth(1).locator('.tile-state').textContent(),he ? 'מחוץ לבית' : 'Away');
+      assert.equal(await symbols.first().evaluate(icon=>getComputedStyle(icon).backgroundColor),'rgb(38, 100, 67)');
+      await state('person.demo_guest','work');
+      await entries.nth(1).and(popup.locator('[data-presence-status=zone]')).waitFor();
+      assert.match(await entries.nth(1).locator('.tile-state').textContent(),/work/i);
+      assert.equal(await symbols.nth(1).getAttribute('icon'),'mdi:map-marker-outline');
+      await state('person.demo_guest','unavailable');
+      await entries.nth(1).and(popup.locator('[data-presence-status=unknown]')).waitFor();
+      assert.equal(await symbols.nth(1).getAttribute('icon'),'mdi:help');
+
+      await entries.first().tap();
+      const native = page.getByRole('dialog',{name:'Native entity details',exact:true});
+      await native.waitFor();
+      assert.equal(new URL(page.url()).searchParams.get('more-info-entity-id'),'person.demo_friend');
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.calls),[]);
+
+      await page.goto(url + '&presence-compact-cards&editor');
+      await page.getByText(he ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens',{exact:true}).tap();
+      await page.getByRole('button',{name:he ? 'נוכחות' : 'Presence',exact:true}).tap();
+      await page.getByRole('button',{name:'Fixture household',exact:true}).tap();
+      const setting = page.getByRole('checkbox',{name:he ? 'הצגת כרטיסי נוכחות קומפקטיים' : 'Show compact presence cards',exact:true});
+      const saved = () => page.evaluate(()=>window.latest.toolbar.find(entry=>entry.kind==='presence').sections[0].layout);
+      assert.ok(await setting.isChecked());
+      await setting.uncheck();
+      assert.equal(await saved(),undefined);
+      await setting.check();
+      assert.equal(await saved(),'compact');
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertCompactAutomationActions(browser) {
   const page = await browser.newPage({ viewport:{ width:320, height:700 }, hasTouch:true, reducedMotion:'reduce' });
   page.setDefaultTimeout(8000);
@@ -8419,6 +8501,7 @@ try {
       await assertToolbarLockPalette(browser);
       console.log(engine + ': semantic toolbar lock colors, contrast and scope');
       await assertCompactAutomationActions(browser);
+      await assertCompactPresenceCards(browser);
       console.log(engine + ': compact Automation actions and editor scope');
       await assertOverviewClimateDiscovery(browser);
       console.log(engine + ': editable active climate discovery, passive rows and live scope');

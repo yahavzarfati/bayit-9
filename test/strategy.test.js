@@ -1968,6 +1968,23 @@ test('an optional Sensors comparison retains only valid graph colors and bounded
   }
 });
 
+test('compact presence layout applies only to opted-in People sections and preserves configured order', () => {
+  const hass = home();
+  const entries = ['person.example_a','person.example_b'];
+  for (const id of entries) {
+    hass.states[id] = { state:'home',attributes:{} };
+    hass.entities[id] = {};
+  }
+  const people = { kind:'people', layout:'compact', entities:entries };
+  const { toolbar } = generateDashboard({ toolbar:[
+    { kind:'presence',sections:[people,{...people,layout:undefined},{...people,kind:'status'}] },
+    { kind:'overview',sections:[people] },
+  ] },hass).views[0].cards[0];
+  const sections = toolbar.flatMap(entry=>entry.sections);
+  assert.deepEqual(sections.map(section=>section.layout),['compact',undefined,undefined,undefined]);
+  assert.deepEqual(sections[0].entities.map(entry=>entry.entity),entries);
+});
+
 test('compact lock controls are opt-in for Security lock sections and retain battery items', () => {
   const hass = home();
   hass.states['lock.test_entry'] = { state:'locked', attributes:{} };

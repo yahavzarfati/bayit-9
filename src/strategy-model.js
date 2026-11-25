@@ -902,7 +902,7 @@ export function isCompactAutomationActions(kind, section) {
 
 export function supportsCompactToolbarStatus(kind, section) {
   return ((kind === 'devices' || kind === 'overview') && section?.kind === 'status') ||
-    (kind === 'security' && section?.kind === 'locks');
+    (kind === 'security' && section?.kind === 'locks') || (kind === 'presence' && section?.kind === 'people');
 }
 
 export function isCompactToolbarStatus(kind, section) {
