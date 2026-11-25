@@ -2863,6 +2863,7 @@ async function assertHomeMaterial(browser) {
         coverInk: pixel(coverStyle.color),
         coverFill: pixel(coverStyle.backgroundColor),
         coverRim: pixel(coverStyle.borderColor)[3],
+        coverRimStyle: coverStyle.borderStyle,
         climateFill: pixel(climate.backgroundColor),
       };
     }, ink);
@@ -2890,10 +2891,11 @@ async function assertHomeMaterial(browser) {
         else if (fallback) for (const value of fill.slice(0, 3)) near(value, 64);
         near(rim, (current.stronger ? .31 : current.reduced ? .10 : dark ? .22 : .18) * 255);
       }
-      assert.deepEqual(current.coverInk, dark ? [0, 63, 104, 255]
-        : fallback ? [122, 167, 255, 255] : [158, 220, 255, 255]);
-      near(current.coverFill[3], (fallback ? .18 : .14) * 255);
-      near(current.coverRim, (fallback ? .38 : .41) * 255);
+      assert.deepEqual(current.coverInk, dark ? (fallback ? [0, 63, 104, 255] : [0, 30, 77, 255])
+        : fallback ? [122, 167, 255, 255] : [164, 200, 255, 255]);
+      near(current.coverFill[3], .18 * 255);
+      near(current.coverRim, .38 * 255);
+      assert.equal(current.coverRimStyle, 'solid');
       near(current.climateFill[3], .14 * 255);
     };
     const cdp = engine === 'chromium' ? await quietPage.context().newCDPSession(quietPage) : undefined;
@@ -2914,23 +2916,45 @@ async function assertHomeMaterial(browser) {
       await assertAppearance('dark');
     }
 
-    await setMedia('reduce', 'more');
+    await setMedia('no-preference', 'no-preference');
     const he = quietLocale === 'he';
+    const unavailableLabel = he ? 'לא זמין' : 'Unavailable';
     for (const [state, tone, direction, label] of [
       ['open', 'moving', '', he ? 'פתוח' : 'Open'],
       ['opening', 'moving', 'opening', he ? 'נפתח' : 'Opening'],
-      ['unavailable', 'quiet', '', he ? 'לא זמין' : 'Unavailable'],
+      ['unavailable', 'quiet', '', unavailableLabel],
+      ['unknown', 'quiet', '', unavailableLabel],
+      ['closed', 'quiet', '', he ? 'סגור' : 'Closed'],
     ]) {
       await quietPage.evaluate(async state => {
         window.bayitTest.setRoomState('cover.demo_window', state);
         await new Promise(requestAnimationFrame);
       }, state);
+      const unavailable = state === 'unknown' || state === 'unavailable';
       assert.equal(await cover.getAttribute('data-tone'), tone);
       assert.equal(await cover.getAttribute('data-transition'), direction);
+      assert.equal(await cover.getAttribute('data-unavailable') !== null, unavailable);
       assert.ok((await cover.getAttribute('aria-label')).includes(label));
+      for (const ink of ['light', 'dark']) {
+        const current = await appearance(ink);
+        assert.equal(current.coverRimStyle, unavailable ? 'dashed' : 'solid');
+        if (unavailable) {
+          near(current.coverRim, .48 * 255);
+          assert.equal(await cover.getAttribute('aria-busy'), 'false');
+        }
+      }
+      if (unavailable) {
+        await setMedia('reduce', 'more');
+        const fallback = await appearance('light');
+        assert.equal(fallback.coverRimStyle, 'dashed');
+        near(fallback.coverRim, .58 * 255);
+        await setMedia('no-preference', 'no-preference');
+      }
     }
-    const inactive = await appearance('light');
-    near(inactive.coverRim, inactive.stronger ? inactive.strongRim : 41);
+    const unrelated = homeRoom.locator('.quick-button[data-entity="light.demo_unavailable"]');
+    assert.equal(await unrelated.getAttribute('data-unavailable'), null);
+    assert.equal(await unrelated.evaluate(control => getComputedStyle(control).borderStyle), 'solid');
+    assert.equal(await quietPage.evaluate(() => window.bayitTest.calls.length), 0);
     const quietRoomName = homeRoom.locator('.room-name');
     const nameLines = () => quietRoomName.evaluate(name => {
       const range = document.createRange();

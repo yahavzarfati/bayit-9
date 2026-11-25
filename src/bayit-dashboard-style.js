@@ -369,6 +369,7 @@ export const styles = `
       --home-room-outline: 58%;
       --home-toolbar-outline: 58%;
       --home-badge-outline: 31%;
+      --home-cover-availability-outline: 58%;
     }
     .shell[data-page=true] .quick-button[data-tone=quiet]:not(:disabled) { border-color: var(--soft-line); }
   }
@@ -391,6 +392,21 @@ export const styles = `
   .quick-button[data-tone=warm] { background: rgba(255,197,83,.14); border-color: rgba(255,215,147,.39); }
   .quick-button[data-tone=moving] { background: rgba(98,202,255,.14); border-color: rgba(164,225,255,.41); }
   .quick-button[data-tone=critical] { background: rgba(255,146,151,.16); border-color: rgba(255,187,187,.42); }
+  .shell[data-page=true] .room {
+    --home-cover-ink: #a4c8ff;
+    --home-cover-ink-on-light: #001e4d;
+  }
+  .shell[data-page=true][data-wallpaper-ink=dark] .room:not([data-wallpaper-ink=light]),
+  .shell[data-page=true] .room[data-wallpaper-ink=dark] { --home-cover-ink: var(--home-cover-ink-on-light); }
+  .shell[data-page=true] .quick-button[data-entity^="cover."][data-tone=moving] {
+    color: var(--home-cover-ink);
+    background: rgba(122,167,255,.18);
+    border-color: rgba(122,167,255,.38);
+  }
+  .shell[data-page=true] .quick-button[data-entity^="cover."][data-unavailable] {
+    border-style: dashed;
+    border-color: color-mix(in srgb,var(--ink) var(--home-cover-availability-outline,48%),transparent);
+  }
   .quick-button[aria-busy=true][data-transition=""]::after {
     content: ""; position: absolute; inset: 4px; border-radius: inherit;
     border: 1px solid transparent; border-block-start-color: currentColor;
@@ -872,12 +888,9 @@ export const styles = `
       background: color-mix(in srgb,var(--ink) 11%,var(--surface));
       border-color: color-mix(in srgb,var(--ink) var(--home-badge-outline,10%),transparent);
     }
-    .shell[data-page=true][data-wallpaper-ink=dark] .room:not([data-wallpaper-ink=light]),
-    .shell[data-page=true] .room[data-wallpaper-ink=dark] { --home-cover-ink: var(--moving); }
-    .shell[data-page=true] .quick-button[data-entity^="cover."][data-tone=moving] {
-      color: var(--home-cover-ink,#7aa7ff);
-      background: rgba(122,167,255,.18);
-      border-color: rgba(122,167,255,.38);
+    .shell[data-page=true] .room {
+      --home-cover-ink: #7aa7ff;
+      --home-cover-ink-on-light: var(--moving);
     }
   }
   @media (prefers-reduced-motion: reduce) {
