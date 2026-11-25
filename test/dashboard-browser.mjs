@@ -3392,12 +3392,52 @@ async function assertKitchenApplianceTiles(browser) {
   }
 }
 
+
+async function assertClippedRoomOrigin(browser) {
+  const page = await browser.newPage({
+    viewport: { width: 390, height: 640 }, isMobile:true, hasTouch:true, reducedMotion:'reduce',
+  });
+  try {
+    for (const locale of ['en','he']) {
+      await page.goto(base + '?popup-geometry&locale=' + locale);
+      const title = page.getByRole('button', { name:'Studio', exact:true });
+      const before = await title.evaluate(source => {
+        const clip = source.closest('.room-scroll');
+        source.closest('.rooms').style.paddingBlockEnd = '800px';
+        const clipTop = clip.getBoundingClientRect().top;
+        clip.scrollTop += source.getBoundingClientRect().top - clipTop + 10;
+        const bounds = source.getBoundingClientRect();
+        return { top:clip.scrollTop, cut:clipTop - bounds.top, height:bounds.height };
+      });
+      assert.ok(before.top > 14 && before.cut >= 8 && before.cut < before.height, JSON.stringify(before));
+      // Call the room activation while the title is partially visible. A locator
+      // click would scroll it fully into view on behalf of the automation.
+      await title.evaluate(source => source.click());
+      const dialog = page.getByRole('dialog', { name:'Studio', exact:true });
+      await dialog.waitFor();
+      const after = await title.evaluate(source => {
+        const clip = source.closest('.room-scroll');
+        return { top:clip.scrollTop, gap:source.getBoundingClientRect().top - clip.getBoundingClientRect().top };
+      });
+      assert.ok(after.top < before.top && after.gap >= 3,
+        'Opening should reveal the original room heading ' + JSON.stringify({before,after}));
+      await dialog.getByRole('button', { name:locale === 'he' ? 'סגירה' : 'Close', exact:true }).tap();
+      await dialog.waitFor({ state:'hidden' });
+      await page.locator('[data-popup-origin]').waitFor({ state:'detached' });
+      assert.equal(await title.evaluate(source => source.closest('.room-scroll').scrollTop),before.top);
+    }
+  } finally {
+    await page.close();
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
     try {
       await assertHomePreferenceAliases(browser);
       await assertSharedAppearance(browser);
+      await assertClippedRoomOrigin(browser);
       await assertPopupScrollMemory(browser);
       console.log(engine + ': popup scroll survives reload and remains scoped to the room and dashboard');
       await assertCompactSettings(browser);

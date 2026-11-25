@@ -230,9 +230,10 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     const cardBottom = context.kind === 'room' ? context.highlighted.getBoundingClientRect().bottom : sourceRect.bottom;
     const roomGap = context.kind === 'room' ? 8 : 24;
     const desired = Math.max(0, cardBottom + roomGap - panelRect.top);
-    const beforeClip = Math.max(0, sourceRect.top - visibleTop - 4);
-    const target = start + Math.min(desired, beforeClip);
-    if (target - start < .5) return;
+    const beforeClip = sourceRect.top - visibleTop - 4;
+    const sourceLimit = context.kind === 'room' ? beforeClip : Math.max(0, beforeClip);
+    const target = Math.max(0, start + Math.min(desired, sourceLimit));
+    if (Math.abs(target - start) < .5) return;
     let available = Math.max(0, clip.scrollHeight - clip.clientHeight);
     if (target > available + .5) {
       const spacer = context.spacer ??= doc.createElement('div');
