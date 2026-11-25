@@ -1,5 +1,6 @@
 import {
-  discoverRooms, generateDashboard, isToolbarLightTile, LOCAL_ROUTE, normalizeOverviewDiscovery, overviewSectionOptions, roomPanelOptions, selectableRoomEntities,
+  discoverRooms, generateDashboard, hasDynamicPresenceIcon, isToolbarLightTile, LOCAL_ROUTE,
+  normalizeOverviewDiscovery, overviewSectionOptions, roomPanelOptions, selectableRoomEntities,
   TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
 } from './strategy-model.js';
 import { normalizeOrefMap, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
@@ -11,6 +12,7 @@ const WORDS = {
     layout: 'Toolbar layout', automatic: 'Automatic', custom: 'Custom',
     empty: 'Add the first toolbar button.', buttons: 'Toolbar buttons', addButton: 'Add button',
     buttonType: 'Button type', editButton: 'Edit toolbar button', label: 'Button label', icon: 'Icon',
+    dynamicPresenceIcon: 'Change icon with the number of people at home',
     localPath: 'Home Assistant path', invalidPath: 'Use a local path such as /config/areas.',
     invalidIcon: 'Use an icon name such as mdi:home.',
     up: 'Move up', down: 'Move down', remove: 'Remove', choose: 'Choose…',
@@ -56,6 +58,7 @@ const WORDS = {
     layout: 'פריסת הסרגל', automatic: 'אוטומטית', custom: 'התאמה אישית',
     empty: 'הוסיפו את הכפתור הראשון לסרגל.', buttons: 'כפתורי הסרגל', addButton: 'הוספת כפתור',
     buttonType: 'סוג הכפתור', editButton: 'עריכת כפתור בסרגל', label: 'תווית הכפתור', icon: 'סמל',
+    dynamicPresenceIcon: 'שינוי הסמל לפי מספר הנוכחים בבית',
     localPath: 'נתיב ב־Home Assistant', invalidPath: 'הזינו נתיב מקומי, למשל ‎/config/areas‎.',
     invalidIcon: 'הזינו שם סמל, למשל ‎mdi:home‎.',
     up: 'הזזה למעלה', down: 'הזזה למטה', remove: 'הסרה', choose: 'בחירה…',
@@ -656,12 +659,22 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       textField(words.label, entry.label, value => {
         changeEntry({ label: value || undefined });
         renameItem('button', entryIndex, value || words[entry.kind]);
-      }, { placeholder: words[entry.kind] }).field,
-      iconField(entry.icon, value => changeEntry({ icon: value || undefined }))];
+      }, { placeholder: words[entry.kind] }).field];
+    const presenceOnToolbar = entry.kind === 'presence' && entry.placement !== 'settings';
+    const dynamic = presenceOnToolbar && hasDynamicPresenceIcon(entry);
+    if (presenceOnToolbar) {
+      const toggle = node('input', { type: 'checkbox', checked: dynamic });
+      toggle.dataset.toolbarFocus = 'presence-icon';
+      toggle.addEventListener('change', () => changeEntry({ presence_dynamic_icon: toggle.checked }, true, 'presence-icon'));
+      fields.push(field(words.dynamicPresenceIcon, toggle));
+    }
+    if (!dynamic) fields.push(iconField(entry.icon, value => changeEntry({ icon: value || undefined })));
     if (entry.kind !== 'settings') {
       const placement = select([['toolbar', words.toolbarPlace], ['settings', words.settingsPlace]],
         entry.placement === 'settings' ? 'settings' : 'toolbar');
-      placement.addEventListener('change', () => changeEntry({ placement: placement.value === 'settings' ? 'settings' : undefined }));
+      placement.dataset.toolbarFocus = 'placement';
+      placement.addEventListener('change', () => changeEntry({ placement: placement.value === 'settings' ? 'settings' : undefined },
+        entry.kind === 'presence', 'placement'));
       fields.push(field(words.placement, placement));
     }
     if (entry.kind === 'security') fields.push(editOrefMap(entry));

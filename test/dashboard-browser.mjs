@@ -356,6 +356,12 @@ if (query.has('toolbar-panels')) {
     'calendar.demo_household': {state:'off',attributes:{friendly_name:'Household'}},
     'calendar.demo_birthdays': {state:'off',attributes:{friendly_name:'Birthdays'}},
   });
+  if (query.has('presence-icons')) {
+    states['person.demo_friend'].state = 'not_home';
+    states['person.demo_guest'] = {state:'not_home',attributes:{friendly_name:'Noa'}};
+    states['device_tracker.demo_phone'] = {state:'not_home',attributes:{friendly_name:'Phone'}};
+    states['sensor.demo_home_text'] = {state:'home',attributes:{friendly_name:'Text status'}};
+  }
   hass.entities['sensor.demo_studio_temperature'] = { area_id: 'studio' };
   if (!query.has('no-native-charts')) window.loadCardHelpers = async () => ({createCardElement(configuration) {
     const graphAction = configuration.tap_action?.action === 'fire-dom-event' && configuration.tap_action;
@@ -474,7 +480,14 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     {kind:'automations',sections:[{kind:'actions',entities:[{entity:'script.demo_scene',role:'action',command:'run_script',confirmation:'Run the evening scene?'},
       {entity:'lock.demo_entry',role:'lock',confirmation:'Open the front door?'},
       ...(query.has('automation-toggle') ? [{entity:'script.demo_toggle',role:'action',command:'toggle_script',confirmation:'Run the arrival scene?'}] : [])]}]},
-    {kind:'presence',sections:[{kind:'people',entities:['person.demo_friend']}]},
+    {kind:'presence',
+      ...(query.has('presence-custom') && {icon:'mdi:account-heart-outline'}),
+      ...(query.has('presence-opt-in') && {presence_dynamic_icon:true}),
+      ...(query.has('presence-fixed') && {presence_dynamic_icon:false}),
+      sections:[{kind:'people',entities:['person.demo_friend']}, ...(query.has('presence-icons') ? [
+        {kind:'people',entities:[{entity:'person.demo_friend',role:'person'},'person.demo_guest','device_tracker.demo_phone']},
+        {kind:'status',entities:[{entity:'sensor.demo_home_text',role:'status'}]},
+      ] : [])]},
     {kind:'weather',sections:[{kind:'forecast',entities:['weather.demo_home']},{kind:'sun',entities:['sun.sun']}]},
     {kind:'energy',sections:[{kind:'electricity',entities:[{entity:'sensor.demo_meter',role:'graph',graph_hours:168}]}]},
     {kind:'settings'},
@@ -1933,6 +1946,61 @@ try {
       assert.equal(await nextPage.evaluate(() => window.bayitTest.calls.length), 1);
       await nextPage.close();
       console.log(engine + ' 320: helper-only heater preselect, observed save and independent running controls');
+
+      const presencePage = await browser.newPage({ viewport:{ width:390,height:844 }, hasTouch:true, reducedMotion:'reduce' });
+      presencePage.setDefaultTimeout(8000);
+      const presenceUrl = base + '?toolbar-panels&presence-icons';
+      const presenceButton = presencePage.locator('button[data-role=presence]');
+      const presenceBadge = presenceButton.locator('.badge');
+      const presenceState = (entity, state) => presencePage.evaluate(([id, value]) => window.bayitTest.setRoomState(id, value), [entity, state]);
+      const expectPresenceIcon = icon => presenceButton.locator('ha-icon[icon="' + icon + '"]').waitFor();
+      await presencePage.goto(presenceUrl);
+      await expectPresenceIcon('mdi:home-off-outline');
+      await presenceBadge.waitFor({state:'hidden'});
+      await presenceState('person.demo_friend', 'home');
+      await expectPresenceIcon('mdi:account');
+      assert.equal(await presenceBadge.innerText(), '1');
+      assert.equal(await presenceButton.getAttribute('aria-description'), 'People at home · 1');
+      await presenceState('device_tracker.demo_phone', 'home');
+      await expectPresenceIcon('mdi:account-group');
+      assert.equal(await presenceBadge.innerText(), '2');
+      await presenceState('person.demo_guest', 'home');
+      await presenceBadge.filter({hasText:/^3$/}).waitFor();
+      await expectPresenceIcon('mdi:account-group');
+      await presenceButton.tap();
+      await presencePage.getByRole('dialog', {name:'People at home',exact:true}).locator('h2 ha-icon[icon="mdi:account-group"]').waitFor();
+      await presencePage.keyboard.press('Escape');
+      await presenceState('person.demo_friend', 'unavailable');
+      await presenceState('person.demo_guest', 'not_home');
+      await presenceState('device_tracker.demo_phone', 'not_home');
+      await expectPresenceIcon('mdi:home-off-outline');
+      await presenceBadge.waitFor({state:'hidden'});
+      assert.equal(await presencePage.evaluate(() => window.bayitTest.calls.length), 0);
+
+      await presencePage.goto(presenceUrl + '&presence-custom');
+      await expectPresenceIcon('mdi:account-heart-outline');
+      await presenceState('person.demo_guest', 'home');
+      await presenceBadge.filter({hasText:/^1$/}).waitFor();
+      await expectPresenceIcon('mdi:account-heart-outline');
+      await presencePage.goto(presenceUrl + '&presence-custom&presence-opt-in');
+      await expectPresenceIcon('mdi:home-off-outline');
+      await presencePage.goto(presenceUrl + '&presence-fixed');
+      await expectPresenceIcon('mdi:account-group-outline');
+
+      await presencePage.goto(presenceUrl + '&presence-custom&editor');
+      await presencePage.getByText('Toolbar and extra screens', {exact:true}).tap();
+      const presenceEditor = presencePage.locator('bayit-9-strategy-editor');
+      await presenceEditor.getByRole('button', {name:'Presence',exact:true}).tap();
+      const presenceToggle = presenceEditor.getByRole('checkbox', {name:'Change icon with the number of people at home',exact:true});
+      assert.equal(await presenceToggle.isChecked(), false);
+      await presenceToggle.check();
+      const editedPresence = () => presencePage.evaluate(() => window.latest.toolbar.find(item => item.kind === 'presence'));
+      assert.equal((await editedPresence()).presence_dynamic_icon, true);
+      await presenceToggle.uncheck();
+      assert.equal((await editedPresence()).presence_dynamic_icon, false);
+      assert.equal((await editedPresence()).icon, 'mdi:account-heart-outline');
+      await presencePage.close();
+      console.log(engine + ': native presence scope, 0/1/2+ icons, authored icon and toolbar editor');
 
       const panelsPage = await browser.newPage({ viewport: { width:390,height:844 } });
       panelsPage.setDefaultTimeout(8000);

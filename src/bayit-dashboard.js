@@ -1,6 +1,6 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
-import { classicRoomTitle, isAutomationScriptToggle, isVisibleEntity, MAX_ROOM_SHORTCUTS,
+import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isVisibleEntity, MAX_ROOM_SHORTCUTS,
   normalizeRoomControlName, overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { createDeviceController, getDeviceModel, roomShutdownTargets, supportsRoomShutdown } from './device-control.mjs';
@@ -52,6 +52,7 @@ const toolbarIcons = {
   devices: 'mdi:devices',
 };
 const shortcutDomains = new Set(['light', 'switch', 'fan', 'cover', 'lock', 'climate', 'water_heater']);
+const presenceIcons = ['mdi:home-off-outline', 'mdi:account', 'mdi:account-group'];
 const powerDomains = new Set(['light', 'switch', 'fan', 'climate', 'water_heater']);
 const roomSectionKinds = new Set(['lights', 'covers', 'climate', 'heating', 'sensors', 'devices', 'garage', 'weather', 'security', 'media', 'vacuum', 'laundry']);
 const localPath = /^\/(?!\/)[a-z0-9][a-z0-9/_-]*(?:#[a-z0-9_-]+)?$/i;
@@ -311,6 +312,7 @@ export function normalizeDashboardConfig(config = {}) {
     const vacuumMap = item.kind === 'vacuum' ? normalizeVacuumMap(item.vacuum_map) : undefined;
     const agenda = item.kind === 'calendar' ? normalizeCalendarAgenda(item.calendar_agenda) : undefined;
     return [{ kind: item.kind, id: text(item.id), label: text(item.label), path: item.path,
+      ...(item.kind === 'presence' && { presence_dynamic_icon: hasDynamicPresenceIcon(item) }),
       ...(item.placement === 'settings' && item.kind !== 'settings' && {placement:'settings'}),
       ...(orefMap && { oref_map: orefMap }),
       ...(vacuumMap && { vacuum_map: vacuumMap }),
@@ -748,7 +750,9 @@ export class BayitDashboard extends HTMLElement {
     const settings = this.config;
     const automatic = [settings.context.automations.length ? 'automations' : 'activity',
       ...automaticToolbarContext.slice(1), 'overview', 'settings'];
-    const items = settings.toolbar?.filter(item => item.placement !== 'settings') ?? automatic.map(kind => ({ kind, icon: toolbarIcons[kind] }));
+    const items = settings.toolbar?.filter(item => item.placement !== 'settings') ?? automatic.map(kind => ({
+      kind, icon: toolbarIcons[kind], ...(kind === 'presence' && { presence_dynamic_icon: true }),
+    }));
     if (settings.fullscreen && !items.some(item => item.kind === 'settings')) items.push({ kind:'settings', icon:toolbarIcons.settings });
     this.nodes.toolbarActions.replaceChildren();
     this.toolbarViews = items.map(item => {
@@ -757,7 +761,12 @@ export class BayitDashboard extends HTMLElement {
       const entities = item.sections?.flatMap(section => section.entities) ?? item.entities ??
         (item.calendar_agenda ? [] : kind === 'overview' ? settings.overview : settings.context[kind] ?? []);
       const panel = { ...item, name, entities };
-      const element = button('chrome-button', name, item.icon, true);
+      const presenceIds = kind === 'presence' ? [...new Set(entities.filter(entry => {
+        const domain = domainFor(entry);
+        return domain === 'person' || (domain === 'device_tracker' && entry.role !== 'person');
+      }).map(entry => entry.entity))] : [];
+      if (item.presence_dynamic_icon) panel.icon = presenceIcons[0];
+      const element = button('chrome-button', name, panel.icon, true);
       element.dataset.role = kind;
       if (kind !== 'link') element.setAttribute('aria-haspopup', 'dialog');
       const badge = ['presence', 'activity'].includes(kind) ? make('span', 'badge') : null;
@@ -772,7 +781,7 @@ export class BayitDashboard extends HTMLElement {
       };
       const needsContent = !settings.toolbar && (kind === 'overview' || contextKeys.includes(kind));
       this.nodes.toolbarActions.append(element);
-      return { kind, element, badge, entities, needsContent, panel };
+      return { kind, element, badge, entities, needsContent, panel, presenceIds };
     });
   }
 
@@ -1095,11 +1104,19 @@ export class BayitDashboard extends HTMLElement {
     this.roomGraphs?.update(this._hass);
     this.boilerView?.update(this._hass);
     if (panel === 'activity') this.paintActivity();
-    for (const { kind, element, badge, entities, needsContent } of this.toolbarViews) {
+    for (const { kind, element, badge, entities, needsContent, panel, presenceIds } of this.toolbarViews) {
       element.hidden = needsContent && !entities.length && (kind !== 'energy' || !this._hass?.panels?.energy);
       if (badge) {
         const count = kind === 'activity' ? active.size
-          : entities.filter(item => this._hass?.states?.[item.entity]?.state === 'home').length;
+          : presenceIds.filter(entity => this._hass?.states?.[entity]?.state === 'home').length;
+        if (kind === 'presence') {
+          const description = this.t('presence_count').replace('{count}', count);
+          if (element.getAttribute('aria-description') !== description) element.setAttribute('aria-description', description);
+          if (panel.presence_dynamic_icon) {
+            panel.icon = presenceIcons[Math.min(count, presenceIcons.length - 1)];
+            setIcon(element.firstElementChild, panel.icon);
+          }
+        }
         badge.hidden = !count;
         setText(badge, count);
       }

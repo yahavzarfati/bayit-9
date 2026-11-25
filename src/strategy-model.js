@@ -43,6 +43,11 @@ const PROFILE_KINDS = new Set(['heater', 'boiler', 'climate']);
 const DEFAULT_RANK = new Map(DEFAULT_DOMAINS.map((domain, index) => [domain, index]));
 const ARMING_DOMAIN = 'script';
 
+export function hasDynamicPresenceIcon(entry) {
+  if (typeof entry.presence_dynamic_icon === 'boolean') return entry.presence_dynamic_icon;
+  return typeof entry.icon !== 'string' || !ROOM_ICON.test(entry.icon.trim());
+}
+
 const labels = {
   en: { title: 'Bayit 9', home: 'Home', unassigned: 'Unassigned' },
   he: { title: 'בית 9', home: 'בית', unassigned: 'ללא חדר' },
@@ -562,6 +567,8 @@ function dashboardToolbar(config, hass, roomIds) {
       isVisibleEntity(entity, states, registry, hidden) &&
       supportsDailyForecast(states[entity])) : undefined;
     return { id, kind: entry.kind, ...(label && { label }), ...(ROOM_ICON.test(icon) && { icon }),
+      ...(entry.kind === 'presence' && typeof entry.presence_dynamic_icon === 'boolean' &&
+        { presence_dynamic_icon: entry.presence_dynamic_icon }),
       ...(path && { path }), ...(entry.placement === 'settings' && entry.kind !== 'settings' && { placement:'settings' }),
       ...(entities !== undefined && { entities }), ...(sections !== undefined && { sections }),
       ...(agenda && { calendar_agenda: agenda }),
