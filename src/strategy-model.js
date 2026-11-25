@@ -369,6 +369,7 @@ function dashboardAreas(config, hass) {
     if (!area && (!CUSTOM_ROOM_ID.test(id) || !name)) continue;
     const icon = normalizeRoomIcon(override.icon);
     const entityIcons = override.entity_icons;
+    const panelEntityIcons = override.panel_entity_icons;
     const entityNames = override.entity_names;
     const presetShortcuts = override.climate_preset_shortcuts;
     const sections = roomSections(override.sections);
@@ -412,6 +413,7 @@ function dashboardAreas(config, hass) {
         return links && typeof links === 'object' && !Array.isArray(links) ? [[kind, links]] : [];
       })),
       entityIcons: entityIcons && typeof entityIcons === 'object' && !Array.isArray(entityIcons) ? entityIcons : null,
+      panelEntityIcons: panelEntityIcons && typeof panelEntityIcons === 'object' && !Array.isArray(panelEntityIcons) ? panelEntityIcons : null,
       entityNames: entityNames && typeof entityNames === 'object' && !Array.isArray(entityNames) ? entityNames : null,
       presetShortcuts: presetShortcuts && typeof presetShortcuts === 'object' && !Array.isArray(presetShortcuts) ? presetShortcuts : null,
       custom: !area,
@@ -675,6 +677,11 @@ export function discoverRooms(config, hass, locale) {
       entities.some(device => device.entity === activity.boiler_entity && device.kind === 'boiler'));
     if (activities.length) room.activities = activities;
     for (const device of entities) {
+      if (area.panelEntityIcons && Object.hasOwn(area.panelEntityIcons, device.entity) &&
+          !room.panel_hidden_entities?.includes(device.entity)) {
+        const icon = normalizeRoomIcon(area.panelEntityIcons[device.entity]);
+        if (icon) device.room_icon = icon;
+      }
       if (area.entityNames && Object.hasOwn(area.entityNames, device.entity)) {
         const name = normalizeRoomControlName(area.entityNames[device.entity]);
         if (name !== undefined) device.room_name = name;

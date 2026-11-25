@@ -896,6 +896,25 @@ test('honors room names, icons and hand-picked device order across areas without
   assert.deepEqual(studio.entities[0], { entity: 'fan.demo_fan', name: 'מאוורר', icon: 'mdi:fan' });
 });
 
+test('scopes panel icons to visible room members without changing the shared icon', () => {
+  const entity = 'light.demo_lamp';
+  const hidden = 'switch.demo_boiler';
+  const malformed = 'fan.demo_fan';
+  const config = { area_ids:['lounge','studio'], room_overrides:{
+    lounge:{ entities:[entity,hidden,malformed], entity_icons:{ [entity]:'mdi:light-recessed' },
+      panel_hidden_entities:[hidden],
+      panel_entity_icons:{ [entity]:' mdi:ceiling-light ', [hidden]:'mdi:fire', [malformed]:'<svg>' } },
+    studio:{ entities:[entity] },
+  } };
+  const [lounge, studio] = generateDashboard(config, home()).views[0].cards[0].rooms;
+  const [light, hiddenDevice, bad] = lounge.entities;
+  assert.equal(light.icon,'mdi:light-recessed');
+  assert.equal(light.room_icon,'mdi:ceiling-light');
+  assert.equal(hiddenDevice.room_icon,undefined);
+  assert.equal(bad.room_icon,undefined);
+  assert.equal(studio.entities[0].room_icon,undefined);
+});
+
 test('shares room-picker exclusions with visible devices, including registry-less manual choices', () => {
   const hass = home();
   hass.entities['light.compact_hidden'] = { hidden: true };

@@ -5390,6 +5390,85 @@ async function assertCompactLightReadings(browser) {
   }
 }
 
+async function assertRoomPanelDeviceIcon(browser) {
+  const shared = 'mdi:light-recessed';
+  const panelIcon = 'mdi:ceiling-light';
+  for (const locale of ['en', 'he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({ viewport:{width:391,height:844}, hasTouch:true, reducedMotion:'reduce' });
+    const url = base + '/fixture-home/home?configuration&locale=' + locale;
+    await page.addInitScript(icon => {
+      const key = 'bayit9-browser-fixture';
+      if (sessionStorage.getItem(key)) return;
+      const entity = 'light.demo_lamp';
+      sessionStorage.setItem(key, JSON.stringify({ strategy:{ type:'custom:bayit-9',
+        show_unassigned:false, area_ids:['studio','bayit_room_den'],
+        room_overrides:{
+          studio:{ entities:[entity], entity_icons:{ [entity]:icon } },
+          bayit_room_den:{ name:'Den', entities:[entity] },
+        },
+      } }));
+    }, shared);
+    const openEditor = async () => {
+      await page.getByRole('button',{name:he?'מראה':'Appearance',exact:true}).tap();
+      const name = he ? 'התאמת הבית' : 'Customize home';
+      await page.getByRole('button',{name,exact:true}).tap();
+      const editor = page.getByRole('dialog',{name,exact:true});
+      await editor.getByText(he?'חדרים':'Rooms',{exact:true}).tap();
+      await editor.getByLabel(he?'חדר להתאמה אישית':'Room to customize',{exact:true}).selectOption('studio');
+      await editor.getByText(he?'תצוגת מכשירים':'Device display',{exact:true}).tap();
+      return editor;
+    };
+    const save = async editor => {
+      await editor.getByRole('button',{name:he?'שמירת הדשבורד':'Save dashboard',exact:true}).tap();
+      await editor.waitFor({state:'hidden'});
+    };
+    const roomIcon = async (room, expected) => {
+      await page.getByRole('button',{name:room,exact:true}).tap();
+      const dialog = page.getByRole('dialog',{name:room,exact:true});
+      await dialog.locator('[data-entity="light.demo_lamp"] .device-icon[icon="' + expected + '"]').waitFor();
+      await dialog.getByRole('button',{name:he?'סגירה':'Close',exact:true}).tap();
+      await dialog.waitFor({state:'hidden'});
+    };
+    try {
+      await page.goto(url);
+      const editor = await openEditor();
+      const disclosure = he ? 'סמל נפרד לחלונית החדר' : 'Separate room panel icon';
+      const field = he ? 'סמל בחלונית החדר' : 'Icon in the room panel';
+      assert.equal(await editor.getByLabel(field,{exact:true}).count(),0);
+      await editor.getByText(disclosure,{exact:true}).tap();
+      const input = editor.getByLabel(field,{exact:true});
+      await input.fill('invalid-icon');
+      await input.press('Enter');
+      assert.equal(await input.evaluate(element => element.checkValidity()),false);
+      await input.fill(panelIcon);
+      await input.press('Enter');
+      await save(editor);
+      await page.locator('.room[data-room=studio] .quick-button[data-entity="light.demo_lamp"] ha-icon[icon="' + shared + '"]').waitFor();
+      await roomIcon('Studio',panelIcon);
+      await roomIcon('Den','mdi:lightbulb-outline');
+      await page.goto(url + '#device/studio/light.demo_lamp');
+      await page.getByRole('dialog',{name:'Desk lamp',exact:true})
+        .locator('h2 ha-icon[icon="' + shared + '"]').waitFor();
+      await page.goto(url);
+      await openEditor();
+      await editor.getByText(disclosure,{exact:true}).tap();
+      assert.equal(await input.inputValue(),panelIcon);
+      await editor.getByRole('button',{name:he?'שימוש בסמל המשותף':'Use shared icon',exact:true}).tap();
+      assert.equal(await input.inputValue(),'');
+      await save(editor);
+      await roomIcon('Studio',shared);
+      const saved = await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.room_overrides.studio);
+      assert.equal(saved.panel_entity_icons,undefined);
+      assert.equal(saved.entity_icons['light.demo_lamp'],shared);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)),[]);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+
 async function assertRoomCoverColumns(browser) {
   for (const locale of ['en', 'he']) {
     const he = locale === 'he';
@@ -5490,6 +5569,9 @@ try {
     try {
       await assertRoomCoverColumns(browser);
       console.log(engine + ': authored single-cover columns keep readable names and full-sized commands');
+      await assertRoomPanelDeviceIcon(browser);
+      console.log(engine + ': custom popup icons stay scoped to the selected room device');
+
       await assertHomePreferenceAliases(browser);
       await assertSharedAppearance(browser);
       await assertClippedRoomOrigin(browser);

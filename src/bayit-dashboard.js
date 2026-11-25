@@ -217,6 +217,8 @@ function normalizeEntity(item) {
   if (text(item.name)) entry.name = text(item.name);
   const roomName = normalizeRoomControlName(item.room_name);
   if (roomName !== undefined) entry.room_name = roomName;
+  const roomIcon = normalizeRoomIcon(item.room_icon);
+  if (roomIcon) entry.room_icon = roomIcon;
   if (item.room_light_controls === true && entity.startsWith('light.')) entry.room_light_controls = true;
   if (item.room_dual_light_detail === true && entity.startsWith('light.')) entry.room_dual_light_detail = true;
   if (item.room_compact_light_reading === true && entity.startsWith('light.')) entry.room_compact_light_reading = true;
@@ -1715,7 +1717,8 @@ export class BayitDashboard extends HTMLElement {
     item.toggleAttribute('data-room-appliance-tile', applianceTile);
     item.toggleAttribute('data-room-boiler-quick', boilerQuick);
     if (compactDevice) item.dataset.roomCompactDevice = domain;
-    const glyph = icon(config.icon || 'mdi:information-outline');
+    const roomIcon = room && config.room_icon;
+    const glyph = icon(roomIcon || config.icon || 'mdi:information-outline');
     glyph.className = 'device-icon';
     const name = make(tileMode || launchFromHeader ? 'span' : room ? 'h4' : 'h3', 'device-name');
     const state = make('span', 'current');
@@ -1795,7 +1798,7 @@ export class BayitDashboard extends HTMLElement {
       if (cover) item.dataset.compact = 'cover';
       const more = launchFromHeader ? button('device-head device-panel-launch')
         : button('round-action', this.t(hasPanel ? 'device_controls' : 'more_info'),
-          cover ? config.icon || DEVICE_ICONS.cover : 'mdi:information-outline', true);
+          cover ? roomIcon || config.icon || DEVICE_ICONS.cover : 'mdi:information-outline', true);
       if (hasPanel || nativeRoomCover || compactDevice) more.setAttribute('aria-haspopup', 'dialog');
       more.onclick = () => {
         if (hasPanel) this.openPanel('device', more, room, config.entity);
@@ -2060,7 +2063,7 @@ export class BayitDashboard extends HTMLElement {
       const labelName = roomName || model.name;
       setText(view.name, labelName);
       view.name.toggleAttribute('data-room-name-hidden', roomName === '' || (view.inlineClimate && roomName === undefined));
-      setIcon(view.glyph, model.icon);
+      setIcon(view.glyph, (view.room && view.config.room_icon) || model.icon);
       if (model.timer?.state === 'active') countdown = true;
       const media = model.domain === 'media_player' && view.config.role !== 'now_playing' &&
         typeof model.attributes.media_title === 'string'

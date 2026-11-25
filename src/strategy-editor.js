@@ -35,6 +35,7 @@ const WORDS = {
     roomTitleBreak: 'Room name line break in classic layout', roomTitleAuto: 'Wrap automatically',
     roomControlDisplay: 'Device display', roomControlDevice: 'Device to customize', roomControlName: 'Name in this room',
     roomControlShow: 'Show name in this room', roomDeviceIcon: 'Icon in this room', roomDeviceIconDefault: 'Use default icon',
+    roomPanelIconOptions: 'Separate room panel icon', roomPanelIcon: 'Icon in the room panel', roomPanelIconDefault: 'Use shared icon',
     roomInlineLight: 'Show brightness and temperature in this room',
     roomNativeCoverHeader: 'Open Home Assistant details from the cover header',
     roomDualLightDetail: 'Show both sliders in light details',
@@ -158,6 +159,7 @@ const WORDS = {
     roomTitleBreak: 'חלוקת שם החדר לשורות בפריסה הקלאסית', roomTitleAuto: 'גלישה לפי רוחב הכרטיס',
     roomControlDisplay: 'תצוגת מכשירים', roomControlDevice: 'מכשיר להתאמה אישית', roomControlName: 'שם המכשיר בחדר הזה',
     roomControlShow: 'הצגת שם המכשיר בחדר הזה', roomDeviceIcon: 'סמל המכשיר בחדר הזה', roomDeviceIconDefault: 'שימוש בסמל ברירת המחדל',
+    roomPanelIconOptions: 'סמל נפרד לחלונית החדר', roomPanelIcon: 'סמל בחלונית החדר', roomPanelIconDefault: 'שימוש בסמל המשותף',
     roomInlineLight: 'הצגת בהירות וגוון אור בתוך החדר',
     roomNativeCoverHeader: 'פתיחת פרטי Home Assistant מכותרת התריס',
     roomDualLightDetail: 'הצגת שני המחוונים בפרטי התאורה',
@@ -805,12 +807,18 @@ export class Bayit9StrategyEditor extends HTMLElement {
     return fields;
   }
 
-  #roomControlIcon(room, device, words) {
+  #roomControlIcon(room, device, words, panel = false) {
     const { entity, icon, kind } = device;
     const override = this.#roomOverride(room.id);
-    const icons = override.entity_icons;
-    const saved = normalizeRoomIcon(icons?.[entity]);
-    const fallback = normalizeRoomIcon(icon) ?? DEVICE_ICONS[kind || entity.split('.')[0]] ?? 'mdi:information-outline';
+    const setting = panel ? 'panel_entity_icons' : 'entity_icons';
+    const controlLabel = panel ? words.roomPanelIcon : words.roomDeviceIcon;
+    const resetLabel = panel ? words.roomPanelIconDefault : words.roomDeviceIconDefault;
+    const focusKey = panel ? 'room-panel-icon' : 'room-control-icon';
+    const saved = normalizeRoomIcon(override[setting]?.[entity]);
+    const defaultIcon = normalizeRoomIcon(icon) ?? DEVICE_ICONS[kind || entity.split('.')[0]] ?? 'mdi:information-outline';
+    const panelIcon = normalizeRoomTemperatureGraphColor(override.room_temperature_graph_colors?.[entity])
+      ? 'mdi:thermometer' : normalizeRoomIcon(override.entity_icons?.[entity]);
+    const fallback = (panel && panelIcon) || defaultIcon;
     const preview = node('ha-icon');
     preview.setAttribute('icon', saved ?? fallback);
     preview.setAttribute('aria-hidden', 'true');
@@ -819,21 +827,21 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const chosen = normalizeRoomIcon(raw);
       if ((raw.trim() && !chosen) || chosen === saved) return;
       const next = { ...this.#roomOverride(room.id) };
-      const previous = next.entity_icons;
+      const previous = next[setting];
       const updated = previous && typeof previous === 'object' && !Array.isArray(previous) ? { ...previous } : {};
       if (chosen) updated[entity] = chosen;
       else delete updated[entity];
-      if (Object.keys(updated).length) next.entity_icons = updated;
-      else delete next.entity_icons;
-      this.#setRoomOverride(room.id, next, 'room-control-icon');
+      if (Object.keys(updated).length) next[setting] = updated;
+      else delete next[setting];
+      this.#setRoomOverride(room.id, next, focusKey);
     };
 
     let input;
     let labelled;
     let suggestions;
     if (customElements.get('ha-icon-picker')) {
-      input = node('ha-icon-picker', { hass: this.#hass, label: words.roomDeviceIcon, value: saved ?? '' });
-      input.setAttribute('aria-label', words.roomDeviceIcon);
+      input = node('ha-icon-picker', { hass: this.#hass, label: controlLabel, value: saved ?? '' });
+      input.setAttribute('aria-label', controlLabel);
       input.addEventListener('value-changed', event => {
         if (event.target === input) save(event.detail?.value ?? '');
       });
@@ -841,7 +849,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     } else {
       input = node('input', { value: saved ?? '', placeholder: 'mdi:ceiling-light', dir: 'ltr',
         maxLength: 120, pattern: 'mdi:[a-z0-9\\-]+', spellcheck: false, autocapitalize: 'off' });
-      labelled = field(words.roomDeviceIcon, input);
+      labelled = field(controlLabel, input);
       const choices = new Set([fallback, ...Object.values(DEVICE_ICONS), ...Object.keys(ROOM_ICONS)]);
       suggestions = node('datalist', { id: 'bayit9-editor-icons-' + ++nextLabel },
         [...choices].map(value => option(value, value)));
@@ -861,14 +869,14 @@ export class Bayit9StrategyEditor extends HTMLElement {
         commit();
       });
     }
-    input.dataset.roomFocus = 'room-control-icon';
+    input.dataset.roomFocus = focusKey;
     const fieldRow = node('div', { className: 'room-icon-field' }, [
       labelled, node('span', { className: 'room-icon-preview' }, [preview]),
       ...(suggestions ? [suggestions] : []),
     ]);
     return saved
       ? node('div', { className: 'stack' }, [fieldRow, node('div', { className: 'actions' }, [
-        button(words.roomDeviceIconDefault, () => save('')),
+        button(resetLabel, () => save('')),
       ])])
       : fieldRow;
   }
@@ -903,7 +911,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
         });
         showDevice.firstElementChild.dataset.roomFocus = 'room-control-device-show';
         const profile = profiles.find(item => item.entity === id);
-        const deviceIcon = this.#roomControlIcon(room, { ...available.get(id), kind: profile?.kind }, words);
+        const device = { ...available.get(id), kind: profile?.kind };
+        const deviceIcon = this.#roomControlIcon(room, device, words);
         if (!shown) {
           fields.replaceChildren(showDevice, deviceIcon, node('small', { textContent: words.roomPanelHint }));
           return;
@@ -934,7 +943,9 @@ export class Bayit9StrategyEditor extends HTMLElement {
           event.preventDefault();
           saveText();
         });
-        fields.replaceChildren(showDevice, show, field(words.roomControlName, input), deviceIcon);
+        fields.replaceChildren(showDevice, show, field(words.roomControlName, input), deviceIcon,
+          disclosure(words.roomPanelIconOptions, this.#open.roomPanelIcon, open => { this.#open.roomPanelIcon = open; },
+            () => [this.#roomControlIcon(room, device, words, true)]));
         if (id.startsWith('sensor.') && supportsRoomTemperatureSource(id, this.#hass.states?.[id]?.attributes)) {
           const selected = normalizeRoomTemperatureGraphColor(override.room_temperature_graph_colors?.[id]);
           const saveGraph = (color, focus) => {

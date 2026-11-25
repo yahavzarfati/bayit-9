@@ -44,7 +44,7 @@ function buildCompactGraph(config, hass, { host, make, icon, moreInfo, locale, t
   root.type = 'button';
   root.dir = 'ltr';
   root.style.setProperty('--room-chart-color', config.room_temperature_graph_color);
-  root.append(icon('mdi:thermometer'));
+  root.append(icon(config.room_icon || 'mdi:thermometer'));
   root.addEventListener('click', () => moreInfo(config, root));
 
   const reading = make('span', 'room-temperature-reading');

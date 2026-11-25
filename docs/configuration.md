@@ -55,6 +55,8 @@ In **Rooms**, open **Device display** and select a device. Clear **Name in this 
 
 Choose **Icon in this room** in **Device display** to customize the glyph in the room and on its Home shortcut. Clear it with **Use default icon**. The icon can be any MDI icon and other rooms retain their own icons for the same entity. The YAML `entity_icons` maps room member IDs to icons.
 
+In **Device display → Separate room panel icon**, choose an MDI icon for the selected device's tile inside that room. The Home shortcut and the device's standalone details keep their shared icon. In YAML, map room member IDs to MDI icons under `panel_entity_icons` on the room override.
+
 Turn off **Show device in room panel** to hide the control from both manual sections and automatic grouping inside that room. The corresponding YAML `panel_hidden_entities` lists room member IDs. Use **Room shortcuts** to give a hidden control a button on Home. Existing device links can still open its details. Home Assistant permissions govern device access.
 
 In **Room shortcuts**, turn off **Open details with a long press** for an individual switch shortcut to keep the quick toggle and consume a long press without a command. The YAML field `shortcut_no_details` under that room’s `room_overrides` lists the selected switch shortcuts. This setting applies only to ordinary switch shortcuts and keeps existing device links available.
