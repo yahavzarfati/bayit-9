@@ -1087,10 +1087,12 @@ try {
       await rememberedRoomRange.fill('45');
       await rememberedRoom.getByRole('button', { name: 'Close', exact: true }).click();
       await rememberedRoom.waitFor({ state: 'hidden' });
+      await rememberedTimerPage.locator('[data-popup-origin]').waitFor({ state: 'detached' });
       await rememberedRoomButton.tap();
       assert.equal(await rememberedRoomRange.inputValue(), '45');
       await rememberedRoom.getByRole('button', { name: 'Close', exact: true }).click();
       await rememberedRoom.waitFor({ state: 'hidden' });
+      await rememberedTimerPage.locator('[data-popup-origin]').waitFor({ state: 'detached' });
       await rememberedTimerPage.locator('.quick-button[data-entity="climate.demo_air"]').press('Shift+Enter');
       const rememberedDevice = rememberedTimerPage.getByRole('dialog', { name: 'Studio air conditioner', exact: true });
       const rememberedDeviceRange = rememberedDevice.locator('input.timer-range');
@@ -1127,6 +1129,7 @@ try {
       assert.match(roomGeometry.sourceRing, /2px inset/);
       await geometryPage.keyboard.press('Escape');
       await geometryDialog.waitFor({ state: 'hidden' });
+      await geometryPage.locator('[data-popup-origin]').waitFor({ state: 'detached' });
       const geometryShortcut = geometryPage.locator('.quick-button[data-entity="switch.demo_heater"]');
       await geometryShortcut.press('Shift+Enter');
       await geometryPage.getByRole('dialog', { name: 'Room heater', exact: true }).waitFor();
@@ -1146,6 +1149,7 @@ try {
       assert.ok(constrainedGeometry.top >= roomGeometry.top - 1);
       await geometryPage.keyboard.press('Escape');
       await geometryDialog.waitFor({ state: 'hidden' });
+      await geometryPage.locator('[data-popup-origin]').waitFor({ state: 'detached' });
       assert.equal(await geometryShortcut.evaluate(button => button.getRootNode().activeElement === button), true);
       await geometryPage.close();
 
