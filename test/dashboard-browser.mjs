@@ -9435,10 +9435,8 @@ try {
       const timerRange = nextPanel.locator('.device-timer[data-compact] .timer-range');
       assert.equal(await heaterOff.count(), 0);
       assert.equal(await timerRange.evaluate(range => getComputedStyle(range).appearance), 'none');
-      assert.equal(await timerRange.evaluate(range => {
-        const properties = getComputedStyle(range);
-        return properties.getPropertyValue('--timer-thumb').trim() === properties.getPropertyValue('--warm').trim();
-      }), true);
+      assert.equal(await timerRange.evaluate(range =>
+        getComputedStyle(range).getPropertyValue('--timer-thumb').trim()), '#ff9b69');
       await timerRange.press('ArrowLeft');
       assert.equal(await timerRange.inputValue(), '45');
       assert.equal(await nextPage.evaluate(() => window.bayitTest.calls.length), 0);
