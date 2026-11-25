@@ -1,12 +1,16 @@
 const HOLD_MS = 500;
 const HOLD_SLOP = 12;
+const TRAILING_CLICK_MS = 700;
 const OPEN_MS = 190;
 const CLOSE_MS = 220;
 const EASING = 'cubic-bezier(.2,.65,.22,1)';
 
+function isActivationKey(event) {
+  return event.key === 'Enter' || event.code === 'Space' || event.key === ' ' || event.key === 'Spacebar';
+}
+
 function isDetailsKey(event) {
-  return event.key === 'ContextMenu' || (event.shiftKey &&
-    (event.key === 'F10' || event.key === 'Enter' || event.code === 'Space' || event.key === ' '));
+  return event.key === 'ContextMenu' || (event.shiftKey && (event.key === 'F10' || isActivationKey(event)));
 }
 
 export function bindDeviceDetails(button, openDetails) {
@@ -14,12 +18,13 @@ export function bindDeviceDetails(button, openDetails) {
   const view = doc.defaultView;
   let held;
   let suppressClickUntil = 0;
+  let suppressKeyClickUntil = 0;
 
   function finishPointer() {
     if (!held) return;
     clearTimeout(held.timer);
     held.listeners.abort();
-    if (held.handled) suppressClickUntil = performance.now() + 700;
+    if (held.handled) suppressClickUntil = performance.now() + TRAILING_CLICK_MS;
     held = undefined;
   }
 
@@ -40,7 +45,8 @@ export function bindDeviceDetails(button, openDetails) {
     suppressClickUntil = 0;
     const listeners = new AbortController();
     const options = { signal: listeners.signal, capture: true };
-    held = { id: event.pointerId, x: event.clientX, y: event.clientY, touch: event.pointerType === 'touch', listeners };
+    held = { id: event.pointerId, x: event.clientX, y: event.clientY, touch: event.pointerType === 'touch',
+      startedAt: performance.now(), listeners };
     held.timer = setTimeout(() => {
       if (!button.isConnected) finishPointer();
       else handleHold();
@@ -49,7 +55,12 @@ export function bindDeviceDetails(button, openDetails) {
       if (held && move.pointerId === held.id && !held.handled &&
           Math.hypot(move.clientX - held.x, move.clientY - held.y) > HOLD_SLOP) finishPointer();
     }, options);
-    const release = end => { if (end.pointerId === held?.id) finishPointer(); };
+    const release = end => {
+      if (end.pointerId !== held?.id) return;
+      // A busy renderer can deliver pointerup before the hold timer callback.
+      if (end.type === 'pointerup' && performance.now() - held.startedAt >= HOLD_MS) handleHold();
+      finishPointer();
+    };
     doc.addEventListener('pointerup', release, options);
     doc.addEventListener('pointercancel', release, options);
     view?.addEventListener('blur', finishPointer, options);
@@ -62,26 +73,38 @@ export function bindDeviceDetails(button, openDetails) {
   });
   button.addEventListener('click', event => {
     const byPointer = event.detail > 0 || Boolean(event.pointerType);
-    if (!byPointer || performance.now() > suppressClickUntil) return;
-    suppressClickUntil = 0;
+    const deadline = byPointer ? suppressClickUntil : suppressKeyClickUntil;
+    if (performance.now() > deadline) return;
+    if (byPointer) suppressClickUntil = 0;
+    else suppressKeyClickUntil = 0;
     event.preventDefault();
     event.stopImmediatePropagation();
   }, true);
   button.addEventListener('keydown', event => {
-    if (button.disabled || !isDetailsKey(event)) return;
+    if (button.disabled) return;
+    if (!isDetailsKey(event)) {
+      if (isActivationKey(event)) suppressKeyClickUntil = 0;
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     if (event.repeat) return;
     // Suppress the paired key release even when dialog focus has moved.
+    const guardClick = !openDetails && isActivationKey(event);
+    if (guardClick) suppressKeyClickUntil = Infinity;
     const key = event.code || event.key;
     const listeners = new AbortController();
     const options = { signal: listeners.signal, capture: true };
+    const finishKey = () => {
+      if (guardClick) suppressKeyClickUntil = performance.now() + TRAILING_CLICK_MS;
+      listeners.abort();
+    };
     doc.addEventListener('keyup', release => {
       if ((release.code || release.key) !== key) return;
       release.preventDefault();
-      listeners.abort();
+      finishKey();
     }, options);
-    view?.addEventListener('blur', () => listeners.abort(), options);
+    view?.addEventListener('blur', finishKey, options);
     openDetails?.();
   });
 }

@@ -4018,17 +4018,37 @@ try {
       assert.equal(await toggle.getAttribute('aria-haspopup'), null);
       assert.equal(await toggle.getAttribute('aria-keyshortcuts'), null);
       assert.equal(await alternate.getAttribute('aria-haspopup'), 'dialog');
+      const powerCalls = () => shortcutModePage.evaluate(() => window.bayitTest.calls.filter(request => request.domain === 'switch'));
       await toggle.evaluate(async button => {
         button.dispatchEvent(new PointerEvent('pointerdown', { button: 0, pointerId: 12, pointerType: 'touch', isPrimary: true }));
         await new Promise(resolve => setTimeout(resolve, 530));
-        button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 12, pointerType: 'touch', isPrimary: true }));
+        button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, composed: true,
+          pointerId: 12, pointerType: 'touch', isPrimary: true }));
         button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
       });
+      assert.deepEqual(await powerCalls(), [], 'A pointer hold never toggles the switch');
+      await toggle.evaluate(button => {
+        button.dispatchEvent(new PointerEvent('pointerdown', { button: 0, pointerId: 13, pointerType: 'touch', isPrimary: true }));
+        const releaseAt = performance.now() + 530;
+        // Keep the hold timeout queued until after the pointer release.
+        while (performance.now() < releaseAt) { /* wait for the simulated hold */ }
+        button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, composed: true,
+          pointerId: 13, pointerType: 'touch', isPrimary: true }));
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+      });
+      assert.deepEqual(await powerCalls(), [], 'A delayed hold timer never turns the release into a tap');
       await toggle.press('Shift+Enter');
+      assert.deepEqual(await powerCalls(), [], 'Shift+Enter never toggles the switch');
       await toggle.press('Shift+Space');
+      assert.deepEqual(await powerCalls(), [], 'Shift+Space never toggles the switch');
+      await toggle.evaluate(button => {
+        const key = { key: ' ', code: 'Space', shiftKey: true, bubbles: true, composed: true, cancelable: true };
+        button.dispatchEvent(new KeyboardEvent('keydown', key));
+        button.dispatchEvent(new KeyboardEvent('keyup', key));
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      });
+      assert.deepEqual(await powerCalls(), [], 'A synthesized click after a details key is consumed');
       assert.equal(await switchDetails.count(), 0);
-      const powerCalls = () => shortcutModePage.evaluate(() => window.bayitTest.calls.filter(request => request.domain === 'switch'));
-      assert.deepEqual(await powerCalls(), []);
       await toggle.tap();
       await shortcutModePage.waitForFunction(() => window.bayitTest.calls.some(request => request.domain === 'switch'));
       assert.deepEqual(await powerCalls(), [{ type:'call_service', domain:'switch', service:'turn_on',
