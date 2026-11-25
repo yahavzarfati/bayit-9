@@ -125,6 +125,7 @@ try {
     const otherPage = await otherContext.newPage();
     await otherPage.goto(target, { waitUntil: 'domcontentloaded' });
     await otherPage.locator('bayit-dashboard .shell[data-background="aurora"]').waitFor();
+    await appearance.locator('.appearance-layout > summary').click();
     await appearance.getByRole('button', { name: 'Save as household defaults', exact: true }).click();
     await poll('the household wallpaper to be stored in Home Assistant', async () => {
       const saved = await api.command('lovelace/config', { url_path: dashboard.url_path, force: true });
