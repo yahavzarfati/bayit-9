@@ -39,6 +39,8 @@ Each room section has a `kind`, optional `id` and `title`, and an ordered list o
 
 In **Rooms → Device display**, a temperature sensor can use **Compact temperature graph** and a custom line color. The tile shows the reported temperature and the last 24 hours. Select it to open the sensor's Home Assistant details. In YAML, map each sensor to a six-digit hex color under `room_temperature_graph_colors` in its room override.
 
+In **Customize home → Appearance**, **Align dashboard to the left on wide screens** places the toolbar and room grid together on the left on tablets and desktop. In YAML, set `wide_alignment: left`.
+
 In **Rooms**, use **Room name line break in classic layout** to choose where a multiword room name breaks on its Home card. In YAML, set `classic_title_break: 1` in that room's `room_overrides` to break after the first word. The top-title layout and the room panel use the full room name.
 
 When adding a device from an automatic room, select **Keep in the automatic room too** to show it in both rooms. Its Home Assistant area stays the same. In YAML, list those devices under `keep_in_automatic_room_entities` in the destination room override.

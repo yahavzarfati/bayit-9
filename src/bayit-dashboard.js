@@ -441,6 +441,7 @@ export function normalizeDashboardConfig(config = {}) {
     popupAliases: new Map(Object.entries(normalizePopupAliases(config.popup_aliases))),
     title: text(config.title) || languages[locale].home,
     background, sharedWallpapers, appearanceSync: config.appearance_sync === true,
+    wideLeft: config.wide_alignment === 'left',
     layout: options.layout.includes(config.layout) ? config.layout : 'classic',
     shape: options.shape.includes(config.shape) ? config.shape : 'soft',
     storageKey, fallbackStorageKeys,
@@ -579,6 +580,7 @@ export class BayitDashboard extends HTMLElement {
     n.shell.lang = next.locale;
     n.shell.dir = next.locale === 'he' ? 'rtl' : 'ltr';
     n.shell.dataset.page = String(next.page);
+    n.shell.toggleAttribute('data-wide-left', next.wideLeft);
     n.shell.style.setProperty('--bayit-room-rows', String(Math.max(1, Math.ceil(next.rooms.length / 2))));
     n.shell.style.setProperty('--bayit-room-rows-wide', String(Math.max(1, Math.ceil(next.rooms.length / 4))));
     setText(n.title, next.title);

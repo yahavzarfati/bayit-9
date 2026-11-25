@@ -1111,6 +1111,7 @@ export function generateDashboard(config = {}, hass = {}) {
     page: true,
     ...(config.fullscreen === true && { fullscreen: true }),
     ...(config.appearance_sync === true && { appearance_sync: true }),
+    ...(config.wide_alignment === 'left' && { wide_alignment: 'left' }),
     locale,
     title,
     rooms: discoverRooms(config, hass, locale),

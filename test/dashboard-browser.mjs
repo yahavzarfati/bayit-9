@@ -1052,6 +1052,13 @@ if (query.has('home-room-sizing')) {
   if (count !== 3) selected.room_overrides = { fixture_room_0:{classic_title_break:1} };
   if (query.has('header')) selected.layout = 'header';
 }
+if (query.has('wide-home-profile')) {
+  selected.wide_alignment = query.get('wide-alignment') || undefined;
+  selected.toolbar = [
+    ...Array.from({length:5}, (_,index) => ({ kind:'link', path:'/profile-' + (index + 1), label:'View ' + (index + 1) })),
+    { kind:'settings' },
+  ];
+}
 const config = Strategy.generate(selected, query.has('empty') ? { ...hass, states: {} } : hass);
 const cardConfig = { ...config.views[0].cards[0],
   ...(query.has('embedded-popup-card') && { page: false }),
@@ -1073,7 +1080,7 @@ if (query.has('editor')) {
     ...((query.has('toolbar-panels') || query.has('automation-compact') || query.has('overview-opt-in') || query.has('lighting-count') ||
       query.has('preset-shortcut') || query.has('entrance-popup-position') || query.has('timer-usage') ||
       query.has('swing-unreported') || query.has('temperature-source') || query.has('room-temperature-chart') || query.has('dual-light-details') ||
-      query.has('compact-light-reading')) && selected) });
+      query.has('compact-light-reading') || query.has('wide-home-profile')) && selected) });
   editor.hass = hass;
   editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
   document.querySelector('#editor').append(editor);
@@ -2079,6 +2086,55 @@ async function assertShortcutDetailRoutes(browser) {
     assert.deepEqual(await commands(), []);
   } finally {
     await page.close();
+  }
+}
+
+async function assertWideHomeAlignment(browser) {
+  const measurements = async page => {
+    const room = page.getByRole('article').first();
+    return room.evaluate(el => {
+      const root = el.getRootNode();
+      const grid = el.parentElement;
+      const slots = [...root.querySelectorAll('.toolbar-actions > .chrome-button:not([hidden])')];
+      const coords = node => {
+        const box = node.getBoundingClientRect();
+        return [Math.round(box.left), Math.round(box.width)];
+      };
+      return { rooms:coords(grid), nav:coords(slots[0].parentElement), buttons:slots.map(button => coords(button)[0]) };
+    });
+  };
+  for (const locale of ['en','he']) {
+    const page=await browser.newPage({viewport:{width:391,height:846},reducedMotion:'reduce'});
+    const url=base+'?room-status&wide-home-profile&locale='+locale;
+    const left='&wide-alignment=left';
+    try {
+      await page.goto(url);
+      const phone=await measurements(page);
+      await page.goto(url+left);
+      assert.deepEqual(await measurements(page),phone,'The optional alignment starts above phone widths');
+      for (const [width,inset,span] of [[768,8,430],[1024,16,900]]) {
+        await page.setViewportSize({width,height:846});
+        const geometry=await measurements(page);
+        assert.deepEqual(geometry.rooms,[inset,span]);
+        assert.deepEqual(geometry.nav,[inset,span]);
+        assert.equal(geometry.buttons.length,6);
+        assert.equal(geometry.buttons[0],inset);
+        assert.ok(Math.abs(geometry.buttons[5] - inset - (span+8)*5/6)<=1);
+      }
+      await page.goto(url+'&wide-alignment=unsupported');
+      const defaultWide=await measurements(page);
+      assert.deepEqual(defaultWide.rooms,[62,900]);
+      assert.ok(defaultWide.nav[0]>defaultWide.rooms[0]);
+      await page.goto(url+left+'&editor');
+      const he=locale==='he';
+      await page.getByText(he?'מראה':'Appearance',{exact:true}).click();
+      const setting=page.getByRole('checkbox',{name:he?'הצמדת הדשבורד לשמאל במסכים רחבים':'Align dashboard to the left on wide screens',exact:true});
+      assert.equal(await setting.isChecked(),true);
+      await setting.uncheck();
+      assert.equal(await page.evaluate(()=>window.latest.wide_alignment),undefined);
+      await setting.check();
+      assert.equal(await page.evaluate(()=>window.latest.wide_alignment),'left');
+    } finally { await page.close(); }
   }
 }
 
@@ -4641,6 +4697,7 @@ try {
       console.log(engine + ': per-room device icon editing, native picker, fallback and reset');
       await assertHeaderRoomLayout(browser);
       await assertClassicRoomTitleLanes(browser);
+      await assertWideHomeAlignment(browser);
       console.log(engine + ': room titles, responsive shortcut lanes and keyboard focus');
       await assertSetupFooterLayout(browser);
       console.log(engine + ': setup footer stays clear of the scrollable editor');

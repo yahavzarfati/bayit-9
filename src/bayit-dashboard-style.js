@@ -1120,7 +1120,37 @@ export const styles = `
     }
     .room-status { font-size: 12px; }
   }
+  @container (min-width: 421px) {
+    .shell[data-page=true][data-wide-left] {
+      --wide-left-inset: 8px;
+      --wide-left-content: min(430px,calc(100cqi - 32px));
+    }
+    .shell[data-page=true][data-wide-left] :is(.room-scroll,.toolbar) {
+      --edge: var(--wide-left-inset);
+    }
+    .shell[data-page=true][data-wide-left] .room-scroll { padding-inline: var(--wide-left-inset); }
+    .shell[data-page=true][data-wide-left] :is(.rooms,.toolbar-actions) {
+      width: min(100%,var(--wide-left-content));
+      margin-left: 0;
+      margin-right: auto;
+    }
+    .shell[data-page=true][data-wide-left] .toolbar-actions:not(:has(.chrome-button:nth-child(5 of .chrome-button:not([hidden])))) {
+      justify-content: flex-start;
+    }
+    .shell[data-page=true][data-wide-left] .toolbar-actions:has(> :nth-child(6 of .chrome-button:not([hidden]))):not(:has(> :nth-child(7 of .chrome-button:not([hidden])))) {
+      --chrome-size: 48px;
+      --chrome-icon-size: 24px;
+      display: grid;
+      grid-template-columns: repeat(6,minmax(0,1fr));
+      justify-items: start;
+      gap: 8px;
+    }
+  }
   @container (min-width: 900px) {
+    .shell[data-page=true][data-wide-left] {
+      --wide-left-inset: 16px;
+      --wide-left-content: min(900px,calc(100cqi - 96px));
+    }
     .shell[data-page=true] {
       --room-rows: var(--bayit-room-rows-wide,3);
       --room-block-limit: max(164px,calc(var(--room-available) / 2 - var(--room-gap)));
