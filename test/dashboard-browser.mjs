@@ -2762,6 +2762,10 @@ try {
         const securityRails = securityDialog.locator('[data-cover-rail]');
         assert.equal(await securityRails.count(), 2);
         assert.equal(await securityDialog.locator('[data-action="set_position"]').count(), 0);
+        if (width === 390) {
+          // The scrollbar in the installed Security screen leaves about 302px for these tiles.
+          await securityRails.first().evaluate(card => { card.parentElement.style.maxInlineSize = '302px'; });
+        }
         const layout = await securityRails.evaluateAll(cards => {
           const top = cards.map(card => card.getBoundingClientRect().top);
           const bounds = cards.flatMap(card => [...card.querySelectorAll('.device-panel-launch, .basic-actions button')]

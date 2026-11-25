@@ -640,12 +640,13 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
     --ha-card-border-color: var(--soft-line); --primary-text-color: var(--ink); --secondary-text-color: var(--secondary); }
   .toolbar-device, .toolbar-link { min-width: 0; }
   .toolbar-section[data-section=covers] .toolbar-section-items:has(> [data-cover-rail] ~ [data-cover-rail]) {
-    grid-template-columns: repeat(auto-fit,minmax(min(100%,max(150px,calc((100% - 8px) / 2))),1fr));
+    /* Three 44px commands, two 3px gaps, padding and a border. */
+    grid-template-columns: repeat(auto-fit,minmax(min(100%,max(146px,calc((100% - 8px) / 2))),1fr));
   }
   .toolbar-section[data-section=covers] .toolbar-section-items:has(> [data-cover-rail]) > :not([data-cover-rail]) {
     grid-column: 1 / -1;
   }
-  [data-cover-rail] > .device[data-compact=cover] { padding: 5px; }
+  [data-cover-rail] > .device[data-compact=cover] { padding: 5px 3px; }
   [data-cover-rail] .device[data-compact=cover] .basic-actions {
     grid-template-columns: repeat(auto-fit,minmax(44px,1fr));
   }
