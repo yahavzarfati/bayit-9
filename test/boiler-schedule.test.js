@@ -124,6 +124,33 @@ test('configured guarded action uses strict server revision and response without
   assert.equal(writes().length, 1);
 });
 
+test('guarded schedules use the same fixed duration grid in records and writes regardless of immediate timer settings', async () => {
+  const timed = { ...boiler.timed, min_minutes: 1, max_minutes: 75, step_minutes: 1 };
+  const initial = [row(), row('offgrid', { ...timerData, duration: 17 })];
+  const guarded = fixture({ ...boiler, timed, schedule: guard }, initial);
+  assert.deepEqual(guarded.controller.limits, { min: 15, max: 300, step: 15 });
+  assert.equal(guarded.controller.defaultDuration, 90);
+  const [editable, offGrid] = await guarded.controller.list();
+  assert.deepEqual([editable.mutable, editable.duration, offGrid.mutable], [true, 90, false]);
+  for (const duration of [1, 17, 301]) {
+    await assert.rejects(() => guarded.controller.create({ ...draft, duration }), { code: 'invalid' });
+    await assert.rejects(() => guarded.controller.update(editable, { ...draft, duration }), { code: 'invalid' });
+  }
+  assert.deepEqual(guarded.writes(), []);
+  guarded.onWrite(({ service_data }) => {
+    guarded.database.get(editable.id).timeslots[0].actions[0].service_data.duration = service_data.duration;
+    guarded.database.get(editable.id).name = service_data.schedule_name;
+    return { response: { success: true } };
+  });
+  await guarded.controller.update(guarded.controller.revisionOf(editable), { ...draft, duration: 300 });
+  assert.equal(guarded.writes()[0].service_data.duration, 300);
+
+  const native = fixture({ ...boiler, timed }, initial).controller;
+  assert.deepEqual(native.limits, { min: 1, max: 75, step: 1 });
+  assert.equal(native.defaultDuration, 75);
+  assert.deepEqual((await native.list()).map(record => record.mutable), [false, true]);
+});
+
 test('rejects invalid days, off-grid minutes and non-admin writes; never treats a silent acknowledgement as success', async () => {
   const { controller, writes, hass } = fixture();
   for (const bad of [{ weekdays: [] }, { weekdays: ['sun', 'sun'] }, { time: '07:31' }, { duration: 301 }]) {

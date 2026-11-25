@@ -10,10 +10,12 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
   '<script type="module">import "/dashboard.js";(' + function () {
     const params = new URL(location.href).searchParams;
     const locale = params.get('locale');
+    const guardedSchedule = params.has('guarded-schedule');
     const timing = params.has('compact') ? { min_minutes: 1, max_minutes: 300, step_minutes: 1, presets: [] }
       : { min_minutes: 15, max_minutes: 60, step_minutes: 15 };
     const boiler = { entity: 'switch.fixture_boiler', name: 'Fixture boiler', kind: 'boiler',
       ...(params.has('stacked') && { boiler_timer_with_details: true }),
+      ...(guardedSchedule && { schedule: { save_script: 'script.fixture_schedule_save', delete_script: 'script.fixture_schedule_delete' } }),
       ...(!params.has('untimed') && { timed: { simple_timer_entity: 'sensor.fixture_runtime', ...timing } }) };
     const sensors = Array.from({ length: 12 }, (_, index) => ({
       entity: 'sensor.fixture_' + index, name: 'Fixture reading ' + index,
@@ -25,7 +27,9 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
         entry_id: 'fixture-runtime', switch_entity_id: boiler.entity, timer_state: 'idle', device_active: false,
       } },
     };
-    const schedules = ['Morning', 'Evening'].map((name, index) => ({
+    const names = ['Morning', 'Evening'];
+    if (guardedSchedule) names.push(...Array.from({ length: 10 }, (_, index) => 'Fixture schedule ' + index));
+    const schedules = names.map((name, index) => ({
       schedule_id: 'fixture' + index, entity_id: 'switch.schedule_fixture' + index, name, enabled: true,
       weekdays: ['daily'], repeat_type: 'repeat', start_date: null, end_date: null, tags: [],
       timeslots: [{ start: index ? '17:30:00' : '07:30:00', stop: null, conditions: [],
@@ -34,7 +38,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     }));
     const requests = [];
     const moreInfo = [];
-    const scheduleActions = params.has('schedule-actions');
+    const scheduleActions = params.has('schedule-actions') || guardedSchedule;
     const scheduleCalls = [];
     const card = document.createElement('bayit-dashboard');
     card.setConfig({ locale, page: params.has('routed'), rooms: [
@@ -47,8 +51,9 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     if (scheduleActions) {
       services.scheduler.edit = {};
       services.switch = { turn_on: {}, turn_off: {} };
-      for (const schedule of schedules) states[schedule.entity_id] = { state: 'on', attributes: {} };
+      for (const schedule of schedules) states[schedule.entity_id] = { state: 'on', last_updated: 'fixture-revision', attributes: {} };
     }
+    if (guardedSchedule) services.script = { fixture_schedule_save: {}, fixture_schedule_delete: {} };
     const hass = {
       user: { is_admin: true }, states, services,
       callWS(request) {
@@ -58,6 +63,28 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
           return Promise.resolve(schedules.find(schedule => schedule.schedule_id === request.schedule_id));
         }
         if (scheduleActions && request.type === 'call_service') {
+          if (guardedSchedule) {
+            const payload = request.service_data;
+            const existing = payload?.schedule_entity;
+            if (request.domain !== 'script' || request.service !== 'fixture_schedule_save' || request.return_response !== true
+                || payload.duration < 15 || payload.duration > 300 || payload.duration % 15 || !payload.weekdays.length
+                || (existing && payload.expected_revision !== states[existing]?.last_updated)) {
+              return Promise.reject(new Error('Unexpected guarded write in schedule fixture'));
+            }
+            const record = existing ? schedules.find(item => item.entity_id === existing) : {
+              ...structuredClone(schedules[0]), schedule_id: 'created', entity_id: 'switch.schedule_created',
+            };
+            record.name = payload.schedule_name;
+            record.weekdays = payload.weekdays;
+            record.timeslots[0].start = payload.schedule_time + ':00';
+            record.timeslots[0].actions[0].service_data.duration = payload.duration;
+            if (!existing) {
+              schedules.push(record);
+              states[record.entity_id] = { state: 'on', last_updated: 'fixture-created', attributes: {} };
+            }
+            scheduleCalls.push(request);
+            return Promise.resolve({ response: { success: true } });
+          }
           const schedule = schedules.find(entry => entry.entity_id === request.target?.entity_id);
           if (request.domain !== 'switch' || request.service !== 'turn_off' || !schedule) {
             return Promise.reject(new Error('Unexpected service in schedule fixture'));
@@ -353,6 +380,99 @@ try {
         { type: 'call_service', domain: 'switch', service: 'turn_off', service_data: {},
           target: { entity_id: 'switch.schedule_fixture0' } },
       ]);
+
+      // Enough rows to put the inline editor well below the trigger at a phone viewport.
+      await stackedPage.goto(stackedUrl + '&guarded-schedule&routed');
+      await stackedShortcut.tap();
+      await scheduleRows.getByText('Fixture schedule 9', { exact: true }).waitFor();
+      await stackedDialog.evaluate(node => Promise.allSettled(node.getAnimations().map(animation => animation.finished)));
+      const english = locale === 'en';
+      const dialogViewport = stackedDialog.locator('.modal-body');
+      const rootScroll = () => stackedDialog.evaluate(node => [window.scrollY, node.getRootNode().querySelector('.room-scroll').scrollTop]);
+      const focused = node => node.getRootNode().activeElement === node;
+      const startingPageScroll = await rootScroll();
+      const add = stackedDialog.getByRole('button', { name: english ? 'Add schedule' : 'הוספת תזמון', exact: true });
+      const heading = form.getByRole('heading');
+      const choices = form.locator('select');
+      const cancel = form.getByRole('button', { name: english ? 'Cancel' : 'ביטול', exact: true });
+      const save = form.getByRole('button', { name: english ? 'Save schedule' : 'שמירת תזמון', exact: true });
+      async function openScheduleForm(trigger) {
+        await trigger.scrollIntoViewIfNeeded();
+        const start = await dialogViewport.evaluate(node => node.scrollTop);
+        await trigger.tap();
+        await heading.waitFor();
+        assert.equal(await heading.evaluate(focused), true, 'Opening a form focuses its heading without a software keyboard');
+        assert.equal(await heading.evaluate(node => {
+          const heading = node.getBoundingClientRect();
+          const body = node.closest('.modal-body').getBoundingClientRect();
+          return heading.top >= body.top && heading.bottom <= body.bottom;
+        }), true, 'The form heading is inside the visible dialog immediately after tapping');
+        assert.ok(await dialogViewport.evaluate(node => node.scrollTop) > start);
+        assert.deepEqual(await rootScroll(), startingPageScroll);
+        return start;
+      }
+      async function expectFormReturn(trigger) {
+        await form.waitFor({ state: 'hidden' });
+        await trigger.waitFor();
+        await stackedPage.waitForFunction(selector => {
+          const root = document.querySelector('bayit-dashboard').shadowRoot;
+          return root.activeElement?.matches(selector);
+        }, await trigger.evaluate(node => node.getAttribute('aria-label')
+          ? 'button[aria-label=' + JSON.stringify(node.getAttribute('aria-label')) + ']' : 'button.schedule-add'));
+        assert.equal(await trigger.evaluate(focused), true);
+        assert.equal(await trigger.evaluate(node => {
+          const control = node.getBoundingClientRect();
+          const body = node.closest('.modal-body').getBoundingClientRect();
+          return control.top >= body.top - 1 && control.bottom <= body.bottom + 1;
+        }), true, 'The originating control is revealed again');
+        assert.deepEqual(await rootScroll(), startingPageScroll);
+      }
+      await openScheduleForm(add);
+      assert.deepEqual(await choices.locator('option').evaluateAll(nodes => nodes.map(node => Number(node.value))),
+        Array.from({ length: 20 }, (_, index) => (index + 1) * 15));
+      assert.equal(await choices.inputValue(), '90');
+      await cancel.tap();
+      await expectFormReturn(add);
+      assert.deepEqual(await stackedPage.evaluate(() => window.fixture.scheduleCalls), []);
+
+      await openScheduleForm(edit);
+      assert.equal(await choices.inputValue(), '30');
+      await cancel.tap();
+      await expectFormReturn(edit);
+      await openScheduleForm(edit);
+      await choices.selectOption('45');
+      await save.tap();
+      await expectFormReturn(edit);
+      assert.equal(await stackedPage.evaluate(() => window.fixture.scheduleCalls[0].service_data.duration), 45);
+      await openScheduleForm(add);
+      await form.locator('input[type=text]').fill('New fixture');
+      await choices.selectOption('15');
+      await form.getByRole('button', { name: english ? 'Every day' : 'כל יום', exact: true }).tap();
+      await save.tap();
+      await expectFormReturn(add);
+      await scheduleRows.getByText('New fixture', { exact: true }).waitFor();
+      assert.deepEqual(await stackedPage.evaluate(() => window.fixture.scheduleCalls.map(({ domain, service, service_data }) =>
+        [domain, service, service_data.schedule_entity, service_data.duration])), [
+        ['script', 'fixture_schedule_save', 'switch.schedule_fixture0', 45], ['script', 'fixture_schedule_save', '', 15],
+      ]);
+      assert.equal(await stackedRange.getAttribute('step'), '1');
+
+      await add.scrollIntoViewIfNeeded();
+      await dialogViewport.evaluate(node => { node.scrollTop += 32; });
+      const previousBoilerScroll = Math.round(await openScheduleForm(add));
+      assert.ok(previousBoilerScroll > 0);
+      const closeBoiler = stackedDialog.getByRole('button', { name: words.close, exact: true });
+      await closeBoiler.tap();
+      await stackedDialog.waitFor({ state: 'hidden' });
+      const savedBoilerScroll = await stackedPage.evaluate(() => {
+        const key = Object.keys(sessionStorage).find(key => key.startsWith('bayit-9.popup-scroll.v1:')
+          && key.includes('#device/bath/switch.fixture_boiler'));
+        return Number(sessionStorage.getItem(key));
+      });
+      assert.equal(savedBoilerScroll, previousBoilerScroll, 'Dismissing a draft keeps the pre-editor scroll offset');
+      await stackedShortcut.tap();
+      await scheduleRows.getByText('New fixture', { exact: true }).waitFor();
+      assert.equal(Math.round(await dialogViewport.evaluate(node => node.scrollTop)), previousBoilerScroll);
 
       const editorWords = locale === 'he' ? {
         profiles: 'שליטה בדוד ובתנורים', edit: 'עריכה', save: 'שמירת בקר',

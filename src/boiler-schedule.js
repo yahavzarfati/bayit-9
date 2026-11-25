@@ -43,7 +43,10 @@ function boilerBinding(config, hass) {
     && state.attributes.switch_entity_id === config.entity ? { timer, entryId } : null;
 }
 
+const guardedScheduleLimits = Object.freeze({ min: 15, max: 300, step: 15 });
+
 function limitsFor(config) {
+  if (config.schedule !== undefined) return guardedScheduleLimits;
   const { min_minutes: min = 15, max_minutes: max = 300, step_minutes: step = 15 } = config.timed;
   if (![min, max, step].every(Number.isSafeInteger) || min < 1 || max > 360 || max < min || step < 1) {
     reject('unavailable');
@@ -171,7 +174,6 @@ export function createBoilerScheduler(config, getHass, { locale = 'en', retry = 
     if (name === null || name.length > 40 || !TIME.test(draft.time) || !validDuration(draft.duration, limits) || !days) {
       reject('invalid');
     }
-    if (useGuards && (draft.duration < 15 || draft.duration > 300 || draft.duration % 15 !== 0)) reject('invalid');
     return { name, time: draft.time, duration: draft.duration, weekdays: days };
   }
 
@@ -330,12 +332,13 @@ const styles = [
   '.bayit-boiler-schedules .schedule-form label { display:grid; gap:5px; flex:1; min-width:0; }',
   '.bayit-boiler-schedules .schedule-form input,.bayit-boiler-schedules .schedule-form select { width:100%; box-sizing:border-box; min-height:44px; font:inherit; color:inherit; border:1px solid var(--edge,rgba(255,255,255,.28)); border-radius:10px; background:transparent; padding:6px 9px; }',
   '.bayit-boiler-schedules .schedule-form select option { color:CanvasText; background:Canvas; }',
+  '.bayit-boiler-schedules .schedule-form-title { margin:0; font-size:1em; }',
   '.bayit-boiler-schedules .schedule-day-group { margin:0; min-width:0; border:0; padding:0; display:grid; gap:7px; }',
   '.bayit-boiler-schedules .schedule-description { margin:0; }',
   '.bayit-boiler-schedules .schedule-confirm { border:1px solid var(--critical,currentColor); display:grid; gap:8px; padding:10px; border-radius:10px; }',
 ].join('\n');
 
-export function createBoilerSchedulePanel(config, { host, hass, locale = 'en', compact = false }) {
+export function createBoilerSchedulePanel(config, { host, viewport, hass, locale = 'en', compact = false, pauseScrollMemory }) {
   const t = text[locale] ?? text.en;
   const make = (tag, cls, value) => {
     const node = host.ownerDocument.createElement(tag);
@@ -352,8 +355,11 @@ export function createBoilerSchedulePanel(config, { host, hass, locale = 'en', c
   let unsubscribe;
   let listRows = [];
   let draft;
+  let formOrigin;
+  let resumeScrollMemory;
   let confirmedRemove = false;
   let ready = false;
+  const editControls = new Map();
   const region = make('section', compact ? 'bayit-boiler-schedules schedule-compact' : 'bayit-boiler-schedules');
   region.lang = locale;
   region.dir = locale === 'he' ? 'rtl' : 'ltr';
@@ -408,6 +414,7 @@ export function createBoilerSchedulePanel(config, { host, hass, locale = 'en', c
 
   function renderList() {
     const caps = schedule.capabilities();
+    editControls.clear();
     list.replaceChildren();
     for (const row of listRows) {
       const tile = make('section', 'schedule-row');
@@ -415,7 +422,10 @@ export function createBoilerSchedulePanel(config, { host, hass, locale = 'en', c
       const canToggle = row.mutable && caps.toggle;
       const canEdit = row.mutable && caps.edit;
       const edit = canEdit ? button(t.edit, () => openForm(row)) : undefined;
-      if (edit) edit.setAttribute('aria-label', t.edit + ' · ' + rowName);
+      if (edit) {
+        edit.setAttribute('aria-label', t.edit + ' · ' + rowName);
+        editControls.set(row.id, edit);
+      }
       const summary = compact && edit ? edit : make('div');
       summary.classList.add('schedule-summary');
       summary.replaceChildren(make('strong', '', (compact ? rowName : row.title || row.name) || t.name));
@@ -485,20 +495,50 @@ export function createBoilerSchedulePanel(config, { host, hass, locale = 'en', c
     }
   }
 
+  function focusInPanel(target, atStart = false) {
+    target.focus({ preventScroll: true });
+    if (!viewport?.offsetHeight) return;
+    const visible = viewport.getBoundingClientRect();
+    const bounds = target.getBoundingClientRect();
+    const above = bounds.top - visible.top - 8;
+    const below = bounds.bottom - visible.bottom + 8;
+    const scale = visible.height / viewport.offsetHeight;
+    if (scale > 0) viewport.scrollTop += (atStart || above < 0 ? above : Math.max(0, below)) / scale;
+  }
+
+  function resumeRememberingScroll() {
+    resumeScrollMemory?.();
+    resumeScrollMemory = undefined;
+  }
+
+  function restoreFormOrigin({ id, scrollTop }) {
+    resumeRememberingScroll();
+    if (viewport) viewport.scrollTop = scrollTop;
+    const control = id ? editControls.get(id) : add;
+    focusInPanel(control && !control.hidden && !control.disabled ? control : refreshing);
+  }
+
   function closeForm() {
+    const origin = formOrigin;
     draft = undefined;
+    formOrigin = undefined;
     confirmedRemove = false;
     form.hidden = true;
     form.replaceChildren();
     syncButtons();
+    return origin;
   }
 
   function openForm(row) {
     if (pending || !ready || !schedule || row && !row.mutable) return;
     const selected = new Set(row?.weekdays);
+    formOrigin = { id: row?.id, scrollTop: viewport?.scrollTop ?? 0 };
+    resumeScrollMemory = pauseScrollMemory?.();
     draft = row ? schedule.revisionOf(row) : {};
     message('');
     form.replaceChildren();
+    const heading = make('h3', 'schedule-form-title', row ? t.edit + ' · ' + (row.name || row.title || row.time) : t.add);
+    heading.tabIndex = -1;
     const fields = make('div', 'schedule-fields');
     const title = make('input');
     title.type = 'text';
@@ -555,7 +595,11 @@ export function createBoilerSchedulePanel(config, { host, hass, locale = 'en', c
     const submit = button(t.save);
     submit.type = 'submit';
     submit.setAttribute('data-schedule-commit', '');
-    commands.append(submit, button(t.cancel, () => { closeForm(); message(''); }));
+    commands.append(submit, button(t.cancel, () => {
+      const origin = closeForm();
+      message(listRows.length ? '' : t.empty);
+      if (origin) restoreFormOrigin(origin);
+    }));
     const confirmation = make('div', 'schedule-confirm');
     confirmation.hidden = true;
     if (row && schedule.capabilities().remove) {
@@ -583,10 +627,10 @@ export function createBoilerSchedulePanel(config, { host, hass, locale = 'en', c
       const payload = { name: title.value, time: time.value, duration: Number(duration.value), weekdays: [...selected] };
       void operate(() => row ? schedule.update(draft, payload) : schedule.create(payload), t.saved);
     };
-    form.append(fields, group, commands, confirmation);
+    form.append(heading, fields, group, commands, confirmation);
     form.hidden = false;
     syncButtons();
-    time.focus({ preventScroll: true });
+    focusInPanel(heading, true);
   }
 
   async function operate(action, success) {
@@ -595,10 +639,11 @@ export function createBoilerSchedulePanel(config, { host, hass, locale = 'en', c
     pending = true;
     message('');
     syncButtons();
+    let origin;
     try {
       await action();
       if (gone) return;
-      closeForm();
+      origin = closeForm();
       message(success);
       await refresh({ quiet: true, keepMessage: true });
     } catch (error) {
@@ -610,6 +655,7 @@ export function createBoilerSchedulePanel(config, { host, hass, locale = 'en', c
       if (!gone) {
         pending = false;
         syncButtons();
+        if (origin) restoreFormOrigin(origin);
       }
     }
   }
@@ -645,6 +691,7 @@ export function createBoilerSchedulePanel(config, { host, hass, locale = 'en', c
       gone = true;
       if (unsubscribe) void Promise.resolve(unsubscribe()).catch(() => {});
       region.remove();
+      resumeRememberingScroll();
     },
   };
 }
