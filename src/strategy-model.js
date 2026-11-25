@@ -7,7 +7,7 @@ import { normalizeMediaRemote } from './media-device-support.mjs';
 import { wallpaperChoices } from './wallpapers.js';
 import { normalizeSharedWallpapers } from './shared-wallpapers.js';
 import { normalizeLightEffectGroups } from './light-effects.js';
-import { normalizePopupAliases } from './popup-routes.js';
+import { normalizePopupAliases, popupRouteFragment } from './popup-routes.js';
 import { calendarAccent, normalizeCalendarAgenda, supportsDailyForecast } from './calendar-agenda.js';
 
 export const CARD_TYPE = 'custom:bayit-dashboard';
@@ -1011,6 +1011,49 @@ function dashboardToolbar(config, hass, roomIds) {
       ...(agenda && { calendar_agenda: agenda }), ...(mediaRemote && { media_remote: mediaRemote }),
       ...(mediaStage && { media_stage: mediaStage }),
       ...(orefMap && { oref_map: orefMap }), ...(vacuumMap && { vacuum_map: vacuumMap }) };
+  });
+}
+
+export function automaticToolbarKinds(context = {}) {
+  return [context.automations?.length ? 'automations' : 'activity', 'security', 'presence', 'weather', 'energy', 'overview', 'settings'];
+}
+
+export function settingsScreenEntries(config) {
+  const configured = config.toolbar?.filter(item => item.placement === 'settings');
+  if (configured?.length) return configured;
+  const linked = new Set(config.toolbar?.filter(item => item.placement === 'linked').map(item => item.kind));
+  return ['overview', 'sensors', 'calendar', 'media', 'vacuum'].filter(kind => !linked.has(kind)).flatMap(kind => {
+    const entities = kind === 'overview' ? config.overview : config.context?.[kind];
+    return entities?.length ? [{ kind, entities }] : [];
+  });
+}
+
+export function popupAliasDestinations(config, hass = {}) {
+  const card = generateDashboard(config, hass).views[0].cards[0];
+  const roomLinks = card.rooms.flatMap(room => [
+    { kind:'room', room:room.id, name:room.name },
+    ...room.entities.map(item => ({ kind:'device', room:room.id, entity:item.entity,
+      name:item.name || item.entity, roomName:room.name })),
+  ]);
+  const bar = card.toolbar?.filter(item => !item.placement) ?? automaticToolbarKinds(card.context)
+    .filter(kind => ['activity','settings'].includes(kind) ||
+      (kind === 'overview' ? card.overview : card.context?.[kind])?.length || (kind === 'energy' && hass.panels?.energy))
+    .map(kind => ({ kind }));
+  if (card.fullscreen && !bar.some(item => item.kind === 'settings')) bar.push({ kind:'settings' });
+  const extra = bar.some(item => item.kind === 'settings') ? settingsScreenEntries(card) : [];
+  const linked = card.toolbar?.filter(item => item.placement === 'linked') ?? [];
+  const panels = new Map();
+  for (const item of [...bar, ...extra, ...linked]) {
+    if (item.kind === 'link') continue;
+    const id = item.id || item.kind;
+    if (!panels.has(id)) panels.set(id, item);
+    else if (card.toolbar) panels.set(id, null);
+  }
+  const panelLinks = [...panels].flatMap(([panel, item]) => item
+    ? [{ kind:'panel', panel, name:item.label, panelKind:item.kind }] : []);
+  return [...roomLinks, ...panelLinks].flatMap(route => {
+    const fragment = popupRouteFragment(route);
+    return fragment ? [{ ...route, fragment }] : [];
   });
 }
 

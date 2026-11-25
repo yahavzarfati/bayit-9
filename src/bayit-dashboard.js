@@ -1,11 +1,11 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
-import { classicRoomTitle, DEVICE_ICONS, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isToolbarReadouts, isVacuumProgramAction,
+import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isToolbarReadouts, isVacuumProgramAction,
   isCompactAutomationActions, isEnergyReadingCards, isWeatherReadingsList,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
   normalizeRoomVacuumSummary, normalizeToolbarReadout, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
   ROOM_PANEL_KINDS, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
-  sensorComparisonOptions, sensorSeriesColor, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
+  sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { allowsCoverRailAction, climatePowerServiceRegistered, createDeviceController, getDeviceModel, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
@@ -56,7 +56,6 @@ const controlIcons = {
 };
 const curtainControlIcons = { open: 'mdi:arrow-expand-horizontal', close: 'mdi:arrow-collapse-horizontal' };
 const contextKeys = ['automations', 'security', 'presence', 'weather', 'energy', 'media', 'vacuum', 'calendar', 'sensors', 'devices'];
-const automaticToolbarContext = contextKeys.slice(0, 5);
 const toolbarIcons = {
   activity: 'mdi:home-automation', automations: 'mdi:home-automation', security: 'mdi:shield-home-outline',
   presence: 'mdi:account-group-outline', weather: 'mdi:weather-partly-cloudy', energy: 'mdi:meter-electric-outline',
@@ -1005,8 +1004,7 @@ export class BayitDashboard extends HTMLElement {
 
   buildToolbar() {
     const settings = this.config;
-    const automatic = [settings.context.automations.length ? 'automations' : 'activity',
-      ...automaticToolbarContext.slice(1), 'overview', 'settings'];
+    const automatic = automaticToolbarKinds(settings.context);
     const items = settings.toolbar?.filter(item => !item.placement) ?? automatic.map(kind => ({
       kind, icon: toolbarIcons[kind], ...(kind === 'presence' && { presence_dynamic_icon: true }),
     }));
@@ -2134,14 +2132,9 @@ export class BayitDashboard extends HTMLElement {
   }
 
   settingsScreens() {
-    const extra = ['overview','sensors','calendar','media','vacuum'];
-    const configured = this.config.toolbar?.filter(item => item.placement === 'settings');
-    const linkedKinds = new Set(this.config.toolbar?.filter(item => item.placement === 'linked').map(item => item.kind));
-    const automatic = extra.filter(kind => !linkedKinds.has(kind)).flatMap(kind => {
-      const entries = kind === 'overview' ? this.config.overview : this.config.context[kind];
-      return entries.length ? [{ kind, icon: toolbarIcons[kind], entities: entries }] : [];
-    });
-    return (configured?.length ? configured : automatic).map(item => ({ ...item, name: item.label || this.t(item.kind) }));
+    return settingsScreenEntries(this.config).map(item => ({
+      ...item, icon:item.icon ?? toolbarIcons[item.kind], name:item.label || this.t(item.kind),
+    }));
   }
 
   paintSettings() {

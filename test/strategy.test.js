@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverOverviewEntities, discoverRooms, generateDashboard,
-  normalizeOverviewDiscovery, normalizeProfile, normalizeRoomVacuumSummary, normalizeShortcutDetailRoutes, roomPanelOptions, roomVacuumSummary,
+  normalizeOverviewDiscovery, normalizeProfile, normalizeRoomVacuumSummary, normalizeShortcutDetailRoutes, popupAliasDestinations, roomPanelOptions, roomVacuumSummary,
   selectableRoomEntities, shortcutDetailPanels, suggestedDashboard,
 } from '../src/strategy-model.js';
 import { getDeviceModel } from '../src/device-control.mjs';
@@ -922,6 +922,28 @@ test('keeps opted-in memberships in their automatic room without changing explic
   assert.deepEqual(placements({ [custom]:mirror }, { area_ids:[custom] }), [custom]);
   assert.deepEqual(placements({ [custom]:mirror }, { hidden_entities:[light] }), []);
   assert.deepEqual({ areas:hass.areas, entities:hass.entities, devices:hass.devices }, registry);
+});
+
+test('lists only same-dashboard popup destinations, respecting rooms, hidden devices and screen visibility', () => {
+  const hass = home();
+  const config = { show_unassigned:false, hidden_entities:['light.demo_lamp'], toolbar:[
+    { id:'appear', kind:'settings' },
+    { id:'display', kind:'media', placement:'settings', label:'Media controls' },
+    { id:'vacuum', kind:'vacuum', placement:'linked' },
+    { id:'external', kind:'link', path:'/other/home' },
+  ] };
+  const visible = input => new Set(popupAliasDestinations({ ...config, ...input }, hass).map(item => item.fragment));
+  const direct = visible();
+  for (const value of ['#room-studio', '#device/studio/fan.demo_fan', '#panel/appear', '#panel/display', '#panel/vacuum']) {
+    assert.ok(direct.has(value), value);
+  }
+  for (const value of ['#device/lounge/light.demo_lamp', '#panel/external', '#panel/weather']) assert.ok(!direct.has(value), value);
+  assert.ok(!visible({ toolbar:config.toolbar.slice(1) }).has('#panel/display'));
+  assert.ok(visible({ toolbar:config.toolbar.slice(1), fullscreen:true }).has('#panel/display'));
+  const automatic = visible({ toolbar:undefined });
+  for (const value of ['#panel/activity', '#panel/settings', '#panel/calendar']) assert.ok(automatic.has(value), value);
+  assert.ok(!automatic.has('#panel/weather'));
+  assert.ok(!visible({ toolbar:[{ id:'calendar', kind:'activity' }, { kind:'settings' }] }).has('#panel/calendar'));
 });
 
 test('supports additional dashboard-only rooms in the room order and retains empty rooms', () => {

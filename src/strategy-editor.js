@@ -4,7 +4,7 @@ import {
   isVisibleEntity, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
   normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeRoomIcon, normalizeShortcutDetailEntities, normalizeShortcutDetailRoutes,
   normalizeRoomVacuumSummary, normalizeUnreportedSwingMode,
-  PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, roomShortcutDevices, roomVacuumPresentation, ROOM_VACUUM_SUMMARY_DOMAINS,
+  popupAliasDestinations, PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, roomShortcutDevices, roomVacuumPresentation, ROOM_VACUUM_SUMMARY_DOMAINS,
   selectableRoomEntities, selectedRoomIds,
   shortcutPanelOptions, STRATEGY_NAME, supportsNativeShortcutDetails, supportsShortcutWithoutDetails,
   supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, usesAutomaticRoomDevices,
@@ -15,6 +15,7 @@ import { buildToolbarEditor } from './toolbar-editor.js';
 import { activityKinds, activitySources, normalizeRoomActivities } from './room-appliance.mjs';
 import { getDeviceModel, supportsRoomShutdown } from './device-control.mjs';
 import { normalizeLightEffectGroups } from './light-effects.js';
+import { isPopupFragment, normalizePopupAliases } from './popup-routes.js';
 
 const WORDS = {
   en: {
@@ -93,6 +94,13 @@ const WORDS = {
     addWallpaper: 'Add photo', updateWallpaper: 'Update photo', removeWallpaper: 'Remove photo',
     invalidWallpaperPath: 'Enter a local JPG, PNG, WebP, or AVIF path starting with /local/.',
     toolbar: 'Toolbar and extra screens', fullscreen: 'Hide Home Assistant chrome on this dashboard',
+    popupLinks: 'Popup links', popupLinkEntry: 'Link to edit', popupLinkNew: 'New popup link',
+    popupLinkFragment: 'Old link fragment', popupLinkDestination: 'Popup destination', popupLinkChoose: 'Choose a destination',
+    popupLinkRooms: 'Rooms', popupLinkDevices: 'Room devices', popupLinkScreens: 'Screens', popupLinkUnavailable: 'Destination unavailable',
+    popupLinkAdd: 'Add link', popupLinkUpdate: 'Update link', popupLinkRemove: 'Remove link',
+    popupLinkInvalid: 'Enter only the fragment from the old URL, such as #old-room.',
+    popupLinkConflict: 'This fragment already opens a popup on this dashboard.',
+    popupLinkSelect: 'Choose an available popup on this dashboard.', popupLinkLimit: 'This dashboard has reached the limit for popup links.',
     boilerTimerWithDetails: 'Show the boiler timer with schedule or history',
     scheduleSave: 'Boiler schedule save script (optional)', scheduleDelete: 'Boiler schedule delete script (optional)',
     classic: 'Alongside the controls', header: 'At the top', soft: 'Rounded', circle: 'Circle', square: 'Square',
@@ -200,6 +208,13 @@ const WORDS = {
     addWallpaper: 'הוספת תמונה', updateWallpaper: 'עדכון תמונה', removeWallpaper: 'הסרת תמונה',
     invalidWallpaperPath: 'הזינו נתיב מקומי לקובץ JPG, PNG, WebP או AVIF שמתחיל ב־‎/local/‎.',
     toolbar: 'סרגל ומסכים נוספים', fullscreen: 'הסתרת סרגל Home Assistant בדשבורד הזה',
+    popupLinks: 'קישורים לחלוניות', popupLinkEntry: 'קישור לעריכה', popupLinkNew: 'קישור חדש לחלונית',
+    popupLinkFragment: 'מקטע הקישור הישן', popupLinkDestination: 'יעד הקישור', popupLinkChoose: 'בחירת יעד',
+    popupLinkRooms: 'חדרים', popupLinkDevices: 'מכשירים בחדרים', popupLinkScreens: 'מסכים', popupLinkUnavailable: 'היעד אינו זמין',
+    popupLinkAdd: 'הוספת קישור', popupLinkUpdate: 'עדכון הקישור', popupLinkRemove: 'הסרת הקישור',
+    popupLinkInvalid: 'יש להזין רק את המקטע מהכתובת הישנה, למשל #old-room.',
+    popupLinkConflict: 'המקטע הזה כבר פותח חלונית בדשבורד.',
+    popupLinkSelect: 'בחרו חלונית זמינה בדשבורד הזה.', popupLinkLimit: 'הגעתם למספר המרבי של קישורים לחלוניות בדשבורד.',
     boilerTimerWithDetails: 'הצגת טיימר הדוד לצד התזמון או ההיסטוריה',
     scheduleSave: 'סקריפט לשמירת תזמון הדוד (אופציונלי)', scheduleDelete: 'סקריפט למחיקת תזמון הדוד (אופציונלי)',
     classic: 'לצד הכפתורים', header: 'בראש הכרטיס', soft: 'מעוגל', circle: 'עיגול', square: 'ריבוע',
@@ -2148,6 +2163,90 @@ export class Bayit9StrategyEditor extends HTMLElement {
       disclosure(words.sharedWallpaper, this.#open.sharedWallpapers, open => { this.#open.sharedWallpapers = open; }, editList)];
   }
 
+  #popupLinksPanel(words, language) {
+    const savedLinks = () => {
+      const value = this.#config.popup_aliases;
+      return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    };
+    const entry = node('select', { dir:'ltr' });
+    const fragment = node('input', { dir:'ltr', maxLength:512, autocapitalize:'none', spellcheck:false, placeholder:'#old-room' });
+    const target = node('select');
+    const error = node('p', { className:'room-add-hint' });
+    error.setAttribute('role', 'status');
+    let renderedTargets;
+    const updateTargets = value => {
+      const destinations = popupAliasDestinations(this.#config, this.#hass);
+      const allowed = new Set(destinations.map(item => item.fragment));
+      const unavailable = value && !allowed.has(value) ? value : '';
+      const signature = JSON.stringify([destinations, unavailable]);
+      if (signature !== renderedTargets) {
+        const groups = [['room', words.popupLinkRooms], ['device', words.popupLinkDevices], ['panel', words.popupLinkScreens]];
+        const choices = groups.flatMap(([kind, label]) => {
+          const entries = destinations.filter(item => item.kind === kind).map(item => {
+            const name = item.kind === 'panel' ? item.name || languages[language][item.panelKind] : item.name;
+            return option(item.fragment, item.roomName ? name + ' · ' + item.roomName : name);
+          });
+          return entries.length ? [node('optgroup', { label }, entries)] : [];
+        });
+        if (unavailable) choices.push(option(unavailable, words.popupLinkUnavailable + ' · ' + unavailable));
+        target.replaceChildren(option('', words.popupLinkChoose), ...choices);
+        renderedTargets = signature;
+      }
+      target.value = value;
+      return allowed;
+    };
+    const remember = (links, selected) => {
+      this.#commit({ popup_aliases:Object.keys(links).length ? links : undefined });
+      draw(selected);
+    };
+    const apply = button(words.popupLinkAdd, () => {
+      const source = fragment.value.trim();
+      const destination = target.value;
+      const existing = entry.value;
+      const links = savedLinks();
+      const allowed = updateTargets(destination);
+      if (!isPopupFragment(source)) error.textContent = words.popupLinkInvalid;
+      else if (allowed.has(source) || source !== existing && Object.hasOwn(links, source)) error.textContent = words.popupLinkConflict;
+      else if (!allowed.has(destination)) error.textContent = words.popupLinkSelect;
+      else {
+        const pairs = Object.entries(links);
+        const next = Object.fromEntries(existing ? pairs.map(([key, value]) => key === existing ? [source, destination] : [key, value])
+          : [...pairs, [source, destination]]);
+        if (normalizePopupAliases(next)[source] !== destination) error.textContent = words.popupLinkLimit;
+        else if (source !== existing || links[source] !== destination) remember(next, source);
+        else error.textContent = '';
+      }
+    });
+    const remove = button(words.popupLinkRemove, () => {
+      const links = { ...savedLinks() };
+      delete links[entry.value];
+      remember(links, '');
+      entry.focus({ preventScroll:true });
+    });
+    const draw = selected => {
+      const links = savedLinks();
+      const entries = Object.keys(links).filter(isPopupFragment);
+      entry.replaceChildren(option('', words.popupLinkNew), ...entries.map(alias => option(alias, alias)));
+      entry.value = entries.includes(selected) ? selected : '';
+      fragment.value = entry.value;
+      const destination = links[entry.value];
+      updateTargets(typeof destination === 'string' ? destination : '');
+      apply.textContent = entry.value ? words.popupLinkUpdate : words.popupLinkAdd;
+      remove.hidden = !entry.value;
+      error.textContent = '';
+    };
+    entry.addEventListener('change', () => draw(entry.value));
+    target.addEventListener('focus', () => updateTargets(target.value));
+    fragment.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' || event.isComposing) return;
+      event.preventDefault();
+      apply.click();
+    });
+    draw('');
+    return [node('div', { className:'stack' }, [field(words.popupLinkEntry, entry), field(words.popupLinkFragment, fragment),
+      field(words.popupLinkDestination, target), node('div', { className:'actions' }, [apply, remove]), error])];
+  }
+
   render() {
     if (!this.isConnected) return;
     const focused = this.shadowRoot.activeElement;
@@ -2185,10 +2284,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
             value => this.#commit({appearance_sync:value})),
           checkbox(words.fullscreen, this.#config.fullscreen === true, value => this.#commit({fullscreen:value})),
         ])]),
-      pane(words.toolbar, 'toolbar', () => [node('div', {}, [buildToolbarEditor({
-        config:this.#config, hass:this.#hass, locale:language, viewState:this.#toolbarView,
-        onChange:value=>this.#commit({toolbar:value}),
-      })])]),
+      pane(words.toolbar, 'toolbar', () => [node('div', { className:'stack' }, [
+        pane(words.popupLinks, 'popupLinks', () => this.#popupLinksPanel(words, language)),
+        buildToolbarEditor({ config:this.#config, hass:this.#hass, locale:language, viewState:this.#toolbarView,
+          onChange:value=>this.#commit({toolbar:value}),
+        }),
+      ])]),
       pane(words.devices, 'devices', () => {
         const options = entityOptions(this.#hass);
         return [this.#entityMulti(words.hidden, 'hidden_entities', words, options),

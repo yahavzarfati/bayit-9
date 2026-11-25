@@ -8,12 +8,12 @@ const navigationEvents = ['location-changed', 'hashchange', 'popstate'];
 const roomReturnTimeout = 350;
 let roomEntryId = 0;
 
-function validFragment(fragment) {
+export function isPopupFragment(fragment) {
   return typeof fragment === 'string' && fragmentPattern.exec(fragment)?.[0] === fragment;
 }
 
 export function parsePopupRoute(fragment) {
-  if (!validFragment(fragment)) return null;
+  if (!isPopupFragment(fragment)) return null;
   const room = roomPattern.exec(fragment);
   if (room) return { kind: 'room', room: room[1] };
   const device = devicePattern.exec(fragment);
@@ -26,7 +26,7 @@ export function parsePopupRoute(fragment) {
 export function popupRouteFragment(route) {
   if (route?.kind === 'room' && typeof route.room === 'string' && route.room) {
     const hash = '#room-' + route.room;
-    return roomPattern.test(hash) && validFragment(hash) ? hash : '';
+    return roomPattern.test(hash) && isPopupFragment(hash) ? hash : '';
   }
   if (route?.kind === 'device' && typeof route.room === 'string' && typeof route.entity === 'string') {
     const hash = '#device/' + route.room + '/' + route.entity;
@@ -35,13 +35,13 @@ export function popupRouteFragment(route) {
   }
   if (route?.kind === 'panel' && typeof route.panel === 'string' && route.panel) {
     const hash = '#panel/' + route.panel;
-    return panelPattern.test(hash) && validFragment(hash) ? hash : '';
+    return panelPattern.test(hash) && isPopupFragment(hash) ? hash : '';
   }
   return '';
 }
 
 export function resolvePopupRoute(fragment, admit, aliases) {
-  if (!validFragment(fragment)) return null;
+  if (!isPopupFragment(fragment)) return null;
   const direct = parsePopupRoute(fragment);
   if (direct && admit(direct)) return direct;
   // Alias values are canonical destinations. They do not traverse other aliases.
@@ -52,7 +52,7 @@ export function resolvePopupRoute(fragment, admit, aliases) {
 export function normalizePopupAliases(config) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) return {};
   return Object.fromEntries(Object.entries(config).filter(([alias, target]) =>
-    validFragment(alias) && parsePopupRoute(target) && alias !== target).slice(0, 128));
+    isPopupFragment(alias) && parsePopupRoute(target) && alias !== target).slice(0, 128));
 }
 
 export function createPopupHistory({ view, resolve, onChange, pathname = view.location.pathname }) {

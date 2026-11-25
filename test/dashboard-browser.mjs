@@ -2485,6 +2485,101 @@ async function assertToolbarLockPalette(browser) {
   }
 }
 
+async function assertPopupAliasEditing(browser) {
+  const initialAliases = Object.fromEntries(Array.from({ length:32 }, (_, index) => ['#legacy-' + index, '#room-studio']));
+  Object.assign(initialAliases, { '#legacy-unavailable':'#room-old-room', '#legacy-invalid':'https://example.test/elsewhere' });
+  const wordsByLocale = {
+    en:{ appearance:'Appearance', setup:'Customize home', toolbar:'Toolbar and extra screens', links:'Popup links',
+      entry:'Link to edit', fragment:'Old link fragment', target:'Popup destination', add:'Add link', update:'Update link',
+      remove:'Remove link', save:'Save dashboard', invalid:'Enter only the fragment', conflict:'This fragment already opens',
+      unavailable:'Destination unavailable' },
+    he:{ appearance:'מראה', setup:'התאמת הבית', toolbar:'סרגל ומסכים נוספים', links:'קישורים לחלוניות',
+      entry:'קישור לעריכה', fragment:'מקטע הקישור הישן', target:'יעד הקישור', add:'הוספת קישור', update:'עדכון הקישור',
+      remove:'הסרת הקישור', save:'שמירת הדשבורד', invalid:'יש להזין רק את המקטע', conflict:'המקטע הזה כבר פותח',
+      unavailable:'היעד אינו זמין' },
+  };
+  for (const [locale, words] of Object.entries(wordsByLocale)) {
+    const page = await browser.newPage({ viewport:{ width:320, height:660 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(10000);
+    try {
+      const url = base + '/fixture-home/home?configuration&locale=' + locale;
+      await page.addInitScript(aliases => {
+        const key = 'bayit9-browser-fixture';
+        if (sessionStorage.getItem(key)) return;
+        sessionStorage.setItem(key, JSON.stringify({ strategy:{ type:'custom:bayit-9', popup_aliases:aliases,
+          hidden_entities:['switch.demo_heater'], toolbar:[
+            { id:'settings', kind:'settings' },
+            { id:'fixture-media', kind:'media', placement:'settings', label:'Fixture media' },
+            { id:'external', kind:'link', path:'/other-dashboard/home' },
+          ],
+        } }));
+      }, initialAliases);
+      const openLinks = async () => {
+        await page.getByRole('button', { name:words.appearance, exact:true }).tap();
+        await page.getByRole('button', { name:words.setup, exact:true }).tap();
+        const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+        await setup.getByText(words.toolbar, { exact:true }).tap();
+        await setup.getByText(words.links, { exact:true }).tap();
+        return setup;
+      };
+      const stored = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.popup_aliases);
+      await page.goto(url);
+      const setup = await openLinks();
+      const entry = setup.getByLabel(words.entry, { exact:true });
+      const fragment = setup.getByLabel(words.fragment, { exact:true });
+      const target = setup.getByLabel(words.target, { exact:true });
+      const add = setup.getByRole('button', { name:words.add, exact:true });
+      const edit = setup.getByRole('button', { name:words.update, exact:true });
+      const destinations = () => target.locator('option').evaluateAll(nodes => nodes.map(node => node.value));
+      const allowed = await destinations();
+      for (const value of ['#room-studio', '#device/studio/light.demo_lamp', '#panel/fixture-media']) assert.ok(allowed.includes(value));
+      assert.ok(!allowed.includes('#panel/external') && !allowed.includes('#device/studio/switch.demo_heater'));
+      await entry.selectOption('#legacy-unavailable');
+      assert.equal(await target.inputValue(), '#room-old-room');
+      assert.match(await target.locator('option:checked').textContent(), new RegExp(words.unavailable));
+      await entry.selectOption('');
+      await target.selectOption('#room-studio');
+      await fragment.fill('https://example.test/#old-room');
+      await add.tap();
+      await setup.getByRole('status').filter({ hasText:words.invalid }).waitFor();
+      for (const invalid of ['#legacy-0', '#room-studio']) {
+        await fragment.fill(invalid);
+        await add.tap();
+        await setup.getByRole('status').filter({ hasText:words.conflict }).waitFor();
+      }
+      const addAlias = async (alias, destination) => {
+        await entry.selectOption('');
+        await fragment.fill(alias);
+        await target.selectOption(destination);
+        await add.tap();
+        assert.equal(await entry.inputValue(), alias);
+      };
+      await addAlias('#fixture-room', '#room-studio');
+      await fragment.fill('#fixture-room-renamed');
+      await edit.tap();
+      await addAlias('#fixture-light', '#device/studio/light.demo_lamp');
+      await addAlias('#fixture-screen', '#panel/fixture-media');
+      await addAlias('#fixture-remove', '#room-studio');
+      await setup.getByRole('button', { name:words.remove, exact:true }).tap();
+      assert.deepEqual(await stored(), initialAliases);
+      await setup.getByRole('button', { name:words.save, exact:true }).tap();
+      await setup.waitFor({ state:'hidden' });
+      assert.deepEqual(await stored(), { ...initialAliases, '#fixture-room-renamed':'#room-studio',
+        '#fixture-light':'#device/studio/light.demo_lamp', '#fixture-screen':'#panel/fixture-media' });
+      await page.reload();
+      const savedSetup = await openLinks();
+      assert.ok(await savedSetup.getByLabel(words.entry, { exact:true }).locator('option[value="#fixture-light"]').count());
+      for (const [hash, title] of [['#fixture-room-renamed','Studio'], ['#fixture-light','Desk lamp'], ['#fixture-screen','Fixture media']]) {
+        await page.goto(url + hash);
+        await page.getByRole('dialog', { name:title, exact:true }).waitFor();
+        assert.equal(await page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service').length), 0);
+      }
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertRoomMirrorPlacement(browser) {
   const rooms = [
     { locale:'en', id:'bayit_room_1', name:'Reading nook', appearance:'Appearance', setup:'Customize home', rooms:'Rooms',
@@ -7671,6 +7766,8 @@ try {
       console.log(engine + ' 320: device placement preview reflects automatic moves and stays local until saved');
       await assertRoomMirrorPlacement(browser);
       console.log(engine + ' 320: optional mirrored room placement, saved reload and native registry unchanged');
+      await assertPopupAliasEditing(browser);
+      console.log(engine + ' 320: editable popup links, preserved legacy routes and same-dashboard URL reopen');
 
       const emptyPage = await browser.newPage();
       await emptyPage.goto(base + '?empty');
