@@ -2880,7 +2880,7 @@ try {
       });
       const assertClearPopup = async panel => {
         assert.deepEqual(await readPopupMaterial(panel), {
-          reduced: false, radius: '25px', fill: 'rgba(0, 0, 0, 0)', blur: 'blur(16px)', backdrop: 'rgba(0, 0, 0, 0)',
+          reduced: false, radius: '25px', fill: 'rgba(0, 0, 0, 0)', blur: 'blur(18px)', backdrop: 'rgba(0, 0, 0, 0)',
         });
       };
       const assertOpaquePopup = async panel => {

@@ -416,8 +416,8 @@ export const styles = `
     border: 1px solid var(--line);
     border-radius: 25px;
     background: transparent;
-    -webkit-backdrop-filter: blur(16px);
-    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
     overflow: hidden;
     overscroll-behavior: contain;
     transform-origin: var(--motion-x,50%) var(--motion-y,34%);
