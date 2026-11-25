@@ -1974,6 +1974,7 @@ async function assertMediaRemotePower(browser) {
       const legacy = await openRemote('');
       const legacyRow = legacy.getByRole('group', { name: 'Television', exact: true });
       await page.evaluate(() => window.bayitTest.setFixtureAttributes('media_player.demo_tv', { is_volume_muted: false }));
+      await legacyRow.getByRole('button', { name: rtl ? 'השתקה' : 'Mute', exact: true }).waitFor();
       assert.deepEqual(await rowIcons(legacyRow), ['mdi:volume-minus', 'mdi:volume-mute', 'mdi:volume-plus']);
       assert.equal(await power.count(), 0);
       if (rtl) continue;
