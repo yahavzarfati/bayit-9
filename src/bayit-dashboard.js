@@ -781,7 +781,12 @@ export class BayitDashboard extends HTMLElement {
     else if (powerDomains.has(domain) && !config.kind) action = state === 'off' ? 'turn_on' : 'turn_off';
     if (action && model.actions[action]) {
       this.requestAction(config, action, undefined, source, domain === 'lock');
-    } else this.openPanel('device', source, room, config.entity);
+    } else this.openDeviceDetails(config, source, room);
+  }
+
+  openDeviceDetails(config, source, room) {
+    if (room) this.openPanel('device', source, room, config.entity);
+    else this.moreInfo(config);
   }
 
   coverIsMoving(model) {
@@ -1255,10 +1260,10 @@ export class BayitDashboard extends HTMLElement {
     return groups.values();
   }
 
-  buildDevice(config, parent, room, groupKey, { titleInDialog = false, inlineClimate = false } = {}) {
+  buildDevice(config, parent, room, groupKey, { titleInDialog = false, inlineClimate = false, toolbarLightTile = false } = {}) {
     const item = make('section', 'device');
     const domain = domainFor(config);
-    const tileMode = groupKey === 'room_lights' && ['light', 'switch'].includes(domain) && !config.kind;
+    const tileMode = toolbarLightTile || groupKey === 'room_lights' && ['light', 'switch'].includes(domain) && !config.kind;
     const panelKind = ROOM_PANEL_KINDS.get(domain);
     const panelId = config[panelKind + '_panel_id'];
     const panelTarget = room && panelId && this.config.toolbar?.find(
@@ -1282,7 +1287,7 @@ export class BayitDashboard extends HTMLElement {
       tile.append(glyph, name, state);
       tile.setAttribute('aria-haspopup', 'dialog');
       tile.onclick = () => this.quickAction(config, tile, room);
-      bindDeviceDetails(tile, () => this.openPanel('device', tile, room, config.entity));
+      bindDeviceDetails(tile, () => this.openDeviceDetails(config, tile, room));
       view.tile = tile;
       item.append(tile);
       if (inlineLight) {
@@ -1350,7 +1355,7 @@ export class BayitDashboard extends HTMLElement {
       modelFor: item => this.model(item), stateLabel: model => this.stateLabel(model),
       moreInfo: item => this.moreInfo(item), pending: entity => this.pending.has(entity),
       request: (item, action, value, source) => this.requestAction(item, action, value, source),
-      buildDevice: (item, slot) => this.buildDevice(item, slot),
+      buildDevice: (item, slot, presentation) => this.buildDevice(item, slot, undefined, undefined, presentation),
       graphDestination: item => {
         if (type !== 'sensors') return;
         const room = this.roomViews.get(item.graph_room_id)?.room;
@@ -1450,6 +1455,7 @@ export class BayitDashboard extends HTMLElement {
         if (toggles) view.tile.setAttribute('aria-pressed', String(model.state === 'on'));
         else view.tile.removeAttribute('aria-pressed');
         view.tile.setAttribute('aria-busy', String(!!pending));
+        if (!view.room) view.tile.disabled = !toggles && !model.actions.more_info;
         if (!view.inlineLight) continue;
       }
       if (view.panelLaunch) {

@@ -30,10 +30,10 @@ export const TOOLBAR_KINDS = new Set(['automations', 'activity', 'security', 'pr
   'settings', 'overview', 'sensors', 'media', 'vacuum', 'calendar', 'devices', 'link']);
 export const TOOLBAR_SECTION_KINDS = new Set(['actions', 'locks', 'covers', 'status', 'devices',
   'people', 'forecast', 'sun', 'readings', 'electricity', 'water', 'media', 'vacuum', 'series']);
-export const TOOLBAR_ROLES = new Set(['action', 'lock', 'cover', 'status', 'device', 'forecast', 'sun', 'graph', 'person', 'now_playing']);
+export const TOOLBAR_ROLES = new Set(['action', 'lock', 'cover', 'status', 'device', 'light_tile', 'forecast', 'sun', 'graph', 'person', 'now_playing']);
 export const TOOLBAR_ROLE_DOMAINS = new Map([
   ['lock', 'lock'], ['cover', 'cover'], ['forecast', 'weather'], ['sun', 'sun'], ['person', 'person'],
-  ['now_playing', 'media_player'],
+  ['now_playing', 'media_player'], ['light_tile', 'light'],
 ]);
 export const ROOM_PANEL_KINDS = new Map([['media_player', 'media'], ['vacuum', 'vacuum']]);
 const ROOM_ICON = /^mdi:[a-z0-9-]+$/;
@@ -482,6 +482,10 @@ export function isAutomationScriptToggle(kind, section, item) {
     item.command === 'toggle_script' && idForDomain(item.entity, 'script');
 }
 
+export function isToolbarLightTile(kind, section, item) {
+  return kind === 'devices' && section === 'devices' && item?.role === 'light_tile' && Boolean(idForDomain(item.entity, 'light'));
+}
+
 function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
   if (!Array.isArray(value)) return undefined;
   const seenSections = new Set();
@@ -501,6 +505,7 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
       const domain = domainOf(entity);
       const roleDomain = TOOLBAR_ROLE_DOMAINS.get(item?.role);
       if (roleDomain && roleDomain !== domain) return [];
+      if (item?.role === 'light_tile' && !isToolbarLightTile(kind, section.kind, item)) return [];
       seenEntities.add(entity);
       const name = typeof item?.name === 'string' ? item.name.trim().slice(0, 80) : '';
       const icon = typeof item?.icon === 'string' ? item.icon.trim() : '';

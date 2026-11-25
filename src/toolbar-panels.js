@@ -1,7 +1,7 @@
 import { createOrefMap } from './oref-alert-map.js';
 import { createVacuumMap } from './vacuum-map.js';
 import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
-import { discoverOverviewLights, isActiveOverviewLight } from './strategy-model.js';
+import { discoverOverviewLights, isActiveOverviewLight, isToolbarLightTile } from './strategy-model.js';
 import { calendarAgendaStyles, createCalendarAgenda } from './calendar-agenda.js';
 
 const sectionKeys = {
@@ -340,14 +340,17 @@ export function createToolbarPanel(kind, configuration, context) {
       return chart;
     }
     const nowPlaying = itemKind === 'now_playing' && domain(item) === 'media_player';
-    if (nowPlaying || itemKind === 'device' || (['locks','covers','devices','media','vacuum'].includes(section) && itemKind !== 'status')) {
+    const toolbarLightTile = isToolbarLightTile(kind, section, item);
+    if (nowPlaying || toolbarLightTile || itemKind === 'device' ||
+        (['locks','covers','devices','media','vacuum'].includes(section) && itemKind !== 'status')) {
       const row = make('div', 'toolbar-device');
+      row.toggleAttribute('data-light-tile', toolbarLightTile);
       if (nowPlaying) {
         const player = createNowPlaying({ host: row, dialog, make, icon, t });
         mediaViews.push(player);
         handlers.push(() => player.update(modelFor(item)));
       }
-      buildDevice(item, row, section);
+      buildDevice(item, row, { toolbarLightTile });
       return row;
     }
     return renderTile(item, 'status');
@@ -503,6 +506,14 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
   .native-panel-card { min-width: 0; --ha-card-background: transparent; --ha-card-box-shadow: none;
     --ha-card-border-color: var(--soft-line); --primary-text-color: var(--ink); --secondary-text-color: var(--secondary); }
   .toolbar-device, .toolbar-link { min-width: 0; }
+  @media (min-width: 300px) {
+    .toolbar-section[data-section=devices] .toolbar-section-items:has(> [data-light-tile]) {
+      grid-template-columns: repeat(2,minmax(0,1fr));
+    }
+    .toolbar-section[data-section=devices] .toolbar-section-items:has(> [data-light-tile]) > :not([data-light-tile]) {
+      grid-column: 1 / -1;
+    }
+  }
   .weather-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .forecast-clock { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 3px 3px 8px; }
   .forecast-clock strong { font-variant-numeric: tabular-nums; font-size: 19px; }

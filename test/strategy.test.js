@@ -856,6 +856,28 @@ test('only an individual Sensors history graph can link to an existing Vacuum pa
   assert.equal(makeToolbar()[0].sections[0].entities[0].vacuum_panel_id, undefined);
 });
 
+test('light toggle tiles are explicit and scoped to visible lights in Devices sections', () => {
+  const hass = home();
+  const tile = entity => ({ entity, role: 'light_tile' });
+  const { toolbar } = generateDashboard({
+    hidden_entities: ['light.hidden_fixture'],
+    toolbar: [
+      { kind: 'devices', placement: 'settings', sections: [
+        { kind: 'devices', entities: [
+          { ...tile('light.demo_lamp'), confirmation: 'Control this lamp?' },
+          tile('light.hidden_fixture'), tile('switch.demo_heater'),
+        ] },
+        { kind: 'status', entities: [tile('light.demo_lamp')] },
+      ] },
+      { kind: 'security', sections: [{ kind: 'devices', entities: [tile('light.demo_lamp')] }] },
+    ],
+  }, { ...hass, states: { ...hass.states, 'light.hidden_fixture': { state: 'off', attributes: {} } } }).views[0].cards[0];
+  assert.deepEqual(toolbar[0].sections.map(section => section.entities), [[{
+    entity: 'light.demo_lamp', name: 'מנורה', role: 'light_tile', confirmation: 'Control this lamp?',
+  }], []]);
+  assert.deepEqual(toolbar[1].sections[0].entities, []);
+});
+
 test('script toggles stay scoped to explicit Automations actions and preserve confirmation settings', () => {
   const item = { entity: 'script.demo_start', role: 'action', command: 'toggle_script', confirmation: false };
   const section = (kind, entities) => ({ kind, entities });

@@ -320,6 +320,12 @@ if (query.has('heater-level')) {
   hass.entities[heaterFan] = { area_id: 'studio' };
 }
 if (query.has('toolbar-panels')) {
+  if (query.has('entrance-light-tiles')) Object.assign(states, {
+    'light.demo_entry_second': { state: 'off', attributes: { friendly_name: 'Porch light' } },
+    'light.demo_entry_guarded': { state: 'on', attributes: { friendly_name: 'Guarded light' } },
+    'light.demo_entry_unavailable': { state: 'unavailable', attributes: { friendly_name: 'Offline light' } },
+    'light.demo_entry_generic': { state: 'off', attributes: { friendly_name: 'Generic light' } },
+  });
   Object.assign(states, {
     'script.demo_scene': {state:'off', attributes:{friendly_name:'Evening scene'}},
     'script.demo_toggle': {state:'off', last_changed:'2026-01-01T00:00:00.000Z',
@@ -471,6 +477,14 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
       {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24,graph_room_id:'studio'},
       {entity:'sensor.demo_meter',role:'graph',graph_hours:24,graph_room_id:'removed-room'}]}]},
     {kind:'calendar',placement:'settings',entities:['calendar.demo_household','calendar.demo_birthdays']},
+    ...(query.has('entrance-light-tiles') ? [{id:'entrance-panel',kind:'devices',label:'Entrance',placement:'settings',
+      sections:[{kind:'devices',title:'Lights',entities:[
+        {entity:'light.demo_lamp',role:'light_tile'},
+        {entity:'light.demo_entry_second',role:'light_tile'},
+        {entity:'light.demo_entry_guarded',role:'light_tile',confirmation:'Turn off the guarded light?'},
+        {entity:'light.demo_entry_unavailable',role:'light_tile'},
+        {entity:'light.demo_entry_generic',role:'device'},
+      ]}]}] : []),
   ],
 } : {};
 const config = Strategy.generate(selected, query.has('empty') ? { ...hass, states: {} } : hass);
@@ -2183,6 +2197,77 @@ try {
       assert.equal((await edited()).confirmation, 'Run the arrival scene?');
       await scriptEditor.close();
       console.log(engine + ' 320: script Start/Stop, changed-state and replacement-run guards, and editor');
+
+      const entrancePage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+      entrancePage.setDefaultTimeout(8000);
+      const entranceUrl = base + '/fixture-home/home?toolbar-panels&entrance-light-tiles';
+      await entrancePage.goto(entranceUrl);
+      const entrance = entrancePage.getByRole('dialog', { name: 'Entrance', exact: true });
+      const openEntrance = async () => {
+        await entrancePage.getByRole('button', { name: 'Appearance', exact: true }).tap();
+        await entrancePage.getByRole('button', { name: 'Entrance', exact: true }).tap();
+        await entrance.waitFor();
+      };
+      const lightCalls = () => entrancePage.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service'));
+      await openEntrance();
+      const lamp = entrance.locator('[data-entity="light.demo_lamp"] .device-tile');
+      const tiles = entrance.locator('[data-light-tile] .device-tile');
+      assert.equal(await tiles.count(), 4);
+      assert.equal(await entrance.getByRole('button', { name: 'Apply · Brightness' }).count(), 0);
+      assert.equal(await entrance.locator('[data-entity="light.demo_entry_generic"] .device-tile').count(), 0);
+      assert.ok(await entrance.locator('.toolbar-section-items:has([data-light-tile])').evaluate(items => {
+        const [first, second, , , generic] = [...items.children].map(item => item.getBoundingClientRect());
+        return Math.abs(first.top - second.top) <= 1 && Math.abs(first.width - second.width) <= 1 &&
+          first.width >= 44 && first.height >= 44 && generic.width > first.width && items.scrollWidth <= items.clientWidth;
+      }));
+      const entranceHash = new URL(entrancePage.url()).hash;
+      assert.equal(entranceHash, '#panel/entrance-panel');
+      await lamp.tap();
+      await entrance.locator('[data-entity="light.demo_lamp"] .device-tile[aria-pressed="true"]').waitFor();
+      const expectedCommand = {
+        type:'call_service', domain:'light', service:'turn_on', service_data:{}, target:{entity_id:'light.demo_lamp'},
+      };
+      assert.deepEqual(await lightCalls(), [expectedCommand]);
+      assert.equal(new URL(entrancePage.url()).hash, entranceHash);
+
+      await entrance.getByRole('button', { name: 'Guarded light · Turn off', exact: true }).tap();
+      const guardedPrompt = entrancePage.locator('dialog.confirm[open]');
+      await guardedPrompt.getByText('Turn off the guarded light?', { exact:true }).waitFor();
+      await guardedPrompt.getByRole('button', { name: 'Cancel', exact:true }).tap();
+      assert.deepEqual(await lightCalls(), [expectedCommand]);
+
+      await entrance.getByRole('button', { name: 'Offline light · More info', exact: true }).tap();
+      await entrance.waitFor({ state: 'hidden' });
+      assert.deepEqual(await entrancePage.evaluate(() => window.bayitTest.moreInfoCalls), ['light.demo_entry_unavailable']);
+      await openEntrance();
+      const entryLightBounds = await lamp.boundingBox();
+      await entrancePage.mouse.move(entryLightBounds.x + entryLightBounds.width / 2, entryLightBounds.y + entryLightBounds.height / 2);
+      await entrancePage.mouse.down();
+      await entrancePage.waitForFunction(() => window.bayitTest.moreInfoCalls.includes('light.demo_lamp'));
+      await entrancePage.mouse.up();
+      await entrance.waitFor({ state: 'hidden' });
+      await openEntrance();
+      await entrance.getByRole('button', { name: 'Porch light · Turn on', exact: true }).press('Shift+Enter');
+      await entrance.waitFor({ state: 'hidden' });
+      assert.deepEqual(await entrancePage.evaluate(() => window.bayitTest.moreInfoCalls), [
+        'light.demo_entry_unavailable', 'light.demo_lamp', 'light.demo_entry_second',
+      ]);
+      assert.deepEqual(await lightCalls(), [expectedCommand]);
+      await entrancePage.close();
+
+      const entranceEditor = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true });
+      await entranceEditor.goto(entranceUrl + '&editor');
+      await entranceEditor.getByText('Toolbar and extra screens', { exact: true }).tap();
+      await entranceEditor.getByRole('button', { name: 'Entrance', exact: true }).tap();
+      await entranceEditor.getByRole('button', { name: 'Lights', exact: true }).tap();
+      await entranceEditor.getByRole('button', { name: 'Generic light', exact: true }).tap();
+      const entranceRole = entranceEditor.getByLabel('Display as', { exact: true });
+      assert.equal(await entranceRole.inputValue(), 'device');
+      await entranceRole.selectOption({ label: 'Light toggle tile' });
+      assert.equal(await entranceEditor.evaluate(() => window.latest.toolbar.find(item => item.id === 'entrance-panel')
+        .sections[0].entities.find(item => item.entity === 'light.demo_entry_generic').role), 'light_tile');
+      await entranceEditor.close();
+      console.log(engine + ': configured entry light tiles, guarded commands, exact native details, and visual editor');
 
       const overviewPage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
       overviewPage.setDefaultTimeout(8000);

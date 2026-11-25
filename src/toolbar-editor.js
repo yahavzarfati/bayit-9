@@ -1,5 +1,5 @@
 import {
-  discoverRooms, generateDashboard, LOCAL_ROUTE, normalizeOverviewDiscovery, overviewSectionOptions, roomPanelOptions, selectableRoomEntities,
+  discoverRooms, generateDashboard, isToolbarLightTile, LOCAL_ROUTE, normalizeOverviewDiscovery, overviewSectionOptions, roomPanelOptions, selectableRoomEntities,
   TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
 } from './strategy-model.js';
 import { normalizeOrefMap, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
@@ -50,7 +50,7 @@ const WORDS = {
     actions: 'Actions', locks: 'Locks', covers: 'Covers', status: 'Status', devices: 'Devices',
     people: 'People', forecast: 'Forecast', sun: 'Sun', readings: 'Readings',
     electricity: 'Electricity', water: 'Water', action: 'Action', lock: 'Lock', cover: 'Cover',
-    device: 'Device controls', graph: 'History graph', person: 'Person', now_playing: 'Now Playing',
+    device: 'Device controls', light_tile: 'Light toggle tile', graph: 'History graph', person: 'Person', now_playing: 'Now Playing',
   },
   he: {
     layout: 'פריסת הסרגל', automatic: 'אוטומטית', custom: 'התאמה אישית',
@@ -95,7 +95,7 @@ const WORDS = {
     actions: 'פעולות', locks: 'מנעולים', covers: 'תריסים', status: 'מצב', devices: 'מכשירים',
     people: 'אנשים', forecast: 'תחזית', sun: 'שמש', readings: 'מדדים',
     electricity: 'חשמל', water: 'מים', action: 'פעולה', lock: 'מנעול', cover: 'תריס',
-    device: 'פקדי המכשיר', graph: 'גרף היסטוריה', person: 'אדם', now_playing: 'מתנגן עכשיו',
+    device: 'פקדי המכשיר', light_tile: 'אריח הדלקה וכיבוי לתאורה', graph: 'גרף היסטוריה', person: 'אדם', now_playing: 'מתנגן עכשיו',
   },
 };
 
@@ -333,6 +333,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     };
     const roles = [...TOOLBAR_ROLES].filter(role => {
       if (role === 'graph') return domain === 'sensor';
+      if (role === 'light_tile') return isToolbarLightTile(toolbar[entryIndex].kind, section.kind, { entity, role });
       return !TOOLBAR_ROLE_DOMAINS.has(role) || TOOLBAR_ROLE_DOMAINS.get(role) === domain;
     });
     const role = select([['', words.automatic], ...optionNames(roles)], record.role ?? '');
@@ -409,7 +410,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       }
     }
     const effectiveRole = record.role ?? (section.kind === 'actions' ? 'action' : undefined);
-    if (['action', 'lock', 'cover', 'device', 'now_playing'].includes(effectiveRole)
+    if (['action', 'lock', 'cover', 'device', 'light_tile', 'now_playing'].includes(effectiveRole)
         || ['locks', 'covers', 'devices'].includes(section.kind) && !['status', 'graph'].includes(effectiveRole)) {
       const current = record.confirmation === true ? 'ask' : record.confirmation === false ? 'skip'
         : typeof record.confirmation === 'string' ? 'custom' : '';
