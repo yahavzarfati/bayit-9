@@ -1755,7 +1755,7 @@ test('compact action tiles are opt-in only for Automations actions and retain lo
   assert.equal(toolbar[0].sections[0].entities[0].confirmation, 'Change the lock?');
 });
 
-test('native reading cards are opt-in only for Energy electricity and water', () => {
+test('native reading cards are opt-in for Energy electricity and water and Weather readings', () => {
   const hass = home();
   const shown = 'sensor.fixture_cost';
   const hidden = 'sensor.fixture_hidden_cost';
@@ -1773,10 +1773,11 @@ test('native reading cards are opt-in only for Energy electricity and water', ()
     { kind: 'weather', sections: [electricity, { ...water, kind: 'readings' }] },
   ] }, hass).views[0].cards[0];
   const sections = toolbar.flatMap(entry => entry.sections);
-  assert.deepEqual(sections.map(section => section.layout), ['reading-cards', 'reading-cards', undefined, undefined, undefined, undefined]);
+  assert.deepEqual(sections.map(section => section.layout), ['reading-cards', 'reading-cards', undefined, undefined, undefined, 'reading-cards']);
   assert.deepEqual(sections[0].entities.map(({ entity, icon, role, graph_hours }) => [entity, icon, role, graph_hours]),
     [[shown, 'mdi:cash', 'status', undefined], [graph.entity, undefined, 'graph', 168]]);
   assert.equal(sections[0].entities[0].name, 'Cost');
+  assert.equal(sections[5].entities.find(item => item.role === 'graph').graph_hours, 168);
 });
 
 test('Energy popup may use an independent validated header icon', () => {

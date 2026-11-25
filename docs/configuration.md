@@ -191,7 +191,7 @@ In a **Security** status section, enable **Show compact read-only status tiles**
 
 In YAML use `layout: readouts` on the status section. A binary sensor can use `readout: { state_labels: { 'on': Active, 'off': Quiet }, danger_on: true }`. A sensor can set `state_labels` for the reported `safe` and `ok` states, and `unit` for numeric readings.
 
-In a **Weather** readings section, enable **Show readings as a compact read-only list** to show each sensor's name and current value on one row. Graphs in the section keep their history charts. In YAML, set `layout: readings-list` on the readings section.
+In a **Weather** readings section, enable **Show readings as a compact read-only list** to show each sensor's name and current value on one row. Graphs in the section keep their history charts. In YAML, set `layout: readings-list` on the readings section. Choose **Show readings as chart cards** to keep the authored card order from left to right in either language. In YAML, set `layout: reading-cards`. Native charts keep their configured history duration. If a chart cannot load, its card shows the current reading and still opens Home Assistant details.
 
 In an **Energy** electricity or water section, enable **Show readings with large values** to use Home Assistant's sensor cards for devices displayed as **Status**. Tap a reading to open its details. History charts keep their configured durations. In YAML, set `layout: reading-cards` on the section. In the Energy screen settings, switch off **Show the Home Assistant Energy dashboard link** to keep just the readings and charts. The YAML equivalent is `energy_dashboard_link: false` on the toolbar entry.
 

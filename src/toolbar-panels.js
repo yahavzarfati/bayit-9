@@ -1,7 +1,7 @@
 import { createOrefMap } from './oref-alert-map.js';
 import { createVacuumMap } from './vacuum-map.js';
 import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
-import { discoverOverviewEntities, isActiveOverviewEntity, isCompactAutomationActions, isCompactToolbarStatus, isEnergyReadingCards,
+import { discoverOverviewEntities, isActiveOverviewEntity, isCompactAutomationActions, isCompactToolbarStatus, isReadingCards,
   isToolbarLightTile, isToolbarReadoutEntity, isToolbarReadouts, isVisibleEntity, isWeatherReadingsList } from './strategy-model.js';
 import { mediaServiceRegistered } from './media-device-support.mjs';
 import { compactRoomLockCommand, roomShutdownTargets } from './device-control.mjs';
@@ -559,7 +559,7 @@ export function createToolbarPanel(kind, configuration, context) {
         type: 'sensor', entity: item.entity, name: item.name, icon: item.icon,
         tap_action: { action: 'more-info' }, hold_action: { action: 'none' }, double_tap_action: { action: 'none' },
       }, fallback);
-      card.classList.add('energy-native-card');
+      card.classList.add('reading-native-card');
       slot.append(card);
     });
     return slot;
@@ -642,7 +642,7 @@ export function createToolbarPanel(kind, configuration, context) {
     return region;
   }
 
-  function render(item, section, { compactStatus, energyReadingCards, compactActions }) {
+  function render(item, section, { compactStatus, readingCards, compactActions }) {
     const itemKind = item.role ?? ({ people: 'person', actions: 'action', forecast: 'forecast', sun: 'sun' }[section]);
     if (itemKind === 'person' && domain(item) === 'person') return renderTile(item, 'person');
     if (item.command === 'toggle_script') return renderScriptToggle(item, compactActions);
@@ -658,6 +658,7 @@ export function createToolbarPanel(kind, configuration, context) {
         kind === 'energy' && (section === 'electricity' || section === 'water');
       const config = sensorGraphConfig(item, { moreInfo });
       const fallback = renderTile(item, 'status');
+      if (readingCards && kind === 'weather') fallback.classList.add('weather-history-value');
       const destination = itemKind === 'graph' && graphDestination?.(item);
       if (destination) {
         config.tap_action = { action: 'fire-dom-event', bayit_graph_link: true };
@@ -665,7 +666,7 @@ export function createToolbarPanel(kind, configuration, context) {
         config.double_tap_action = { action: 'none' };
       }
       const chart = nativeCard(config, fallback);
-      if (energyReadingCards) chart.classList.add('energy-native-card');
+      if (readingCards) chart.classList.add('reading-native-card');
       if (!destination) return chart;
       const open = () => openGraphDestination(destination, chart);
       fallback.onclick = open;
@@ -676,7 +677,7 @@ export function createToolbarPanel(kind, configuration, context) {
       });
       return chart;
     }
-    if (energyReadingCards && domain(item) === 'sensor' && itemKind === 'status') return renderEnergyReading(item);
+    if (readingCards && kind === 'energy' && domain(item) === 'sensor' && itemKind === 'status') return renderEnergyReading(item);
     const nowPlaying = itemKind === 'now_playing' && domain(item) === 'media_player';
     const toolbarLightTile = isToolbarLightTile(kind, section, item);
     const toolbarCoverRail = kind === 'security' && section === 'covers' && domain(item) === 'cover' && itemKind !== 'status';
@@ -740,9 +741,9 @@ export function createToolbarPanel(kind, configuration, context) {
     const compactStatus = isCompactToolbarStatus(kind, section);
     const readouts = isToolbarReadouts(kind, section);
     const weatherReadings = isWeatherReadingsList(kind, section);
-    const energyReadingCards = isEnergyReadingCards(kind, section);
+    const readingCards = isReadingCards(kind, section);
     const compactActions = isCompactAutomationActions(kind, section);
-    if (compactStatus || readouts || weatherReadings || energyReadingCards || compactActions) {
+    if (compactStatus || readouts || weatherReadings || readingCards || compactActions) {
       panel.dataset.layout = section.layout;
     }
     if (kind === 'overview' && !compactStatus && section.filter === 'active' &&
@@ -776,7 +777,7 @@ export function createToolbarPanel(kind, configuration, context) {
         .map(item => {
           if (weatherReadings && isPassiveWeatherReading(item)) return { item, node: renderWeatherReading(item) };
           if (readouts && isToolbarReadoutEntity(kind, item)) return { item, node: renderReadout(item) };
-          return { item, node: render(item, section.kind, { compactStatus, energyReadingCards, compactActions }) };
+          return { item, node: render(item, section.kind, { compactStatus, readingCards, compactActions }) };
         });
       items.append(...pairs.map(pair=>pair.node));
       if (section.filter === 'active') handlers.push(() => {
@@ -940,6 +941,7 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   }
   .shell[dir=rtl] .toolbar-section[data-layout=compact] > .toolbar-section-items > * { direction: rtl; }
   .toolbar-section[data-layout=reading-cards] > .toolbar-section-items { direction: ltr; }
+  .toolbar-section[data-section=readings][data-layout=reading-cards] { border: 0; padding: 0; }
   .shell[dir=rtl] .toolbar-section[data-layout=reading-cards] > .toolbar-section-items > * { direction: rtl; }
   .toolbar-section[data-layout=reading-cards] > .toolbar-section-title {
     color: var(--secondary); font-size: 13px; font-weight: 700;
@@ -1030,12 +1032,22 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   }
   .native-panel-card { min-width: 0; --ha-card-background: transparent; --ha-card-box-shadow: none;
     --ha-card-border-color: var(--soft-line); --primary-text-color: var(--ink); --secondary-text-color: var(--secondary); }
-  .energy-reading, .energy-native-card { display: grid; min-width: 0; }
-  .energy-native-card {
+  .energy-reading, .reading-native-card { display: grid; min-width: 0; }
+  .reading-native-card {
     --ha-card-border-width: 1px; --ha-card-border-radius: 8px;
     --state-icon-color: var(--secondary); --accent-color: var(--secondary);
     font-weight: var(--ha-font-weight-normal,400);
   }
+  .tile-row.weather-history-value {
+    direction: ltr; grid-template-columns: minmax(0,1fr) auto; grid-template-areas: "label icon" "value value";
+    justify-items: start; align-items: center; align-content: start; gap: 6px;
+    min-height: 104px; padding: 9px; border-radius: 8px; text-align: left;
+  }
+  .weather-history-value > .tile-mark {
+    grid-area: icon; width: 20px; height: 20px; background: transparent; color: var(--secondary);
+  }
+  .weather-history-value > .tile-label { grid-area: label; unicode-bidi: plaintext; overflow-wrap: anywhere; }
+  .weather-history-value > .tile-state { grid-area: value; color: var(--ink); font-size: 18px; font-variant-numeric: tabular-nums; }
   .toolbar-device, .toolbar-link { min-width: 0; }
   .toolbar-section[data-section=covers] .toolbar-section-items:has(> [data-cover-rail] ~ [data-cover-rail]) {
     /* Three 44px commands, two 3px gaps, padding and a border. */

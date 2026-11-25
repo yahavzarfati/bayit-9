@@ -893,6 +893,11 @@ export function isWeatherReadingsList(kind, section) {
   return supportsWeatherReadingsList(kind, section) && section.layout === 'readings-list';
 }
 
+export function isReadingCards(kind, section) {
+  return isEnergyReadingCards(kind, section) ||
+    (supportsWeatherReadingsList(kind, section) && section.layout === 'reading-cards');
+}
+
 export function supportsHourlyWeatherForecast(kind, section, item) {
   return kind === 'weather' && section?.kind === 'forecast' && typeof item?.entity === 'string' &&
     domainOf(item.entity) === 'weather' && (!item.role || item.role === 'forecast');
@@ -1020,7 +1025,7 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
       ...(isCompactToolbarStatus(kind, section) && { layout: 'compact' }),
       ...(isToolbarReadouts(kind, section) && { layout: 'readouts' }),
       ...(isWeatherReadingsList(kind, section) && { layout: 'readings-list' }),
-      ...(isEnergyReadingCards(kind, section) && { layout: 'reading-cards' }),
+      ...(isReadingCards(kind, section) && { layout: 'reading-cards' }),
       ...(comparison && { comparison }),
       ...(section.filter === 'active' && { filter:'active' }), ...overview, entities }];
   });

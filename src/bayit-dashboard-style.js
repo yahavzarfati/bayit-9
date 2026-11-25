@@ -478,7 +478,7 @@ export const styles = `
   }
   .modal[data-kind=device] { width: min(520px,calc(100% - 2 * var(--edge))); }
   @container (max-width: 420px) {
-    .shell[data-page=true] .modal[data-kind=toolbar]:has([data-layout=reading-cards]) { width: calc(100% - 32px); }
+    .shell[data-page=true] .modal[data-kind=toolbar]:has(:is([data-section=electricity],[data-section=water])[data-layout=reading-cards]) { width: calc(100% - 32px); }
   }
   .modal[data-kind=toolbar]:not([data-room-position],[data-centered-toolbar]) {
     --panel-top: clamp(14px,calc(var(--bayit-popup-area-top,142px) - 78px),max(14px,calc(var(--panel-bottom) - 180px)));

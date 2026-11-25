@@ -1,5 +1,5 @@
 import {
-  discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactAutomationActions, isCompactToolbarStatus, isEnergyReadingCards, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
+  discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactAutomationActions, isCompactToolbarStatus, isEnergyReadingCards, isReadingCards, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
   isToolbarReadoutEntity, isToolbarReadouts, isWeatherReadingsList, normalizeOverviewDiscovery, normalizeToolbarReadout, overviewSectionOptions, roomPanelOptions,
   securityReadoutLabelStates, selectableRoomEntities, sensorComparisonMaxHours, sensorComparisonOptions,
   SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
@@ -67,6 +67,7 @@ const WORDS = {
     compactStatus: 'Show status items side by side', compactSecurityLocks: 'Show compact lock controls',
     compactAutomationActions: 'Show compact action buttons',
     weatherReadingsList: 'Show readings as a compact read-only list',
+    weatherReadingCards: 'Show readings as chart cards',
     hourlyForecast: 'Show the 24-hour forecast above the daily forecast',
     energyReadingCards: 'Show readings with large values',
     energyDashboardLink: 'Show the Home Assistant Energy dashboard link',
@@ -140,6 +141,7 @@ const WORDS = {
     compactStatus: 'הצגת פריטי הסטטוס זה לצד זה', compactSecurityLocks: 'הצגת פקדי נעילה קומפקטיים',
     compactAutomationActions: 'הצגת כפתורי פעולה קומפקטיים',
     weatherReadingsList: 'הצגת המדדים ברשימה קומפקטית לקריאה בלבד',
+    weatherReadingCards: 'הצגת המדדים ככרטיסי גרף',
     hourlyForecast: 'הצגת תחזית ל־24 שעות מעל התחזית היומית',
     energyReadingCards: 'הצגת ערכי המדידה בגדול',
     energyDashboardLink: 'הצגת קישור לדשבורד האנרגיה של Home Assistant',
@@ -699,6 +701,11 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       readings.addEventListener('change', () =>
         changeSection({ layout: readings.checked ? 'readings-list' : undefined }, true, 'weather-readings-list'));
       fields.push(node('label', { className: 'check' }, [readings, words.weatherReadingsList]));
+      const cards = node('input', { type: 'checkbox', checked: isReadingCards(kind, active) });
+      cards.dataset.toolbarFocus = 'weather-reading-cards';
+      cards.addEventListener('change', () =>
+        changeSection({ layout: cards.checked ? 'reading-cards' : undefined }, true, 'weather-reading-cards'));
+      fields.push(node('label', { className: 'check' }, [cards, words.weatherReadingCards]));
     }
     if (supportsSensorComparison(kind, active)) {
       const options = sensorComparisonOptions(kind, active);

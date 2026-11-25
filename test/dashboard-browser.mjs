@@ -726,6 +726,11 @@ if (query.has('toolbar-panels')) {
       'sensor.demo_outdoor_temperature': {state:'24.5',attributes:{friendly_name:'Outdoor sensor',unit_of_measurement:'°C'}},
       'binary_sensor.demo_rain': {state:'off',attributes:{friendly_name:'Rain status'}},
     }),
+    ...(query.has('weather-history') && {
+      'sensor.demo_weather_history_temp': {state:'24.5',attributes:{friendly_name:'Outside temperature',unit_of_measurement:'°C'}},
+      'sensor.demo_weather_history_humidity': {state:'52',attributes:{friendly_name:'Humidity',unit_of_measurement:'%'}},
+      'sensor.demo_weather_history_rain': {state:'0',attributes:{friendly_name:'Chance of rain',unit_of_measurement:'%'}},
+    }),
     'sensor.demo_progress': {state:'40',attributes:{friendly_name:'Cleaning progress',unit_of_measurement:'%'}},
     'media_player.demo_speaker': {state:'playing',attributes:{friendly_name:'Speaker',supported_features:30781,volume_level:.24,
       is_volume_muted:false,source:'Radio',source_list:['Radio','Aux'],media_title:'Station',media_artist:'Fixture artist',
@@ -1024,6 +1029,15 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
           {entity:'sensor.demo_outdoor_temperature',role:'status',name:'Outside temperature',icon:'mdi:thermometer'},
           'binary_sensor.demo_rain',
           {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24},
+        ],
+      }] : []),
+      ...(query.has('weather-history') ? [{
+        kind:'readings', id:'weather-history', title:hass.locale.language === 'he' ? 'מדידות חוץ' : 'Outdoor readings',
+        ...(query.has('weather-reading-cards') && {layout:'reading-cards'}),
+        entities:[
+          {entity:'sensor.demo_weather_history_temp', role:'graph', graph_hours:24, name:hass.locale.language === 'he' ? 'טמפרטורה חוץ' : 'Outside temperature'},
+          {entity:'sensor.demo_weather_history_humidity', role:'graph', graph_hours:24, name:hass.locale.language === 'he' ? 'לחות' : 'Humidity'},
+          {entity:'sensor.demo_weather_history_rain', role:'graph', graph_hours:24, name:hass.locale.language === 'he' ? 'סיכוי גשם' : 'Chance of rain'},
         ],
       }] : []),
       ...(query.has('utility-graph-details') ? [{kind:'readings',entities:[
@@ -3449,6 +3463,109 @@ async function assertCompactWeatherReadings(browser) {
       assert.equal(await currentLayout(), undefined);
       await toggle.check();
       assert.equal(await currentLayout(), 'readings-list');
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+async function assertWeatherReadingCards(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const url = base + '/fixture-home/home?toolbar-panels&weather-history&locale=' + locale;
+    const weather = he ? 'מזג אוויר' : 'Weather';
+    const title = he ? 'מדידות חוץ' : 'Outdoor readings';
+    const dialog = page.getByRole('dialog',{name:weather,exact:true});
+    const names = he ? ['טמפרטורה חוץ','לחות','סיכוי גשם'] : ['Outside temperature','Humidity','Chance of rain'];
+    const open = async flags => {
+      await page.goto(url + flags);
+      await page.getByRole('button',{name:weather,exact:true}).tap();
+      await dialog.waitFor();
+    };
+    const items = dialog.locator('[data-section=readings] > .toolbar-section-items');
+    const positions = () => items.evaluate(node => {
+      const box = node.getBoundingClientRect();
+      return [...node.children].map(card => {
+        const {left,right,top,bottom,width,height} = card.getBoundingClientRect();
+        return {left,top,bottom,width,height,inside:left >= box.left - 1 && right <= box.right + 1};
+      });
+    });
+    const assertOrder = async (width, surface) => {
+      const cards = await positions();
+      const [first,second,third] = cards;
+      assert.equal(cards.length,3);
+      assert.ok(cards.every(card=>card.inside && card.width >= 44),JSON.stringify({locale,width,surface,cards}));
+      assert.ok(Math.abs(first.top - second.top) < 1 && first.left < second.left &&
+        Math.abs(first.left - third.left) < 1 && third.top >= first.bottom,
+      JSON.stringify({locale,width,surface,cards}));
+    };
+    try {
+      await open('');
+      const native = items.locator('[data-native-type=sensor]');
+      await native.nth(2).waitFor();
+      assert.equal(await dialog.locator('[data-layout=reading-cards]').count(),0);
+      const [defaultFirst,defaultSecond] = await positions();
+      assert.ok(he ? defaultFirst.left > defaultSecond.left : defaultFirst.left < defaultSecond.left);
+
+      await open('&weather-reading-cards');
+      await native.nth(2).waitFor();
+      assert.equal(await dialog.locator('[data-layout=reading-cards]').count(),1);
+      assert.deepEqual(await items.evaluate(node => {
+        const frame = getComputedStyle(node.parentElement);
+        return [frame.borderInlineStartWidth,frame.paddingInlineStart];
+      }),['0px','0px']);
+      assert.deepEqual(await native.allTextContents(),names);
+      assert.deepEqual(await native.evaluateAll(cards=>cards.map(card=>[
+        card.dataset.graphHours,card.dataset.tapAction,card.dataset.duringOpening,
+      ])), Array.from({length:3},()=>['24','more-info','false']));
+
+      for (const width of [320,391]) {
+        await page.setViewportSize({width,height:844});
+        await assertOrder(width,'native');
+      }
+      await native.first().tap();
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.moreInfoCalls),['sensor.demo_weather_history_temp']);
+
+      await open('&weather-reading-cards&no-native-charts');
+      const fallback = items.locator('.weather-history-value');
+      await fallback.nth(2).waitFor();
+      assert.deepEqual(await fallback.locator('.tile-label').allTextContents(),names);
+      const values = await fallback.locator('.tile-state').allTextContents();
+      assert.ok(values[0].includes('24.5 °C') && values[1].includes('52 %') && values[2].includes('0 %'));
+      assert.ok(await fallback.locator('.tile-state').first().evaluate(node=>parseFloat(getComputedStyle(node).fontSize) >= 18));
+      for (const width of [320,391]) {
+        await page.setViewportSize({width,height:844});
+        await assertOrder(width,'fallback');
+      }
+      await page.evaluate(()=>window.bayitTest.setRoomState('sensor.demo_weather_history_temp','25.5'));
+      await fallback.first().getByText(/25.5 °C/).waitFor();
+      await fallback.first().tap();
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.moreInfoCalls),['sensor.demo_weather_history_temp']);
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.calls),[]);
+
+      await page.goto(url + '&weather-reading-cards&editor');
+      await page.getByText(he ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens',{exact:true}).tap();
+      await page.getByRole('button',{name:weather,exact:true}).tap();
+      await page.getByRole('button',{name:title,exact:true}).tap();
+      const cards = page.getByRole('checkbox',{name:he ? 'הצגת המדדים ככרטיסי גרף' : 'Show readings as chart cards',exact:true});
+      const list = page.getByRole('checkbox',{name:he ? 'הצגת המדדים ברשימה קומפקטית לקריאה בלבד'
+        : 'Show readings as a compact read-only list',exact:true});
+      const saved = () => page.evaluate(()=>window.latest.toolbar.find(item=>item.kind==='weather')
+        .sections.find(section=>section.id==='weather-history'));
+      assert.equal(await cards.isChecked(),true);
+      assert.equal(await list.isChecked(),false);
+      await list.check();
+      assert.equal((await saved()).layout,'readings-list');
+      assert.equal(await cards.isChecked(),false);
+      await cards.check();
+      assert.equal((await saved()).layout,'reading-cards');
+      assert.equal(await list.isChecked(),false);
+      assert.deepEqual((await saved()).entities.map(({role,graph_hours})=>[role,graph_hours]),
+        Array.from({length:3},()=>['graph',24]));
+      await cards.uncheck();
+      assert.equal((await saved()).layout,undefined);
     } finally {
       await page.close();
     }
@@ -9251,6 +9368,8 @@ try {
       await assertEnergyReadingCards(browser);
       await assertEnergyPopupPlacement(browser);
       console.log(engine + ': optional Energy headline readings, native details, fallback and editor');
+      await assertWeatherReadingCards(browser);
+      console.log(engine + ': authored Weather chart order, readable fallback and editor at phone widths');
       await assertCompactWeatherReadings(browser);
       console.log(engine + ': optional passive Weather readings, RTL, updates, existing charts and editor');
 
