@@ -429,6 +429,7 @@ export class BayitDashboard extends HTMLElement {
     if (this.nodes.confirm.open) this.nodes.confirm.close();
     this.popupMotion.reset();
     this.toolbarPanel?.dispose();
+    this.wallpaperGallery?.dispose();
     this.roomGraphs?.dispose();
     this.boilerView?.dispose();
     this.config = next;
@@ -501,6 +502,7 @@ export class BayitDashboard extends HTMLElement {
     if (this.nodes.confirm.open) this.nodes.confirm.close();
     this.popupMotion.reset();
     this.toolbarPanel?.dispose();
+    this.wallpaperGallery?.dispose();
     this.roomGraphs?.dispose();
     this.boilerView?.dispose();
     this.pageChrome.dispose();
@@ -1020,6 +1022,7 @@ export class BayitDashboard extends HTMLElement {
     n.back.hidden = !returnTo;
     this.setup = null;
     this.toolbarPanel?.dispose();
+    this.wallpaperGallery?.dispose();
     this.roomGraphs?.dispose();
     this.boilerView?.dispose();
     this.toolbarPanel = this.wallpaperGallery = this.roomGraphs = this.boilerView = undefined;
@@ -1096,6 +1099,7 @@ export class BayitDashboard extends HTMLElement {
     this.panel = null;
     this.setup = null;
     this.toolbarPanel?.dispose();
+    this.wallpaperGallery?.dispose();
     this.roomGraphs?.dispose();
     this.boilerView?.dispose();
     this.toolbarPanel = this.wallpaperGallery = this.roomGraphs = this.boilerView = undefined;

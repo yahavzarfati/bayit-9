@@ -50,6 +50,20 @@ function loadImage(view, source) {
   });
 }
 
+function stockPhotoUrl(filename) {
+  return new URL(filename, import.meta.url).href;
+}
+
+function stockPhotoBackground(stock, source) {
+  const layers = ['url("' + source + '") center / cover no-repeat', stock.background];
+  const { overlay } = stock.photo;
+  if (overlay) {
+    const stop = opacity => 'rgba(' + overlay.rgb.join(',') + ',' + opacity + ')';
+    layers.unshift('linear-gradient(180deg,' + stop(overlay.start) + ',' + stop(overlay.end) + ')');
+  }
+  return layers.join(', ');
+}
+
 function canvasFor(document, width, height) {
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -96,13 +110,14 @@ async function preparePhoto(document, file) {
   }
 }
 
-function rasterFor(document, image) {
+function rasterFor(document, image, overlay) {
   const canvas = canvasFor(document, sampleSize, sampleSize);
   const context = drawPhoto(canvas, image);
   return {
     pixels: context.getImageData(0, 0, sampleSize, sampleSize).data,
     width: image.naturalWidth,
     height: image.naturalHeight,
+    overlay,
   };
 }
 
@@ -119,12 +134,20 @@ function darkInkOn(raster, area, frame, shade = 0) {
   const top = frame.top + (frame.height - height) / 2;
   const sampleIndex = position => Math.min(sampleSize - 1, Math.max(0, Math.floor(position * sampleSize)));
   const levels = [];
+  const { overlay } = raster;
   for (let row = 0; row < 5; row++) {
+    const sampleY = area.top + area.height * (row + .5) / 5;
+    const position = Math.max(0, Math.min(1, (sampleY - frame.top) / frame.height));
+    const opacity = overlay ? overlay.start + position * (overlay.end - overlay.start) : 0;
+    const y = sampleIndex((sampleY - top) / height);
     for (let column = 0; column < 5; column++) {
-      const y = sampleIndex((area.top + area.height * (row + .5) / 5 - top) / height);
       const x = sampleIndex((area.left + area.width * (column + .5) / 5 - left) / width);
       const index = (y * sampleSize + x) * 4;
-      const value = channel => linear(raster.pixels[index + channel] * (1 - shade) / 255);
+      const value = channel => {
+        const original = raster.pixels[index + channel];
+        const pixel = overlay ? original * (1 - opacity) + overlay.rgb[channel] * opacity : original;
+        return linear(pixel * (1 - shade) / 255);
+      };
       levels.push(.2126 * value(0) + .7152 * value(1) + .0722 * value(2));
     }
   }
@@ -145,6 +168,7 @@ export function createWallpaperController(shell, { storageKey = 'default', fallb
   const output = { id: null, url: null, raster: null };
   let generation = 0;
   let pending;
+  let stockRequest;
   let frame = 0;
   let disposed = false;
   const themedNodes = new Set();
@@ -225,6 +249,18 @@ export function createWallpaperController(shell, { storageKey = 'default', fallb
     return undefined;
   }
 
+  function showStockPhoto(id, stock) {
+    const source = stockPhotoUrl(stock.photo.full);
+    const request = loadImage(view, source);
+    stockRequest = request;
+    void request.then(image => {
+      if (disposed || stockRequest !== request || output.id !== id) return;
+      let raster;
+      try { raster = rasterFor(document, image, stock.photo.overlay); } catch {}
+      publish(id, stockPhotoBackground(stock, source), !!stock.darkInk, null, raster);
+    }, () => {});
+  }
+
   function apply(id) {
     if (disposed) return Promise.resolve(false);
     if (id === personalWallpaperId && pending?.ticket === generation) return pending.promise;
@@ -234,6 +270,7 @@ export function createWallpaperController(shell, { storageKey = 'default', fallb
     if (output.id === id) return Promise.resolve(true);
     if (stock) {
       publish(id, stock.background, !!stock.darkInk);
+      if (stock.photo) showStockPhoto(id, stock);
       return Promise.resolve(true);
     }
     const promise = readSavedPhoto().then(record => showPhoto(ticket, record, false), () => false)
@@ -288,14 +325,14 @@ export function createWallpaperController(shell, { storageKey = 'default', fallb
 const labels = {
   en: {
     legend: 'Wallpaper', all: 'All', new: 'New', basic: 'Basic', nature: 'Nature', materials: 'Materials',
-    light: 'Color and light', personal: 'My photo', more: 'More wallpapers',
+    photos: 'Photos', light: 'Color and light', personal: 'My photo', more: 'More wallpapers',
     upload: 'Choose a photo', saved: 'Use my saved photo', preparing: 'Preparing photo…',
     failed: 'Could not load this wallpaper.', uploadFailed: 'Could not save the photo. Choose an image up to 20 MB.',
     noPhoto: 'Choose a photo from this device.',
   },
   he: {
     legend: 'רקע', all: 'הכל', new: 'חדשים', basic: 'בסיס', nature: 'טבע ונוף', materials: 'חומרים וצורות',
-    light: 'אור וצבע', personal: 'תמונה שלי', more: 'עוד רקעים',
+    photos: 'תמונות', light: 'אור וצבע', personal: 'תמונה שלי', more: 'עוד רקעים',
     upload: 'בחירת תמונה', saved: 'שימוש בתמונה השמורה', preparing: 'מכין את התמונה…',
     failed: 'לא ניתן לטעון את הרקע.', uploadFailed: 'לא ניתן לשמור את התמונה. בחרו תמונה בגודל של עד 20 מ״ב.',
     noPhoto: 'בחרו תמונה מהמכשיר הזה.',
@@ -327,6 +364,25 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
   let category = selected === personalWallpaperId ? 'personal' : catalog[selected]?.group ?? 'nature';
   let request = 0;
   let expandedAll = false;
+  let disposed = false;
+  const view = element.ownerDocument.defaultView;
+  const previewObserver = typeof view.IntersectionObserver === 'function'
+    ? new view.IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (disposed || !entry.isIntersecting || !element.open || !entry.target.isConnected) continue;
+        previewObserver.unobserve(entry.target);
+        loadStockPreview(entry.target);
+      }
+    })
+    : null;
+
+  function loadStockPreview(sample) {
+    const stock = catalog[sample.dataset.wallpaperPreview];
+    const source = stockPhotoUrl(stock.photo.preview);
+    void loadImage(view, source).then(() => {
+      if (!disposed && sample.isConnected) sample.style.background = stockPhotoBackground(stock, source);
+    }, () => {});
+  }
 
   function button(text, className) {
     const item = document.createElement('button');
@@ -359,13 +415,14 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
     if (file && category === 'personal') fillPersonalPreview();
   }
 
-  function wallpaperButton(id, name, background) {
+  function wallpaperButton(id, name, wallpaper) {
     const item = button('', 'wallpaper-option');
     item.dataset.wallpaperChoice = id;
     const sample = document.createElement('span');
     sample.className = 'wallpaper-sample';
     sample.setAttribute('aria-hidden', 'true');
-    if (background) sample.style.background = background;
+    if (wallpaper) sample.style.background = wallpaper.background;
+    if (wallpaper?.photo) sample.dataset.wallpaperPreview = id;
     const caption = document.createElement('span');
     caption.textContent = name;
     item.append(sample, caption);
@@ -384,8 +441,10 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
   }
 
   function render(group) {
+    if (disposed) return;
     category = group;
     for (const [name, item] of categoryButtons) item.setAttribute('aria-pressed', String(name === category));
+    previewObserver?.disconnect();
     content.replaceChildren();
     if (group === 'personal') {
       content.className = 'wallpaper-personal';
@@ -417,7 +476,7 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
       const visibleIds = group === 'all' && !expandedAll ? ids.slice(0, 6) : ids;
       for (const id of visibleIds) {
         const wallpaper = catalog[id];
-        content.append(wallpaperButton(id, wallpaper[locale] ?? wallpaper.en, wallpaper.background));
+        content.append(wallpaperButton(id, wallpaper[locale] ?? wallpaper.en, wallpaper));
       }
       if (visibleIds.length < ids.length) {
         const more = button(words.more, 'wallpaper-upload wallpaper-more');
@@ -427,6 +486,10 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
           content.children[visibleIds.length]?.focus({ preventScroll: true });
         };
         content.append(more);
+      }
+      for (const sample of content.querySelectorAll('[data-wallpaper-preview]')) {
+        if (previewObserver) previewObserver.observe(sample);
+        else if (element.open) loadStockPreview(sample);
       }
     }
     select(selected);
@@ -440,9 +503,21 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
   }
   element.addEventListener('toggle', () => {
     if (element.open && !content.firstElementChild) render(category);
+    if (!element.open) {
+      previewObserver?.disconnect();
+      content.replaceChildren();
+    }
   });
   select(selected);
-  return { element, select };
+  return {
+    element,
+    select,
+    dispose() {
+      disposed = true;
+      request++;
+      previewObserver?.disconnect();
+    },
+  };
 }
 
 export const wallpaperStyles = `

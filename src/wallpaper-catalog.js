@@ -101,6 +101,24 @@ export const catalog = Object.freeze({
       radial-gradient(ellipse at 75% 0%, #314760, transparent 60%),
       linear-gradient(150deg,#182532,#0a121b)`,
   },
+  misty_lake: {
+    en: 'Misty lake', he: 'אגם ערפילי', group: 'photos',
+    background: 'linear-gradient(160deg,#364c5e,#142230 76%)',
+    photo: {
+      full: 'bayit9-wallpaper-misty-lake-full-8db692a7bdc7.webp',
+      preview: 'bayit9-wallpaper-misty-lake-preview-b25f5a91b334.webp',
+      overlay: { rgb: [5, 13, 20], start: .25, end: .55 },
+    },
+  },
+  graphite_and_bronze: {
+    en: 'Graphite and bronze', he: 'גרפיט וברונזה', group: 'photos',
+    background: 'linear-gradient(145deg,#373940,#1c1818 78%)',
+    photo: {
+      full: 'bayit9-wallpaper-graphite-and-bronze-full-67ab0076cc1f.webp',
+      preview: 'bayit9-wallpaper-graphite-and-bronze-preview-2b71cc9b0cca.webp',
+      overlay: { rgb: [3, 5, 9], start: .10, end: .32 },
+    },
+  },
   mountain_lake: {
     en: 'Mountain lake', he: 'אגם בין הרים', group: 'nature',
     background: `
@@ -197,6 +215,14 @@ export const catalog = Object.freeze({
       radial-gradient(circle at 86% 78%, rgba(157,225,226,.25), transparent 27%),
       linear-gradient(150deg,#283657,#151e37 65%,#182b3b)`,
   },
+  mediterranean_coast: {
+    en: 'Mediterranean coast', he: 'חוף ים תיכוני', group: 'photos',
+    background: 'linear-gradient(165deg,#475f7c,#183754 76%)',
+    photo: {
+      full: 'bayit9-wallpaper-mediterranean-coast-full-6413808a3604.webp',
+      preview: 'bayit9-wallpaper-mediterranean-coast-preview-43d7ffc5228c.webp',
+    },
+  },
   jade_stone: {
     en: 'Jade stone', he: 'אבן ירקן', group: 'materials',
     background: `
@@ -204,6 +230,14 @@ export const catalog = Object.freeze({
       linear-gradient(31deg,transparent 57%,rgba(149,180,162,.19) 57.5%,transparent 60%),
       radial-gradient(ellipse at 15% 9%,#5e8271,transparent 62%),
       linear-gradient(150deg,#315653 16%,#23403d 54%,#152323)`,
+  },
+  copper_dunes: {
+    en: 'Copper dunes', he: 'דיונות נחושת', group: 'photos',
+    background: 'linear-gradient(160deg,#784f43,#351e23 78%)',
+    photo: {
+      full: 'bayit9-wallpaper-copper-dunes-full-5ad08aa4f2d0.webp',
+      preview: 'bayit9-wallpaper-copper-dunes-preview-13a5622d0d72.webp',
+    },
   },
   light_through_blinds: {
     en: 'Light through blinds', he: 'אור דרך תריסים', group: 'light',
@@ -281,11 +315,15 @@ export const catalog = Object.freeze({
 
 export const wallpaperGroups = Object.freeze({
   new: Object.freeze([
-    'jade_stone', 'light_through_blinds', 'frozen_horizon', 'ink_on_paper',
+    'mediterranean_coast', 'jade_stone', 'copper_dunes',
+    'light_through_blinds', 'frozen_horizon', 'ink_on_paper',
   ]),
   basic: Object.freeze([
     'design_default', 'solid', 'blue_glow', 'warm_glow', 'nature_tones',
     'deep_dark',
+  ]),
+  photos: Object.freeze([
+    'misty_lake', 'graphite_and_bronze', 'mediterranean_coast', 'copper_dunes',
   ]),
   nature: Object.freeze([
     'mountain_lake', 'tuscany', 'moonlit_night', 'tropical_shore', 'desert_sunset',
@@ -304,7 +342,8 @@ export const wallpaperGroups = Object.freeze({
 });
 
 export const featuredWallpapers = Object.freeze([
-  'jade_stone', 'light_through_blinds', 'frozen_horizon', 'ink_on_paper',
+  'mediterranean_coast', 'jade_stone', 'copper_dunes',
+  'light_through_blinds', 'frozen_horizon', 'ink_on_paper',
   'aurora', 'desert_sunset', 'mountain_lake', 'ocean_waves',
   'architecture', 'clouds',
 ]);

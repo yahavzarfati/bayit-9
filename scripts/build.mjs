@@ -1,11 +1,24 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { catalog } from '../src/wallpaper-catalog.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const metadata = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const output = new URL('../dist/bayit-9.js', import.meta.url);
+for (const { photo } of Object.values(catalog)) {
+  if (!photo) continue;
+  for (const file of [photo.full, photo.preview]) {
+    const match = /^bayit9-wallpaper-[a-z0-9-]+-([a-f0-9]{12})\.webp$/.exec(file);
+    assert.ok(match, 'Bundled stock wallpaper filenames must include an asset fingerprint');
+    const bytes = await readFile(new URL(file, output));
+    assert.equal(bytes.toString('ascii', 0, 4), 'RIFF', file);
+    assert.equal(bytes.toString('ascii', 8, 12), 'WEBP', file);
+    assert.ok(createHash('sha256').update(bytes).digest('hex').startsWith(match[1]), file);
+  }
+}
 const result = await build({
   absWorkingDir: root,
   entryPoints: ['src/index.js'],
