@@ -2719,7 +2719,12 @@ async function assertManualShortcutsSurviveAutomaticMode(browser) {
       const first = setup.getByLabel(words.slot + ' 1', { exact:true });
       const second = setup.getByLabel(words.slot + ' 2', { exact:true });
       const destination = setup.getByLabel(words.destination, { exact:true });
-      const active = () => page.locator('.room[data-room=studio] .quick-button').evaluateAll(items => items.map(item => item.dataset.entity));
+      const waitForShortcuts = expected => page.waitForFunction(order => {
+        const studio = document.querySelector('bayit-dashboard')?.shadowRoot?.querySelector('.room[data-room=studio]');
+        if (!studio) return false;
+        const shortcuts = [...studio.querySelectorAll('.quick-button')];
+        return shortcuts.length === order.length && shortcuts.every((item, index) => item.dataset.entity === order[index]);
+      }, expected);
       const open = async () => {
         await page.getByRole('button', { name:words.appearance, exact:true }).tap();
         await page.getByRole('button', { name:words.setup, exact:true }).tap();
@@ -2727,8 +2732,7 @@ async function assertManualShortcutsSurviveAutomaticMode(browser) {
         await room.selectOption('studio');
       };
       const save = async () => {
-        await setup.getByRole('button', { name:words.save, exact:true }).tap();
-        await setup.waitFor({ state:'hidden' });
+        await Promise.all([page.waitForEvent('load'), setup.getByRole('button', { name:words.save, exact:true }).tap()]);
         return page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
       };
       const visitOtherRoom = async () => {
@@ -2743,7 +2747,7 @@ async function assertManualShortcutsSurviveAutomaticMode(browser) {
       await second.selectOption(manual[1]);
       await destination.selectOption('native');
       assert.deepEqual((await save()).room_shortcuts.studio, manual);
-      assert.deepEqual(await active(), manual);
+      await waitForShortcuts(manual);
 
       await open();
       await automatic.check();
@@ -2759,7 +2763,7 @@ async function assertManualShortcutsSurviveAutomaticMode(browser) {
       await page.goto(url + '#room-studio');
       await page.getByRole('dialog', { name:'Studio', exact:true }).waitFor();
       await page.goto(url);
-      assert.deepEqual(await active(), ['light.demo_lamp', 'switch.demo_heater']);
+      await waitForShortcuts(['light.demo_lamp', 'switch.demo_heater']);
 
       await open();
       assert.equal(await automatic.isChecked(), true);
@@ -2771,7 +2775,7 @@ async function assertManualShortcutsSurviveAutomaticMode(browser) {
       const empty = await save();
       assert.deepEqual(empty.room_shortcuts.studio, []);
       assert.equal(empty.room_overrides.studio.shortcut_selection, undefined);
-      assert.deepEqual(await active(), []);
+      await waitForShortcuts([]);
 
       await open();
       await automatic.check();
@@ -2781,7 +2785,7 @@ async function assertManualShortcutsSurviveAutomaticMode(browser) {
       await automatic.uncheck();
       assert.deepEqual([await first.inputValue(), await second.inputValue()], ['', '']);
       assert.deepEqual((await save()).room_shortcuts.studio, []);
-      assert.deepEqual(await active(), []);
+      await waitForShortcuts([]);
     } finally {
       await page.close();
     }
