@@ -229,10 +229,36 @@ export function preparePageChrome({ enabled, hass, doc = globalThis.document } =
   }
 }
 
+function suppressRetiringLaunchScreen(doc) {
+  const splash = doc.querySelector('body > div#ha-launch-screen');
+  if (!splash || !doc.head) return;
+  const rule = doc.createElement('style');
+  rule.setAttribute('data-bayit-launch-handoff', '');
+  rule.textContent = `
+    body > div#ha-launch-screen.removing:not(:has(button,a,input,select,textarea,[role="button"],[role="link"])) {
+      visibility: hidden !important;
+      pointer-events: none !important;
+    }
+  `;
+  // Keep Home Assistant’s opacity transition and its own removal lifecycle intact.
+  const observer = new doc.defaultView.MutationObserver(() => { if (splash.parentNode !== doc.body) stop(); });
+  observer.observe(doc.body, { childList: true });
+  doc.head.append(rule);
+  return stop;
+
+  function stop() {
+    observer.disconnect();
+    rule.remove();
+  }
+}
+
 export function createPageChrome(card, { onChange } = {}) {
   let lease;
   let editing = false;
   let dashboardId;
+  let ownsPage = false;
+  let rendered = false;
+  let releaseLaunch;
   const doc = card.ownerDocument;
   const win = doc.defaultView;
   const find = id => {
@@ -255,10 +281,25 @@ export function createPageChrome(card, { onChange } = {}) {
     return true;
   }
 
+  function updateLaunchHandoff() {
+    if (ownsPage && rendered) releaseLaunch ??= suppressRetiringLaunchScreen(doc);
+    else {
+      releaseLaunch?.();
+      releaseLaunch = undefined;
+    }
+  }
+
+  function changed(owned) {
+    ownsPage = owned;
+    updateLaunchHandoff();
+    onChange?.(owned);
+  }
+
   function dispose() {
     lease?.stop();
     lease = undefined;
     dashboardId = undefined;
+    rendered = false;
   }
 
   return {
@@ -268,9 +309,14 @@ export function createPageChrome(card, { onChange } = {}) {
         dispose();
         return;
       }
-      lease ??= watch(doc, find, { editing: () => editing, onChange });
+      lease ??= watch(doc, find, { editing: () => editing, onChange: changed });
       lease.refresh();
       if (find(routeId(win.location.pathname))) early.get(doc)?.();
+    },
+    markRendered() {
+      if (!lease || rendered) return;
+      rendered = true;
+      updateLaunchHandoff();
     },
     showHomeAssistantMenu: () => setBypass(true),
     toggleHomeAssistantMenu: () => setBypass(!new URL(win.location.href).searchParams.has('disable_km')),

@@ -202,6 +202,66 @@ async function assertLaunchToolbarPress(browser, base) {
   }
 }
 
+async function assertLaunchHandoff(browser, base) {
+  const page = await browser.newPage({ viewport: { width: 391, height: 845 }, hasTouch: true });
+  try {
+    const url = base + '/bayit-9/home?launch-toolbar=1';
+    await page.goto(url);
+    await page.waitForFunction(() => window.test?.launch);
+    const launchStyle = () => page.evaluate(() => {
+      const { visibility, pointerEvents, opacity } = getComputedStyle(test.launch.splash);
+      return [visibility, pointerEvents, opacity];
+    });
+
+    await page.evaluate(() => test.launch.fade(.8, true));
+    assert.deepEqual(await launchStyle(), ['visible', 'auto', '0.8']);
+    await page.evaluate(() => test.chrome.markRendered());
+    assert.deepEqual(await launchStyle(), ['hidden', 'none', '0.8']);
+    await page.getByRole('button', { name: 'weather', exact: true }).tap();
+    await page.waitForFunction(() => test.launch.popup.open);
+    await page.evaluate(() => test.launch.popup.close());
+
+    await page.evaluate(() => test.launch.fade(1, false));
+    assert.deepEqual(await launchStyle(), ['visible', 'auto', '1']);
+    await page.evaluate(() => {
+      const recovery = document.createElement('button');
+      recovery.textContent = 'Recovery';
+      test.launch.splash.append(recovery);
+      test.launch.fade(.8, true);
+    });
+    assert.deepEqual(await launchStyle(), ['visible', 'auto', '0.8']);
+    await page.evaluate(() => {
+      test.launch.splash.querySelector('button').remove();
+      test.navigate('/another-dashboard/home');
+    });
+    assert.deepEqual(await launchStyle(), ['visible', 'auto', '0.8']);
+    await page.evaluate(url => test.navigate(url + '&edit=1'), url);
+    assert.deepEqual(await launchStyle(), ['visible', 'auto', '0.8']);
+    await page.evaluate(url => test.navigate(url), url);
+    assert.deepEqual(await launchStyle(), ['hidden', 'none', '0.8']);
+
+    // Even if an older host removes the splash on transitionend, it can still do so.
+    await page.evaluate(() => {
+      const { splash } = test.launch;
+      splash.classList.remove('removing');
+      splash.style.removeProperty('opacity');
+      getComputedStyle(splash).opacity;
+      splash.style.transitionDuration = '725ms';
+      splash.addEventListener('transitionend', event => {
+        if (event.propertyName === 'opacity' && splash.classList.contains('removing')) splash.remove();
+      });
+      splash.classList.add('removing');
+    });
+    await page.waitForFunction(() => test.launch.splash.isConnected &&
+      getComputedStyle(test.launch.splash).visibility === 'hidden');
+    assert.equal(await page.evaluate(() => getComputedStyle(test.launch.splash).transitionProperty), 'opacity');
+    assert.equal(await page.evaluate(() => getComputedStyle(test.launch.splash).transitionDuration), '0.725s');
+    await page.waitForFunction(() => !test.launch.splash.isConnected && !document.querySelector('style[data-bayit-launch-handoff]'));
+  } finally {
+    await page.close();
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
@@ -323,6 +383,8 @@ try {
       assert.deepEqual(errors, []);
       console.log(`${engine}: page chrome ownership, native recovery and cleanup passed`);
       await assertLaunchToolbarPress(browser, 'http://127.0.0.1:' + server.address().port);
+      await assertLaunchHandoff(browser, 'http://127.0.0.1:' + server.address().port);
+      console.log(engine + ': ready dashboard skips the native fade without suppressing recovery');
       console.log(engine + ': trusted launch-screen presses reach only the visible toolbar popup');
     } finally {
       await browser.close();

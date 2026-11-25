@@ -1565,6 +1565,7 @@ export class BayitDashboard extends HTMLElement {
     }
     if (countdown && !this.ticker && this.isConnected) this.ticker = setInterval(() => this.update(), 1000);
     if (!countdown && this.ticker) { clearInterval(this.ticker); this.ticker = 0; }
+    if (haveStates) this.pageChrome.markRendered();
   }
 
   openPanel(type, source, room, entity, toolbar, returnFromRoom, navigation = {}) {
