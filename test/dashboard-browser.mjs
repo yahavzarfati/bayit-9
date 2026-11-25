@@ -1741,6 +1741,7 @@ async function assertTimerHistory(browser) {
       await page.locator('.quick-button[data-entity="climate.demo_air"]').press('Shift+Enter');
       await history.waitFor();
       assert.ok((await history.boundingBox()).height >= 44);
+      assert.ok((await panel.locator('.timer-clock-row').boundingBox()).height <= 60);
       await panel.locator('.timer-clock').tap();
       assert.deepEqual(await infoCalls(),[]);
       await history.press('Shift+Enter');

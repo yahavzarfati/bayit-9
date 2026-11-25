@@ -188,7 +188,7 @@ export function buildPanelControls(model, {
     const openHistory = () => { if (currentHistory) historyInfo(currentHistory, history); };
     history.onclick = openHistory;
     bindDeviceDetails(history, openHistory);
-    clockRow.append(time, history);
+    const readings = make('div', 'timer-clock-readings');
     const today = make('p', 'timer-today');
     const usage = button('timer-today timer-usage');
     usage.setAttribute('aria-haspopup', 'dialog');
@@ -239,7 +239,9 @@ export function buildPanelControls(model, {
         usage.title = t('more_info');
       }
     });
-    card.append(clockRow, today, usage);
+    readings.append(time, today, usage);
+    clockRow.append(readings, history);
+    card.append(clockRow);
     const tools = make('div', 'timer-tools');
     let input;
     if (duration) {
@@ -431,9 +433,9 @@ export const panelControlStyles = `
   .device-timer, .heat-level { min-width: 0; text-align: center; border-top: 1px solid var(--soft-line); padding-top: 6px; }
   .timer-clock { margin: 1px 0 0; font-size: 18px; font-weight: 780; font-variant-numeric: tabular-nums; }
   .timer-clock-row:has(.timer-history:not([hidden])) {
-    display: grid; grid-template-columns: 44px 1fr 44px; align-items: center;
+    display: grid; grid-template-columns: 44px minmax(0,1fr) 44px; align-items: center;
   }
-  .timer-clock-row:has(.timer-history:not([hidden])) .timer-clock { grid-column: 2; }
+  .timer-clock-row:has(.timer-history:not([hidden])) .timer-clock-readings { grid-column: 2; }
   .timer-history { grid-column: 3; justify-self: end; }
   .timer-today, .heat-level-title { margin: 0; font-size: 12px; font-weight: 740; color: var(--secondary); }
   .timer-usage {
