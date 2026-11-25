@@ -8,7 +8,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
-import { allowsCoverRailAction, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
+import { allowsCoverRailAction, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
   simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupScrollMemory } from './popup-scroll.js';
@@ -232,6 +232,9 @@ function normalizeEntity(item) {
     if (/^input_number\.[a-z0-9_]+$/.test(item.level_read_entity ?? '')) entry.level_read_entity = item.level_read_entity;
   }
   if (item.timed && typeof item.timed === 'object' && !Array.isArray(item.timed)) entry.timed = { ...item.timed };
+  if (entry.kind === 'heater' && entity.startsWith('fan.') && /^automation\.[a-z0-9_]+$/.test(item.home_heater_cutoff_automation ?? '')) {
+    entry.home_heater_cutoff_automation = item.home_heater_cutoff_automation;
+  }
   if (entry.kind === 'heater' && entity.startsWith('fan.') && entry.level_read_entity &&
       /^sensor\.[a-z0-9_]+$/.test(entry.timed?.simple_timer_entity ?? '') &&
       /^script\.[a-z0-9_]+$/.test(item.level_select_script ?? '')) {
@@ -1094,6 +1097,7 @@ export class BayitDashboard extends HTMLElement {
   homeShortcutPowerAction(config) {
     if (!isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities)) return;
     if (config.room_boiler_quick_power) return this.roomPowerTileAction(config);
+    if (config.home_heater_shortcut) return homeHeaterPowerAction(this._hass, config);
     const action = roomClimatePowerAction(this.model(config));
     if (climatePowerServiceRegistered(this._hass, action)) return action;
   }
@@ -1198,7 +1202,8 @@ export class BayitDashboard extends HTMLElement {
         const details = !room.shortcutNoDetails?.has(config.entity);
         let powerConfig;
         if (room.shortcutPower.has(config.entity)) {
-          const flag = domainFor(config) === 'climate' ? 'room_climate_power' : 'room_boiler_quick_power';
+          const flag = config.kind === 'heater' ? 'home_heater_shortcut'
+            : domainFor(config) === 'climate' ? 'room_climate_power' : 'room_boiler_quick_power';
           powerConfig = { ...config, [flag]: true };
         }
         const showDetails = () => this.openShortcutDetails(config, el, room);

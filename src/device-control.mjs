@@ -208,6 +208,14 @@ function sharedHeaterLevelSelector(config) {
   }
 }
 
+export function supportsHomeHeaterPower(config) {
+  const timed = config?.timed;
+  return config?.kind === 'heater' && isEntity(config.entity, 'fan') &&
+    isEntity(config.home_heater_cutoff_automation, 'automation') &&
+    isEntity(timed?.simple_timer_entity, 'sensor') && isEntity(timed?.simple_timer_target, 'switch') &&
+    !timed.start_script && !timed.stop_script && !timed.timer_entity;
+}
+
 function supportedActions(config, states, record, timer, nowMs, roomBoilerQuickPower) {
   const actions = {};
   const confirmationText = typeof config.confirmation === "string" ? config.confirmation.trim().slice(0, 200) : "";
@@ -315,6 +323,7 @@ function supportedActions(config, states, record, timer, nowMs, roomBoilerQuickP
 
   const timedStart = timing?.start_script || timing?.simple_timer_entity;
   const timedHeat = timedStart && (config.kind === "heater" || config.kind === "boiler");
+  const homeFanPower = config.home_heater_shortcut === true && supportsHomeHeaterPower(config);
   if (timedHeat || timing?.start_script) {
     // Mapped heat starts go through a server-side timer that owns automatic cutoff.
     if (!actions.turn_off) {
@@ -330,7 +339,7 @@ function supportedActions(config, states, record, timer, nowMs, roomBoilerQuickP
       config.domain === "switch" && config.kind === "boiler" && timing.simple_timer_entity &&
       !timing.start_script && !timing.stop_script && (timing.simple_timer_target ?? config.entity) === config.entity &&
       timer?.state === "idle" && record.state === "off";
-    if (!quickStart) delete actions.turn_on;
+    if (!quickStart && !homeFanPower) delete actions.turn_on;
     for (const action of ["set_hvac_mode", "set_operation_mode", "set_percentage", "set_temperature",
       "set_temperature_range", "set_fan_mode", "set_swing_mode", "set_swing_horizontal_mode", "set_preset_mode"]) {
       delete actions[action];
@@ -343,7 +352,7 @@ function supportedActions(config, states, record, timer, nowMs, roomBoilerQuickP
   if (timing?.simple_timer_entity && timer?.state === "active") {
     if (timer.deadlineMs > nowMs) add("extend_timed", duration());
     add("stop_timed");
-    if (timedHeat) delete actions.turn_off;
+    if (timedHeat && !homeFanPower) delete actions.turn_off;
   }
   if (timing?.allow_daily_usage_reset && ['active', 'idle'].includes(timer?.state) && Number.isFinite(timer.usedSeconds) && timer.usedSeconds > 0) {
     const { entry_id: entry, switch_entity_id: linked } = states[timer.entity].attributes;
@@ -514,6 +523,31 @@ export function roomBoilerQuickPowerAction(hass, model) {
     const action = powered ? 'turn_off' : 'turn_on';
     if (model.actions[action] && Object.hasOwn(hass?.services?.switch ?? {}, action)) return action;
   }
+}
+
+export function homeHeaterPowerAction(hass, config) {
+  if (config.home_heater_shortcut !== true || !supportsHomeHeaterPower(config)) return;
+  const states = hass?.states;
+  const registry = hass?.entities ?? {};
+  const platform = id => registry[id]?.platform ?? registry[id]?.pl;
+  const hidden = id => registry[id]?.hidden || registry[id]?.hidden_by || registry[id]?.disabled_by;
+  const { simple_timer_entity: sensor, simple_timer_target: relay } = config.timed;
+  const model = getDeviceModel(config, states);
+  if (!model.available || !['on', 'off'].includes(model.state) || model.attributes.assumed_state === true ||
+      states?.[relay]?.state !== model.state || platform(config.entity) !== 'template' ||
+      [config.entity, relay].some(hidden)) return;
+
+  const action = model.state === 'on' ? 'turn_off' : 'turn_on';
+  if (!model.actions[action] || model.actions[action].service || !Object.hasOwn(hass?.services?.fan ?? {}, action)) return;
+  if (action === 'turn_off') return action;
+
+  const cutoff = config.home_heater_cutoff_automation;
+  const runtime = states?.[sensor]?.attributes;
+  if (states?.[cutoff]?.state === 'on' && !hidden(cutoff) && !hidden(sensor) &&
+      platform(sensor) === 'simple_timer' && model.timer?.state === 'idle' &&
+      Object.hasOwn(hass?.services?.simple_timer ?? {}, 'start_timer') &&
+      runtime?.switch_entity_id === relay && runtime.device_active === false &&
+      states?.[config.level_select_script]?.state !== 'on') return action;
 }
 
 function expectedState(config, action, value, states) {
@@ -802,6 +836,9 @@ export function createDeviceController({
         if (config.room_boiler_quick_power !== true || roomBoilerQuickPowerAction(hass, model) !== actionId) {
           throw new DeviceControlError("action_unavailable", "The boiler or its timer changed before the command was sent.");
         }
+      }
+      if (config.home_heater_shortcut === true && homeHeaterPowerAction(hass, config) !== actionId) {
+        throw new DeviceControlError("action_unavailable", "The heater or its cutoff changed before the command was sent.");
       }
       const plan = planDeviceAction(config, hass?.states, actionId, value, options);
       if (plan.kind === "more_info") return { status: "more_info", entity: plan.entity };

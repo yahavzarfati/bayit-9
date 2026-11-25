@@ -1,5 +1,5 @@
 import { normalizeRoomActivities } from './room-appliance.mjs';
-import { HEATING_DOMAINS, isReadOnlyRole, supportsRoomShutdown } from './device-control.mjs';
+import { HEATING_DOMAINS, isReadOnlyRole, supportsHomeHeaterPower, supportsRoomShutdown } from './device-control.mjs';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
 import { normalizeMediaStage } from './now-playing.js';
@@ -186,6 +186,8 @@ export function normalizeProfile(value) {
   const simpleTimer = startScript ? undefined : idForDomain(timed.simple_timer_entity, 'sensor');
   const targetDomain = value.kind === 'climate' ? 'input_boolean' : fanHeater ? 'switch' : undefined;
   const simpleTimerTarget = simpleTimer && targetDomain ? idForDomain(timed.simple_timer_target, targetDomain) : undefined;
+  const cutoff = simpleTimerTarget && fanHeater && idForDomain(value.home_heater_cutoff_automation, 'automation');
+  if (cutoff) profile.home_heater_cutoff_automation = cutoff;
   const levelSelect = simpleTimer && profile.level_read_entity ? idForDomain(value.level_select_script, 'script') : undefined;
   if (levelSelect) profile.level_select_script = levelSelect;
   const preselect = simpleTimerTarget && profile.level_steps ? idForDomain(value.level_preselect_entity, 'input_number') : undefined;
@@ -341,7 +343,7 @@ export function supportsRoomBoilerQuickPower(device) {
 export function supportsHomeShortcutPower(device) {
   const climate = domainOf(device.entity) === 'climate' && (!device.kind || device.kind === 'climate') &&
     !device.timed?.start_script && !device.timed?.stop_script;
-  return !isReadOnlyRole(device.role) && (climate || supportsRoomBoilerQuickPower(device));
+  return !isReadOnlyRole(device.role) && (climate || supportsRoomBoilerQuickPower(device) || supportsHomeHeaterPower(device));
 }
 
 export function normalizeShortcutPowerEntities(room, value) {
@@ -466,6 +468,7 @@ function presentEntity(entity, state, registry, profile) {
     ...(profile?.level_select_script && { level_select_script: profile.level_select_script }),
     ...(profile?.level_preselect_entity && { level_preselect_entity: profile.level_preselect_entity }),
     ...(profile?.timed && { timed: profile.timed }),
+    ...(profile?.home_heater_cutoff_automation && { home_heater_cutoff_automation: profile.home_heater_cutoff_automation }),
     ...(profile?.schedule && { schedule: profile.schedule }),
     ...(profile?.boiler_timer_with_details && { boiler_timer_with_details: true }),
   };

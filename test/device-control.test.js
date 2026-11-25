@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { allowsCoverRailAction, createDeviceController, DeviceControlError, getDeviceModel, planDeviceAction, roomBoilerQuickPowerAction, roomShutdownTargets } from "../src/device-control.mjs";
+import { allowsCoverRailAction, createDeviceController, DeviceControlError, getDeviceModel, homeHeaterPowerAction, planDeviceAction, roomBoilerQuickPowerAction, roomShutdownTargets } from "../src/device-control.mjs";
 
 const entity = (state, attributes = {}) => ({ state, attributes });
 const config = (id, fields) => ({ entity: id, ...fields });
@@ -1020,4 +1020,56 @@ test("script start observation distinguishes a completed quick run from unrelate
   assert.equal(unchanged.reason, "state_timeout");
   const completed = await withUpdate(fresh).controller.execute(script, "start_script", revision);
   assert.equal(completed.status, "confirmed");
+});
+
+test("Home heater power honors the native fan and revalidates its cutoff before dispatch", async () => {
+  const fan = "fan.fixture_heater";
+  const relay = "switch.fixture_relay";
+  const timer = "sensor.fixture_timer";
+  const cutoff = "automation.fixture_heater_cutoff";
+  const calls = [];
+  const device = config(fan, { kind: "heater", home_heater_cutoff_automation: cutoff,
+    timed: { simple_timer_entity: timer, simple_timer_target: relay } });
+  const shortcut = { ...device, home_heater_shortcut: true };
+  const hass = {
+    states: {
+      [fan]: entity("off", { supported_features: 48 }), [relay]: entity("off"),
+      [timer]: entity("0", { switch_entity_id: relay, timer_state: "idle", device_active: false }),
+      [cutoff]: entity("on"),
+    },
+    services: { fan: { turn_on: {}, turn_off: {} }, simple_timer: { start_timer: {} } },
+    entities: { [fan]: { pl: "template" }, [timer]: { platform: "simple_timer" } },
+    callWS: request => { calls.push(request); },
+  };
+  const controller = createDeviceController({ getHass: () => hass, confirmationTimeoutMs: 0 });
+  const action = () => homeHeaterPowerAction(hass, shortcut);
+  assert.equal(getDeviceModel(device, hass.states).actions.turn_on, undefined);
+  assert.equal(action(), "turn_on");
+  hass.states[cutoff].state = "off";
+  assert.equal(action(), undefined);
+  await assert.rejects(controller.execute(shortcut, "turn_on"),code("action_unavailable"));
+  assert.deepEqual(calls, []);
+  hass.states[cutoff].state = "on";
+  hass.states[timer].attributes.switch_entity_id = "switch.wrong";
+  assert.equal(action(), undefined);
+  hass.states[timer].attributes.switch_entity_id = relay;
+  hass.entities[fan].pl = "mqtt";
+  assert.equal(action(), undefined);
+  hass.entities[fan].pl = "template";
+  delete hass.services.simple_timer.start_timer;
+  assert.equal(action(), undefined);
+  hass.services.simple_timer.start_timer = {};
+  await controller.execute(shortcut, "turn_on");
+  hass.states[fan].state = "on";
+  assert.equal(action(), undefined);
+  hass.states[relay].state = "on";
+  hass.states[cutoff].state = "unavailable";
+  hass.states[timer].attributes.timer_state = "active";
+  hass.states[fan].attributes.supported_features = 1;
+  assert.equal(action(), undefined);
+  hass.states[fan].attributes.supported_features = 48;
+  assert.equal(action(), "turn_off");
+  await controller.execute(shortcut, "turn_off");
+  assert.deepEqual(calls.map(request => [request.domain, request.service, request.target.entity_id]),
+    [["fan", "turn_on", fan], ["fan", "turn_off", fan]]);
 });

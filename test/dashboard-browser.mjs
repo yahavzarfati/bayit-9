@@ -1216,7 +1216,11 @@ const params = new URLSearchParams(location.search);
 const climate = 'climate.fixture_air';
 const boiler = 'switch.fixture_boiler';
 const runtime = 'sensor.fixture_runtime';
-const ids = [climate, boiler];
+const heater = 'fan.fixture_heater';
+const relay = 'switch.fixture_heater_relay';
+const heaterRuntime = 'sensor.fixture_heater_runtime';
+const cutoff = 'automation.fixture_cutoff';
+const ids = [climate, boiler, ...(params.has('heater') ? [heater] : [])];
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
 const settings = {
   type: 'custom:bayit-9', locale: params.get('locale'), area_ids: ['studio', 'den'],
@@ -1226,26 +1230,39 @@ const settings = {
   },
   room_shortcuts: { studio: ids, den: ids },
   profiles: [{ entity: climate, kind: 'climate' }, { entity: boiler, kind: 'boiler',
-    timed: { simple_timer_entity: runtime, min_minutes: 15, max_minutes: 60, step_minutes: 15 } }],
+    timed: { simple_timer_entity: runtime, min_minutes: 15, max_minutes: 60, step_minutes: 15 } },
+    ...(params.has('heater') ? [{ entity: heater, kind: 'heater', home_heater_cutoff_automation: cutoff,
+      timed: { simple_timer_entity: heaterRuntime, simple_timer_target: relay } }] : [])],
 };
 const calls = [], details = [];
 const states = {
   [climate]: { state: 'off', attributes: { friendly_name: 'Fixture air', supported_features: 384 } },
   [boiler]: { state: 'off', attributes: { friendly_name: 'Fixture boiler' } },
+  [heater]: { state: 'off', attributes: { friendly_name: 'Fixture heater', supported_features: 48 } },
+  [relay]: { state: 'off', attributes: {} },
+  [cutoff]: { state: 'on', attributes: { friendly_name: 'Fixture heater cutoff' } },
+  [heaterRuntime]: { state: '0', attributes: {
+    entry_id: 'fixture-heater', switch_entity_id: relay, timer_state: 'idle', device_active: false, reverse_mode: false,
+  } },
   [runtime]: { state: '0', attributes: {
     entry_id: 'fixture', switch_entity_id: boiler, timer_state: 'idle', device_active: false, reverse_mode: false,
   } },
 };
 const services = { climate: { turn_on: {}, turn_off: {} }, switch: { turn_on: {}, turn_off: {} },
-  simple_timer: { start_timer: {}, cancel_timer: {} } };
+  fan: { turn_on: {}, turn_off: {} }, simple_timer: { start_timer: {}, cancel_timer: {} } };
 const card = document.createElement('bayit-dashboard');
 const hass = {
-  areas: { studio: { name: 'Studio' }, den: { name: 'Den' } }, states, services, entities: { [runtime]: { platform: 'simple_timer' } },
+  areas: { studio: { name: 'Studio' }, den: { name: 'Den' } }, states, services,
+  entities: { [runtime]: { platform: 'simple_timer' }, [heater]: { pl: 'template' }, [heaterRuntime]: { pl: 'simple_timer' } },
   callWS(request) {
     if (request.type !== 'call_service') return Promise.resolve({});
     calls.push(request);
     const powered = request.service === 'turn_on';
     if (request.domain === 'climate') states[climate].state = powered ? 'cool' : 'off';
+    if (request.domain === 'fan') {
+      states[heater].state = states[relay].state = powered ? 'on' : 'off';
+      Object.assign(states[heaterRuntime].attributes, { timer_state: powered ? 'active' : 'idle', device_active: powered });
+    }
     if (request.domain === 'switch' || request.service === 'cancel_timer') {
       states[boiler].state = powered ? 'on' : 'off';
       Object.assign(states[runtime].attributes, { timer_state: 'idle', device_active: powered, reverse_mode: false });
@@ -5742,6 +5759,75 @@ async function assertHomeShortcutPower(browser) {
   }
 }
 
+
+async function assertHomeHeaterShortcut(browser) {
+  for (const locale of ['en', 'he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({ viewport: { width: 390, height: 846 }, hasTouch: true, reducedMotion: 'reduce' });
+    page.setDefaultTimeout(10000);
+    const url = base + '/fixture-home/quick-power?heater&locale=' + locale;
+    const target = '.room[data-room="studio"] .quick-button[data-entity="fan.fixture_heater"]';
+    const heater = page.locator(target);
+    const action = value => page.locator(target + '[data-action="' + value + '"]').waitFor();
+    const dialog = page.getByRole('dialog', { name: 'Fixture heater', exact: true });
+    const calls = () => page.evaluate(() => window.fixture.calls);
+    const state = (entity, value) => page.evaluate(([id, next]) => window.fixture.state(id, next), [entity, value]);
+    const close = async () => {
+      await dialog.getByRole('button', { name: he ? 'סגירה' : 'Close', exact: true }).press('Enter');
+      await dialog.waitFor({ state: 'hidden' });
+    };
+    try {
+      await page.goto(url);
+      await action('turn_on');
+      await heater.evaluate(el => el.click());
+      assert.deepEqual(await calls(), []);
+      await heater.press('Shift+F10');
+      await dialog.waitFor();
+      await close();
+      assert.deepEqual(await calls(), []);
+
+      await state('automation.fixture_cutoff', 'off');
+      await action('');
+      await heater.tap();
+      await dialog.waitFor();
+      await close();
+      assert.deepEqual(await calls(), []);
+
+      await state('automation.fixture_cutoff', 'on');
+      await state('switch.fixture_heater_relay', 'on');
+      await action('');
+      await heater.tap();
+      await dialog.waitFor();
+      await close();
+      assert.deepEqual(await calls(), []);
+
+      await state('switch.fixture_heater_relay', 'off');
+      await action('turn_on');
+      await heater.tap();
+      await page.waitForFunction(() => window.fixture.calls.length === 1);
+      await action('turn_off');
+      await state('automation.fixture_cutoff', 'off');
+      await heater.tap();
+      await page.waitForFunction(() => window.fixture.calls.length === 2);
+      assert.deepEqual((await calls()).map(request => [request.domain, request.service, request.target.entity_id]),
+        [['fan', 'turn_on', 'fan.fixture_heater'], ['fan', 'turn_off', 'fan.fixture_heater']]);
+
+      await page.goto(url + '&editor');
+      await page.getByText(he ? 'שליטה בדוד ובתנורים' : 'Boiler and heater controls', { exact: true }).click();
+      const profile = page.locator('.record').filter({ hasText: 'Fixture heater' });
+      await profile.getByRole('button', { name: he ? 'עריכה' : 'Edit', exact: true }).click();
+      const cutoff = page.getByLabel(he ? 'כיבוי אוטומטי של התנור' : 'Automatic heater cutoff', { exact: true });
+      assert.equal(await cutoff.inputValue(), 'automation.fixture_cutoff');
+      await cutoff.selectOption('');
+      await page.getByRole('button', { name: he ? 'שמירת בקר' : 'Save profile', exact: true }).click();
+      assert.equal(await page.evaluate(() => window.latest.profiles.find(item => item.entity === 'fan.fixture_heater').home_heater_cutoff_automation), undefined);
+      assert.deepEqual(await calls(), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
@@ -5765,6 +5851,7 @@ try {
       console.log(engine + ': editable active climate discovery, passive rows and live scope');
       await assertShortcutDetailRoutes(browser);
       await assertHomeShortcutPower(browser);
+      await assertHomeHeaterShortcut(browser);
       await assertCompactInlineLightLayout(browser);
       await assertCompactRoomHeater(browser);
       await assertSharedHeaterLevelInterop(browser);
