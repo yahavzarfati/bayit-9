@@ -436,6 +436,10 @@ export const styles = `
   @keyframes appear { from { opacity: 0; transform: scale(.92); } }
   .devices, .settings { display: grid; gap: 12px; }
   .settings-screens { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
+  .appearance-preferences { display: grid; gap: 8px; }
+  .appearance-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+  .appearance-actions > p:not(:empty) { flex-basis: 100%; padding-inline: 2px; }
+  .appearance-actions > p:empty { display: none; }
   .device-group { display: grid; gap: 7px; min-width: 0; }
   .device-group-title {
     margin: 1px 2px 0;

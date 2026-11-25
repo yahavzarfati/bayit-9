@@ -34,6 +34,10 @@ cleanup() {
 trap cleanup EXIT
 
 cp -- dist/bayit-9.js "$stage/www/bayit-9.js"
+for asset in dist/bayit-wallpaper-*.webp; do
+  [[ -f "$asset" ]] || continue
+  cp -- "$asset" "$stage/www/"
+done
 printf '%s\n' "$marker" > "$stage/www/bayit-acceptance-marker.txt"
 cat > "$stage/configuration.yaml" <<'YAML'
 homeassistant:

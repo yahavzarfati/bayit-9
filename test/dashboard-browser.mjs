@@ -55,7 +55,11 @@ const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection'
     },
   }),
 };
-const stored = () => JSON.parse(sessionStorage.getItem(storedKey) ||
+const sharedName = query.get('shared-appearance');
+const sharedURL = sharedName && '/fixture-shared-dashboard/' + encodeURIComponent(sharedName);
+const readShared = () => fetch(sharedURL).then(response => response.json());
+const sharedConfig = sharedURL ? await readShared() : undefined;
+const stored = () => sharedConfig ?? JSON.parse(sessionStorage.getItem(storedKey) ||
   JSON.stringify({ strategy: initialStrategy }));
 const hass = {
   user: { is_admin: query.has('configuration') && !query.has('member') },
@@ -69,8 +73,11 @@ const hass = {
     if (request.type === 'lovelace/dashboards/list') {
       return Promise.resolve([{ url_path: 'fixture-home', mode: 'storage' }]);
     }
-    if (request.type === 'lovelace/config') return Promise.resolve(stored());
+    if (request.type === 'lovelace/config') return sharedURL ? readShared() : Promise.resolve(stored());
     if (request.type === 'lovelace/config/save') {
+      if (sharedURL) return fetch(sharedURL, { method: 'POST', body: JSON.stringify(request.config) }).then(response => {
+        if (!response.ok) throw new Error('Could not save shared fixture');
+      });
       sessionStorage.setItem(storedKey, JSON.stringify(request.config));
       sessionStorage.setItem(storedKey + '-hash-at-save', location.hash);
       return Promise.resolve();
@@ -469,11 +476,21 @@ window.bayitTest = {
 };
 </script></html>`;
 
-const server = http.createServer((req, res) => {
+const sharedFixtureDefaults = { strategy: { type: 'custom:bayit-9', show_unassigned: false }, fixture: true };
+const sharedFixtures = new Map();
+const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname === '/bayit-9.js') {
     res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
     res.end(bundle);
+  } else if (/^[/]fixture-shared-dashboard[/][a-z]+$/.test(url.pathname)) {
+    if (req.method === 'POST') {
+      const body = [];
+      for await (const chunk of req) body.push(chunk);
+      sharedFixtures.set(url.pathname, JSON.parse(Buffer.concat(body).toString()));
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(sharedFixtures.get(url.pathname) ?? sharedFixtureDefaults));
   } else if (url.pathname === '/api/media_player_proxy/media_player.demo_speaker') {
     res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
     res.end('<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60"><rect width="60" height="60" fill="teal"/></svg>');
@@ -553,6 +570,57 @@ async function assertHomePreferenceAliases(browser) {
   }
 }
 
+async function assertSharedAppearance(browser, engine) {
+  const url = base + '/fixture-home/home?configuration&shared-appearance=' + engine.toLowerCase();
+  const device = { viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: 'reduce' };
+  const adminPage = await browser.newPage(device);
+  const memberPage = await browser.newPage(device);
+  try {
+    await Promise.all([adminPage.goto(url), memberPage.goto(url + '&member')]);
+    const openSettings = async page => {
+      await page.getByRole('button', { name: 'Appearance', exact: true }).tap();
+      return page.getByRole('dialog', { name: 'Appearance', exact: true });
+    };
+    const appearance = page => page.locator('.shell').evaluate(shell =>
+      [shell.dataset.background, shell.dataset.shape, shell.dataset.layout]);
+    const admin = await openSettings(adminPage);
+    const member = await openSettings(memberPage);
+    await member.getByRole('button', { name: 'Square', exact: true }).tap();
+    assert.equal(await member.getByRole('button', { name: 'Save as household defaults' }).count(), 0);
+    assert.deepEqual(await appearance(memberPage), ['aurora', 'square', 'classic']);
+    assert.deepEqual(await appearance(adminPage), ['aurora', 'soft', 'classic']);
+
+    await admin.locator('.wallpaper-gallery > summary').tap();
+    await admin.getByRole('button', { name: 'Misty forest', exact: true }).tap();
+    await admin.getByRole('button', { name: 'Round', exact: true }).tap();
+    await admin.locator('[data-preference="layout"][value="header"]').tap();
+    assert.equal(await adminPage.evaluate(() => window.bayitTest.calls.length), 0);
+    assert.deepEqual(await appearance(adminPage), ['jade', 'circle', 'header']);
+    assert.deepEqual(await appearance(memberPage), ['aurora', 'square', 'classic']);
+
+    await admin.getByRole('button', { name: 'Save as household defaults', exact: true }).tap();
+    await admin.getByText('Household appearance saved.', { exact: true }).waitFor();
+    const saveRequests = await adminPage.evaluate(() =>
+      window.bayitTest.calls.filter(call => call.type === 'lovelace/config/save'));
+    assert.deepEqual(saveRequests, [{ type: 'lovelace/config/save', url_path: 'fixture-home',
+      config: { strategy: { type: 'custom:bayit-9', show_unassigned: false, background: 'jade', shape: 'circle', layout: 'header' },
+        fixture: true } }]);
+    await admin.getByRole('button', { name: 'Use household defaults', exact: true }).waitFor({ state: 'hidden' });
+
+    await memberPage.reload();
+    await memberPage.locator('.shell[data-background="jade"][data-layout="header"]').waitFor();
+    assert.deepEqual(await appearance(memberPage), ['jade', 'square', 'header']);
+    const updated = memberPage.getByRole('dialog', { name: 'Appearance', exact: true });
+    await updated.getByRole('button', { name: 'Use household defaults', exact: true }).tap();
+    assert.deepEqual(await appearance(memberPage), ['jade', 'circle', 'header']);
+    assert.equal(await memberPage.evaluate(() => window.bayitTest.calls.length), 0);
+    await memberPage.reload();
+    await memberPage.locator('.shell[data-background="jade"][data-shape="circle"][data-layout="header"]').waitFor();
+  } finally {
+    await Promise.all([adminPage.close(), memberPage.close()]);
+  }
+}
+
 async function assertDeviceHeading(dialog, name) {
   assert.equal(await dialog.getByRole('heading', { name, exact: true }).count(), 1);
   const status = dialog.locator('.device-state-head');
@@ -566,6 +634,8 @@ try {
     const browser = await launcher.launch({ headless: true });
     try {
       await assertHomePreferenceAliases(browser);
+      await assertSharedAppearance(browser, engine);
+      console.log(engine + ': independent browser appearance and admin household defaults');
       const quietPage = await browser.newPage({
         viewport: { width: 391, height: 845 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce',
       });

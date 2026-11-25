@@ -600,6 +600,14 @@ export class BayitDashboard extends HTMLElement {
     for (const item of this.nodes.content.querySelectorAll('[data-preference]')) {
       item.setAttribute('aria-pressed', String(item.value === this.nodes.shell.dataset[item.dataset.preference]));
     }
+    const appearance = this.appearanceActions;
+    if (appearance?.panel === this.panel) {
+      appearance.reset.hidden = !Object.keys(this.preferences).length;
+      if (appearance.share) {
+        appearance.share.disabled = Boolean(this.appearanceSave);
+        appearance.share.hidden = this.appearanceSave !== appearance && !Object.keys(this.appearanceChanges()).length;
+      }
+    }
   }
 
   applySavedWallpaper() {
@@ -634,10 +642,50 @@ export class BayitDashboard extends HTMLElement {
     return true;
   }
 
-  setPreference(key, value) {
-    this.preferences[key] = value;
+  persistPreferences() {
     try { localStorage.setItem(this.config.storageKey, JSON.stringify(this.preferences)); } catch {}
     this.applyPreferences();
+  }
+
+  setPreference(key, value) {
+    this.preferences[key] = value;
+    this.persistPreferences();
+  }
+
+  appearanceChanges() {
+    return Object.fromEntries(Object.entries(this.preferences)
+      .filter(([key, value]) => value !== this.config[key] && value !== personalWallpaperId));
+  }
+
+  configurationErrorText(error) {
+    return this.t(['setup_storage', 'setup_conflict'].includes(error.code) ? error.code : 'setup_error');
+  }
+
+  async saveAppearance(actions) {
+    if (this.appearanceSave) return;
+    const changes = this.appearanceChanges();
+    if (!Object.keys(changes).length) return;
+    const config = this.config;
+    this.appearanceSave = actions;
+    actions.share.disabled = true;
+    actions.status.textContent = this.t('setup_saving');
+    try {
+      const current = await loadConfiguration(this._hass, location.pathname);
+      if (this.config !== config || this.panel !== actions.panel) return;
+      await saveConfiguration(this._hass, current, { ...current.strategy, ...changes });
+      if (this.config.storageKey !== config.storageKey) return;
+      if (this.config === config) Object.assign(config, changes);
+      for (const [key, value] of Object.entries(changes)) {
+        if (this.preferences[key] === value) delete this.preferences[key];
+      }
+      this.persistPreferences();
+      actions.status.textContent = this.t('appearance_saved');
+    } catch (error) {
+      actions.status.textContent = this.configurationErrorText(error);
+    } finally {
+      this.appearanceSave = undefined;
+      if (this.panel?.type === 'settings') this.applyPreferences();
+    }
   }
 
   model(config) {
@@ -1355,10 +1403,13 @@ export class BayitDashboard extends HTMLElement {
       group.append(make('legend','',this.t('more_screens')),screens);
       content.prepend(group);
     }
+    const deviceAppearance = make('section', 'appearance-preferences');
+    deviceAppearance.setAttribute('aria-label', this.t('appearance_browser'));
+    deviceAppearance.append(make('h3', 'device-group-title', this.t('appearance_browser')));
     this.wallpaperGallery = createWallpaperGallery({ locale: this.config.locale, controller: this.wallpaper,
       selected: this.activeWallpaper || this.config.background,
       onSelect: id => this.selectWallpaper(id), onUpload: file => this.selectWallpaper(personalWallpaperId, { file }) });
-    content.append(this.wallpaperGallery.element);
+    deviceAppearance.append(this.wallpaperGallery.element);
     for (const key of ['shape','layout']) {
       const values = options[key];
       const group = make('fieldset', 'prefs-group');
@@ -1372,8 +1423,27 @@ export class BayitDashboard extends HTMLElement {
         choices.append(el);
       }
       group.append(choices);
-      content.append(group);
+      deviceAppearance.append(group);
     }
+    const appearanceActions = make('div', 'appearance-actions');
+    const reset = button('control-button', this.t('appearance_reset'));
+    reset.onclick = () => {
+      this.preferences = {};
+      this.persistPreferences();
+    };
+    const status = make('p', 'setup-status');
+    status.setAttribute('role', 'status');
+    const actions = { panel: this.panel, reset, status };
+    this.appearanceActions = actions;
+    appearanceActions.append(reset);
+    if (this.config.page && this._hass?.user?.is_admin) {
+      actions.share = button('control-button', this.t('appearance_share'), 'mdi:content-save-outline');
+      actions.share.onclick = () => { void this.saveAppearance(actions); };
+      appearanceActions.append(actions.share);
+    }
+    appearanceActions.append(status);
+    deviceAppearance.append(appearanceActions);
+    content.append(deviceAppearance);
     this.applyPreferences();
     if (this.config.page && this.config.fullscreen) {
       const bypass = new URL(location.href).searchParams.has('disable_km');
@@ -1393,7 +1463,6 @@ export class BayitDashboard extends HTMLElement {
     status.setAttribute('role', 'status');
     content.className = 'setup-page';
     content.replaceChildren(status);
-    const errorText = error => this.t(['setup_storage', 'setup_conflict'].includes(error.code) ? error.code : 'setup_error');
     try {
       const current = await loadConfiguration(this._hass, location.pathname);
       if (this.panel !== page) return;
@@ -1419,7 +1488,7 @@ export class BayitDashboard extends HTMLElement {
           location.reload();
         } catch (error) {
           if (this.panel !== page) return;
-          status.textContent = errorText(error);
+          status.textContent = this.configurationErrorText(error);
           editor.inert = false;
           save.disabled = error.code === 'setup_conflict';
         }
@@ -1429,7 +1498,7 @@ export class BayitDashboard extends HTMLElement {
       footer.append(status, save);
       content.replaceChildren(editor, footer);
     } catch (error) {
-      if (this.panel === page) status.textContent = errorText(error);
+      if (this.panel === page) status.textContent = this.configurationErrorText(error);
     }
   }
 

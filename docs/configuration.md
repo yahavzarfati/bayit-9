@@ -21,9 +21,11 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 | `fullscreen` | Set to `true` to hide the Home Assistant header and sidebar on this standalone dashboard. Use **Home Assistant menu** in Bayit 9 Settings, or add `?disable_km=1` to the dashboard address, to restore them. |
 | `shape` | `soft`, `circle` or `square`. |
 | `layout` | `classic` or `header`. |
-| `preference_key` | Optional browser preference key for households using multiple Bayit 9 dashboards. |
+| `preference_key` | Optional explicit browser preference group. By default, the Home view and its alternate URLs share one group per dashboard. |
 | `toolbar` | Optional ordered entries with `kind`, `label`, `icon`, `entities` or `sections`. Set `placement: settings` to put a screen inside Settings. Link entries use a local Home Assistant `path`. Security entries can opt in to an Oref alert map. |
 | `profiles` | Climate, boiler and heater controls mapped to local entities. See [heating and timer profiles](heating.md). |
+
+The Settings appearance controls preview changes in the current browser. On a storage dashboard, an administrator can save built-in wallpaper, button shape, and room layout choices as household defaults. A device with a local override keeps it until **Use household defaults** is selected on that device. Personal photos stay in the browser that uploaded them.
 
 Entity-level room assignment takes precedence over device-level assignment. Home Assistant's disabled and hidden entities remain excluded. Diagnostic and configuration entities are omitted from automatic discovery. A room override with `entities` uses exactly the listed visible entities, in order. An empty list keeps the room with no devices. Omit `entities` to use automatic discovery. `entity_icons` is a mapping from entity ID to icon for that room. Assigning a device explicitly moves it out of automatically discovered rooms on this dashboard. You can include it in multiple rooms by listing it explicitly in each one. These choices leave Home Assistant area assignments as they are.
 

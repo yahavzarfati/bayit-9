@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { connect, fixtureOrigin, onboard, poll, RESOURCE_URL, seedLovelace } from './ha-acceptance-provision.mjs';
@@ -27,15 +27,27 @@ try {
     ? await installRelease(api, base, JSON.parse(await readFile(releaseReceipt, 'utf8')))
     : RESOURCE_URL;
   const browserModuleUrl = new URL(resourceUrl, base).href;
-  console.log('Synthetic Home Assistant ' + api.version + ' onboarded and module registered');
+  const distribution = new URL('../dist/', import.meta.url);
+  const wallpapers = (await readdir(distribution)).filter(name => /^bayit-wallpaper-[a-z0-9-]+\.webp$/.test(name));
+  await Promise.all(wallpapers.map(async name => {
+    const expected = await readFile(new URL(name, distribution));
+    const actual = await fetch(new URL(name, browserModuleUrl), { redirect: 'error', signal: AbortSignal.timeout(15000) });
+    assert.ok(actual.ok, 'Missing installed wallpaper ' + name);
+    assert.deepEqual(Buffer.from(await actual.arrayBuffer()), expected, name + ' differs from the release');
+  }));
+  console.log('Synthetic Home Assistant ' + api.version + ' loaded the module and ' + wallpapers.length + ' wallpaper assets');
 
   browser = await chromium.launch();
-  const context = await browser.newContext({ locale: 'en-US', viewport: { width: 1200, height: 900 } });
-  await context.route(/https?:\/\//, route => new URL(route.request().url()).origin === base
-    ? route.continue() : route.abort());
-  await context.addInitScript(({ expectedOrigin, savedTokens }) => {
-    if (location.origin === expectedOrigin) localStorage.setItem('hassTokens', JSON.stringify(savedTokens));
-  }, { expectedOrigin: base, savedTokens: tokens });
+  const createContext = async viewport => {
+    const context = await browser.newContext({ locale: 'en-US', viewport });
+    await context.route(/https?:\/\//, route => new URL(route.request().url()).origin === base
+      ? route.continue() : route.abort());
+    await context.addInitScript(({ expectedOrigin, savedTokens }) => {
+      if (location.origin === expectedOrigin) localStorage.setItem('hassTokens', JSON.stringify(savedTokens));
+    }, { expectedOrigin: base, savedTokens: tokens });
+    return context;
+  };
+  const context = await createContext({ width: 1200, height: 900 });
   page = await context.newPage();
   page.setDefaultTimeout(30000);
   page.on('response', result => {
@@ -107,6 +119,22 @@ try {
   assert.ok(moduleResponses.includes(200) || moduleResponses.includes(304),
     'The browser did not fetch the registered Bayit 9 bundle');
   console.log('Mobile-width appearance setting saved and survived reload');
+
+  const otherContext = await createContext({ width: 390, height: 844 });
+  try {
+    const otherPage = await otherContext.newPage();
+    await otherPage.goto(target, { waitUntil: 'domcontentloaded' });
+    await otherPage.locator('bayit-dashboard .shell[data-background="aurora"]').waitFor();
+    await appearance.getByRole('button', { name: 'Save as household defaults', exact: true }).click();
+    await poll('the household wallpaper to be stored in Home Assistant', async () => {
+      const saved = await api.command('lovelace/config', { url_path: dashboard.url_path, force: true });
+      return saved?.strategy?.background === 'lagoon';
+    });
+    await otherPage.locator('bayit-dashboard .shell[data-background="lagoon"]').waitFor();
+    console.log('The household wallpaper reached another open Home Assistant browser');
+  } finally {
+    await otherContext.close();
+  }
 
   await appearance.getByRole('button', { name: 'Close', exact: true }).click();
   await mkdir(artifacts, { recursive: true });
