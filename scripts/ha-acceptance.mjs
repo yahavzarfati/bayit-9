@@ -143,6 +143,31 @@ try {
   await roomButton.click();
   await room.waitFor();
   await room.screenshot({ path: resolve(artifacts, 'room.png'), animations: 'disabled' });
+
+  const roomRoute = page.url();
+  const beforeDetails = await deviceState();
+  await device.getByRole('button', { name: / · (Turn on|Turn off)$/ }).press('Shift+Enter');
+  const deviceDialog = card.locator('dialog[data-kind="device"][open]');
+  const moreInfo = deviceDialog.getByRole('button', { name: 'More info', exact: true });
+  await moreInfo.waitFor();
+  const deviceRoute = page.url();
+  assert.match(new URL(deviceRoute).hash, /^#device\//);
+  await moreInfo.click();
+  const nativeClose = page.locator('ha-more-info-dialog').getByRole('button', { name: 'Close', exact: true });
+  await nativeClose.waitFor();
+  assert.equal(new URL(page.url()).hash, new URL(deviceRoute).hash);
+  assert.equal(await deviceDialog.count(), 1, 'Bayit device controls stay mounted underneath native More info');
+  await nativeClose.click();
+  await nativeClose.waitFor({ state: 'hidden' });
+  await page.waitForURL(deviceRoute);
+  await poll('focus to return to the More info button', async () =>
+    moreInfo.evaluate(button => button.getRootNode().activeElement === button));
+  await deviceDialog.getByRole('button', { name: 'Back to room', exact: true }).click();
+  await page.waitForURL(roomRoute);
+  await room.waitFor();
+  assert.equal(await deviceState(), beforeDetails);
+  console.log('Native More info returned to the same Bayit device controls and room');
+
   await room.getByRole('button', { name: 'Close', exact: true }).click();
 
   await settings.click();
