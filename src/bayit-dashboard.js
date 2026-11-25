@@ -1868,7 +1868,8 @@ export class BayitDashboard extends HTMLElement {
       const head = launchFromHeader ? more : make('header', 'device-head');
       if (titleInDialog) {
         head.classList.add('device-state-head');
-        glyph.hidden = true;
+        head.classList.toggle('boiler-state-head', standaloneBoiler);
+        glyph.hidden = !standaloneBoiler;
         name.hidden = true;
       }
       if (panelTarget) {
@@ -1979,6 +1980,7 @@ export class BayitDashboard extends HTMLElement {
     const host = make('div', 'boiler-pane boiler-history-host');
     host.hidden = true;
     const tabs = make('div', 'boiler-tabs');
+    tabs.dir = 'ltr';
     let panel;
     const stacked = config.boiler_timer_with_details === true;
     const choices = [
@@ -2044,6 +2046,11 @@ export class BayitDashboard extends HTMLElement {
     };
     for (const item of selectable) {
       const tab = button('control-button', this.t(item.label), item.icon);
+      tab.id = 'boiler-tab-' + item.label;
+      item.element.id = 'boiler-pane-' + item.label;
+      item.element.setAttribute('role', 'region');
+      item.element.setAttribute('aria-labelledby', tab.id);
+      tab.setAttribute('aria-controls', item.element.id);
       tab.hidden = compactNavigation && item === timer;
       tab.setAttribute('aria-pressed', String(item === active));
       tab.onclick = () => activate(item, true);
@@ -2187,6 +2194,7 @@ export class BayitDashboard extends HTMLElement {
         view.item.dataset.lockState = model.available ? model.state : '';
       }
       view.state.dataset.tone = feedback ? 'moving' : this.tone(model);
+      if (view.standaloneBoiler) view.item.toggleAttribute('data-boiler-heating', model.available && model.state === 'on');
       const powerTileAction = view.roomPowerTile && !pending && this.roomPowerTileAction(view.config, model);
       if (view.tileHint !== undefined) {
         const sending = pending && model.available ? this.t('sending').replace('{name}', labelName) : '';

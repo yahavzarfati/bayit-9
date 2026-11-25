@@ -622,6 +622,18 @@ export const styles = `
   .device-head { display: grid; grid-template-columns: 32px minmax(0,1fr) 44px; align-items: center; gap: 8px; }
   .device-head.device-state-head { grid-template-columns: minmax(0,1fr) 44px; }
   .device-state-head .current { margin-block-start: 0; }
+  .device-head.boiler-state-head { direction: ltr; grid-template-columns: 32px minmax(0,1fr) 44px; }
+  .boiler-state-head .device-detail { text-align: left; }
+  .shell[dir=rtl] .boiler-state-head .device-detail { direction: rtl; }
+  .boiler-state-head > .device-icon {
+    width: 32px; height: 32px; --mdc-icon-size: 20px; place-items: center;
+    background: var(--room-icon-fill); border: 1px solid var(--room-icon-line); border-radius: 50%;
+  }
+  .device[data-boiler-heating] .boiler-state-head > .device-icon {
+    color: var(--warm);
+    background: color-mix(in srgb,var(--warm) 14%,transparent);
+    border-color: color-mix(in srgb,var(--warm) 28%,transparent);
+  }
   .device[data-inline-climate] { padding: 0; border: 0; }
   .device[data-inline-climate] .device-head {
     --climate-header-icon-width: 36px;

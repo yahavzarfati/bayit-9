@@ -162,6 +162,83 @@ const server = createServer((request, response) => {
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 
+async function assertDedicatedBoilerPresentation(browser, locale) {
+  const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+  const he = locale === 'he';
+  const scheduleLabel = he ? 'תזמון' : 'Schedule';
+  const historyLabel = he ? 'היסטוריית שימוש' : 'Usage history';
+  const dialog = page.getByRole('dialog', { name: 'Fixture boiler', exact: true });
+  const header = dialog.locator('.boiler-state-head');
+  const symbol = header.locator('.device-icon');
+  const status = header.locator('.current');
+  const info = header.getByRole('button', { name: he ? 'מידע נוסף' : 'More info', exact: true });
+  const schedule = dialog.getByRole('button', { name: scheduleLabel, exact: true });
+  const history = dialog.getByRole('button', { name: historyLabel, exact: true });
+  const schedulePane = dialog.getByRole('region', { name: scheduleLabel, exact: true });
+  const historyPane = dialog.getByRole('region', { name: historyLabel, exact: true });
+  const boxFor = items => Promise.all(items.map(item => item.boundingBox()));
+  const mark = () => symbol.evaluate(node => ({
+    heating: node.closest('.device').hasAttribute('data-boiler-heating'), color: getComputedStyle(node).color,
+  }));
+  try {
+    await page.goto('http://127.0.0.1:' + server.address().port + '?compact&stacked&locale=' + locale);
+    await page.locator('[data-room=bath] .quick-button').tap();
+    await schedulePane.waitFor();
+    assert.equal(await dialog.getByRole('heading', { name: 'Fixture boiler', exact: true }).count(), 1);
+    assert.equal(await header.locator('.device-name').isHidden(), true);
+    assert.equal(await header.getByRole('button').count(), 1);
+    assert.equal(await symbol.getAttribute('icon'), 'mdi:water-boiler');
+    assert.equal(await symbol.getAttribute('aria-hidden'), 'true');
+    assert.equal(await status.textContent(), he ? 'כבוי' : 'Off');
+    const idle = await mark();
+    assert.equal(idle.heating, false);
+
+    for (const width of [320,391]) {
+      await page.setViewportSize({ width, height: 844 });
+      const [glyphBox,stateBox,infoBox,scheduleBox,historyBox] = await boxFor([symbol,status,info,schedule,history]);
+      assert.ok(glyphBox.x + glyphBox.width <= stateBox.x && stateBox.x + stateBox.width <= infoBox.x);
+      assert.ok(scheduleBox.x < historyBox.x && Math.abs(scheduleBox.y - historyBox.y) < 1);
+      assert.ok([infoBox,scheduleBox,historyBox].every(box => box.width >= 44 && box.height >= 44));
+    }
+    for (const tab of [schedule,history]) {
+      assert.equal(await tab.evaluate(button => button.getRootNode().getElementById(button.getAttribute('aria-controls'))
+        ?.getAttribute('aria-labelledby')), await tab.getAttribute('id'));
+    }
+
+    await symbol.tap();
+    await status.tap();
+    assert.deepEqual(await page.evaluate(() => window.fixture.moreInfo), []);
+    await info.tap();
+    assert.deepEqual(await page.evaluate(() => window.fixture.moreInfo), ['switch.fixture_boiler']);
+    await schedule.focus();
+    await page.keyboard.press('Tab');
+    assert.equal(await history.evaluate(button => button.getRootNode().activeElement === button), true);
+    await page.keyboard.press('Enter');
+    await historyPane.waitFor();
+    assert.equal(await history.getAttribute('aria-pressed'), 'true');
+    await schedulePane.waitFor({ state: 'hidden' });
+    await schedule.press('Enter');
+    await schedulePane.waitFor();
+    assert.equal(await schedule.getAttribute('aria-pressed'), 'true');
+    await historyPane.waitFor({ state: 'hidden' });
+
+    await page.evaluate(() => window.fixture.setupState('off','active'));
+    await dialog.locator('button[data-action=extend_timed]').waitFor();
+    assert.deepEqual(await mark(), idle, 'The icon follows the reported boiler state even when the timer reports activity');
+    await page.evaluate(() => window.fixture.setupState('on','active'));
+    await header.getByText(he ? 'פועל' : 'On', { exact: true }).waitFor();
+    const active = await mark();
+    assert.equal(active.heating,true);
+    assert.notEqual(active.color,idle.color);
+    await page.evaluate(() => window.fixture.setupState('unavailable','active'));
+    await header.getByText(he ? 'לא זמין' : 'Unavailable', { exact: true }).waitFor();
+    assert.deepEqual(await mark(), idle);
+    assert.equal(await page.evaluate(() => window.fixture.requests.includes('call_service')), false);
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertIdleZeroBoilerDuration(browser, locale) {
   const page = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true, reducedMotion: 'reduce' });
   const he = locale === 'he';
@@ -389,7 +466,10 @@ try {
   for (const [launcher, locale] of [[chromium, 'en'], [webkit, 'he']]) {
     const browser = await launcher.launch();
     try {
-      for (const language of ['en', 'he']) await assertIdleZeroBoilerDuration(browser, language);
+      for (const language of ['en', 'he']) {
+        await assertDedicatedBoilerPresentation(browser, language);
+        await assertIdleZeroBoilerDuration(browser, language);
+      }
       const routed = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true });
       await routed.goto('http://127.0.0.1:' + server.address().port + '?routed&locale=' + locale);
       const routedRoom = routed.getByRole('dialog', { name: 'Kitchen', exact: true });
@@ -491,6 +571,7 @@ try {
       await monitor.locator('.quick-button[data-entity="switch.fixture_boiler"]').tap();
       await dialog.getByRole('heading', { name: 'Fixture boiler', exact: true }).first().waitFor();
       await dialog.getByRole('button', { name: words.schedule, exact: true }).waitFor({ state: 'hidden' });
+      assert.equal(await dialog.locator('.boiler-state-head').count(), 0);
       await back.waitFor({ state: 'hidden' });
       await page.keyboard.press('Escape');
       await dialog.waitFor({ state: 'hidden' });
