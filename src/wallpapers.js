@@ -324,14 +324,14 @@ export function createWallpaperController(shell, { storageKey = 'default', fallb
 
 const labels = {
   en: {
-    legend: 'Wallpaper', all: 'All', new: 'New', basic: 'Basic', nature: 'Nature', materials: 'Materials',
+    legend: 'Home wallpaper', all: 'All', new: 'New', basic: 'Basic', nature: 'Nature', materials: 'Materials',
     photos: 'Photos', light: 'Color and light', personal: 'My photo', more: 'More wallpapers',
     upload: 'Choose a photo', saved: 'Use my saved photo', preparing: 'Preparing photo…',
     failed: 'Could not load this wallpaper.', uploadFailed: 'Could not save the photo. Choose an image up to 20 MB.',
     noPhoto: 'Choose a photo from this device.',
   },
   he: {
-    legend: 'רקע', all: 'הכל', new: 'חדשים', basic: 'בסיס', nature: 'טבע ונוף', materials: 'חומרים וצורות',
+    legend: 'רקע הבית', all: 'הכל', new: 'חדשים', basic: 'בסיס', nature: 'טבע ונוף', materials: 'חומרים וצורות',
     photos: 'תמונות', light: 'אור וצבע', personal: 'תמונה שלי', more: 'עוד רקעים',
     upload: 'בחירת תמונה', saved: 'שימוש בתמונה השמורה', preparing: 'מכין את התמונה…',
     failed: 'לא ניתן לטעון את הרקע.', uploadFailed: 'לא ניתן לשמור את התמונה. בחרו תמונה בגודל של עד 20 מ״ב.',
@@ -342,14 +342,17 @@ const labels = {
 export function createWallpaperGallery({ locale, controller, selected, onSelect, onUpload }) {
   const words = labels[locale] ?? labels.en;
   const element = document.createElement('details');
-  element.className = 'wallpaper-gallery';
+  element.className = 'wallpaper-gallery appearance-disclosure';
   element.dir = locale === 'he' ? 'rtl' : 'ltr';
   const summary = document.createElement('summary');
+  const preview = document.createElement('span');
+  preview.className = 'wallpaper-current-preview';
+  preview.setAttribute('aria-hidden', 'true');
   const legend = document.createElement('span');
   legend.textContent = words.legend;
   const current = document.createElement('span');
   current.className = 'wallpaper-current';
-  summary.append(legend, current);
+  summary.append(preview, legend, current);
   const categories = document.createElement('div');
   categories.className = 'wallpaper-categories';
   const content = document.createElement('div');
@@ -551,37 +554,20 @@ export const wallpaperStyles = `
   :is(.shell,.room,.chrome-button,.modal)[data-wallpaper-ink=dark] :focus-visible,
   .chrome-button[data-wallpaper-ink=dark]:focus-visible { outline-color: #243856; }
   .modal[data-wallpaper-ink=dark] select option { background: #efece8; color: var(--ink); }
-  .wallpaper-gallery {
-    margin: 0;
-    min-inline-size: 0;
-    border: 1px solid var(--soft-line);
-    border-radius: 15px;
-  }
-  .wallpaper-gallery summary {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-block-size: 44px;
-    padding-inline: 11px;
-    cursor: pointer;
-    list-style: none;
-    font-size: 13px;
-    font-weight: 760;
-  }
-  .wallpaper-gallery summary::-webkit-details-marker { display: none; }
-  .wallpaper-gallery summary::after {
-    content: '';
-    inline-size: 6px;
-    block-size: 6px;
-    margin-inline-start: 3px;
-    margin-block-start: -4px;
-    border: solid currentColor;
-    border-width: 0 1.5px 1.5px 0;
-    transform: rotate(45deg);
+  .wallpaper-current-preview {
+    inline-size: 36px;
+    block-size: 28px;
     flex: none;
+    border: 1px solid var(--soft-line);
+    border-radius: 8px;
+    background: var(--bayit-wallpaper,var(--wallpaper));
+    background-position: center;
+    background-size: cover;
   }
-  .wallpaper-gallery[open] summary::after { transform: rotate(225deg); margin-block-start: 4px; }
-  .wallpaper-current { margin-inline-start: auto; color: var(--secondary); text-align: end; font-weight: 600; }
+  .wallpaper-current {
+    margin-inline-start: auto; min-inline-size: 0; color: var(--secondary); text-align: end;
+    font-size: 12px; font-weight: 600; overflow-wrap: anywhere;
+  }
   .wallpaper-choices { padding: 0 9px 9px; }
   .wallpaper-categories, .wallpaper-options { display: grid; gap: 7px; }
   .wallpaper-categories { grid-template-columns: repeat(auto-fit,minmax(min(105px,100%),1fr)); margin-block-end: 9px; }

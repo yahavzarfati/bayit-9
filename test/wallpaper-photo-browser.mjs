@@ -99,6 +99,8 @@ try {
       await activePhotoLoaded;
       await page.waitForFunction(asset => document.querySelector('bayit-dashboard').shadowRoot.querySelector('.shell')
         .style.getPropertyValue('--bayit-wallpaper').includes(asset), mediterranean);
+      assert.ok((await gallery.locator('.wallpaper-current-preview').evaluate(node => getComputedStyle(node).backgroundImage))
+        .includes(mediterranean), 'The closed-row swatch uses the active wallpaper');
       await page.locator('.room[data-wallpaper-ink]').waitFor();
       await page.locator('.toolbar .chrome-button[data-wallpaper-ink]').first().waitFor();
       assert.deepEqual([...new Set(requests.filter(url => url.includes('-full-')))], [mediterranean]);

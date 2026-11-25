@@ -48,6 +48,11 @@ if (query.has('entrance-popup-position')) {
 }
 const storedKey = 'bayit9-browser-fixture';
 const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection') && { show_unassigned: false }),
+  ...(query.has('compact-settings') && { fullscreen: true, toolbar: [
+    { id:'appearance', kind:'settings' },
+    ...[['overview','סקירה'], ['sensors','חיישנים'], ['calendar','יומן'], ['devices','כניסה'],
+      ['media','מדיה'], ['vacuum','שואב']].map(([kind, label]) => ({id:kind,kind,label,placement:'settings'})),
+  ] }),
   ...(query.has('legacy-room-order') && { area_ids: ['lounge', 'studio'] }),
   ...(query.has('cross-area-room-device') && { room_overrides: { lounge: { entities: ['light.demo_lamp'] } } }),
   ...(query.has('sole-room') && { area_ids: ['bayit_room_only'],
@@ -816,21 +821,28 @@ async function assertSharedAppearance(browser, engine) {
       [shell.dataset.background, shell.dataset.shape, shell.dataset.layout]);
     const admin = await openSettings(adminPage);
     const member = await openSettings(memberPage);
-    await member.getByRole('button', { name: 'Square', exact: true }).tap();
+    await member.locator('.appearance-layout > summary').press('Enter');
+    const square = member.getByRole('button', { name: 'Square', exact: true });
+    await square.press('Enter');
+    assert.equal(await square.evaluate(control => control.getRootNode().activeElement === control), true);
     assert.equal(await member.getByRole('button', { name: 'Save as household defaults' }).count(), 0);
     assert.deepEqual(await appearance(memberPage), ['aurora', 'square', 'classic']);
     assert.deepEqual(await appearance(adminPage), ['aurora', 'soft', 'classic']);
 
     await admin.locator('.wallpaper-gallery > summary').tap();
     await admin.getByRole('button', { name: 'Misty forest', exact: true }).tap();
+    await admin.locator('.wallpaper-gallery > summary').tap();
+    const adminLayout = admin.locator('.appearance-layout > summary');
+    await adminLayout.press('Enter');
     await admin.getByRole('button', { name: 'Round', exact: true }).tap();
     await admin.locator('[data-preference="layout"][value="header"]').tap();
     assert.equal(await adminPage.evaluate(() => window.bayitTest.calls.length), 0);
     assert.deepEqual(await appearance(adminPage), ['jade', 'circle', 'header']);
     assert.deepEqual(await appearance(memberPage), ['aurora', 'square', 'classic']);
 
-    await admin.getByRole('button', { name: 'Save as household defaults', exact: true }).tap();
+    await admin.getByRole('button', { name: 'Save as household defaults', exact: true }).press('Enter');
     await admin.getByText('Household appearance saved.', { exact: true }).waitFor();
+    assert.equal(await adminLayout.evaluate(summary => summary.getRootNode().activeElement === summary), true);
     const saveRequests = await adminPage.evaluate(() =>
       window.bayitTest.calls.filter(call => call.type === 'lovelace/config/save'));
     assert.deepEqual(saveRequests, [{ type: 'lovelace/config/save', url_path: 'fixture-home',
@@ -842,13 +854,63 @@ async function assertSharedAppearance(browser, engine) {
     await memberPage.locator('.shell[data-background="jade"][data-layout="header"]').waitFor();
     assert.deepEqual(await appearance(memberPage), ['jade', 'square', 'header']);
     const updated = memberPage.getByRole('dialog', { name: 'Appearance', exact: true });
-    await updated.getByRole('button', { name: 'Use household defaults', exact: true }).tap();
+    const restoredLayout = updated.locator('.appearance-layout > summary');
+    await restoredLayout.press('Enter');
+    await updated.getByRole('button', { name: 'Use household defaults', exact: true }).press('Enter');
+    assert.equal(await restoredLayout.evaluate(summary => summary.getRootNode().activeElement === summary), true);
     assert.deepEqual(await appearance(memberPage), ['jade', 'circle', 'header']);
     assert.equal(await memberPage.evaluate(() => window.bayitTest.calls.length), 0);
     await memberPage.reload();
     await memberPage.locator('.shell[data-background="jade"][data-shape="circle"][data-layout="header"]').waitFor();
   } finally {
     await Promise.all([adminPage.close(), memberPage.close()]);
+  }
+}
+
+async function assertCompactSettings(browser) {
+  const page = await browser.newPage({ viewport: { width:391, height:845 }, isMobile:true, hasTouch:true, reducedMotion:'reduce' });
+  page.setDefaultTimeout(8000);
+  try {
+    await page.goto(base + '/fixture-home/home?configuration&compact-settings&locale=he');
+    const open = page.locator('.chrome-button[data-role=settings]');
+    await open.tap();
+    const dialog = page.locator('dialog.modal[open]');
+    const appearance = dialog.locator('.appearance-preferences');
+    const headings = appearance.locator('details > summary');
+    assert.match(await headings.nth(0).innerText(), /^רקע הבית/);
+    assert.equal(await headings.nth(1).innerText(), 'סידור מסך הבית');
+    const geometry = await dialog.evaluate(element => {
+      const settings = element.querySelector('.settings');
+      const rect = node => node.getBoundingClientRect();
+      const disclosures = [...settings.querySelectorAll('details')];
+      const systems = [...settings.querySelectorAll('.settings-system > button')];
+      const preview = settings.querySelector('.wallpaper-current-preview');
+      return { height:rect(element).height, blocks:[...settings.children].map(child => child.className),
+        rows:disclosures.map(detail => [detail.open, rect(detail.querySelector('summary')).height]),
+        systemPositions:systems.map(button => rect(button).y), shortcutCount:settings.querySelectorAll('.settings-screens > button').length,
+        previewWidth:rect(preview).width, previewHeight:rect(preview).height,
+        hasOverflow:settings.scrollWidth > settings.clientWidth };
+    });
+    assert.deepEqual(geometry.blocks, ['appearance-preferences', 'settings-shortcuts', 'settings-system']);
+    assert.deepEqual(geometry.rows, [[false,52], [false,52]]);
+    assert.deepEqual([geometry.previewWidth, geometry.previewHeight], [36,28]);
+    assert.equal(geometry.shortcutCount, 6);
+    assert.equal(geometry.systemPositions.length, 2);
+    assert.equal(geometry.systemPositions[0], geometry.systemPositions[1]);
+    assert.equal(geometry.hasOverflow, false);
+    assert.ok(geometry.height <= 442, JSON.stringify(geometry));
+    assert.equal(await dialog.locator('[data-preference]:visible').count(), 0);
+    assert.equal(await dialog.locator('[data-wallpaper-choice]').count(), 0);
+    await headings.nth(1).press('Enter');
+    await dialog.locator('[data-preference="shape"]:visible').first().waitFor();
+    await headings.nth(1).press('Space');
+    assert.equal(await dialog.locator('[data-preference]:visible').count(), 0);
+    await dialog.getByRole('button', { name:'כניסה', exact:true }).tap();
+    await page.getByRole('dialog', { name:'כניסה', exact:true }).waitFor();
+    assert.equal(new URL(page.url()).hash, '#panel/devices');
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.calls), []);
+  } finally {
+    await page.close();
   }
 }
 
@@ -866,6 +928,7 @@ try {
     try {
       await assertHomePreferenceAliases(browser);
       await assertSharedAppearance(browser, engine);
+      await assertCompactSettings(browser);
       console.log(engine + ': independent browser appearance and admin household defaults');
       const quietPage = await browser.newPage({
         viewport: { width: 391, height: 845 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce',

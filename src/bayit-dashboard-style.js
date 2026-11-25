@@ -483,8 +483,27 @@ export const styles = `
   .shell[dir=rtl] .modal[data-kind=room] .modal-body > :is(.devices,.notice) { direction: rtl; }
   @keyframes appear { from { opacity: 0; transform: scale(.92); } }
   .devices, .settings { display: grid; gap: 12px; }
+  .settings { gap: 8px; }
   .settings-screens { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
+  .settings-shortcuts-title { margin: 0 0 5px; text-align: center; font-size: 13px; font-weight: 760; }
+  .settings-system { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(132px,100%),1fr)); gap: 7px; }
   .appearance-preferences { display: grid; gap: 8px; }
+  .appearance-disclosure { min-inline-size: 0; margin: 0; border: 1px solid var(--soft-line); border-radius: 16px; }
+  .appearance-disclosure > summary {
+    display: flex; align-items: center; gap: 9px; min-block-size: 52px; padding: 8px 11px;
+    cursor: pointer; list-style: none; border-radius: 15px; font-size: 14px; font-weight: 650;
+  }
+  .appearance-disclosure > summary::-webkit-details-marker { display: none; }
+  .appearance-disclosure > summary::after {
+    content: ''; inline-size: 7px; block-size: 7px; flex: none; opacity: .7;
+    border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg);
+  }
+  .appearance-disclosure[open] > summary::after { transform: rotate(225deg); }
+  .appearance-disclosure > summary:focus-visible { outline-offset: -2px; }
+  .appearance-layout > summary::after { margin-inline-start: auto; }
+  .appearance-layout-options { display: grid; gap: 8px; padding: 0 10px 10px; }
+  .appearance-layout-options > .prefs-group { border: 0; padding: 0; }
+  .appearance-layout-options > .prefs-group legend { padding: 0; margin-block-end: 6px; }
   .appearance-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
   .appearance-actions > p:not(:empty) { flex-basis: 100%; padding-inline: 2px; }
   .appearance-actions > p:empty { display: none; }

@@ -1608,30 +1608,16 @@ export class BayitDashboard extends HTMLElement {
     const content = this.nodes.content;
     content.className = 'settings';
     content.replaceChildren();
-    if (this._hass?.user?.is_admin) {
-      const setup = button('control-button setup-entry', this.t('setup'), 'mdi:tune-variant');
-      setup.onclick = () => this.openPanel('setup', setup);
-      content.append(setup);
-    }
-    const screens = make('div', 'settings-screens');
-    for (const item of this.settingsScreens()) {
-      const route = button('control-button', item.name, item.icon);
-      route.onclick = () => item.kind === 'link' ? location.assign(item.path)
-        : this.openPanel(item.kind, route, undefined, undefined, item);
-      screens.append(route);
-    }
-    if (screens.childElementCount) {
-      const group = make('fieldset','prefs-group');
-      group.append(make('legend','',this.t('more_screens')),screens);
-      content.prepend(group);
-    }
     const deviceAppearance = make('section', 'appearance-preferences');
     deviceAppearance.setAttribute('aria-label', this.t('appearance_browser'));
-    deviceAppearance.append(make('h3', 'device-group-title', this.t('appearance_browser')));
     this.wallpaperGallery = createWallpaperGallery({ locale: this.config.locale, controller: this.wallpaper,
       selected: this.activeWallpaper || this.config.background,
       onSelect: id => this.selectWallpaper(id), onUpload: file => this.selectWallpaper(personalWallpaperId, { file }) });
     deviceAppearance.append(this.wallpaperGallery.element);
+    const arrange = make('details', 'appearance-disclosure appearance-layout');
+    const layoutSummary = make('summary', '', this.t('appearance_layout'));
+    const arrangement = make('div', 'appearance-layout-options');
+    arrange.append(layoutSummary, arrangement);
     for (const key of ['shape','layout']) {
       const values = options[key];
       const group = make('fieldset', 'prefs-group');
@@ -1645,11 +1631,12 @@ export class BayitDashboard extends HTMLElement {
         choices.append(el);
       }
       group.append(choices);
-      deviceAppearance.append(group);
+      arrangement.append(group);
     }
     const appearanceActions = make('div', 'appearance-actions');
     const reset = button('control-button', this.t('appearance_reset'));
     reset.onclick = () => {
+      if (this.shadowRoot.activeElement === reset) layoutSummary.focus({ preventScroll: true });
       this.preferences = {};
       this.persistPreferences();
     };
@@ -1660,13 +1647,31 @@ export class BayitDashboard extends HTMLElement {
     appearanceActions.append(reset);
     if (this.config.page && this._hass?.user?.is_admin) {
       actions.share = button('control-button', this.t('appearance_share'), 'mdi:content-save-outline');
-      actions.share.onclick = () => { void this.saveAppearance(actions); };
+      actions.share.onclick = () => {
+        if (this.shadowRoot.activeElement === actions.share) layoutSummary.focus({ preventScroll: true });
+        void this.saveAppearance(actions);
+      };
       appearanceActions.append(actions.share);
     }
     appearanceActions.append(status);
-    deviceAppearance.append(appearanceActions);
+    arrangement.append(appearanceActions);
+    deviceAppearance.append(arrange);
     content.append(deviceAppearance);
     this.applyPreferences();
+
+    const screens = make('div', 'settings-screens');
+    for (const item of this.settingsScreens()) {
+      const route = button('control-button', item.name, item.icon);
+      route.onclick = () => item.kind === 'link' ? location.assign(item.path)
+        : this.openPanel(item.kind, route, undefined, undefined, item);
+      screens.append(route);
+    }
+    if (screens.childElementCount) {
+      const group = make('section', 'settings-shortcuts');
+      group.append(make('h3', 'settings-shortcuts-title', this.t('settings_shortcuts')), screens);
+      content.append(group);
+    }
+    const system = make('div', 'settings-system');
     if (this.config.page && this.config.fullscreen) {
       const bypass = new URL(location.href).searchParams.has('disable_km');
       const menu = button('control-button', this.t(bypass ? 'fullscreen' : 'ha_menu'), 'mdi:menu');
@@ -1674,8 +1679,14 @@ export class BayitDashboard extends HTMLElement {
         this.dismissPanel({ immediate: true, restoreFocus: false });
         this.pageChrome.toggleHomeAssistantMenu();
       };
-      content.append(menu);
+      system.append(menu);
     }
+    if (this._hass?.user?.is_admin) {
+      const setup = button('control-button setup-entry', this.t('setup'), 'mdi:tune-variant');
+      setup.onclick = () => this.openPanel('setup', setup);
+      system.append(setup);
+    }
+    if (system.childElementCount) content.append(system);
   }
 
   async paintSetup() {
