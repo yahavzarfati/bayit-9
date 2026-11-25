@@ -828,9 +828,12 @@ export class BayitDashboard extends HTMLElement {
       config[key] === value && !Object.hasOwn(previousPreferences, key))) return result(true);
 
     const pathname = location.pathname;
+    const href = location.href;
     const userId = this._hass?.user?.id;
+    const { modal } = this.nodes;
     const currentView = () => this.isConnected && this.config === config && this.panel === actions.panel &&
-      pathname === location.pathname && (!direct || this.canSyncAppearance() && this._hass?.user?.id === userId);
+      modal.open && !modal.hasAttribute('data-closing') && href === location.href &&
+      (!direct || this.canSyncAppearance() && this._hass?.user?.id === userId);
     this.appearanceSave = actions;
     actions.status.textContent = throughGallery ? '' : this.t('setup_saving');
     this.applyPreferences();
@@ -854,7 +857,9 @@ export class BayitDashboard extends HTMLElement {
         if (setupDrafts.has(draftKey)) return result(false, this.t('appearance_finish_draft'));
       }
       if (entries.some(([key, value]) => current.strategy[key] !== value)) {
-        await saveConfiguration(this._hass, current, { ...current.strategy, ...changes });
+        const saved = await saveConfiguration(this._hass, current, { ...current.strategy, ...changes },
+          { shouldSave: currentView });
+        if (!saved) return result(false);
       }
       if (!this.isConnected || this.config?.storageKey !== config.storageKey || pathname !== location.pathname) return result(true);
       if (this.config === config) Object.assign(config, changes);

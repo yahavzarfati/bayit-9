@@ -32,8 +32,7 @@ const hass = {
     if (request.type === 'lovelace/dashboards/list') return [{ url_path:'fixture-appearance', mode:'storage' }];
     if (request.type === 'lovelace/config') {
       const config = await read();
-      if (tracker.holdRead) {
-        tracker.holdRead = false;
+      if (tracker.holdRead && --tracker.holdRead === 0) {
         await new Promise(resolve => { tracker.releaseRead = resolve; });
         tracker.readFinished = true;
       }
@@ -160,17 +159,27 @@ try {
       await settings.getByText('The dashboard changed while you were editing. Reload it and try again.',{exact:true}).waitFor();
       assert.equal(await current(admin,'layout'),'header');
       assert.equal(await saves(admin),beforeConflict);
-      await admin.evaluate(() => { tracker.holdRead = true; });
-      await pressed(settings,'layout','classic').click();
-      await admin.waitForFunction(() => !!tracker.releaseRead);
-      await settings.getByRole('button',{name:'Close',exact:true}).click();
-      await settings.waitFor({state:'hidden'});
-      await admin.evaluate(() => tracker.releaseRead());
-      await admin.waitForFunction(() => tracker.readFinished);
-      await admin.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
-      assert.equal(await saves(admin),beforeConflict);
-      assert.equal(await current(admin,'layout'),'header');
-      settings = await openSettings(admin);
+      for (const read of [1,2]) {
+        await admin.evaluate(index => {
+          tracker.holdRead = index;
+          tracker.releaseRead = undefined;
+          tracker.readFinished = false;
+        }, read);
+        await pressed(settings,'layout','classic').click();
+        await admin.waitForFunction(() => !!tracker.releaseRead);
+        await settings.getByRole('button',{name:'Close',exact:true}).evaluate(control => {
+          // Resume data loading before the browser delivers the queued dialog close event.
+          control.click();
+          tracker.releaseRead();
+        });
+        await settings.waitFor({state:'hidden'});
+        await admin.waitForFunction(() => tracker.readFinished);
+        await admin.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+        assert.equal(await saves(admin),beforeConflict, 'Canceled on read ' + read);
+        assert.equal(await current(admin,'layout'),'header');
+        settings = await openSettings(admin);
+        await openLayout(settings);
+      }
 
       const gallery = settings.locator('.wallpaper-gallery');
       await gallery.locator('summary').click();

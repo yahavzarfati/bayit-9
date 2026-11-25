@@ -37,12 +37,14 @@ export async function loadConfiguration(hass, pathname) {
   return { urlPath, strategy: config.strategy };
 }
 
-export async function saveConfiguration(hass, current, strategy) {
+export async function saveConfiguration(hass, current, strategy, { shouldSave } = {}) {
   checkEditor(hass);
   const latest = await readStrategy(hass, current.urlPath);
+  if (shouldSave && !shouldSave()) return false;
   if (JSON.stringify(latest.strategy) !== JSON.stringify(current.strategy)) {
     throw configurationError('setup_conflict');
   }
   const config = { ...latest, strategy: { ...strategy, type: STRATEGY_TYPE } };
   await hass.callWS({ type: 'lovelace/config/save', url_path: current.urlPath, config });
+  return true;
 }
