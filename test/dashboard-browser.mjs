@@ -10512,16 +10512,23 @@ try {
       assert.equal(await caption.getAttribute('placeholder'), 'Dedicated thermostat');
       await showCaption.uncheck();
       await which.selectOption('light.demo_lamp');
+      const popupName = nameSetup.getByLabel('Device popup title', { exact: true });
+      await popupName.fill('Reading light controls');
       await caption.fill('Reading table light');
       await caption.press('Enter');
       await saveRoomConfig(nameSetup);
       assert.deepEqual(await namesPage.evaluate(() => {
         const { room_overrides, profiles } = JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy;
-        return { names: room_overrides.studio.entity_names, den: room_overrides.bayit_room_den.entity_names, profileName: profiles[0].name };
-      }), { names: { 'light.demo_lamp': 'Reading table light', 'climate.demo_air': '' }, den: undefined, profileName: 'Dedicated thermostat' });
+        return { names: room_overrides.studio.entity_names, den: room_overrides.bayit_room_den.entity_names,
+          popupNames: room_overrides.studio.device_popup_names, profileName: profiles[0].name };
+      }), { names: { 'light.demo_lamp': 'Reading table light', 'climate.demo_air': '' }, den: undefined,
+        popupNames: { 'light.demo_lamp': 'Reading light controls' }, profileName: 'Dedicated thermostat' });
       await namesPage.getByRole('button', { name: 'Studio', exact: true }).tap();
       namedRoom = namesPage.getByRole('dialog', { name: 'Studio', exact: true });
-      await namedRoom.getByRole('button', { name: 'Reading table light · Turn on', exact: true }).waitFor();
+      const updatedLamp = namedRoom.getByRole('button', { name: 'Reading table light · Turn on', exact: true });
+      await updatedLamp.waitFor();
+      await updatedLamp.press('Shift+Enter');
+      await namesPage.getByRole('dialog', { name: 'Reading light controls', exact: true }).waitFor();
       assert.equal(await namesPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain).length), 0);
       await namesPage.close();
       console.log(engine + ' 320: scoped room names, accessible blank captions and editor persistence');

@@ -217,6 +217,8 @@ function normalizeEntity(item) {
   if (!entityPattern.test(entity)) throw new Error('Invalid Home Assistant entity in Bayit 9.');
   const entry = { entity };
   if (text(item.name)) entry.name = text(item.name);
+  const popupName = normalizeRoomControlName(item.popup_name);
+  if (popupName) entry.popup_name = popupName;
   const roomName = normalizeRoomControlName(item.room_name);
   if (roomName !== undefined) entry.room_name = roomName;
   const roomIcon = normalizeRoomIcon(item.room_icon);
@@ -1576,7 +1578,7 @@ export class BayitDashboard extends HTMLElement {
     setText(n.modalNotice, '');
     const glyph = model?.icon || room?.icon || toolbar?.panel_icon || toolbar?.icon ||
       source?.querySelector('ha-icon')?.getAttribute('icon');
-    const title = model?.name || room?.name || toolbar?.name || toolbar?.label || this.t(type);
+    const title = selected?.popup_name || model?.name || room?.name || toolbar?.name || toolbar?.label || this.t(type);
     n.modal.setAttribute('aria-label', title);
     n.modalTitle.replaceChildren(icon(glyph), title);
     if (type === 'room') this.buildDevices(room.entities, room);

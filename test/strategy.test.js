@@ -1184,9 +1184,10 @@ test('projects explicit names and blank captions only onto visible members of th
       studio: {
         entities: [lamp, thermostat, fan],
         entity_names: { [lamp]: '  Workshop light  ', [thermostat]: '', [fan]: '  ', 'switch.demo_missing': 'Hidden member' },
+        device_popup_names: { [lamp]: '  Lighting controls  ', [thermostat]: '  ', [fan]: [], 'switch.demo_missing': 'Hidden popup' },
         sections: [{ kind: 'lights', entities: [lamp] }, { kind: 'climate', entities: [thermostat] }],
       },
-      [room]: { name: 'Spare', entities: [lamp], entity_names: { [lamp]: 'Spare light' } },
+      [room]: { name: 'Spare', entities: [lamp], entity_names: { [lamp]: 'Spare light' }, device_popup_names: { [lamp]: 'Spare controls' } },
     },
   };
   const original = structuredClone({ cfg, hass });
@@ -1194,8 +1195,11 @@ test('projects explicit names and blank captions only onto visible members of th
   assert.deepEqual(studio.entities.map(item => [item.entity, item.room_name]),
     [[lamp, 'Workshop light'], [thermostat, ''], [fan, undefined]]);
   assert.deepEqual(studio.sections.flatMap(section => section.entities.map(item => item.room_name)), ['Workshop light', '']);
+  assert.deepEqual(studio.entities.map(item => [item.entity, item.popup_name]),
+    [[lamp, 'Lighting controls'], [thermostat, undefined], [fan, undefined]]);
   assert.deepEqual(studio.shortcuts, [lamp]);
   assert.equal(spare.entities[0].room_name, 'Spare light');
+  assert.equal(spare.entities[0].popup_name, 'Spare controls');
   assert.equal(getDeviceModel(studio.entities[1], hass.states).name, 'Dedicated thermostat');
   assert.equal(studio.entities[0].name, spare.entities[0].name);
   assert.deepEqual({ cfg, hass }, original);

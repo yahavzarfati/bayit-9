@@ -36,6 +36,7 @@ const WORDS = {
     roomName: 'Room display name', roomToEdit: 'Room to customize', roomIcon: 'Room icon', defaultRoomIcon: 'Default icon',
     roomTitleBreak: 'Room name line break in classic layout', roomTitleAuto: 'Wrap automatically',
     roomControlDisplay: 'Device display', roomControlDevice: 'Device to customize', roomControlName: 'Name in this room',
+    roomDevicePopupName: 'Device popup title',
     roomControlShow: 'Show name in this room', roomDeviceIcon: 'Icon in this room', roomDeviceIconDefault: 'Use default icon',
     roomPanelIconOptions: 'Separate room panel icon', roomPanelIcon: 'Icon in the room panel', roomPanelIconDefault: 'Use shared icon',
     roomInlineLight: 'Show brightness and temperature in this room',
@@ -168,6 +169,7 @@ const WORDS = {
     roomName: 'שם החדר לתצוגה', roomToEdit: 'חדר להתאמה אישית', roomIcon: 'סמל החדר', defaultRoomIcon: 'סמל ברירת המחדל',
     roomTitleBreak: 'חלוקת שם החדר לשורות בפריסה הקלאסית', roomTitleAuto: 'גלישה לפי רוחב הכרטיס',
     roomControlDisplay: 'תצוגת מכשירים', roomControlDevice: 'מכשיר להתאמה אישית', roomControlName: 'שם המכשיר בחדר הזה',
+    roomDevicePopupName: 'כותרת חלונית המכשיר',
     roomControlShow: 'הצגת שם המכשיר בחדר הזה', roomDeviceIcon: 'סמל המכשיר בחדר הזה', roomDeviceIconDefault: 'שימוש בסמל ברירת המחדל',
     roomPanelIconOptions: 'סמל נפרד לחלונית החדר', roomPanelIcon: 'סמל בחלונית החדר', roomPanelIconDefault: 'שימוש בסמל המשותף',
     roomInlineLight: 'הצגת בהירות וגוון אור בתוך החדר',
@@ -641,11 +643,13 @@ export class Bayit9StrategyEditor extends HTMLElement {
   }
 
   #setRoomOverride(room, override, focusKey) {
-    // A room-name change keeps the form mounted. Its sibling controls may still hold the prior name.
-    const name = this.#roomOverride(room).name;
+    // These labels save in place so other controls retain focus. Keep the latest labels if a sibling is stale.
+    const current = this.#roomOverride(room);
     const next = { ...override };
-    if (name === undefined) delete next.name;
-    else next.name = name;
+    for (const key of ['name', 'device_popup_names']) {
+      if (Object.hasOwn(current, key)) next[key] = current[key];
+      else delete next[key];
+    }
     this.#commitRoomOverride(room, next);
     this.#renderRoomChange(focusKey);
   }
@@ -974,8 +978,33 @@ export class Bayit9StrategyEditor extends HTMLElement {
         const profile = profiles.find(item => item.entity === id);
         const device = { ...available.get(id), kind: profile?.kind };
         const deviceIcon = this.#roomControlIcon(room, device, words);
+        const popupName = node('input', {
+          value: normalizeRoomControlName(override.device_popup_names?.[id]) || '',
+          maxLength: 80,
+          placeholder: nameOf(id),
+        });
+        popupName.dataset.roomFocus = 'room-device-popup-name';
+        const savePopupName = () => {
+          const title = normalizeRoomControlName(popupName.value) || '';
+          popupName.value = title;
+          const latest = { ...this.#roomOverride(room.id) };
+          const names = { ...latest.device_popup_names };
+          if (title === names[id] || (!title && !Object.hasOwn(names, id))) return;
+          if (title) names[id] = title;
+          else delete names[id];
+          if (Object.keys(names).length) latest.device_popup_names = names;
+          else delete latest.device_popup_names;
+          this.#commitRoomOverride(room.id, latest);
+        };
+        popupName.addEventListener('change', savePopupName);
+        popupName.addEventListener('keydown', event => {
+          if (event.key !== 'Enter' || event.isComposing) return;
+          event.preventDefault();
+          savePopupName();
+        });
+        const popupNameField = field(words.roomDevicePopupName, popupName);
         if (!shown) {
-          fields.replaceChildren(showDevice, deviceIcon, node('small', { textContent: words.roomPanelHint }));
+          fields.replaceChildren(showDevice, popupNameField, deviceIcon, node('small', { textContent: words.roomPanelHint }));
           return;
         }
         const name = normalizeRoomControlName(override.entity_names?.[id]);
@@ -1004,7 +1033,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
           event.preventDefault();
           saveText();
         });
-        fields.replaceChildren(showDevice, show, field(words.roomControlName, input), deviceIcon,
+        fields.replaceChildren(showDevice, show, field(words.roomControlName, input), popupNameField, deviceIcon,
           disclosure(words.roomPanelIconOptions, this.#open.roomPanelIcon, open => { this.#open.roomPanelIcon = open; },
             () => [this.#roomControlIcon(room, device, words, true)]));
         if (id.startsWith('sensor.') && supportsRoomTemperatureSource(id, this.#hass.states?.[id]?.attributes)) {

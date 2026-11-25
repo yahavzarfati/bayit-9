@@ -396,6 +396,7 @@ function dashboardAreas(config, hass) {
     const entityIcons = override.entity_icons;
     const panelEntityIcons = override.panel_entity_icons;
     const entityNames = override.entity_names;
+    const popupNames = override.device_popup_names;
     const presetShortcuts = override.climate_preset_shortcuts;
     const sections = roomSections(override.sections);
     const entityIds = usesAutomaticRoomDevices(override, sections, !area) ? undefined
@@ -441,6 +442,7 @@ function dashboardAreas(config, hass) {
       entityIcons: entityIcons && typeof entityIcons === 'object' && !Array.isArray(entityIcons) ? entityIcons : null,
       panelEntityIcons: panelEntityIcons && typeof panelEntityIcons === 'object' && !Array.isArray(panelEntityIcons) ? panelEntityIcons : null,
       entityNames: entityNames && typeof entityNames === 'object' && !Array.isArray(entityNames) ? entityNames : null,
+      popupNames: popupNames && typeof popupNames === 'object' && !Array.isArray(popupNames) ? popupNames : null,
       presetShortcuts: presetShortcuts && typeof presetShortcuts === 'object' && !Array.isArray(presetShortcuts) ? presetShortcuts : null,
       custom: !area,
     });
@@ -713,6 +715,10 @@ export function discoverRooms(config, hass, locale) {
       if (area.entityNames && Object.hasOwn(area.entityNames, device.entity)) {
         const name = normalizeRoomControlName(area.entityNames[device.entity]);
         if (name !== undefined) device.room_name = name;
+      }
+      if (area.popupNames && Object.hasOwn(area.popupNames, device.entity)) {
+        const title = normalizeRoomControlName(area.popupNames[device.entity]);
+        if (title) device.popup_name = title;
       }
       if (area.readOnly?.has(device.entity)) device.role = 'status';
       if (domainOf(device.entity) === 'sensor' && area.temperatureGraphColors &&
