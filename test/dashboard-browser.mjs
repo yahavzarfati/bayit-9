@@ -411,11 +411,18 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
   ],
 } : {};
 const config = Strategy.generate(selected, query.has('empty') ? { ...hass, states: {} } : hass);
-const cardConfig = { ...config.views[0].cards[0], ...(query.has('embedded-popup-card') && { page: false }) };
+const cardConfig = { ...config.views[0].cards[0],
+  ...(query.has('embedded-popup-card') && { page: false }),
+  ...(query.has('explicit-preference-key') && { preference_key: 'fixture-shared' }),
+};
 const card = document.createElement('bayit-dashboard');
 card.setConfig(cardConfig);
 if (!query.has('defer-popup-hass')) card.hass = hass;
 document.querySelector('#surface').append(card);
+if (query.has('preference-first-frame')) requestAnimationFrame(() => {
+  const { background, wallpaperInk, layout, shape } = card.shadowRoot.querySelector('.shell').dataset;
+  window.firstAppearance = { background, wallpaperInk, layout, shape };
+});
 
 if (query.has('editor')) {
   document.querySelector('#surface').hidden = true;
@@ -470,7 +477,7 @@ const server = http.createServer((req, res) => {
   } else if (url.pathname === '/api/media_player_proxy/media_player.demo_speaker') {
     res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
     res.end('<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60"><rect width="60" height="60" fill="teal"/></svg>');
-  } else if (['/', '/fixture-home/home'].includes(url.pathname)) {
+  } else if (url.pathname === '/' || /^\/fixture-home(?:\/(?:home|0))?\/?$/.test(url.pathname)) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(fixture);
   } else {
@@ -482,6 +489,70 @@ const server = http.createServer((req, res) => {
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 const base = 'http://127.0.0.1:' + server.address().port;
+async function assertHomePreferenceAliases(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const root = '/fixture-home';
+  const home = root + '/home';
+  const first = async (path, flags = '') => {
+    await page.goto(base + path + '?preference-first-frame' + flags);
+    await page.waitForFunction(() => window.firstAppearance);
+    return page.evaluate(() => window.firstAppearance);
+  };
+  try {
+    await first(home);
+    await page.evaluate(path => {
+      const key = 'bayit-9.preferences.v1:';
+      localStorage.setItem(key + path, JSON.stringify({ background: 'porcelain', layout: 'header', shape: 'circle' }));
+      localStorage.setItem(key + 'fixture-shared', JSON.stringify({ background: 'bronze', layout: 'classic', shape: 'square' }));
+    }, home);
+    const saved = { background: 'porcelain', wallpaperInk: 'dark', layout: 'header', shape: 'circle' };
+    for (const path of [home, home + '/', root, root + '/', root + '/0', root + '/0/']) {
+      assert.deepEqual(await first(path), saved);
+    }
+    assert.deepEqual(await first(root + '/0', '&explicit-preference-key'), {
+      background: 'bronze', wallpaperInk: 'light', layout: 'classic', shape: 'square',
+    });
+
+    // A photo saved by 0.13 under the numeric view key remains readable on
+    // Home and after a later preference change writes to the canonical key.
+    await page.evaluate(async ({ home, root }) => {
+      const key = 'bayit-9.preferences.v1:';
+      const legacyKey = key + root + '/0';
+      localStorage.removeItem(key + home);
+      localStorage.setItem(legacyKey, JSON.stringify({ background: 'personal', layout: 'header' }));
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 16;
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#f2f4f7';
+      context.fillRect(0, 0, 16, 16);
+      const thumbnail = canvas.toDataURL('image/jpeg');
+      const jpeg = await (await fetch(thumbnail)).arrayBuffer();
+      await new Promise((resolve, reject) => {
+        const open = indexedDB.open('bayit-9-wallpapers', 1);
+        open.onupgradeneeded = () => open.result.createObjectStore('personal');
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const database = open.result;
+          const transaction = database.transaction('personal', 'readwrite');
+          transaction.objectStore('personal').put({ jpeg, thumbnail }, legacyKey);
+          transaction.oncomplete = () => { database.close(); resolve(); };
+          transaction.onabort = () => { database.close(); reject(transaction.error); };
+        };
+      });
+    }, { home, root });
+    const photo = page.locator('.shell[data-background="personal"][data-wallpaper-ink="dark"]');
+    await first(home);
+    await photo.waitFor();
+    assert.equal(await photo.getAttribute('data-layout'), 'header');
+    await page.locator('bayit-dashboard').evaluate(card => card.setPreference('shape', 'square'));
+    await first(root + '/0');
+    await photo.waitFor();
+    assert.equal(await photo.getAttribute('data-shape'), 'square');
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertDeviceHeading(dialog, name) {
   assert.equal(await dialog.getByRole('heading', { name, exact: true }).count(), 1);
   const status = dialog.locator('.device-state-head');
@@ -494,6 +565,7 @@ try {
   for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
     const browser = await launcher.launch({ headless: true });
     try {
+      await assertHomePreferenceAliases(browser);
       const quietPage = await browser.newPage({
         viewport: { width: 391, height: 845 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce',
       });

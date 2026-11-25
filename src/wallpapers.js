@@ -164,7 +164,7 @@ function setInk(node, dark) {
   if (node.dataset.wallpaperInk !== ink) node.dataset.wallpaperInk = ink;
 }
 
-export function createWallpaperController(shell, { storageKey = 'default' } = {}) {
+export function createWallpaperController(shell, { storageKey = 'default', fallbackStorageKeys = [] } = {}) {
   const document = shell.ownerDocument;
   const view = document.defaultView;
   const output = { id: null, url: null, raster: null };
@@ -242,6 +242,14 @@ export function createWallpaperController(shell, { storageKey = 'default' } = {}
     }
   }
 
+  async function readSavedPhoto() {
+    for (const key of [storageKey, ...fallbackStorageKeys]) {
+      const photo = await accessPhoto(view, key);
+      if (photo) return photo;
+    }
+    return undefined;
+  }
+
   function apply(id) {
     if (disposed) return Promise.resolve(false);
     if (id === personalWallpaperId && pending?.ticket === generation) return pending.promise;
@@ -253,7 +261,7 @@ export function createWallpaperController(shell, { storageKey = 'default' } = {}
       publish(id, stock.background, !!stock.darkInk);
       return Promise.resolve(true);
     }
-    const promise = accessPhoto(view, storageKey).then(record => showPhoto(ticket, record, false), () => false)
+    const promise = readSavedPhoto().then(record => showPhoto(ticket, record, false), () => false)
       .catch(() => false).finally(() => { if (pending?.promise === promise) pending = undefined; });
     pending = { ticket, promise };
     return promise;
@@ -273,7 +281,7 @@ export function createWallpaperController(shell, { storageKey = 'default' } = {}
 
   async function preview() {
     try {
-      const record = await accessPhoto(view, storageKey);
+      const record = await readSavedPhoto();
       return thumbnailPattern.test(record?.thumbnail ?? '') ? record.thumbnail : null;
     } catch { return null; }
   }

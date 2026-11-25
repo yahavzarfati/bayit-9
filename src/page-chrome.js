@@ -62,6 +62,16 @@ function routeId(pathname) {
     ? dashboard : null;
 }
 
+export function homePreferencePaths(pathname) {
+  const id = routeId(pathname);
+  if (!id) return [pathname];
+  const root = '/' + id;
+  // Keep the original named Home key authoritative and read older aliases.
+  return [...new Set([
+    root + '/home', root + '/0', root + '/home/', root, root + '/0/', root + '/', pathname,
+  ])];
+}
+
 function canControl(targets, id) {
   return Boolean(targets && id && targets.panel.panel?.url_path === id);
 }

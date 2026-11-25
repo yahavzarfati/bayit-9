@@ -14,7 +14,7 @@ import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
 import { calendarAccent, normalizeCalendarAgenda } from './calendar-agenda.js';
 import { createWallpaperController, createWallpaperGallery, personalWallpaperId, wallpaperChoices, wallpaperStyles } from './wallpapers.js';
-import { createPageChrome } from './page-chrome.js';
+import { createPageChrome, homePreferencePaths } from './page-chrome.js';
 import { openBoilerHistory, boilerHistoryStyles } from './boiler-history.js';
 import { createBoilerSchedulePanel, isBoilerScheduleProfile } from './boiler-schedule.js';
 
@@ -292,6 +292,10 @@ export function normalizeDashboardConfig(config = {}) {
           ...(section.filter === 'active' && {filter:'active'}), ...overview, entities: members }];
       }) }) }];
   }) : null;
+  const preferenceKey = text(config.preference_key);
+  const preferencePaths = preferenceKey ? [preferenceKey]
+    : config.page === true ? homePreferencePaths(location.pathname) : [location.pathname];
+  const [storageKey, ...fallbackStorageKeys] = preferencePaths.map(key => 'bayit-9.preferences.v1:' + key);
   return {
     locale, rooms, overview, context, toolbar, page: config.page === true, fullscreen: config.fullscreen === true,
     hiddenEntities: new Set(Array.isArray(config.hidden_entities)
@@ -301,7 +305,7 @@ export function normalizeDashboardConfig(config = {}) {
     background: backgrounds.includes(config.background) ? config.background : 'aurora',
     layout: options.layout.includes(config.layout) ? config.layout : 'classic',
     shape: options.shape.includes(config.shape) ? config.shape : 'soft',
-    storageKey: 'bayit-9.preferences.v1:' + (text(config.preference_key) || location.pathname),
+    storageKey, fallbackStorageKeys,
   };
 }
 
@@ -404,7 +408,8 @@ export class BayitDashboard extends HTMLElement {
     this.controller = createDeviceController({ getHass: () => this._hass });
     this.resize = () => this.fitPage();
     this.storageChange = event => {
-      if (event.key !== this.config?.storageKey) return;
+      if (!this.config || (event.key !== this.config.storageKey &&
+          !this.config.fallbackStorageKeys.includes(event.key))) return;
       this.readPreferences();
       this.applyPreferences();
     };
@@ -564,8 +569,16 @@ export class BayitDashboard extends HTMLElement {
 
   readPreferences() {
     let saved;
-    try { saved = JSON.parse(localStorage.getItem(this.config.storageKey) || '{}'); }
-    catch { return; }
+    const { storageKey, fallbackStorageKeys } = this.config;
+    for (const key of [storageKey, ...fallbackStorageKeys]) {
+      try {
+        const candidate = JSON.parse(localStorage.getItem(key));
+        if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+          saved = candidate;
+          break;
+        }
+      } catch { /* A corrupt older setting does not prevent recovery. */ }
+    }
     this.preferences = {};
     for (const [key, choices] of Object.entries(options)) {
       if (choices.includes(saved?.[key]) || (key === 'background' && saved?.[key] === personalWallpaperId)) {
@@ -590,10 +603,10 @@ export class BayitDashboard extends HTMLElement {
   }
 
   applySavedWallpaper() {
-    const { storageKey, background } = this.config;
+    const { storageKey, fallbackStorageKeys, background } = this.config;
     if (this.wallpaperKey !== storageKey) {
       this.wallpaper?.destroy();
-      this.wallpaper = createWallpaperController(this.nodes.shell, { storageKey });
+      this.wallpaper = createWallpaperController(this.nodes.shell, { storageKey, fallbackStorageKeys });
       this.wallpaperKey = storageKey;
       this.activeWallpaper = this.pendingWallpaper = undefined;
     }
