@@ -2699,6 +2699,93 @@ async function assertDeviceHeading(dialog, name) {
   assert.equal(await status.locator('.device-name, .device-icon').filter({ visible: true }).count(), 0);
 }
 
+async function assertManualShortcutsSurviveAutomaticMode(browser) {
+  const labels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', shortcuts:'Room shortcuts', slot:'Shortcut',
+      automatic:'Choose shortcuts automatically', save:'Save dashboard', destination:'Long-press destination · Room heater' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', shortcuts:'קיצורים בחדרים', slot:'קיצור',
+      automatic:'בחירת קיצורים אוטומטית', save:'שמירת הדשבורד', destination:'יעד לחיצה ארוכה · Room heater' },
+  ];
+  for (const words of labels) {
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      const url = base + '/fixture-home/home?configuration&room-selection&locale=' + words.locale;
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      const room = setup.locator('[data-shortcut-room]');
+      const automatic = setup.getByRole('checkbox', { name:words.automatic, exact:true });
+      const first = setup.getByLabel(words.slot + ' 1', { exact:true });
+      const second = setup.getByLabel(words.slot + ' 2', { exact:true });
+      const destination = setup.getByLabel(words.destination, { exact:true });
+      const active = () => page.locator('.room[data-room=studio] .quick-button').evaluateAll(items => items.map(item => item.dataset.entity));
+      const open = async () => {
+        await page.getByRole('button', { name:words.appearance, exact:true }).tap();
+        await page.getByRole('button', { name:words.setup, exact:true }).tap();
+        await setup.getByText(words.shortcuts, { exact:true }).tap();
+        await room.selectOption('studio');
+      };
+      const save = async () => {
+        await setup.getByRole('button', { name:words.save, exact:true }).tap();
+        await setup.waitFor({ state:'hidden' });
+        return page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      };
+      const visitOtherRoom = async () => {
+        await room.selectOption('lounge');
+        await room.selectOption('studio');
+      };
+      const manual = ['switch.demo_heater', 'light.demo_lamp'];
+      await page.goto(url);
+      await open();
+      await automatic.uncheck();
+      await first.selectOption(manual[0]);
+      await second.selectOption(manual[1]);
+      await destination.selectOption('native');
+      assert.deepEqual((await save()).room_shortcuts.studio, manual);
+      assert.deepEqual(await active(), manual);
+
+      await open();
+      await automatic.check();
+      await visitOtherRoom();
+      await automatic.uncheck();
+      assert.deepEqual([await first.inputValue(), await second.inputValue()], manual);
+      await automatic.check();
+      const saved = await save();
+      assert.deepEqual(saved.room_shortcuts.studio, manual);
+      assert.equal(saved.room_overrides.studio.shortcut_selection, 'auto');
+      await page.goto(url + '#device/studio/switch.demo_heater');
+      await page.getByRole('dialog', { name:'Room heater', exact:true }).waitFor();
+      await page.goto(url + '#room-studio');
+      await page.getByRole('dialog', { name:'Studio', exact:true }).waitFor();
+      await page.goto(url);
+      assert.deepEqual(await active(), ['light.demo_lamp', 'switch.demo_heater']);
+
+      await open();
+      assert.equal(await automatic.isChecked(), true);
+      await automatic.uncheck();
+      assert.deepEqual([await first.inputValue(), await second.inputValue()], manual);
+      assert.equal(await destination.inputValue(), 'native');
+      await first.selectOption('');
+      await second.selectOption('');
+      const empty = await save();
+      assert.deepEqual(empty.room_shortcuts.studio, []);
+      assert.equal(empty.room_overrides.studio.shortcut_selection, undefined);
+      assert.deepEqual(await active(), []);
+
+      await open();
+      await automatic.check();
+      assert.deepEqual((await save()).room_shortcuts.studio, []);
+      await page.reload();
+      await open();
+      await automatic.uncheck();
+      assert.deepEqual([await first.inputValue(), await second.inputValue()], ['', '']);
+      assert.deepEqual((await save()).room_shortcuts.studio, []);
+      assert.deepEqual(await active(), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertShortcutDetailRoutes(browser) {
   const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true });
   try {
@@ -4464,9 +4551,9 @@ async function assertRetiredRoomLinks(browser) {
       const aliases = { '#fixture-retired-room':'#room-' + legacy, '#fixture-retired-device':'#device/' + legacy + '/light.demo_lamp',
         '#fixture-retained-room':'#room-' + retained };
       const strategy = { type:'custom:bayit-9', show_unassigned:false, room_overrides:{
-        [legacy]:{ name:legacyName, entities:['light.demo_lamp'] },
+        [legacy]:{ name:legacyName, entities:['light.demo_lamp'], shortcut_selection:'auto' },
         [retained]:{ name:retainedName, entities:[] },
-      }, popup_aliases:aliases };
+      }, room_shortcuts:{ [legacy]:['light.demo_lamp'], [retained]:[] }, popup_aliases:aliases };
       await page.addInitScript(value => {
         const key = 'bayit9-browser-fixture';
         if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy:value }));
@@ -4527,6 +4614,7 @@ async function assertRetiredRoomLinks(browser) {
         [retained]:{ name:retainedName, entities:[] },
         [replacement]:{ name:replacementName, entities:[] },
       });
+      assert.deepEqual(current.room_shortcuts, { [retained]:[] });
       assert.deepEqual(current.popup_aliases, { '#fixture-retained-room':'#room-' + retained });
       for (const hash of ['#fixture-retired-room', '#fixture-retired-device', '#room-' + legacy, '#room-' + created]) {
         await page.goto(url + hash);
@@ -7299,6 +7387,7 @@ try {
       console.log(engine + ': compact Automation actions and editor scope');
       await assertOverviewClimateDiscovery(browser);
       console.log(engine + ': editable active climate discovery, passive rows and live scope');
+      await assertManualShortcutsSurviveAutomaticMode(browser);
       await assertShortcutDetailRoutes(browser);
       await assertHomeShortcutPower(browser);
       await assertHomeHeaterShortcut(browser);
@@ -7997,7 +8086,9 @@ try {
       assert.deepEqual(await editorPage.evaluate(() => window.latest.room_shortcuts.studio),
         ['switch.demo_heater', 'light.demo_lamp']);
       await automatic.check();
-      assert.deepEqual(await editorPage.evaluate(() => window.latest.room_shortcuts), {});
+      assert.deepEqual(await editorPage.evaluate(() => window.latest.room_shortcuts.studio),
+        ['switch.demo_heater', 'light.demo_lamp']);
+      assert.equal(await editorPage.evaluate(() => window.latest.room_overrides.studio.shortcut_selection), 'auto');
       await editorPage.getByText('Boiler and heater controls', { exact: true }).click();
       await editorPage.getByRole('button', { name: 'Add profile' }).click();
       await editorPage.getByLabel('Heating device').selectOption('switch.demo_heater');

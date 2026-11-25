@@ -14,7 +14,7 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 | `hidden_entities` | Entity IDs to exclude from the dashboard. |
 | `included_entities` | Extra visible entity IDs to include, such as a template sensor omitted by discovery. |
 | `overview_entities` | Optional visible entities to include in the toolbar's home overview. |
-| `room_shortcuts` | Optional per-room lists of up to six visible entity IDs, in display order. A room without a list uses automatic shortcuts. An empty list hides that room's shortcuts. |
+| `room_shortcuts` | Optional per-room lists of up to six visible entity IDs, in display order. A room without a list uses automatic shortcuts. An empty manual list hides that room's shortcuts. The room override `shortcut_selection: auto` enables automatic shortcuts while keeping the manual list. |
 | `popup_aliases` | Optional mapping of old URL fragments to visible popup routes on this dashboard. |
 | `light_effect_groups` | Optional categories for a light's advertised effects. Open the light's details, choose an effect and press **Apply**. |
 | `light_effect_favorites` | Lights with configured effect categories that allow personal favorites. |

@@ -620,6 +620,28 @@ test('maps effect categories to visible controllable lights and preserves native
     [true, undefined, undefined]);
 });
 
+test('automatic shortcuts can keep authored lists for real and unassigned rooms', () => {
+  const hass = home();
+  const unassigned = 'bayit9_unassigned';
+  const config = { room_shortcuts: { studio: [], lounge: ['light.demo_lamp'], [unassigned]: [] } };
+  const project = () => Object.fromEntries(discoverRooms(config, hass, 'en').map(room => [room.id, room.shortcuts]));
+  const links = () => popupAliasDestinations(config, hass).map(item => item.fragment);
+  const legacyLinks = links();
+  const legacy = project();
+  assert.deepEqual(legacy.studio, []);
+  assert.deepEqual(legacy.lounge, ['light.demo_lamp']);
+  assert.deepEqual(legacy[unassigned], []);
+  config.room_overrides = Object.fromEntries(Object.keys(config.room_shortcuts).map(id => [id, { shortcut_selection:'auto' }]));
+  const automatic = project();
+  assert.equal(automatic.studio, undefined);
+  assert.equal(automatic.lounge, undefined);
+  assert.equal(automatic[unassigned], undefined);
+  assert.deepEqual(config.room_shortcuts, { studio: [], lounge: ['light.demo_lamp'], [unassigned]: [] });
+  assert.deepEqual(links(), legacyLinks);
+  delete config.room_overrides;
+  assert.deepEqual(project(), legacy);
+});
+
 test('projects a scoped hold destination only to an active shortcut and an admitted screen', () => {
   const hass = home();
   const lock = 'lock.example_lock';

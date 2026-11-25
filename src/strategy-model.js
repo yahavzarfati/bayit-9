@@ -303,6 +303,14 @@ export function usesAutomaticRoomDevices(override, sections, custom) {
     (!Array.isArray(override.entities) && !sections?.length));
 }
 
+export function roomShortcutSettings(config, id) {
+  const shortcuts = config.room_shortcuts ?? {};
+  const manual = Object.hasOwn(shortcuts, id) && Array.isArray(shortcuts[id]) ? shortcuts[id] : null;
+  const overrides = config.room_overrides ?? {};
+  const automatic = manual === null || (Object.hasOwn(overrides, id) && overrides[id]?.shortcut_selection === 'auto');
+  return { manual, automatic };
+}
+
 export function roomShortcutDevices(room) {
   if (Array.isArray(room.shortcuts)) {
     const byId = new Map(room.entities.map(device => [device.entity, device]));
@@ -793,8 +801,8 @@ export function discoverRooms(config, hass, locale) {
         ...section, entities: section.entities.map(entity => byId.get(entity)).filter(Boolean),
       }));
     }
-    const shortcuts = Object.hasOwn(config.room_shortcuts ?? {}, id) ? config.room_shortcuts[id] : null;
-    if (Array.isArray(shortcuts)) {
+    const { manual: shortcuts, automatic } = roomShortcutSettings(config, id);
+    if (!automatic) {
       const visible = new Set(entities.map(device => device.entity));
       room.shortcuts = idList(shortcuts).filter(entity => visible.has(entity)).slice(0, MAX_ROOM_SHORTCUTS);
     }

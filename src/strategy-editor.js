@@ -4,7 +4,7 @@ import {
   isVisibleEntity, languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
   normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeRoomIcon, normalizeRoomTemperatureGraphColor, normalizeShortcutDetailEntities, normalizeShortcutDetailRoutes,
   normalizeRoomVacuumSummary, normalizeUnreportedSwingMode,
-  popupAliasDestinations, PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, supportsRoomSectionColumns, roomShortcutDevices, roomVacuumPresentation, ROOM_VACUUM_SUMMARY_DOMAINS,
+  popupAliasDestinations, PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, supportsRoomSectionColumns, roomShortcutDevices, roomShortcutSettings, roomVacuumPresentation, ROOM_VACUUM_SUMMARY_DOMAINS,
   selectableRoomEntities, selectedRoomIds,
   shortcutPanelOptions, STRATEGY_NAME, supportsHomeShortcutPower, supportsNativeShortcutDetails, supportsShortcutWithoutDetails,
   supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomCompactDevice, usesAutomaticRoomDevices,
@@ -635,11 +635,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
     return Object.hasOwn(list, room) && list[room] && typeof list[room] === 'object' ? list[room] : {};
   }
 
-  #commitRoomOverride(room, override) {
+  #commitRoomOverride(room, override, change = {}) {
     const next = { ...this.#config.room_overrides };
     if (Object.keys(override).length) next[room] = override;
     else delete next[room];
-    this.#commit({ room_overrides: next });
+    this.#commit({ ...change, room_overrides: next });
   }
 
   #setRoomOverride(room, override, focusKey) {
@@ -1901,8 +1901,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const rooms = discoverRooms(this.#config, this.#hass, language);
     if (!rooms.length) return [node('p', { textContent: words.noShortcutRooms })];
     const room = rooms.find(item => item.id === this.#shortcutRoom) ?? rooms[0];
-    const current = this.#config.room_shortcuts ?? {};
-    const chosen = Object.hasOwn(current, room.id) && Array.isArray(current[room.id]) ? current[room.id] : null;
+    const { manual: chosen, automatic: autoMode } = roomShortcutSettings(this.#config, room.id);
     const roomInput = select(rooms.map(item => [item.id, item.name]), room.id);
     roomInput.dataset.shortcutRoom = '';
     const list = node('div', { className: 'grid', hidden: true });
@@ -1931,12 +1930,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         ['panel:' + id, words.shortcutPanel.replace('{name}', label || languages[language][kind] || id)]);
       const controls = [];
       const powerControls = [];
-      const commit = next => {
-        const overrides = { ...this.#config.room_overrides };
-        if (Object.keys(next).length) overrides[room.id] = next;
-        else delete overrides[room.id];
-        this.#commit({ room_overrides: overrides });
-      };
+      const commit = next => this.#commitRoomOverride(room.id, next);
       for (const device of roomShortcutDevices(scope)) {
         const id = device.entity;
         const name = deviceName(device);
@@ -2004,9 +1998,15 @@ export class Bayit9StrategyEditor extends HTMLElement {
       }
     };
     const save = () => {
-      this.#commit({ room_shortcuts: {
+      const change = { room_shortcuts: {
         ...this.#config.room_shortcuts, [room.id]: inputs.map(input => input.value).filter(Boolean),
-      } });
+      } };
+      const override = this.#roomOverride(room.id);
+      if (override.shortcut_selection === 'auto') {
+        const next = { ...override };
+        delete next.shortcut_selection;
+        this.#commitRoomOverride(room.id, next, change);
+      } else this.#commit(change);
       renderDetails();
     };
     const showManual = () => {
@@ -2024,20 +2024,18 @@ export class Bayit9StrategyEditor extends HTMLElement {
       list.append(...fields);
       list.hidden = false;
     };
-    if (chosen != null) showManual();
+    if (!autoMode) showManual();
     renderDetails();
     roomInput.addEventListener('change', () => {
       this.#shortcutRoom = roomInput.value;
       this.render();
       this.shadowRoot.querySelector('[data-shortcut-room]')?.focus({ preventScroll: true });
     });
-    const automatic = checkbox(words.automaticShortcuts, chosen == null, enabled => {
+    const automatic = checkbox(words.automaticShortcuts, autoMode, enabled => {
       if (enabled) {
         list.hidden = true;
         list.replaceChildren();
-        const next = { ...this.#config.room_shortcuts };
-        delete next[room.id];
-        this.#commit({ room_shortcuts: next });
+        this.#commitRoomOverride(room.id, { ...this.#roomOverride(room.id), shortcut_selection: 'auto' });
         renderDetails();
       } else {
         showManual();
