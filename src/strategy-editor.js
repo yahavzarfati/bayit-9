@@ -245,6 +245,7 @@ const ROOM_CSS = `
 .room-choice-heading { margin: 3px 0 0; font-size: 1em; }
 .room-icon-field { display: grid; grid-template-columns: minmax(0,1fr) 44px; gap: 8px; align-items: end; }
 .room-icon-field ha-icon-picker {
+  --ha-color-on-surface-default: var(--primary-text-color, currentColor);
   --ha-color-fill-primary-quiet-resting: color-mix(in srgb, var(--primary-text-color, currentColor) 16%, transparent);
 }
 .room-icon-preview { box-sizing: border-box; inline-size: 44px; block-size: 44px; display: grid; place-items: center; border: 1px solid var(--divider-color,#999); border-radius: 8px; }
