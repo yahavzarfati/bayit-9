@@ -1,7 +1,8 @@
 import {
   discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactToolbarStatus, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
   normalizeOverviewDiscovery, overviewSectionOptions, roomPanelOptions, selectableRoomEntities,
-  TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS, toolbarPlacement, usesRoomPopupPosition,
+  supportsCompactToolbarStatus, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
+  toolbarPlacement, usesRoomPopupPosition,
 } from './strategy-model.js';
 import { normalizeOrefMap, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
 import { sameVacuumDevice } from './vacuum-map.js';
@@ -542,7 +543,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     const fields = [node('h3', { textContent: words.editSection }), field(words.sectionDisplay, display),
       node('label', { className: 'check' }, [heading, words.showHeading]), title.field];
     const kind = toolbar[entryIndex].kind;
-    if (kind === 'devices' && active.kind === 'status') {
+    if (supportsCompactToolbarStatus(kind, active)) {
       const compact = node('input', { type: 'checkbox', checked: isCompactToolbarStatus(kind, active) });
       compact.addEventListener('change', () => changeSection({ layout: compact.checked ? 'compact' : undefined }));
       fields.push(node('label', { className: 'check' }, [compact, words.compactStatus]));

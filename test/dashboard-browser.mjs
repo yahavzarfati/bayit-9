@@ -43,6 +43,7 @@ function observeScript(state) {
 }
 const query = new URL(location.href).searchParams;
 const linkedPanels = query.has('linked-only-panels');
+const compactOverview = query.has('compact-overview-status');
 if (query.has('native-more-info')) document.addEventListener('hass-more-info', event => {
   const tag = 'ha-more-info-dialog';
   const previous = new URL(location.href);
@@ -483,7 +484,8 @@ if (query.has('toolbar-panels')) {
   hass.entities['sensor.demo_studio_temperature'] = { area_id: 'studio' };
   if (!query.has('no-native-charts')) window.loadCardHelpers = async () => ({createCardElement(configuration) {
     const graphAction = configuration.tap_action?.action === 'fire-dom-event' && configuration.tap_action;
-    const card = document.createElement(graphAction ? 'button' : 'div');
+    const graphMoreInfo = configuration.tap_action?.action === 'more-info' && configuration.entity;
+    const card = document.createElement(graphAction || graphMoreInfo ? 'button' : 'div');
     const dialog = document.querySelector('bayit-dashboard')?.shadowRoot.querySelector('.modal[open]');
     card.dataset.duringOpening = String(!!dialog?.getAnimations().some(animation =>
       animation.playState === 'running' || animation.pending));
@@ -502,6 +504,8 @@ if (query.has('toolbar-panels')) {
       plot.onclick = event => event.stopPropagation();
       card.append(plot);
     }
+    if (graphMoreInfo) card.onclick = () => card.dispatchEvent(new CustomEvent('hass-more-info',
+      {bubbles:true,composed:true,detail:{entityId:graphMoreInfo}}));
     return card;
   }});
 }
@@ -672,8 +676,9 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
         {entity:'light.demo_entry_unavailable',role:'light_tile'},
         {entity:'light.demo_entry_generic',role:'device'},
       ]}]}] : []),
-    ...(query.has('compact-entrance-status') ? [{id:'compact-entrance',kind:'devices',label:'Front entrance',placement:'settings',
-      sections:[{kind:'status',title:'Entry status',layout:'compact',entities:[
+    ...(query.has('compact-entrance-status') ? [{id:compactOverview ? 'compact-overview' : 'compact-entrance',
+      kind:compactOverview ? 'overview' : 'devices',label:compactOverview ? 'Fixture Overview' : 'Front entrance',placement:'settings',
+      sections:[{kind:'status',title:compactOverview ? 'Home status' : 'Entry status',layout:'compact',entities:[
         {entity:'lock.demo_compact_entry',role:'lock'},
         {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24},
       ]},{kind:'status',title:'Read-only status',layout:'compact',entities:[
@@ -3108,15 +3113,19 @@ try {
       await scriptEditor.close();
       console.log(engine + ' 320: script Start/Stop, changed-state and replacement-run guards, and editor');
 
-      for (const width of [320, 391]) {
+      for (const [width, isOverview] of [[320,false],[391,false],[320,true],[391,true]]) {
         const entryStatusPage = await browser.newPage({ viewport: { width, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
         entryStatusPage.setDefaultTimeout(8000);
-        const entryStatusUrl = base + '/fixture-home/home?toolbar-panels&compact-entrance-status';
+        const fixtureId = isOverview ? 'compact-overview' : 'compact-entrance';
+        const panelName = isOverview ? 'Fixture Overview' : 'Front entrance';
+        const sectionName = isOverview ? 'Home status' : 'Entry status';
+        const entryStatusUrl = base + '/fixture-home/home?toolbar-panels&compact-entrance-status' +
+          (isOverview ? '&compact-overview-status' : '');
         await entryStatusPage.goto(entryStatusUrl);
-        const entryStatus = entryStatusPage.getByRole('dialog', { name:'Front entrance', exact:true });
+        const entryStatus = entryStatusPage.getByRole('dialog', { name:panelName, exact:true });
         const openStatusEntry = async () => {
           await entryStatusPage.getByRole('button', { name:'Appearance', exact:true }).tap();
-          await entryStatusPage.getByRole('button', { name:'Front entrance', exact:true }).tap();
+          await entryStatusPage.getByRole('button', { name:panelName, exact:true }).tap();
           await entryStatus.waitFor();
         };
         const entryLockServiceCalls = () => entryStatusPage.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service'));
@@ -3136,6 +3145,10 @@ try {
         await entryStatusLock.getByRole('button', { name:'Front lock · Locked', exact:true }).press('Shift+Enter');
         await entryStatus.waitFor();
         assert.deepEqual(await entryStatusPage.evaluate(() => window.bayitTest.moreInfoCalls), ['lock.demo_compact_entry']);
+        await entryStatusGraph.tap();
+        await entryStatus.waitFor();
+        assert.deepEqual(await entryStatusPage.evaluate(() => window.bayitTest.moreInfoCalls),
+          ['lock.demo_compact_entry','sensor.demo_studio_temperature']);
         assert.deepEqual(await entryLockServiceCalls(), []);
         const unlockEntry = entryStatusLock.getByRole('button', { name:'Unlock · Front lock', exact:true });
         const entryConfirmation = entryStatusPage.locator('dialog.confirm[open]');
@@ -3151,7 +3164,7 @@ try {
         })));
         await entryStatusPage.evaluate(() => window.bayitTest.setRoomState('lock.demo_compact_entry', 'jammed'));
         await entryStatusLock.locator('.compact-lock-action:disabled').waitFor();
-        assert.equal(new URL(entryStatusPage.url()).hash, '#panel/compact-entrance');
+        assert.equal(new URL(entryStatusPage.url()).hash, '#panel/' + fixtureId);
         if (width === 320) {
           await entryStatusPage.goto(entryStatusUrl + '&protected-entry-lock&no-native-charts');
           await openStatusEntry();
@@ -3167,16 +3180,16 @@ try {
           assert.deepEqual(await entryLockServiceCalls(), []);
           await entryStatusPage.goto(entryStatusUrl + '&editor');
           await entryStatusPage.getByText('Toolbar and extra screens', { exact:true }).tap();
-          await entryStatusPage.getByRole('button', { name:'Front entrance', exact:true }).tap();
-          await entryStatusPage.getByRole('button', { name:'Entry status', exact:true }).tap();
+          await entryStatusPage.getByRole('button', { name:panelName, exact:true }).tap();
+          await entryStatusPage.getByRole('button', { name:sectionName, exact:true }).tap();
           const sideBySide = entryStatusPage.getByRole('checkbox', { name:'Show status items side by side', exact:true });
           assert.equal(await sideBySide.isChecked(), true);
           await sideBySide.uncheck();
-          assert.equal(await entryStatusPage.evaluate(() => window.latest.toolbar.find(item => item.id === 'compact-entrance')
-            .sections[0].layout), undefined);
+          assert.equal(await entryStatusPage.evaluate(id => window.latest.toolbar.find(item => item.id === id)
+            .sections[0].layout, fixtureId), undefined);
           await sideBySide.check();
-          assert.equal(await entryStatusPage.evaluate(() => window.latest.toolbar.find(item => item.id === 'compact-entrance')
-            .sections[0].layout), 'compact');
+          assert.equal(await entryStatusPage.evaluate(id => window.latest.toolbar.find(item => item.id === id)
+            .sections[0].layout, fixtureId), 'compact');
         }
         await entryStatusPage.close();
       }
@@ -3199,7 +3212,7 @@ try {
         await dialog.waitFor({ state:'hidden' });
       }
       await rtlEntryStatusPage.close();
-      console.log(engine + ': compact Entrance status, guarded lock commands, native graph fallback, and visual editor');
+      console.log(engine + ': compact Entrance and Overview status, guarded lock commands, native graph and fallback, and visual editor');
 
       const entrancePage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
       entrancePage.setDefaultTimeout(8000);

@@ -960,17 +960,19 @@ test('room popup position applies only to opted-in Devices screens in Settings',
   assert.deepEqual(toolbar.map(entry => entry.popup_position), ['room', undefined, undefined, undefined]);
 });
 
-test('only Devices status sections retain the compact layout without changing entity roles', () => {
+test('only Devices and Overview status sections retain the compact layout without changing entity roles', () => {
   const hass = home();
   hass.states['lock.fixture'] = { state: 'locked', attributes: {} };
   const status = { kind: 'status', layout: 'compact', entities: [{ entity: 'lock.fixture', role: 'status' }] };
   const { toolbar } = generateDashboard({
     toolbar: [
       { kind: 'devices', sections: [status, { ...status, kind: 'devices' }] },
+      { kind: 'overview', sections: [status, { ...status, layout: undefined }] },
       { kind: 'security', sections: [status] },
     ],
   }, hass).views[0].cards[0];
-  assert.deepEqual(toolbar.map(item => item.sections.map(section => section.layout)), [['compact', undefined], [undefined]]);
+  assert.deepEqual(toolbar.map(item => item.sections.map(section => section.layout)),
+    [['compact', undefined], ['compact', undefined], [undefined]]);
   assert.ok(toolbar.every(item => item.sections.every(section => section.entities[0].role === 'status')));
 });
 

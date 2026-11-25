@@ -515,8 +515,12 @@ export function isToolbarLightTile(kind, section, item) {
   return kind === 'devices' && section === 'devices' && item?.role === 'light_tile' && Boolean(idForDomain(item.entity, 'light'));
 }
 
+export function supportsCompactToolbarStatus(kind, section) {
+  return (kind === 'devices' || kind === 'overview') && section?.kind === 'status';
+}
+
 export function isCompactToolbarStatus(kind, section) {
-  return kind === 'devices' && section?.kind === 'status' && section.layout === 'compact';
+  return supportsCompactToolbarStatus(kind, section) && section.layout === 'compact';
 }
 
 function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
