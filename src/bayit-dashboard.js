@@ -11,6 +11,7 @@ import { loadConfiguration, saveConfiguration } from './dashboard-configuration.
 import { allowsCoverRailAction, climatePowerServiceRegistered, createDeviceController, getDeviceModel, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
   simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
+import { createPopupScrollMemory } from './popup-scroll.js';
 import { createPopupHistory, normalizePopupAliases, popupRouteFragment, resolvePopupRoute } from './popup-routes.js';
 import { preserveMoreInfoReturn } from './native-more-info.js';
 import { buildPanelControls, climateOptionLabel, panelControlStyles } from './panel-controls.js';
@@ -477,6 +478,7 @@ export class BayitDashboard extends HTMLElement {
     n.confirm.setAttribute('aria-labelledby', n.confirmTitle.id);
     n.confirm.setAttribute('aria-describedby', n.confirmText.id);
     this.popupMotion = createPopupMotion({ dialog: n.modal, clip: n.roomScroll, toolbar: n.toolbar });
+    this.popupScroll = createPopupScrollMemory(n.modalBody, n.content);
     this.pageChrome = createPageChrome(this, { onChange: () => this.fitPage() });
     n.back.onclick = () => this.backToRoom();
     n.close.onclick = () => this.dismissPanel();
@@ -514,7 +516,6 @@ export class BayitDashboard extends HTMLElement {
     });
     this.deviceViews = new Set();
     this.pending = new Map();
-    this.roomScroll = new Map();
     this.preferences = {};
     this.controller = createDeviceController({ getHass: () => this._hass });
     this.resize = () => this.fitPage();
@@ -532,6 +533,7 @@ export class BayitDashboard extends HTMLElement {
 
   setConfig(raw) {
     const next = normalizeDashboardConfig(raw);
+    this.popupScroll.stop();
     this.nativeMoreInfoReturn?.();
     if (this.config?.storageKey !== next.storageKey) this.preferences = {};
     this.popupHistory?.stop();
@@ -596,6 +598,7 @@ export class BayitDashboard extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this.popupScroll.stop();
     this.nativeMoreInfoReturn?.();
     this.popupHistory?.stop();
     this.popupHistory = this.popupHistoryPath = undefined;
@@ -1328,11 +1331,11 @@ export class BayitDashboard extends HTMLElement {
     const fromLinkedRoom = (type === 'media' || type === 'vacuum') && returnFromRoom && this.panel?.type === 'room' &&
       this.panel.room === returnFromRoom.room && n.modal.open && n.content.contains(source);
     const returnTo = fromRoomDetail ? { room, entity: selected.entity } : fromLinkedRoom ? returnFromRoom : undefined;
-    if (this.panel?.type === 'room' && n.modal.open) {
-      this.roomScroll.set(this.panel.room.id, n.modalBody.scrollTop);
-    }
+    this.popupScroll.stop();
+    const scrollRoute = type === 'room' ? { kind: 'room', room: room.id }
+      : boilerControls && this.config.page ? { kind: 'device', room: room.id, entity } : null;
     const panel = { type, room, returnTo, roomOrigin: type === 'room' && Boolean(source),
-      routeHash: navigation.hash ?? this.panel?.routeHash };
+      scrollHash: popupRouteFragment(scrollRoute), routeHash: navigation.hash ?? this.panel?.routeHash };
     this.panel = panel;
     n.back.hidden = !returnTo;
     n.setupFooter.hidden = true;
@@ -1375,7 +1378,8 @@ export class BayitDashboard extends HTMLElement {
       centeredToolbar,
       highlighted: type === 'room' ? this.roomViews.get(room.id)?.article : source,
     });
-    n.modalBody.scrollTop = type === 'room' ? this.roomScroll.get(room.id) || 0 : 0;
+    if (panel.scrollHash) this.restorePopupScroll(panel);
+    else n.modalBody.scrollTop = 0;
     this.update();
     if (!navigation.hash && this.popupHistory) {
       const route = type === 'room' ? { kind: type, room: room.id }
@@ -1390,6 +1394,19 @@ export class BayitDashboard extends HTMLElement {
         }
       }
     }
+  }
+
+  restorePopupScroll(panel) {
+    const { modal } = this.nodes;
+    if (!panel?.scrollHash || !modal.open) return;
+    const view = this.ownerDocument.defaultView;
+    const { pathname } = view.location;
+    const key = JSON.stringify([homePreferencePaths(pathname)[0], panel.scrollHash]);
+    this.popupScroll.start(key, {
+      persistent: this.config.page,
+      active: () => this.panel === panel && modal.open && !modal.hasAttribute('data-closing') &&
+        !this.nativeMoreInfoReturn && view.location.pathname === pathname,
+    });
   }
 
   backToRoom() {
@@ -1412,6 +1429,7 @@ export class BayitDashboard extends HTMLElement {
 
   dismissPanel(options) {
     this.setup?.editor.shadowRoot.activeElement?.blur();
+    this.popupScroll.stop();
     const routeHash = this.panel?.routeHash;
     if (routeHash) this.popupHistory?.close(routeHash);
     this.popupMotion.dismiss(options);
@@ -1422,7 +1440,7 @@ export class BayitDashboard extends HTMLElement {
     if (n.modal.open) return;
     this.nativeMoreInfoReturn?.();
     const routeHash = this.panel?.routeHash;
-    if (this.panel?.type === 'room') this.roomScroll.set(this.panel.room.id, n.modalBody.scrollTop);
+    this.popupScroll.stop();
     n.back.hidden = true;
     n.setupFooter.hidden = true;
     n.setupFooter.replaceChildren();
@@ -1714,6 +1732,7 @@ export class BayitDashboard extends HTMLElement {
     let timerScroll = 0;
     const activate = (item, remember = false) => {
       if (active === item) return;
+      if (!stacked && active === timer) this.popupScroll.stop();
       if (compactNavigation && active === timer) {
         returnButton = item.tab;
         timerScroll = this.nodes.modalBody.scrollTop;
@@ -1732,6 +1751,7 @@ export class BayitDashboard extends HTMLElement {
         this.nodes.modalBody.scrollTop = returning ? timerScroll : 0;
         if (returning) returnButton?.focus({ preventScroll: true });
       }
+      if (!stacked && item === timer) this.restorePopupScroll(this.panel);
       if (stacked && remember) {
         try { localStorage.setItem(detailPreference, item.label); } catch {}
       }

@@ -56,6 +56,10 @@ if (query.has('overview-climate-discovery')) {
 if (query.has('lock-status-palette')) states['lock.fixture_entry'] = {
   state: 'locked', attributes: { friendly_name: 'Fixture lock' },
 };
+if (query.has('popup-scroll-memory')) Object.assign(states, {
+  'switch.fixture_scroll_boiler': { state:'off', attributes:{friendly_name:'Fixture boiler'} },
+  'timer.fixture_scroll_boiler': { state:'idle', attributes:{} },
+});
 const linkedPanels = query.has('linked-only-panels');
 const compactOverview = query.has('compact-overview-status');
 if (query.has('native-more-info')) document.addEventListener('hass-more-info', event => {
@@ -120,6 +124,15 @@ const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection'
   ] }),
   ...(query.has('legacy-room-order') && { area_ids: ['lounge', 'studio'] }),
   ...(query.has('cross-area-room-device') && { room_overrides: { lounge: { entities: ['light.demo_lamp'] } } }),
+  ...(query.has('popup-scroll-memory') && {
+    preference_key:'shared-appearance-for-scroll-test', area_ids:['studio','bayit_room_den'],
+    room_overrides:{
+      studio:{entities:['light.demo_lamp','switch.fixture_scroll_boiler']},
+      bayit_room_den:{name:'Den',entities:['light.demo_lamp']},
+    },
+    profiles:[{entity:'switch.fixture_scroll_boiler',kind:'boiler',timed:{timer_entity:'timer.fixture_scroll_boiler'}}],
+    popup_aliases:{'#boiler-timer':'#device/studio/switch.fixture_scroll_boiler'},
+  }),
   ...(query.has('lock-status-palette') && {
     room_overrides: { studio: { entities: ['lock.fixture_entry'] } },
     room_shortcuts: { studio: ['lock.fixture_entry'] },
@@ -1074,7 +1087,7 @@ const server = http.createServer(async (req, res) => {
   } else if (url.pathname === '/api/media_player_proxy/media_player.demo_speaker') {
     res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
     res.end('<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60"><rect width="60" height="60" fill="teal"/></svg>');
-  } else if (url.pathname === '/' || /^\/fixture-home(?:\/(?:home|0))?\/?$/.test(url.pathname)) {
+  } else if (url.pathname === '/' || /^\/fixture-(?:home|other)(?:\/(?:home|0))?\/?$/.test(url.pathname)) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(fixture);
   } else {
@@ -1147,6 +1160,119 @@ async function assertHomePreferenceAliases(browser) {
     assert.equal(await photo.getAttribute('data-shape'), 'square');
   } finally {
     await page.close();
+  }
+}
+
+async function assertPopupScrollMemory(browser) {
+  const viewport = { width:391, height:600 };
+  const url = base + '/fixture-home/home?configuration&popup-scroll-memory';
+  const otherUrl = base + '/fixture-other/home?configuration&popup-scroll-memory';
+  const studioHash = '#room-studio';
+  const boilerHash = '#boiler-timer';
+  const marker = 'bayit-9.popup-scroll.v1:';
+  const page = await browser.newPage({ viewport, hasTouch:true, reducedMotion:'reduce' });
+  const blocked = await browser.newPage({ viewport, hasTouch:true, reducedMotion:'reduce' });
+  page.setDefaultTimeout(8000);
+  blocked.setDefaultTimeout(8000);
+  try {
+    function popup(target) {
+      const dialog = target.getByRole('dialog');
+      const body = dialog.locator('.modal-body');
+      const size = height => body.locator('[data-role=content]').evaluate((content, pixels) => {
+        content.style.minBlockSize = pixels + 'px';
+      }, height);
+      const scroll = top => body.evaluate((element, pixels) => {
+        element.scrollTop = pixels;
+        element.dispatchEvent(new Event('scroll'));
+        return element.scrollTop;
+      }, top);
+      const position = () => body.evaluate(element => element.scrollTop);
+      const waitForPosition = top => target.waitForFunction(value => {
+        const body = document.querySelector('bayit-dashboard').shadowRoot.querySelector('dialog[open] .modal-body');
+        return body?.scrollTop === value;
+      }, top);
+      return { dialog, body, size, scroll, position, waitForPosition };
+    }
+
+    const room = popup(page);
+    await page.goto(url + studioHash);
+    await room.dialog.waitFor();
+    await room.size(1000);
+    assert.equal(await room.scroll(460), 460);
+    await page.reload();
+    await room.dialog.waitFor();
+    assert.ok(await room.position() < 460);
+    await room.size(1000);
+    await room.waitForPosition(460);
+
+    await page.goto(otherUrl + studioHash);
+    await room.dialog.waitFor();
+    await room.size(1000);
+    assert.equal(await room.position(), 0);
+    await page.goto(url + '#room-bayit_room_den');
+    await room.dialog.waitFor();
+    await room.size(1000);
+    assert.equal(await room.position(), 0);
+
+    await page.goto(url + studioHash);
+    await page.reload();
+    await room.dialog.waitFor();
+    await room.body.dispatchEvent('wheel', { deltaY:30 });
+    await room.size(1000);
+    await page.evaluate(() => new Promise(requestAnimationFrame));
+    assert.ok(await room.position() < 460);
+    await room.scroll(140);
+    assert.equal(await room.position(), 140);
+    await page.reload();
+    await room.dialog.waitFor();
+    await room.size(1000);
+    await room.waitForPosition(140);
+
+    const storage = () => page.evaluate(prefix =>
+      Object.fromEntries(Object.keys(sessionStorage).filter(key => key.startsWith(prefix))
+        .map(key => [key, sessionStorage.getItem(key)])), marker);
+    await page.goto(url + boilerHash);
+    await room.dialog.waitFor();
+    await room.size(1000);
+    assert.equal(await room.scroll(420), 420);
+    await page.reload();
+    await room.dialog.waitFor();
+    await room.size(1000);
+    await room.waitForPosition(420);
+    const beforeHistory = await storage();
+    await room.dialog.getByRole('button', { name:'Usage history', exact:true }).evaluate(button => button.click());
+    await room.size(1000);
+    assert.equal(await room.scroll(110), 110);
+    assert.deepEqual(await storage(), beforeHistory);
+    await room.dialog.getByRole('button', { name:'Close', exact:true }).tap();
+    await room.dialog.waitFor({ state:'hidden' });
+    await page.goto(url + boilerHash);
+    await room.dialog.waitFor();
+    await room.size(1000);
+    await room.waitForPosition(420);
+
+    await blocked.addInitScript(prefix => {
+      for (const method of ['getItem', 'setItem']) {
+        const original = Storage.prototype[method];
+        Storage.prototype[method] = function(key, ...args) {
+          if (key.startsWith(prefix)) throw new DOMException('Storage blocked', 'SecurityError');
+          return original.call(this, key, ...args);
+        };
+      }
+    }, marker);
+    const memoryOnly = popup(blocked);
+    await blocked.goto(url + studioHash);
+    await memoryOnly.dialog.waitFor();
+    await memoryOnly.size(1000);
+    assert.equal(await memoryOnly.scroll(225), 225);
+    await memoryOnly.dialog.getByRole('button', { name:'Close', exact:true }).tap();
+    await memoryOnly.dialog.waitFor({ state:'hidden' });
+    await blocked.getByRole('button', { name:'Studio', exact:true }).tap();
+    await memoryOnly.dialog.waitFor();
+    await memoryOnly.waitForPosition(225);
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+  } finally {
+    await Promise.all([page.close(), blocked.close()]);
   }
 }
 
@@ -2898,6 +3024,8 @@ try {
     try {
       await assertHomePreferenceAliases(browser);
       await assertSharedAppearance(browser);
+      await assertPopupScrollMemory(browser);
+      console.log(engine + ': popup scroll survives reload and remains scoped to the room and dashboard');
       await assertCompactSettings(browser);
       await assertToolbarLockPalette(browser);
       console.log(engine + ': semantic toolbar lock colors, contrast and scope');
