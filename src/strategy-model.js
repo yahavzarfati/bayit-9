@@ -1170,13 +1170,25 @@ export function automaticToolbarKinds(context = {}) {
   return [context.automations?.length ? 'automations' : 'activity', 'security', 'presence', 'weather', 'energy', 'overview', 'settings'];
 }
 
-export function settingsScreenEntries(config) {
+export function availableAutomaticToolbarKinds(config, hass = {}) {
+  return automaticToolbarKinds(config.context).filter(kind => ['activity', 'settings'].includes(kind) ||
+    (kind === 'overview' ? config.overview : config.context?.[kind])?.length || (kind === 'energy' && hass.panels?.energy));
+}
+
+export function settingsScreenEntries(config, { includeMirroredOverview = true } = {}) {
   const configured = config.toolbar?.filter(item => item.placement === 'settings');
   if (configured?.length) return configured;
   const linked = new Set(config.toolbar?.filter(item => item.placement === 'linked').map(item => item.kind));
   return ['overview', 'sensors', 'calendar', 'media', 'vacuum'].filter(kind => !linked.has(kind)).flatMap(kind => {
     const entities = kind === 'overview' ? config.overview : config.context?.[kind];
-    return entities?.length ? [{ kind, entities }] : [];
+    if (!entities?.length) return [];
+    if (kind === 'overview') {
+      // A promoted automatic Overview retains its single route in both locations.
+      const overview = config.toolbar?.find(item =>
+        item.kind === 'overview' && item.id === 'overview' && !item.placement);
+      if (overview) return includeMirroredOverview ? [{ ...overview, entities: overview.entities ?? entities }] : [];
+    }
+    return [{ kind, entities }];
   });
 }
 
@@ -1191,12 +1203,11 @@ export function popupAliasDestinations(config, hass = {}) {
       return canOpenBoilerSchedule(item, hass, hidden) ? [device, { ...device, detail:'schedule' }] : [device];
     }),
   ]);
-  const bar = card.toolbar?.filter(item => !item.placement) ?? automaticToolbarKinds(card.context)
-    .filter(kind => ['activity','settings'].includes(kind) ||
-      (kind === 'overview' ? card.overview : card.context?.[kind])?.length || (kind === 'energy' && hass.panels?.energy))
+  const bar = card.toolbar?.filter(item => !item.placement) ?? availableAutomaticToolbarKinds(card, hass)
     .map(kind => ({ kind }));
   if (card.fullscreen && !bar.some(item => item.kind === 'settings')) bar.push({ kind:'settings' });
-  const extra = bar.some(item => item.kind === 'settings') ? settingsScreenEntries(card) : [];
+  const extra = bar.some(item => item.kind === 'settings')
+    ? settingsScreenEntries(card, { includeMirroredOverview: false }) : [];
   const linked = card.toolbar?.filter(item => item.placement === 'linked') ?? [];
   const panels = new Map();
   for (const item of [...bar, ...extra, ...linked]) {

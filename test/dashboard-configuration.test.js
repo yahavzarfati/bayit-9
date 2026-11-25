@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { loadConfiguration, saveConfiguration } from '../src/dashboard-configuration.js';
 
-function dashboard() {
+function dashboard(initial = { title: 'Example', strategy: { type: 'custom:bayit-9', locale: 'en', unknown: true } }) {
   const calls = [];
-  let config = { title: 'Example', strategy: { type: 'custom:bayit-9', locale: 'en', unknown: true } };
+  let config = initial;
   const hass = {
     user: { is_admin: true },
     async callWS(command) {
@@ -30,6 +30,36 @@ test('saves only the active storage dashboard strategy after rereading it', asyn
     config: { title: 'Example', strategy: patch },
   });
   assert.equal(calls.at(-2).force, true);
+});
+
+test('round-trips the effective legacy options, preserving outer and unknown keys', async () => {
+  const type = 'custom:bayit-9';
+  const options = { locale:'he', area_ids:['studio'], future_option:{ keep:true } };
+  const input = { title:'Example', future_dashboard_key:47, strategy:{ type, options } };
+  const fixture = dashboard(input);
+  const base = await loadConfiguration(fixture.hass, '/example-home/home');
+  assert.deepEqual(base.strategy, { type, ...options });
+  assert.deepEqual(fixture.config, input);
+  assert.equal(fixture.calls.some(call => call.type === 'lovelace/config/save'), false);
+
+  await fixture.hass.callWS({ type:'lovelace/config/save',
+    config:{ ...input, strategy:{ type, options:{ ...options, area_ids:['lounge'] } } } });
+  await assert.rejects(() => saveConfiguration(fixture.hass, base, { ...base.strategy, title:'My draft' }),
+    { code:'setup_conflict' });
+  assert.equal(fixture.calls.filter(call => call.type === 'lovelace/config/save').length, 1);
+
+  const current = await loadConfiguration(fixture.hass, '/example-home/home');
+  await saveConfiguration(fixture.hass, current, { ...current.strategy, title:'Renamed' });
+  assert.deepEqual(fixture.config, { ...input, strategy:{ type, ...options, area_ids:['lounge'], title:'Renamed' } });
+});
+
+test('keeps an options key untouched in an already-flat strategy', async () => {
+  const strategy = { type:'custom:bayit-9', options:{ future_option:true }, locale:'en' };
+  const fixture = dashboard({ strategy });
+  const base = await loadConfiguration(fixture.hass, '/example-home/home');
+  assert.deepEqual(base.strategy, strategy);
+  await saveConfiguration(fixture.hass, base, { ...strategy, locale:'he' });
+  assert.deepEqual(fixture.config.strategy, { ...strategy, locale:'he' });
 });
 
 test('refuses to edit a YAML dashboard and avoids overwriting a concurrent strategy change', async () => {

@@ -919,7 +919,14 @@ if (query.has('section-discovery') && stored().strategy.room_overrides?.studio?.
   hass.entities['light.demo_after_sections'] = {area_id:'studio'};
 }
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
-const selected = query.has('configuration') ? stored().strategy : query.has('popup-routes') ? {
+// Simulate Home Assistant's renderer input. The configuration WebSocket still returns the raw storage object.
+function rendererStrategy(strategy) {
+  if (Object.keys(strategy).length !== 2 || typeof strategy.options !== 'object') return strategy;
+  const effective = { ...strategy, ...strategy.options };
+  delete effective.options;
+  return effective;
+}
+const selected = query.has('configuration') ? rendererStrategy(stored().strategy) : query.has('popup-routes') ? {
   room_overrides: { studio: { entities: ['light.demo_lamp', 'switch.demo_heater'],
     read_only_entities: ['switch.demo_heater'] } },
   hidden_entities: ['script.demo_start'],
@@ -5637,9 +5644,114 @@ async function assertToolbarLinksKeepTheirScreenIdentity(browser) {
       await field(words.layout).selectOption('automatic');
       await field(words.layout).selectOption('custom');
       const reseeded = await persist();
-      assert.ok(reseeded.toolbar.every(item => /^toolbar-[a-f0-9]{24}$/.test(item.id) && item.id !== id));
+      assert.ok(reseeded.toolbar.every(item => item.id === item.kind));
+      assert.ok(reseeded.toolbar.every(item => item.id !== id));
       await checkLink(oldRoute);
       await checkLink(alias);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+const adoptionLocales = [
+  { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', roomName:'Room display name',
+    title:'Dashboard title', save:'Save dashboard', toolbar:'Toolbar and extra screens', layout:'Toolbar layout',
+    overview:'Home overview', energy:'Energy', close:'Close' },
+  { locale:'he', appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים', roomName:'שם החדר לתצוגה',
+    title:'שם הדשבורד', save:'שמירת הדשבורד', toolbar:'סרגל ומסכים נוספים', layout:'פריסת הסרגל',
+    overview:'מבט על הבית', energy:'אנרגיה', close:'סגירה' },
+];
+
+async function assertLegacyOptionsRoundTrip(browser) {
+  const type = 'custom:bayit-9';
+  const importedRoom = 'Imported fixture room';
+  const draftTitle = 'Revised fixture home';
+  for (const words of adoptionLocales) {
+    const options = { locale:words.locale, show_unassigned:false, area_ids:['studio'], background:'jade',
+      room_overrides:{ studio:{ name:importedRoom, entities:['light.demo_lamp'] } }, future_option:{ keep:true } };
+    const stored = { title:'Outer fixture title', strategy:{ type, options }, future_dashboard_key:'retained' };
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      await page.addInitScript(config => {
+        const key = 'bayit9-browser-fixture';
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify(config));
+      }, stored);
+      const savedConfig = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')));
+      const button = (name, root=page) => root.getByRole('button', { name, exact:true });
+      const room = button(importedRoom);
+      const settings = page.getByRole('dialog', { name:words.appearance, exact:true });
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      await page.goto(base + '/fixture-home/home?configuration&locale=' + words.locale);
+      await room.waitFor();
+      await button(words.appearance).tap();
+      await button(words.setup, settings).tap();
+      await setup.getByText(words.rooms, { exact:true }).tap();
+      assert.equal(await setup.getByLabel(words.roomName, { exact:true }).inputValue(), importedRoom);
+      assert.deepEqual(await savedConfig(), stored, 'Reading and drafting must leave the effective legacy strategy in storage');
+      const title = setup.getByLabel(words.title, { exact:true });
+      await title.fill(draftTitle);
+      await title.press('Tab');
+      await Promise.all([page.waitForEvent('load'), button(words.save, setup).tap()]);
+      await page.getByRole('heading', { name:draftTitle, exact:true }).waitFor();
+      await room.waitFor();
+      assert.deepEqual(await savedConfig(), { ...stored, strategy:{ type, ...options, title:draftTitle } });
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+async function assertAutomaticToolbarRoutesSurviveCustomization(browser) {
+  const aliases = { '#fixture-appearance':'#panel/settings', '#fixture-overview':'#panel/overview' };
+  for (const words of adoptionLocales) {
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      await page.addInitScript(popup_aliases => {
+        const key = 'bayit9-browser-fixture';
+        const strategy = { type:'custom:bayit-9', overview_entities:['light.demo_lamp'], popup_aliases };
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy }));
+      }, aliases);
+      const url = base + '/fixture-home/home?configuration&with-energy-dashboard&locale=' + words.locale;
+      const button = (name, root=page) => root.getByRole('button', { name, exact:true });
+      const settings = page.getByRole('dialog', { name:words.appearance, exact:true });
+      const overview = page.getByRole('dialog', { name:words.overview, exact:true });
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      const lamp = overview.locator('[data-entity="light.demo_lamp"]');
+      const checkOverview = async fragment => {
+        await page.goto(url + fragment);
+        await overview.waitFor();
+        await lamp.waitFor();
+      };
+      await checkOverview('#fixture-overview');
+      await page.goto(url + '#fixture-appearance');
+      await settings.waitFor();
+      await button(words.setup, settings).tap();
+      await setup.getByText(words.toolbar, { exact:true }).tap();
+      await setup.getByLabel(words.layout, { exact:true }).selectOption('custom');
+      await Promise.all([page.waitForEvent('load'), button(words.save, setup).tap()]);
+      await button(words.energy).waitFor();
+      const saved = await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      const ids = saved.toolbar.map(item => item.id);
+      assert.deepEqual(ids, saved.toolbar.map(item => item.kind));
+      for (const required of ['energy', 'overview', 'settings']) assert.ok(ids.includes(required), required);
+      assert.deepEqual(saved.popup_aliases, aliases);
+
+      await checkOverview('#fixture-overview');
+      await checkOverview('#panel/overview');
+      await page.reload();
+      await lamp.waitFor();
+      await page.goto(url + '#fixture-appearance');
+      await settings.waitFor();
+      await button(words.overview, settings).tap();
+      await lamp.waitFor();
+      assert.equal(new URL(page.url()).hash, '#panel/overview');
+      await button(words.close, overview).tap();
+      await button(words.appearance).tap();
+      await settings.waitFor();
+      assert.equal(new URL(page.url()).hash, '#panel/settings');
     } finally {
       await page.close();
     }
@@ -13150,6 +13262,9 @@ try {
       }
       console.log(engine + ' 320: device placement preview reflects automatic moves and stays local until saved');
     });
+
+    await run('Legacy strategy options survive visual setup and Home Assistant reload', () => assertLegacyOptionsRoundTrip(browser));
+    await run('Automatic toolbar links survive visual customization', () => assertAutomaticToolbarRoutesSurviveCustomization(browser));
 
     await run('Room placement, links and clean installation', async () => {
       await assertRoomMirrorPlacement(browser);

@@ -1191,6 +1191,20 @@ test('lists only same-dashboard popup destinations, respecting rooms, hidden dev
   assert.ok(!visible({ toolbar:[{ id:'calendar', kind:'activity' }, { kind:'settings' }] }).has('#panel/calendar'));
 });
 
+test('lists the mirrored canonical Overview once and rejects collisions with unrelated panels', () => {
+  const hass = home();
+  const destination = '#panel/overview';
+  const base = { overview_entities:['light.demo_lamp'] };
+  const overview = { id:'overview', kind:'overview', label:'Fixture overview' };
+  const gear = { id:'settings', kind:'settings' };
+  const links = toolbar => popupAliasDestinations({ ...base, toolbar }, hass)
+    .filter(item => item.fragment === destination);
+  assert.equal(links(undefined).length, 1);
+  assert.equal(links([overview, gear]).length, 1);
+  assert.equal(links([overview, gear])[0].name, overview.label);
+  assert.equal(links([{ id:'overview', kind:'activity' }, gear]).length, 0);
+});
+
 test('supports additional dashboard-only rooms in the room order and retains empty rooms', () => {
   const hass = home();
   const custom = CUSTOM_ROOM_PREFIX + 'washing-room';

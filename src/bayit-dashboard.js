@@ -760,7 +760,8 @@ export class BayitDashboard extends HTMLElement {
 
   popupToolbar(id) {
     const visible = this.toolbarViews.filter(view => !view.element.hidden).map(view => view.panel);
-    const extra = visible.some(panel => panel.kind === 'settings') ? this.settingsScreens() : [];
+    const extra = visible.some(panel => panel.kind === 'settings')
+      ? this.settingsScreens({ includeMirroredOverview: false }) : [];
     const linked = this.config.toolbar?.filter(item => item.placement === 'linked') ?? [];
     const matches = [...visible, ...extra, ...linked].filter(panel => panel.kind !== 'link' && (panel.id || panel.kind) === id);
     // The automatic overview intentionally appears in both the bar and Settings.
@@ -2654,8 +2655,8 @@ export class BayitDashboard extends HTMLElement {
     return countdown;
   }
 
-  settingsScreens() {
-    return settingsScreenEntries(this.config).map(item => ({
+  settingsScreens(options) {
+    return settingsScreenEntries(this.config, options).map(item => ({
       ...item, icon:item.icon ?? toolbarIcons[item.kind], name:item.label || this.t(item.kind),
     }));
   }

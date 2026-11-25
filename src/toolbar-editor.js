@@ -1,5 +1,5 @@
 import {
-  dashboardToolbarEntries, discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactAutomationActions, isCompactToolbarStatus, isReadingCards, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
+  availableAutomaticToolbarKinds, dashboardToolbarEntries, discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactAutomationActions, isCompactToolbarStatus, isReadingCards, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
   isToolbarReadoutEntity, isToolbarReadouts, isWeatherReadingsList, normalizeOverviewDiscovery, normalizeToolbarReadout, overviewSectionOptions, roomPanelOptions,
   securityReadoutLabelStates, selectableRoomEntities, sensorComparisonMaxHours, sensorComparisonOptions,
   SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
@@ -231,17 +231,9 @@ function patch(item, edits) {
 
 function automaticEntries(config, hass) {
   const card = generateDashboard({ ...config, toolbar: undefined }, hass).views[0].cards[0];
-  const context = card.context ?? {};
-  const first = context.automations?.length ? 'automations' : TOOLBAR_KINDS.has('activity') ? 'activity' : 'automations';
-  const kinds = [first, ...['security', 'presence', 'weather', 'energy'].filter(kind => context[kind]?.length)];
-  if (card.overview?.length) kinds.push('overview');
-  kinds.push('settings');
-  const taken = new Set();
-  return kinds.map(kind => {
-    const id = createPopupRouteId('toolbar-', taken);
-    taken.add(id);
-    return { kind, id };
-  });
+  return availableAutomaticToolbarKinds(card, hass).map(kind => ({
+    kind, id: kind, ...(kind === 'presence' && { presence_dynamic_icon: true }),
+  }));
 }
 
 export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange, viewState = {} }) {

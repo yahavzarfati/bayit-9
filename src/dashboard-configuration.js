@@ -21,8 +21,13 @@ function checkEditor(hass) {
 
 async function readStrategy(hass, urlPath) {
   const config = await hass.callWS({ type: 'lovelace/config', url_path: urlPath, force: true });
-  if (config?.strategy?.type !== STRATEGY_TYPE) throw configurationError('setup_storage');
-  return config;
+  const { strategy } = config ?? {};
+  if (strategy?.type !== STRATEGY_TYPE) throw configurationError('setup_storage');
+  // Home Assistant unwraps this legacy shape before passing it to the renderer.
+  if (Object.keys(strategy).length !== 2 || typeof strategy.options !== 'object') return config;
+  const effective = { ...strategy, ...strategy.options };
+  delete effective.options;
+  return { ...config, strategy: effective };
 }
 
 export async function loadConfiguration(hass, pathname) {
