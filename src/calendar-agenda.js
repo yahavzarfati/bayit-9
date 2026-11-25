@@ -651,9 +651,12 @@ export function createCalendarAgenda({ host, context, items, settings }) {
       calendar = agendaCalendar(timeZone);
     }
     const firstDay = calendar.dayKey(new Date());
-    if (range?.firstDay !== firstDay || range?.calendar !== calendar) {
+    const browserZoneMoved = range && calendar === browserCalendar &&
+      (+range.start !== +calendar.opening(firstDay) || +range.end !== +calendar.opening(range.afterLastDay));
+    if (range?.firstDay !== firstDay || range?.calendar !== calendar || browserZoneMoved) {
       clearSources();
       range = calendarWindow(firstDay, calendar);
+      signature = undefined;
     }
     for (const source of sources) {
       const current = subscriptions.get(source.entity);

@@ -466,7 +466,9 @@ try {
       await retryPage.close();
 
       const zonePage = await browser.newPage({ viewport:{width,height:844}, hasTouch:true, reducedMotion:'reduce',
-        timezoneId:'America/New_York' });
+        ...(launcher !== chromium && {timezoneId:'America/New_York'}) });
+      const devtools = launcher === chromium ? await zonePage.context().newCDPSession(zonePage) : undefined;
+      await devtools?.send('Emulation.setTimezoneOverride', {timezoneId:'America/New_York'});
       await zonePage.clock.install({ time:new Date('2026-03-08T07:15:00Z') });
       await zonePage.goto(base + '?server-zone&month&details&locale=' + locale + '#panel/demo-calendar');
       const zoneDialog = zonePage.getByRole('dialog',{name:names.calendar,exact:true});
@@ -505,6 +507,20 @@ try {
       await appointment.waitFor();
       assert.equal(await zoneDialog.locator('.calendar-agenda-date').getAttribute('datetime'),'2026-03-08');
       assert.match(await zoneDialog.locator('.calendar-agenda-time').innerText(),/0?3:30/);
+      if (devtools) {
+        await devtools.send('Emulation.setTimezoneOverride', {timezoneId:''});
+        await devtools.send('Emulation.setTimezoneOverride', {timezoneId:'America/Denver'});
+        await zonePage.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+        await zonePage.waitForFunction(() => window.fixture.requests().filter(request => request.entity_id === 'calendar.demo_primary').length === 3);
+        requestsWithZone = await primaryRequests();
+        assert.deepEqual(requestsWithZone.map(request => request.closed),[1,1,0]);
+        assert.equal(requestsWithZone[2].start,'2026-03-08T07:00:00.000Z');
+        await emitAppointment();
+        await appointment.waitFor();
+        assert.equal(await zoneDialog.locator('.calendar-agenda-date').getAttribute('datetime'),'2026-03-08');
+        assert.match(await zoneDialog.locator('.calendar-agenda-time').innerText(),/00:30/);
+        await devtools.detach();
+      }
       assert.equal(await zonePage.evaluate(() => window.fixture.mutations.length),0);
       await zonePage.close();
 
