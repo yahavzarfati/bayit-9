@@ -2920,6 +2920,112 @@ async function assertRoomTargetLabels(browser) {
   }
 }
 
+async function assertCustomRoomIcons(browser) {
+  const localeLabels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', room:'Room to customize',
+      icon:'Room icon', custom:'Custom icon', name:'Custom icon name', error:'Enter an icon name such as mdi:compass-outline.',
+      create:'New dashboard-only room', roomName:'New room name', fixtureRoom:'Utility nook',
+      search:'Find a device to add', available:'Available devices', add:'Add device', save:'Save dashboard' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים', room:'חדר להתאמה אישית',
+      icon:'סמל החדר', custom:'סמל מותאם אישית', name:'שם הסמל המותאם', error:'הזינו שם סמל, למשל mdi:compass-outline.',
+      create:'חדר חדש לדשבורד', roomName:'שם החדר החדש', fixtureRoom:'פינת האביזרים',
+      search:'חיפוש מכשיר להוספה', available:'מכשירים זמינים', add:'הוספת מכשיר', save:'שמירת הדשבורד' },
+  ];
+  const compass = 'mdi:compass-outline';
+  const moon = 'mdi:moon-waning-crescent';
+  const home = 'mdi:home-outline';
+  const desk = 'mdi:desk';
+  const lamp = 'light.demo_lamp';
+  for (const [index, words] of localeLabels.entries()) {
+    const page = await browser.newPage({ viewport:{ width:index ? 391 : 320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      const field = name => setup.getByLabel(name, { exact:true });
+      const chooser = field(words.icon);
+      const custom = field(words.name);
+      const room = field(words.room);
+      const save = setup.getByRole('button', { name:words.save, exact:true });
+      const preview = setup.locator('.room-icon-options + .room-icon-preview > ha-icon');
+      const homeIcon = id => page.locator('.room[data-room="' + id + '"] .room-title > ha-icon:first-child');
+      const error = setup.getByRole('status').filter({ hasText:words.error });
+      const open = async () => {
+        await page.getByRole('button', { name:words.appearance, exact:true }).press('Enter');
+        await page.getByRole('button', { name:words.setup, exact:true }).press('Enter');
+        await setup.getByText(words.rooms, { exact:true }).press('Enter');
+      };
+      const persist = async () => {
+        await Promise.all([page.waitForEvent('load'), save.press('Enter')]);
+        return page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      };
+
+      await page.goto(base + '/fixture-home/home?configuration&room-selection&locale=' + words.locale);
+      await open();
+      await room.selectOption('studio');
+      assert.equal(await preview.getAttribute('icon'), desk);
+      await chooser.selectOption({ label:words.custom });
+      assert.equal(await custom.evaluate(input => input.getRootNode().activeElement === input), true);
+      await custom.fill('mdi:in valid');
+      await custom.press('Enter');
+      await error.waitFor();
+      assert.equal(await custom.getAttribute('aria-invalid'), 'true');
+      assert.equal(await preview.getAttribute('icon'), desk);
+      assert.equal(await save.isDisabled(), true);
+
+      await chooser.selectOption('mdi:stove');
+      assert.equal(await preview.getAttribute('icon'), 'mdi:stove');
+      assert.equal(await custom.isVisible(), false);
+      await chooser.selectOption('custom');
+      await custom.fill(compass);
+      assert.equal(await preview.getAttribute('icon'), compass);
+      await custom.press('Tab');
+      await room.selectOption('lounge');
+      await room.selectOption('studio');
+      assert.equal(await chooser.inputValue(), 'custom');
+      assert.equal(await custom.inputValue(), compass);
+
+      await setup.getByText(words.create, { exact:true }).press('Enter');
+      const newRoom = field(words.roomName);
+      await newRoom.fill(words.fixtureRoom);
+      await newRoom.press('Enter');
+      const customId = await room.inputValue();
+      await chooser.selectOption('custom');
+      await custom.fill(moon);
+      await field(words.search).focus();
+      await field(words.search).fill(lamp);
+      await field(words.available).selectOption(lamp);
+      await setup.getByRole('button', { name:words.add, exact:true }).press('Enter');
+      assert.equal(await preview.getAttribute('icon'), moon);
+      await custom.fill('http://invalid.test/icon');
+      await error.waitFor();
+      assert.equal(await preview.getAttribute('icon'), moon);
+      const saved = await persist();
+      assert.equal(saved.room_overrides.studio.icon, compass);
+      assert.deepEqual(saved.room_overrides[customId], { name:words.fixtureRoom, icon:moon, entities:[lamp] });
+      assert.equal(await homeIcon('studio').getAttribute('icon'), compass);
+      assert.equal(await homeIcon(customId).getAttribute('icon'), moon);
+
+      await open();
+      await room.selectOption(customId);
+      assert.equal(await custom.inputValue(), moon);
+      await custom.fill('');
+      await custom.press('Enter');
+      assert.equal(await preview.getAttribute('icon'), home);
+      await room.selectOption('studio');
+      await chooser.selectOption('');
+      assert.equal(await preview.getAttribute('icon'), desk);
+      const cleared = await persist();
+      assert.equal(cleared.room_overrides.studio, undefined);
+      assert.deepEqual(cleared.room_overrides[customId], { name:words.fixtureRoom, entities:[lamp] });
+      assert.equal(await homeIcon('studio').getAttribute('icon'), desk);
+      assert.equal(await homeIcon(customId).getAttribute('icon'), home);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertManualRoomOrderRestored(browser) {
   const labels = [
     { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', mode:'Rooms on the dashboard',
@@ -10058,6 +10164,7 @@ try {
     await run('Shortcut editor distinguishes same-named rooms and popups', () => assertDuplicateShortcutEditorLabels(browser));
     await run('Device appearance edits retain focus and distinguish same-named devices', () => assertDeviceDisplayPickerAndFocus(browser));
     await run('Room setup distinguishes same-named devices in sections and power settings', () => assertRoomTargetLabels(browser));
+    await run('Room icon editor previews, validates, saves and clears custom icons', () => assertCustomRoomIcons(browser));
 
     await run('Home glass and accessibility', async () => {
       await assertHomeMaterial(browser);

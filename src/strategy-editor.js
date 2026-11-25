@@ -38,6 +38,8 @@ const WORDS = {
     roomToAdd: 'Available rooms', addRoom: 'Show room', createRoom: 'New dashboard-only room',
     newRoomName: 'New room name', newRoomHint: 'This room exists only on this dashboard.',
     roomName: 'Room display name', roomToEdit: 'Room to customize', roomIcon: 'Room icon', defaultRoomIcon: 'Default icon',
+    customRoomIcon: 'Custom icon', customRoomIconName: 'Custom icon name',
+    invalidRoomIcon: 'Enter an icon name such as mdi:compass-outline.',
     roomTitleBreak: 'Room name line break in classic layout', roomTitleAuto: 'Wrap automatically',
     roomControlDisplay: 'Device display', roomControlDevice: 'Device to customize', roomControlName: 'Name in this room',
     roomDevicePopupName: 'Device popup title',
@@ -189,6 +191,8 @@ const WORDS = {
     roomToAdd: 'חדרים זמינים', addRoom: 'הצגת חדר', createRoom: 'חדר חדש לדשבורד',
     newRoomName: 'שם החדר החדש', newRoomHint: 'החדר יופיע בדשבורד הזה בלבד.',
     roomName: 'שם החדר לתצוגה', roomToEdit: 'חדר להתאמה אישית', roomIcon: 'סמל החדר', defaultRoomIcon: 'סמל ברירת המחדל',
+    customRoomIcon: 'סמל מותאם אישית', customRoomIconName: 'שם הסמל המותאם',
+    invalidRoomIcon: 'הזינו שם סמל, למשל mdi:compass-outline.',
     roomTitleBreak: 'חלוקת שם החדר לשורות בפריסה הקלאסית', roomTitleAuto: 'גלישה לפי רוחב הכרטיס',
     roomControlDisplay: 'תצוגת מכשירים', roomControlDevice: 'מכשיר להתאמה אישית', roomControlName: 'שם המכשיר בחדר הזה',
     roomDevicePopupName: 'כותרת חלונית המכשיר',
@@ -381,6 +385,7 @@ const ROOM_CSS = `
 .room-add-hint:not(:empty) { margin-block-start: 6px; }
 .room-choice-heading { margin: 3px 0 0; font-size: 1em; }
 .room-icon-field { display: grid; grid-template-columns: minmax(0,1fr) 44px; gap: 8px; align-items: end; }
+.room-icon-options { display: grid; gap: 8px; min-inline-size: 0; }
 .room-icon-field ha-icon-picker {
   --ha-color-on-surface-default: var(--primary-text-color, currentColor);
   --ha-color-text-secondary: var(--secondary-text-color, currentColor);
@@ -535,6 +540,11 @@ function select(opts, value) {
   const input = node('select', {}, opts.map(([id, name]) => option(id, name)));
   input.value = value;
   return input;
+}
+
+function mdiIconInput(value, placeholder) {
+  return node('input', { value: value ?? '', placeholder, dir: 'ltr', maxLength: 120,
+    pattern: 'mdi:[a-z0-9\\-]+', spellcheck: false, autocapitalize: 'off' });
 }
 
 let nextLabel = 0;
@@ -705,7 +715,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     // These labels save in place so other controls retain focus. Keep the latest labels if a sibling is stale.
     const current = this.#roomOverride(room);
     const next = { ...override };
-    for (const key of ['name', 'device_popup_names', 'entity_names']) {
+    for (const key of ['name', 'icon', 'device_popup_names', 'entity_names']) {
       if (Object.hasOwn(current, key)) next[key] = current[key];
       else delete next[key];
     }
@@ -725,21 +735,69 @@ export class Bayit9StrategyEditor extends HTMLElement {
 
   #roomIconPicker(room, override, words, language) {
     const options = [['', words.defaultRoomIcon], ...Object.entries(ROOM_ICONS).map(([icon, names]) => [icon, names[language]])];
-    const current = typeof override.icon === 'string' ? override.icon : '';
-    if (current && !Object.hasOwn(ROOM_ICONS, current)) options.push([current, current]);
-    const input = select(options, current);
-    input.dataset.roomFocus = 'room-icon';
-    input.addEventListener('change', () => {
-      const next = { ...override };
-      if (input.value) next.icon = input.value;
-      else delete next.icon;
-      this.#setRoomOverride(room.id, next, 'room-icon');
-    });
+    const current = normalizeRoomIcon(override.icon);
+    const custom = current && !Object.hasOwn(ROOM_ICONS, current);
+    const choice = select([...options, ['custom', words.customRoomIcon]], custom ? 'custom' : current ?? '');
+    choice.dataset.roomFocus = 'room-icon';
+    const input = mdiIconInput(current, 'mdi:compass-outline');
+    input.dataset.roomFocus = 'room-custom-icon';
+    const fieldRow = field(words.customRoomIconName, input);
+    fieldRow.hidden = !custom;
+    const warning = node('small', { className: 'error', hidden: true, textContent: words.invalidRoomIcon,
+      id: input.getAttribute('aria-labelledby') + '-error' });
+    warning.setAttribute('role', 'status');
+    input.setAttribute('aria-describedby', warning.id);
+    fieldRow.append(warning);
+    const area = Object.entries(this.#hass.areas ?? {}).find(([id, item]) => (item.area_id ?? id) === room.id)?.[1];
+    const defaultIcon = area?.icon || 'mdi:home-outline';
     const preview = node('ha-icon');
-    preview.setAttribute('icon', room.icon || 'mdi:home-outline');
     preview.setAttribute('aria-hidden', 'true');
+    const save = icon => {
+      const next = { ...this.#roomOverride(room.id) };
+      if (next.icon === icon) return;
+      if (icon) next.icon = icon;
+      else delete next.icon;
+      this.#commitRoomOverride(room.id, next);
+    };
+    const draw = () => {
+      const value = input.value.trim();
+      const icon = normalizeRoomIcon(value);
+      const invalid = Boolean(value && !icon);
+      warning.hidden = !invalid;
+      input.setAttribute('aria-invalid', String(invalid));
+      input.setCustomValidity(invalid ? words.invalidRoomIcon : '');
+      const previous = normalizeRoomIcon(this.#roomOverride(room.id).icon);
+      preview.setAttribute('icon', (invalid ? previous : icon) ?? defaultIcon);
+      return !invalid;
+    };
+    const commit = () => {
+      if (!draw()) return;
+      input.value = input.value.trim();
+      save(normalizeRoomIcon(input.value));
+    };
+    input.addEventListener('input', draw);
+    input.addEventListener('change', commit);
+    input.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' || event.isComposing) return;
+      event.preventDefault();
+      commit();
+    });
+    choice.addEventListener('change', () => {
+      fieldRow.hidden = choice.value !== 'custom';
+      if (fieldRow.hidden) {
+        input.value = choice.value;
+        save(choice.value || undefined);
+      } else {
+        input.value = normalizeRoomIcon(this.#roomOverride(room.id).icon) ?? '';
+        input.focus();
+        input.select();
+      }
+      draw();
+    });
+    draw();
     return node('div', { className: 'room-icon-field' }, [
-      field(words.roomIcon, input), node('span', { className: 'room-icon-preview' }, [preview]),
+      node('div', { className: 'room-icon-options' }, [field(words.roomIcon, choice), fieldRow]),
+      node('span', { className: 'room-icon-preview' }, [preview]),
     ]);
   }
 
@@ -1012,8 +1070,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       });
       labelled = input;
     } else {
-      input = node('input', { value: saved ?? '', placeholder: 'mdi:ceiling-light', dir: 'ltr',
-        maxLength: 120, pattern: 'mdi:[a-z0-9\\-]+', spellcheck: false, autocapitalize: 'off' });
+      input = mdiIconInput(saved, 'mdi:ceiling-light');
       labelled = field(controlLabel, input);
       const choices = new Set([fallback, ...Object.values(DEVICE_ICONS), ...Object.keys(ROOM_ICONS)]);
       suggestions = node('datalist', { id: 'bayit9-editor-icons-' + ++nextLabel },
