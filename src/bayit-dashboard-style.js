@@ -589,6 +589,9 @@ export const styles = `
   @keyframes appear { from { opacity: 0; transform: scale(.92); } }
   .devices, .settings { display: grid; gap: 12px; }
   .settings { gap: 8px; container: settings / inline-size; }
+  @media (max-width: 420px) {
+    .shell[data-page=true] .settings { row-gap: 5px; }
+  }
   .settings-screens { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
   .settings-shortcuts-title { margin: 0 0 5px; text-align: center; font-size: 13px; font-weight: 760; }
   .settings-system { display: grid; grid-template-columns: minmax(0,max-content) minmax(44px,1fr); gap: 7px; }
