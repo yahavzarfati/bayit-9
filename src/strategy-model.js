@@ -571,6 +571,12 @@ export function usesRoomPopupPosition(entry) {
   return entry?.kind === 'devices' && entry.placement === 'settings' && entry.popup_position === 'room';
 }
 
+export function toolbarPlacement(kind, value) {
+  if (value === 'settings' && kind !== 'settings') return 'settings';
+  if (value === 'linked' && (kind === 'media' || kind === 'vacuum')) return 'linked';
+  return undefined;
+}
+
 function dashboardToolbar(config, hass, roomIds) {
   if (!Array.isArray(config.toolbar)) return undefined;
   const states = hass.states ?? {};
@@ -591,6 +597,7 @@ function dashboardToolbar(config, hass, roomIds) {
   return entries.map(({ entry, id, path }) => {
     const label = typeof entry.label === 'string' ? entry.label.trim().slice(0, 80) : '';
     const icon = typeof entry.icon === 'string' ? entry.icon.trim() : '';
+    const placement = toolbarPlacement(entry.kind, entry.placement);
     const entities = Array.isArray(entry.entities) ? idList(entry.entities).map(describe).filter(Boolean) : undefined;
     const sections = entry.kind !== 'link'
       ? toolbarSections(entry.sections, describe, entry.kind, { vacuumPanels, roomIds }) : undefined;
@@ -605,7 +612,7 @@ function dashboardToolbar(config, hass, roomIds) {
     return { id, kind: entry.kind, ...(label && { label }), ...(ROOM_ICON.test(icon) && { icon }),
       ...(entry.kind === 'presence' && typeof entry.presence_dynamic_icon === 'boolean' &&
         { presence_dynamic_icon: entry.presence_dynamic_icon }),
-      ...(path && { path }), ...(entry.placement === 'settings' && entry.kind !== 'settings' && { placement:'settings' }),
+      ...(path && { path }), ...(placement && { placement }),
       ...(usesRoomPopupPosition(entry) && { popup_position: 'room' }),
       ...(entities !== undefined && { entities }), ...(sections !== undefined && { sections }),
       ...(agenda && { calendar_agenda: agenda }), ...(mediaRemote && { media_remote: mediaRemote }),

@@ -42,6 +42,7 @@ function observeScript(state) {
   card.hass = { ...hass, states: { ...states } };
 }
 const query = new URL(location.href).searchParams;
+const linkedPanels = query.has('linked-only-panels');
 if (query.has('entrance-popup-position')) {
   states['sensor.demo_entry_temperature'] = { state: '24', attributes: { friendly_name: 'טמפרטורה', unit_of_measurement: '°C' } };
   states['lock.demo_entry_position'] = { state: 'locked', attributes: { friendly_name: 'מנעול' } };
@@ -576,6 +577,7 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     {entity:'light.demo_dining',role:'status'}, {entity:'climate.demo_overview_air',role:'status'},
   ]}]}] : []), {kind:'settings'}],
 } : query.has('toolbar-panels') ? {
+  ...(linkedPanels && { popup_aliases: { '#legacy-media-panel': '#panel/media-panel' } }),
   ...(query.has('room-link') && { room_overrides: { studio: {
     entities:['light.demo_lamp','media_player.demo_tv','vacuum.demo_robot'],
     media_panel_links:{'media_player.demo_tv':'media-panel'},
@@ -606,7 +608,8 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     {kind:'weather',sections:[{kind:'forecast',entities:['weather.demo_home']},{kind:'sun',entities:['sun.sun']}]},
     {kind:'energy',sections:[{kind:'electricity',entities:[{entity:'sensor.demo_meter',role:'graph',graph_hours:168}]}]},
     {kind:'settings'},
-    {id:'media-panel',kind:'media',placement:'settings',
+    {id:'media-panel',kind:'media',placement:linkedPanels ? 'linked' : 'settings',
+      ...(linkedPanels && { label:hass.locale.language === 'he' ? 'מדיה מקושרת' : 'Linked Media' }),
       ...(query.has('media-remote') && { media_remote: {
         transport_entity: 'media_player.demo_speaker', volume_entity: 'media_player.demo_tv',
         allow_standby: !query.has('active-only'),
@@ -615,13 +618,18 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
       {kind:'media',title:'Speaker',entities:[{entity:'media_player.demo_speaker',role:'now_playing'}]},
       {kind:'media',title:'TV',entities:[{entity:'media_player.demo_tv',role:'device'}]},
     ]},
-    {id:'vacuum-panel',kind:'vacuum',placement:'settings',sections:[{kind:'vacuum',entities:[{entity:'vacuum.demo_robot',role:'device'}]},
+    {id:'vacuum-panel',kind:'vacuum',placement:linkedPanels ? 'linked' : 'settings',
+      ...(linkedPanels && { label:hass.locale.language === 'he' ? 'שואב מקושר' : 'Linked Vacuum' }),
+      sections:[{kind:'vacuum',entities:[{entity:'vacuum.demo_robot',role:'device'}]},
       {kind:'actions',entities:[{entity:'button.demo_filter',role:'action',confirmation:'Reset the filter?'}]}]},
-    {id:'sensors-panel',kind:'sensors',placement:'settings',sections:[{kind:'readings',entities:[
-      {entity:'sensor.demo_progress',role:'graph',graph_hours:168,vacuum_panel_id:'vacuum-panel'},
-      {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24,graph_room_id:'studio'},
-      {entity:'sensor.demo_meter',role:'graph',graph_hours:24,graph_room_id:'removed-room'}]}]},
-    {kind:'calendar',placement:'settings',entities:['calendar.demo_household','calendar.demo_birthdays']},
+    ...(!query.has('linked-only-fallback') ? [
+      {id:'sensors-panel',kind:'sensors',placement:'settings',sections:[{kind:'readings',entities:[
+        {entity:'sensor.demo_progress',role:'graph',graph_hours:168,vacuum_panel_id:'vacuum-panel'},
+        {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24,graph_room_id:'studio'},
+        {entity:'sensor.demo_meter',role:'graph',graph_hours:24,graph_room_id:'removed-room'}]}]},
+      {kind:'calendar',placement:'settings',entities:['calendar.demo_household','calendar.demo_birthdays']},
+      ...(linkedPanels ? [{id:'overview',kind:'overview',placement:'settings'}, {id:'entrance',kind:'devices',placement:'settings'}] : []),
+    ] : []),
     ...(query.has('entrance-light-tiles') ? [{id:'entrance-panel',kind:'devices',label:'Entrance',placement:'settings',
       sections:[{kind:'devices',title:'Lights',entities:[
         {entity:'light.demo_lamp',role:'light_tile'},
@@ -1380,6 +1388,78 @@ try {
       assert.deepEqual(mediaErrors, []);
       await mediaPage.close();
       console.log(engine + ': curated media and vacuum controls, Now Playing, and the original room shortcuts');
+
+      for (const locale of ['en','he']) {
+        const linkedPage = await browser.newPage({ viewport:{width:391,height:845}, hasTouch:true, reducedMotion:'reduce' });
+        linkedPage.setDefaultTimeout(8000);
+        const linkUrl = base + '/fixture-home/home?toolbar-panels&room-link&linked-only-panels&locale=' + locale;
+        await linkedPage.goto(linkUrl);
+        const toolbarExtras = linkedPage.locator('.toolbar .chrome-button:is([data-role=media],[data-role=vacuum])');
+        const settings = linkedPage.locator('.toolbar .chrome-button[data-role=settings]');
+        const studioRoom = linkedPage.getByRole('button',{name:'Studio',exact:true});
+        const roomDialog = linkedPage.getByRole('dialog',{name:'Studio',exact:true});
+        const dialog = linkedPage.locator('dialog.modal[open]:not(.confirm)');
+        const expectedMedia = locale === 'he' ? 'מדיה מקושרת' : 'Linked Media';
+        const expectedVacuum = locale === 'he' ? 'שואב מקושר' : 'Linked Vacuum';
+        assert.equal(await toolbarExtras.count(),0);
+        await settings.tap();
+        assert.equal(await dialog.locator('.settings-screens > button').count(),4);
+        assert.equal(await dialog.getByRole('button',{name:expectedMedia,exact:true}).count(),0);
+        assert.equal(await dialog.getByRole('button',{name:expectedVacuum,exact:true}).count(),0);
+        await dialog.locator('[data-role=close]').tap();
+        await dialog.waitFor({state:'hidden'});
+        await studioRoom.tap();
+        for (const [entity, panel, title] of [
+          ['media_player.demo_tv','media-panel',expectedMedia], ['vacuum.demo_robot','vacuum-panel',expectedVacuum],
+        ]) {
+          const source = roomDialog.locator('[data-entity="' + entity + '"] .device-panel-launch');
+          if (panel === 'media-panel') await source.press('Shift+Enter');
+          else await source.tap();
+          await linkedPage.getByRole('dialog',{name:title,exact:true}).waitFor();
+          assert.equal(new URL(linkedPage.url()).hash,'#panel/' + panel);
+          await dialog.locator('[data-role=back]').tap();
+          await roomDialog.waitFor();
+          assert.equal(new URL(linkedPage.url()).hash,'#room-studio');
+          assert.equal(await source.evaluate(control => control.getRootNode().activeElement === control),true);
+        }
+        assert.deepEqual(await linkedPage.evaluate(() => window.bayitTest.calls),[]);
+        for (const [hash, title] of [['#panel/media-panel',expectedMedia],['#panel/vacuum-panel',expectedVacuum],
+          ['#legacy-media-panel',expectedMedia]]) {
+          await linkedPage.goto(linkUrl + hash);
+          await linkedPage.getByRole('dialog',{name:title,exact:true}).waitFor();
+          assert.equal(new URL(linkedPage.url()).hash,hash);
+          assert.equal(await dialog.locator('[data-role=back]:visible').count(),0);
+          assert.deepEqual(await linkedPage.evaluate(() => window.bayitTest.calls),[]);
+        }
+        await linkedPage.goto(linkUrl + '&linked-only-fallback');
+        await settings.tap();
+        assert.ok(await linkedPage.evaluate(() => {
+          const context = window.bayitTest.config.views[0].cards[0].context;
+          return context.media.length > 0 && context.vacuum.length > 0;
+        }));
+        const fallbackScreens = await dialog.locator('.settings-screens > button').allTextContents();
+        assert.ok(fallbackScreens.length > 0);
+        assert.ok(fallbackScreens.every(label => !/^(Media|Robot vacuum|מדיה|שואב)$/.test(label.trim())));
+        if (locale === 'en') {
+          await linkedPage.goto(linkUrl + '&editor');
+          const editor = linkedPage.locator('#editor');
+          await editor.getByText('Rooms',{exact:true}).tap();
+          await editor.getByLabel('Room to customize',{exact:true}).selectOption('studio');
+          assert.equal(await editor.getByLabel('Open on media press and hold · Television',{exact:true}).inputValue(),'media-panel');
+          assert.equal(await editor.getByLabel('Open on vacuum tap · Robot',{exact:true}).inputValue(),'vacuum-panel');
+          await editor.getByText('Toolbar and extra screens',{exact:true}).tap();
+          await editor.getByRole('button',{name:expectedMedia,exact:true}).tap();
+          const placement = editor.getByLabel('Show in',{exact:true});
+          assert.equal(await placement.inputValue(),'linked');
+          await placement.selectOption('settings');
+          await placement.selectOption({label:'Linked only'});
+          assert.equal(await linkedPage.evaluate(() => window.latest.toolbar.find(entry => entry.id === 'media-panel').placement),'linked');
+          await editor.getByRole('button',{name:'Weather',exact:true}).tap();
+          assert.equal(await placement.locator('option[value=linked]').count(),0);
+        }
+        await linkedPage.close();
+      }
+      console.log(engine + ': linked Media and Vacuum routes, room Back, fallback and editor');
 
       const remotePage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
       const remoteRTL = engine === 'WebKit';

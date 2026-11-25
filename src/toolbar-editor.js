@@ -1,7 +1,7 @@
 import {
   discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactToolbarStatus, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
   normalizeOverviewDiscovery, overviewSectionOptions, roomPanelOptions, selectableRoomEntities,
-  TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS, usesRoomPopupPosition,
+  TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS, toolbarPlacement, usesRoomPopupPosition,
 } from './strategy-model.js';
 import { normalizeOrefMap, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
 import { sameVacuumDevice } from './vacuum-map.js';
@@ -17,7 +17,7 @@ const WORDS = {
     localPath: 'Home Assistant path', invalidPath: 'Use a local path such as /config/areas.',
     invalidIcon: 'Use an icon name such as mdi:home.',
     up: 'Move up', down: 'Move down', remove: 'Remove', choose: 'Choose…',
-    placement: 'Show in', toolbarPlace: 'Toolbar', settingsPlace: 'Settings',
+    placement: 'Show in', toolbarPlace: 'Toolbar', settingsPlace: 'Settings', linkedPlace: 'Linked only',
     roomPopupPosition: 'Use the room popup position',
     panelContents: 'Panel contents', deviceList: 'Selected devices', grouped: 'Sections',
     scope: 'Devices', addEntity: 'Add device', entity: 'Device', noDevices: 'No devices selected.',
@@ -69,7 +69,7 @@ const WORDS = {
     localPath: 'נתיב ב־Home Assistant', invalidPath: 'הזינו נתיב מקומי, למשל ‎/config/areas‎.',
     invalidIcon: 'הזינו שם סמל, למשל ‎mdi:home‎.',
     up: 'הזזה למעלה', down: 'הזזה למטה', remove: 'הסרה', choose: 'בחירה…',
-    placement: 'מקום הצגה', toolbarPlace: 'סרגל', settingsPlace: 'הגדרות',
+    placement: 'מקום הצגה', toolbarPlace: 'סרגל', settingsPlace: 'הגדרות', linkedPlace: 'דרך קישורים בלבד',
     roomPopupPosition: 'פתיחה במיקום של חלונית חדר',
     panelContents: 'תוכן החלונית', deviceList: 'מכשירים נבחרים', grouped: 'קבוצות',
     scope: 'מכשירים', addEntity: 'הוספת מכשיר', entity: 'מכשיר', noDevices: 'אין מכשירים שנבחרו.',
@@ -728,10 +728,11 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     }
     if (!dynamic) fields.push(iconField(entry.icon, value => changeEntry({ icon: value || undefined })));
     if (entry.kind !== 'settings') {
-      const placement = select([['toolbar', words.toolbarPlace], ['settings', words.settingsPlace]],
-        entry.placement === 'settings' ? 'settings' : 'toolbar');
+      const places = [['toolbar', words.toolbarPlace], ['settings', words.settingsPlace]];
+      if (toolbarPlacement(entry.kind, 'linked')) places.push(['linked', words.linkedPlace]);
+      const placement = select(places, toolbarPlacement(entry.kind, entry.placement) ?? 'toolbar');
       placement.dataset.toolbarFocus = 'placement';
-      placement.addEventListener('change', () => changeEntry({ placement: placement.value === 'settings' ? 'settings' : undefined },
+      placement.addEventListener('change', () => changeEntry({ placement: toolbarPlacement(entry.kind, placement.value) },
         entry.kind === 'presence' || entry.kind === 'devices', 'placement'));
       fields.push(field(words.placement, placement));
     }

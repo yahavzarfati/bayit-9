@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverOverviewLights, discoverRooms, generateDashboard,
-  normalizeOverviewDiscovery, normalizeProfile, selectableRoomEntities, suggestedDashboard,
+  normalizeOverviewDiscovery, normalizeProfile, roomPanelOptions, selectableRoomEntities, suggestedDashboard,
 } from '../src/strategy-model.js';
 import { getDeviceModel } from '../src/device-control.mjs';
 
@@ -929,6 +929,23 @@ test('light toggle tiles are explicit and scoped to visible lights in Devices se
     entity: 'light.demo_lamp', name: 'מנורה', role: 'light_tile', confirmation: 'Control this lamp?',
   }], []]);
   assert.deepEqual(toolbar[1].sections[0].entities, []);
+});
+
+test('linked placement is restricted to Media and Vacuum while both remain room panel choices', () => {
+  const config = { toolbar: [
+    { id: 'screen-media', kind: 'media', label: 'TV', placement: 'linked' },
+    { id: 'screen-vacuum', kind: 'vacuum', label: 'Robot', placement: 'linked' },
+    { id: 'screen-weather', kind: 'weather', placement: 'linked' },
+    { id: 'screen-calendar', kind: 'calendar', placement: 'settings' },
+    { id: 'main-appearance', kind: 'settings', placement: 'settings' },
+  ] };
+  const hass = home();
+  const { toolbar } = generateDashboard(config, hass).views[0].cards[0];
+  assert.deepEqual(toolbar.map(entry => entry.placement), ['linked', 'linked', undefined, 'settings', undefined]);
+  assert.deepEqual(roomPanelOptions(config, hass), [
+    { id: 'screen-media', label: 'TV', kind: 'media' },
+    { id: 'screen-vacuum', label: 'Robot', kind: 'vacuum' },
+  ]);
 });
 
 test('room popup position applies only to opted-in Devices screens in Settings', () => {

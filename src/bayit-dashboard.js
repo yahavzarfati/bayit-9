@@ -2,7 +2,7 @@ import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isVacuumProgramAction,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName,
-  overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME, usesRoomPopupPosition } from './strategy-model.js';
+  overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME, toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { createDeviceController, getDeviceModel, roomShutdownTargets, simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
@@ -318,9 +318,10 @@ export function normalizeDashboardConfig(config = {}) {
     const vacuumMap = item.kind === 'vacuum' ? normalizeVacuumMap(item.vacuum_map) : undefined;
     const mediaRemote = item.kind === 'media' ? normalizeMediaRemote(item.media_remote) : undefined;
     const agenda = item.kind === 'calendar' ? normalizeCalendarAgenda(item.calendar_agenda) : undefined;
+    const placement = toolbarPlacement(item.kind, item.placement);
     return [{ kind: item.kind, id: text(item.id), label: text(item.label), path: item.path,
       ...(item.kind === 'presence' && { presence_dynamic_icon: hasDynamicPresenceIcon(item) }),
-      ...(item.placement === 'settings' && item.kind !== 'settings' && {placement:'settings'}),
+      ...(placement && { placement }),
       ...(usesRoomPopupPosition(item) && { popup_position: 'room' }),
       ...(orefMap && { oref_map: orefMap }),
       ...(vacuumMap && { vacuum_map: vacuumMap }),
@@ -597,7 +598,8 @@ export class BayitDashboard extends HTMLElement {
   popupToolbar(id) {
     const visible = this.toolbarViews.filter(view => !view.element.hidden).map(view => view.panel);
     const extra = visible.some(panel => panel.kind === 'settings') ? this.settingsScreens() : [];
-    const matches = [...visible, ...extra].filter(panel => panel.kind !== 'link' && (panel.id || panel.kind) === id);
+    const linked = this.config.toolbar?.filter(item => item.placement === 'linked') ?? [];
+    const matches = [...visible, ...extra, ...linked].filter(panel => panel.kind !== 'link' && (panel.id || panel.kind) === id);
     // The automatic overview intentionally appears in both the bar and Settings.
     return matches.length === 1 || !this.config.toolbar ? matches[0] : undefined;
   }
@@ -762,7 +764,7 @@ export class BayitDashboard extends HTMLElement {
     const settings = this.config;
     const automatic = [settings.context.automations.length ? 'automations' : 'activity',
       ...automaticToolbarContext.slice(1), 'overview', 'settings'];
-    const items = settings.toolbar?.filter(item => item.placement !== 'settings') ?? automatic.map(kind => ({
+    const items = settings.toolbar?.filter(item => !item.placement) ?? automatic.map(kind => ({
       kind, icon: toolbarIcons[kind], ...(kind === 'presence' && { presence_dynamic_icon: true }),
     }));
     if (settings.fullscreen && !items.some(item => item.kind === 'settings')) items.push({ kind:'settings', icon:toolbarIcons.settings });
@@ -1167,7 +1169,7 @@ export class BayitDashboard extends HTMLElement {
     this.activitySignature = null;
     setText(n.modalNotice, '');
     const glyph = model?.icon || room?.icon || toolbar?.icon || source?.querySelector('ha-icon')?.getAttribute('icon');
-    const title = model?.name || room?.name || toolbar?.name || this.t(type);
+    const title = model?.name || room?.name || toolbar?.name || toolbar?.label || this.t(type);
     n.modal.setAttribute('aria-label', title);
     n.modalTitle.replaceChildren(icon(glyph), title);
     if (type === 'room') this.buildDevices(room.entities, room);
@@ -1597,7 +1599,8 @@ export class BayitDashboard extends HTMLElement {
   settingsScreens() {
     const extra = ['overview','sensors','calendar','media','vacuum'];
     const configured = this.config.toolbar?.filter(item => item.placement === 'settings');
-    const automatic = extra.flatMap(kind => {
+    const linkedKinds = new Set(this.config.toolbar?.filter(item => item.placement === 'linked').map(item => item.kind));
+    const automatic = extra.filter(kind => !linkedKinds.has(kind)).flatMap(kind => {
       const entries = kind === 'overview' ? this.config.overview : this.config.context[kind];
       return entries.length ? [{ kind, icon: toolbarIcons[kind], entities: entries }] : [];
     });
