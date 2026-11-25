@@ -1226,7 +1226,13 @@ const selected = query.has('configuration') ? rendererStrategy(stored().strategy
       ]}]}] : []),
     ...(query.has('compact-entrance-status') ? [{id:compactOverview ? 'compact-overview' : 'compact-entrance',
       kind:compactOverview ? 'overview' : 'devices',label:compactOverview ? 'Fixture Overview' : 'Front entrance',placement:'settings',
-      sections:[{kind:'status',title:compactOverview ? 'Home status' : 'Entry status',layout:'compact',entities:[
+      sections:[
+        ...(compactOverview && query.has('overview-authored-proof') ? [{kind:'people',title:'Fixture people',
+          ...(query.has('overview-authored-layout') && {layout:'compact'}),
+          entities:['person.demo_friend','person.demo_guest'],
+        }] : []),
+        {kind:'status',title:compactOverview ? 'Home status' : 'Entry status',layout:'compact',
+          ...(compactOverview && query.has('overview-authored-layout') && {stacked_lock_actions:true}),entities:[
         {entity:'lock.demo_compact_entry',role:'lock'},
         {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:24},
       ]},{kind:'status',title:'Read-only status',layout:'compact',entities:[
@@ -6895,6 +6901,121 @@ async function assertCompactAutomationActions(browser) {
     assert.equal(await page.evaluate(() => window.bayitTest.calls.length), 0);
   } finally {
     await page.close();
+  }
+}
+
+async function assertAuthoredOverviewLayout(browser) {
+  for (const locale of ['en','he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({ viewport:{width:391,height:845}, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const url = base + '/fixture-home/home?toolbar-panels&compact-entrance-status&compact-overview-status' +
+      '&overview-authored-proof&presence-icons&locale=' + locale;
+    const popup = page.getByRole('dialog', { name:'Fixture Overview', exact:true });
+    const people = popup.locator('[data-section=people] .tile-row');
+    const lock = popup.locator('.compact-status-lock');
+    const action = lock.locator('.compact-lock-action');
+    const graph = popup.locator('[data-native-type=sensor][data-graph-hours="24"]');
+    const calls = () => page.evaluate(() => window.bayitTest.calls.filter(call=>call.type === 'call_service'));
+    const open = async flags => {
+      await page.goto(url + flags + '#panel/compact-overview');
+      await popup.waitFor();
+      await graph.waitFor();
+    };
+    const geometry = () => popup.evaluate(dialog => {
+      const people = [...dialog.querySelectorAll('[data-section=people] .tile-row')];
+      const lock = dialog.querySelector('.compact-status-lock');
+      const detail = lock.querySelector('.tile-row');
+      const action = lock.querySelector('.compact-lock-action');
+      const graph = lock.nextElementSibling;
+      const box = node => node.getBoundingClientRect();
+      return {
+        people:people.map(person => {
+          const title = person.querySelector('.tile-label');
+          const state = person.querySelector('.tile-state');
+          return {
+            x:box(person).x, top:box(person).top, name:title.textContent,
+            horizontal:box(person.querySelector('.tile-mark')).right < box(title).left,
+            fits:[title,state].every(text=>text.scrollWidth <= text.clientWidth+1),
+            dir:[title,state].map(text=>getComputedStyle(text).direction),
+          };
+        }),
+        sideBySide:Math.abs(box(lock).top - box(graph).top) < 1,
+        controlsFit:lock.scrollWidth <= lock.clientWidth+1 && [detail,action].every(button=>
+          box(button).width >= 43.9 && box(button).height >= 43.9),
+        actionBelow:box(action).top >= box(detail).bottom-1,
+        fullWidth:Math.abs(box(action).width-box(detail).width) <= 1,
+      };
+    });
+    try {
+      await open('');
+      const original = await geometry();
+      assert.ok(original.people.every(person=>!person.horizontal));
+      assert.equal(original.actionBelow,false);
+      assert.equal(await popup.locator('[data-stacked-lock-actions]').count(),0);
+
+      await open('&overview-authored-layout');
+      for (const width of [320,391]) {
+        await page.setViewportSize({width,height:845});
+        const layout = await geometry();
+        const [first,second] = layout.people;
+        const context = JSON.stringify({locale,width,layout});
+        assert.deepEqual(layout.people.map(person=>person.name),['Simona','Noa'],context);
+        assert.ok(first.x < second.x && first.top === second.top,context);
+        assert.ok(layout.people.every(person=>person.horizontal && person.fits &&
+          person.dir.every(direction=>direction === (he ? 'rtl' : 'ltr'))),context);
+        assert.ok(layout.sideBySide && layout.controlsFit && layout.actionBelow && layout.fullWidth,context);
+      }
+      await page.evaluate(()=>window.bayitTest.setRoomState('person.demo_friend','home'));
+      await popup.locator('[data-presence-status=home]').waitFor();
+      assert.equal(await people.first().locator('.tile-state').textContent(),he ? 'בבית' : 'Home');
+      await people.first().tap();
+      await lock.locator('.tile-row').press('Shift+Enter');
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.moreInfoCalls),['person.demo_friend','lock.demo_compact_entry']);
+      assert.equal(await graph.getAttribute('data-tap-action'),'more-info');
+      assert.equal(await popup.locator('.compact-lock-action').count(),1);
+      await action.tap();
+      const confirmation = page.locator('dialog.confirm[open]');
+      await confirmation.waitFor();
+      assert.deepEqual(await calls(),[]);
+      await confirmation.locator('[data-role=abort]').tap();
+      await confirmation.waitFor({state:'hidden'});
+      assert.deepEqual(await calls(),[]);
+      await action.tap();
+      await confirmation.locator('[data-role=accept]').tap();
+      await confirmation.waitFor({state:'hidden'});
+      assert.deepEqual(await calls(),[{type:'call_service',domain:'lock',service:'unlock',
+        service_data:{},target:{entity_id:'lock.demo_compact_entry'}}]);
+      await page.evaluate(()=>window.bayitTest.setRoomState('lock.demo_compact_entry','jammed'));
+      await lock.locator('.compact-lock-action:disabled').waitFor();
+
+      await page.goto(url + '&overview-authored-layout&editor');
+      await page.getByText(he ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens',{exact:true}).tap();
+      await page.getByRole('button',{name:'Fixture Overview',exact:true}).tap();
+      const saved = async () => page.evaluate(()=>window.latest.toolbar.find(item=>item.id === 'compact-overview').sections);
+      await page.getByRole('button',{name:'Fixture people',exact:true}).tap();
+      const compactPeople = page.getByRole('checkbox',{name:he ? 'הצגת כרטיסי נוכחות קומפקטיים' : 'Show compact presence cards',exact:true});
+      assert.equal(await compactPeople.isChecked(),true);
+      await compactPeople.uncheck();
+      assert.equal((await saved())[0].layout,undefined);
+      await compactPeople.check();
+      assert.equal((await saved())[0].layout,'compact');
+      await page.getByRole('button',{name:'Home status',exact:true}).tap();
+      const stacked = page.getByRole('checkbox',{name:he ? 'הצגת כפתורי הנעילה מתחת למצב' : 'Place lock buttons below their status',exact:true});
+      assert.equal(await stacked.isChecked(),true);
+      await stacked.uncheck();
+      assert.equal((await saved())[1].stacked_lock_actions,undefined);
+      await stacked.check();
+      assert.equal((await saved())[1].stacked_lock_actions,true);
+      const sideBySide = page.getByRole('checkbox',{name:he ? 'הצגת פריטי הסטטוס זה לצד זה' : 'Show status items side by side',exact:true});
+      await sideBySide.uncheck();
+      await stacked.waitFor({state:'hidden'});
+      await sideBySide.check();
+      await stacked.waitFor();
+      assert.deepEqual((await saved())[1].entities.map(entity=>entity.role),['lock','graph']);
+    } finally {
+      await page.close();
+    }
   }
 }
 
@@ -13552,6 +13673,7 @@ try {
     });
 
     await run('Overview lights, covers and climate', async () => {
+      await assertAuthoredOverviewLayout(browser);
       await assertOverviewDeviceIdentities(browser);
       const groupOffPage = await browser.newPage({ viewport:{width:320,height:845}, hasTouch:true, reducedMotion:'reduce' });
       groupOffPage.setDefaultTimeout(8000);

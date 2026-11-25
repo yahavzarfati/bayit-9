@@ -566,17 +566,25 @@ export function supportsOverviewLightsOff(kind, section) {
     section.entities.some(item => item?.role === 'action' && idForDomain(item.entity, 'light'));
 }
 
+export function supportsOverviewStackedLocks(kind, section) {
+  return kind === 'overview' && section?.kind === 'status' && isCompactToolbarStatus(kind, section) &&
+    !normalizeOverviewDiscovery(section.discover) && Array.isArray(section.entities) &&
+    section.entities.some(item => item?.role === 'lock' && idForDomain(item.entity, 'lock'));
+}
+
 export function overviewSectionOptions(kind, section) {
   if (kind !== 'overview') return {};
   const discover = normalizeOverviewDiscovery(section.discover);
-  const lightsOff = section.turn_off_active_lights === true && supportsOverviewLightsOff(kind, section)
-    ? { turn_off_active_lights: true } : {};
+  const options = {
+    ...(section.turn_off_active_lights === true && supportsOverviewLightsOff(kind, section) && { turn_off_active_lights: true }),
+    ...(section.stacked_lock_actions === true && supportsOverviewStackedLocks(kind, section) && { stacked_lock_actions: true }),
+  };
   if (discover && (section.kind === 'status' || section.kind === 'covers' && discover.domain === 'cover')) {
-    return { ...lightsOff, discover, filter: 'active', ...(discover.domain === 'cover' && section.include_closing === true &&
+    return { ...options, discover, filter: 'active', ...(discover.domain === 'cover' && section.include_closing === true &&
       { include_closing: true }) };
   }
   return section.filter === 'active' && ['status', 'covers'].includes(section.kind) && section.include_closing === true
-    ? { ...lightsOff, include_closing: true } : lightsOff;
+    ? { ...options, include_closing: true } : options;
 }
 
 export function isActiveOverviewEntity(entity, source, hass, hidden, includeClosing = false) {
@@ -945,7 +953,8 @@ export function isCompactAutomationActions(kind, section) {
 
 export function supportsCompactToolbarStatus(kind, section) {
   return ((kind === 'devices' || kind === 'overview') && section?.kind === 'status') ||
-    (kind === 'security' && section?.kind === 'locks') || (kind === 'presence' && section?.kind === 'people');
+    (kind === 'security' && section?.kind === 'locks') ||
+    ((kind === 'presence' || kind === 'overview') && section?.kind === 'people');
 }
 
 export function isCompactToolbarStatus(kind, section) {

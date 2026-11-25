@@ -178,11 +178,11 @@ For a grouped light, enable **Allow personal favorites on this device** under **
       light_effect_favorites:
         - light.demo_reading
 
-In a **Presence** people section, enable **Show compact presence cards** to keep the configured card order across interface languages. Each card shows the reported location in text and a badge for home, away, another zone, or unavailable. Tap a card to open Home Assistant details. In YAML set `layout: compact` on the `people` section.
+In a **Presence** or **Overview** people section, enable **Show compact presence cards** to keep the configured card order across interface languages. Each card shows the reported location in text and a badge for home, away, another zone, or unavailable. Tap a card to open Home Assistant details. In YAML set `layout: compact` on the `people` section.
 
 Toolbar sections accept ordered entities and can render action tiles, locks, covers, person tiles, solar readings, forecasts, and history graphs. Choose those presentations in **Toolbar and extra screens**. A status or graph tile is read-only, and confirmations can be set for explicit actions. Overview sections can show active devices only. Media, vacuum, calendar and other configured screens can live inside Settings.
 
-On a **Devices** or **Overview** screen, choose **Show status items side by side** for a compact status section. In YAML, use `layout: compact` on that section. Tap a graph in this layout to open the sensor's Home Assistant details. To add a separate lock command, set the lock's display role to `lock`. Unlocking asks for confirmation, and locks that require a PIN use Home Assistant's native details dialog.
+On a **Devices** or **Overview** screen, choose **Show status items side by side** for a compact status section. In YAML, use `layout: compact` on that section. Tap a graph in this layout to open the sensor's Home Assistant details. To add a separate lock command, set the lock's display role to `lock`. Unlocking asks for confirmation, and locks that require a PIN use Home Assistant's native details dialog. In a compact **Overview** status section with a lock, **Place lock buttons below their status** gives each command the full card width. In YAML, set `stacked_lock_actions: true` on that status section.
 
 For a **Devices** screen shown in Settings, enable **Use the room popup position** to align its top edge with room popups. In YAML, set `popup_position: room` on the toolbar entry with `kind: devices` and `placement: settings`.
 

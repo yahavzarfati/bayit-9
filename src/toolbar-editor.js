@@ -5,7 +5,7 @@ import {
   securityReadoutLabelStates, selectableRoomEntities, sensorComparisonMaxHours, sensorComparisonOptions,
   SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
   supportsCompactAutomationActions, supportsCompactToolbarStatus, supportsHorizonCard, supportsHourlyWeatherForecast, supportsReadingCards,
-  supportsOverviewLightsOff, supportsSecurityDangerAction, supportsToolbarReadouts, supportsToolbarVacuumSummary,
+  supportsOverviewLightsOff, supportsOverviewStackedLocks, supportsSecurityDangerAction, supportsToolbarReadouts, supportsToolbarVacuumSummary,
   supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
@@ -73,7 +73,7 @@ const WORDS = {
     calendarWeather: 'Daily forecast beside dates', calendarNoWeather: 'No forecast',
     calendarAccent: 'Calendar accent', calendarInvalidAccent: 'Enter a six-digit color such as #80BFFF.',
     compactStatus: 'Show status items side by side', compactSecurityLocks: 'Show compact lock controls',
-    compactPeople: 'Show compact presence cards',
+    compactPeople: 'Show compact presence cards', stackedLocks: 'Place lock buttons below their status',
     compactAutomationActions: 'Show compact action buttons',
     weatherReadingsList: 'Show readings as a compact read-only list',
     horizonCard: 'Show the Sun and Moon with Horizon Card',
@@ -156,7 +156,7 @@ const WORDS = {
     calendarWeather: 'תחזית יומית ליד התאריך', calendarNoWeather: 'ללא תחזית',
     calendarAccent: 'צבע היומן', calendarInvalidAccent: 'הזינו צבע בן שש ספרות, למשל ‎#80BFFF‎.',
     compactStatus: 'הצגת פריטי הסטטוס זה לצד זה', compactSecurityLocks: 'הצגת פקדי נעילה קומפקטיים',
-    compactPeople: 'הצגת כרטיסי נוכחות קומפקטיים',
+    compactPeople: 'הצגת כרטיסי נוכחות קומפקטיים', stackedLocks: 'הצגת כפתורי הנעילה מתחת למצב',
     compactAutomationActions: 'הצגת כפתורי פעולה קומפקטיים',
     weatherReadingsList: 'הצגת המדדים ברשימה קומפקטית לקריאה בלבד',
     horizonCard: 'הצגת השמש והירח באמצעות Horizon Card',
@@ -759,9 +759,17 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     }
     if (supportsCompactToolbarStatus(kind, active)) {
       const compact = node('input', { type: 'checkbox', checked: isCompactToolbarStatus(kind, active) });
-      compact.addEventListener('change', () => changeSection({ layout: compact.checked ? 'compact' : undefined }));
-      const title = { security: words.compactSecurityLocks, presence: words.compactPeople }[kind] ?? words.compactStatus;
+      compact.dataset.toolbarFocus = 'compact-status';
+      const refresh = kind === 'overview' && active.kind === 'status';
+      compact.addEventListener('change', () =>
+        changeSection({ layout: compact.checked ? 'compact' : undefined }, refresh, 'compact-status'));
+      const title = active.kind === 'people' ? words.compactPeople : kind === 'security' ? words.compactSecurityLocks : words.compactStatus;
       fields.push(node('label', { className:'check' }, [compact, title]));
+    }
+    if (supportsOverviewStackedLocks(kind, active)) {
+      const stacked = node('input', { type:'checkbox', checked:active.stacked_lock_actions === true });
+      stacked.addEventListener('change', () => changeSection({ stacked_lock_actions:stacked.checked ? true : undefined }));
+      fields.push(node('label', { className:'check' }, [stacked, words.stackedLocks]));
     }
     if (supportsToolbarReadouts(kind, active)) {
       const readouts = node('input', { type: 'checkbox', checked: isToolbarReadouts(kind, active) });

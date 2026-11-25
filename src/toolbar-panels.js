@@ -800,7 +800,7 @@ export function createToolbarPanel(kind, configuration, context) {
   function render(item, section, { compactStatus, readingCards, compactActions, compactVacuum }) {
     const itemKind = item.role ?? ({ people: 'person', actions: 'action', forecast: 'forecast', sun: 'sun' }[section]);
     if (itemKind === 'person' && domain(item) === 'person') {
-      return renderTile(item, kind === 'presence' && compactStatus ? 'compact-person' : 'person');
+      return renderTile(item, section === 'people' && compactStatus ? 'compact-person' : 'person');
     }
     if (item.command === 'toggle_script') return renderScriptToggle(item, compactActions);
     if (itemKind === 'action' || (section === 'actions' && itemKind === 'lock')) {
@@ -926,6 +926,8 @@ export function createToolbarPanel(kind, configuration, context) {
     panel.toggleAttribute('data-security-section', kind === 'security');
     panel.toggleAttribute('data-overview-people', kind === 'overview' && section.kind === 'people');
     const compactStatus = isCompactToolbarStatus(kind, section);
+    panel.toggleAttribute('data-stacked-lock-actions', compactStatus &&
+      (kind === 'security' && section.kind === 'locks' || kind === 'overview' && section.stacked_lock_actions === true));
     const readouts = isToolbarReadouts(kind, section);
     const weatherReadings = isWeatherReadingsList(kind, section);
     const readingCards = isReadingCards(kind, section);
@@ -1195,21 +1197,21 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .compact-status-lock > .tile-row { min-width: 0; padding-inline: 2px; border: 0; background: transparent; }
   .compact-status-lock .tile-mark { width: 28px; height: 28px; }
   .compact-lock-action { padding: 4px; }
-  .toolbar-section[data-security-section][data-section=locks][data-layout=compact] .compact-status-lock {
+  .toolbar-section[data-stacked-lock-actions] .compact-status-lock {
     grid-template-columns: minmax(0,1fr); grid-template-rows: minmax(44px,auto) auto; gap: 3px; padding: 5px;
   }
-  .toolbar-section[data-security-section][data-section=locks][data-layout=compact] .compact-status-lock > .tile-row {
+  .toolbar-section[data-stacked-lock-actions] .compact-status-lock > .tile-row {
     direction: ltr; grid-template-columns: 32px minmax(0,1fr); grid-template-areas: "icon label" "icon state";
     justify-items: start; align-content: center; align-items: center; gap: 3px 6px; min-height: 44px;
     padding: 3px 2px; text-align: left;
   }
-  .toolbar-section[data-security-section][data-section=locks] .compact-status-lock > .tile-row > .tile-mark { grid-area: icon; }
-  .toolbar-section[data-security-section][data-section=locks] .compact-status-lock > .tile-row > .tile-label { grid-area: label; }
-  .toolbar-section[data-security-section][data-section=locks] .compact-status-lock > .tile-row > .tile-state { grid-area: state; }
-  .toolbar-section[data-security-section][data-section=locks] .compact-status-lock > .tile-row > :is(.tile-label,.tile-state) {
+  .toolbar-section[data-stacked-lock-actions] .compact-status-lock > .tile-row > .tile-mark { grid-area: icon; }
+  .toolbar-section[data-stacked-lock-actions] .compact-status-lock > .tile-row > .tile-label { grid-area: label; }
+  .toolbar-section[data-stacked-lock-actions] .compact-status-lock > .tile-row > .tile-state { grid-area: state; }
+  .toolbar-section[data-stacked-lock-actions] .compact-status-lock > .tile-row > :is(.tile-label,.tile-state) {
     unicode-bidi: plaintext;
   }
-  .toolbar-section[data-security-section][data-section=locks] .compact-status-lock > .compact-lock-action {
+  .toolbar-section[data-stacked-lock-actions] .compact-status-lock > .compact-lock-action {
     width: 100%; border-radius: 10px; background: var(--glass);
   }
   .compact-lock-action[data-lock-transition]:disabled { color: var(--lock-pending-ink,#fbbf24); opacity: 1; }

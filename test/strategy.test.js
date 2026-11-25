@@ -2029,11 +2029,28 @@ test('compact presence layout applies only to opted-in People sections and prese
   const people = { kind:'people', layout:'compact', entities:entries };
   const { toolbar } = generateDashboard({ toolbar:[
     { kind:'presence',sections:[people,{...people,layout:undefined},{...people,kind:'status'}] },
-    { kind:'overview',sections:[people] },
+    { kind:'overview',sections:[people,{...people,layout:undefined}] },
   ] },hass).views[0].cards[0];
   const sections = toolbar.flatMap(entry=>entry.sections);
-  assert.deepEqual(sections.map(section=>section.layout),['compact',undefined,undefined,undefined]);
-  assert.deepEqual(sections[0].entities.map(entry=>entry.entity),entries);
+  assert.deepEqual(sections.map(section=>section.layout),['compact',undefined,undefined,'compact',undefined]);
+  for (const index of [0,3]) assert.deepEqual(sections[index].entities.map(entry=>entry.entity),entries);
+});
+
+test('full-width Overview lock actions require an authored compact status with a lock role', () => {
+  const hass = home();
+  hass.states['lock.fixture'] = { state:'locked', attributes:{} };
+  const lock = { entity:'lock.fixture', role:'lock' };
+  const compact = { kind:'status', layout:'compact', stacked_lock_actions:true, entities:[lock] };
+  const dashboard = generateDashboard({toolbar:[
+    {kind:'overview',sections:[
+      compact, {...compact,stacked_lock_actions:undefined}, {...compact,layout:undefined},
+      {...compact,entities:[{...lock,role:'status'}]},
+    ]},
+    {kind:'devices',sections:[compact]},
+  ]},hass).views[0].cards[0];
+  const sections = dashboard.toolbar.flatMap(entry=>entry.sections);
+  assert.deepEqual(sections.map(section=>section.stacked_lock_actions),[true,undefined,undefined,undefined,undefined]);
+  assert.deepEqual(sections.map(section=>section.entities[0].role),['lock','lock','lock','status','lock']);
 });
 
 test('compact lock controls are opt-in for Security lock sections and retain battery items', () => {
