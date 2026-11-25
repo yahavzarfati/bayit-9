@@ -10694,7 +10694,8 @@ try {
       const unmute = audio.getByRole('button', { name: remoteRTL ? 'ביטול השתקה' : 'Unmute', exact: true });
       await combined.waitFor();
       assert.ok((await combined.boundingBox()).height >= 44);
-      assert.equal(await mute.count(), 0);
+      await mute.waitFor();
+      assert.equal(await mute.isDisabled(),true);
       assert.equal(await unmute.count(), 0);
       assert.equal(await remotePage.getByRole('button', { name: remoteRTL ? 'הדלקה' : 'Turn on', exact: true }).count(), 2);
       assert.deepEqual(await remotePage.evaluate(() => window.bayitTest.calls), []);

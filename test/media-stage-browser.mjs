@@ -29,7 +29,8 @@ const legacy = options.has('legacy');
 const config = { type:'custom:bayit-9', locale:hass.locale.language, toolbar:[
   { id:'sample-media', kind:'media', label:'Fixture Media', placement:'linked',
     ...(!legacy && { media_stage:{ source_entity:source, ...(options.has('default-icon') ? {} : { fallback_icon:'mdi:radio' }) } }),
-    media_remote:{ transport_entity:source, ...(options.has('full-remote') && { volume_entity:other, power_entity:other }) }, sections:legacy
+    media_remote:{ transport_entity:source, ...(options.has('full-remote') && { volume_entity:other, power_entity:other }),
+      ...(options.has('mute-standby') && { allow_standby:true }) }, sections:legacy
       ? [{id:'small',kind:'media',entities:[{entity:source,role:'now_playing'}]}] : [] },
 ] };
 const dashboard = document.createElement('bayit-dashboard');
@@ -43,6 +44,11 @@ tracker.update = (picture, state = 'paused') => {
 tracker.hide = () => {
   hass.entities[source] = { hidden_by:'user' };
   dashboard.hass = { ...hass, entities:{ ...hass.entities } };
+};
+tracker.updateTelevision = (state, supported_features, mute) => {
+  hass.states[other] = {state,attributes:{friendly_name:'Alternative player',supported_features,
+    ...(typeof mute === 'boolean' && { is_volume_muted:mute }) }};
+  dashboard.hass = { ...hass, states:{ ...hass.states } };
 };
 if (options.has('editor')) {
   const editor = Strategy.getConfigElement();
@@ -245,6 +251,45 @@ try {
         await state(page,proxy,'unavailable');
         await neutral.waitFor({state:'hidden'});
         assert.equal(await page.evaluate(() => tracker.calls.length),2);
+      }
+
+      for (const [locale, muteName, unmuteName, unavailable] of [
+        ['en', 'Mute', 'Unmute', 'Unavailable'], ['he', 'השתקה', 'ביטול השתקה', 'לא זמין'],
+      ]) {
+        await page.goto(home + '?full-remote&mute-standby&locale=' + locale + hash);
+        const tv = dialog.getByRole('group',{name:'Alternative player',exact:true});
+        const mute = tv.getByRole('button',{name:muteName,exact:true});
+        const unmute = tv.getByRole('button',{name:unmuteName,exact:true});
+        const update = (state, features, mute) => page.evaluate(args => tracker.updateTelevision(...args), [state,features,mute]);
+        await mute.waitFor();
+        await update('off',1416);
+        await mute.and(tv.locator(':disabled')).waitFor();
+        assert.equal(await mute.getAttribute('aria-description'), unavailable);
+        assert.equal(await tv.getByRole('button').count(),4);
+        const original = await mute.elementHandle();
+        const position = await mute.boundingBox();
+        await mute.evaluate(button => button.click());
+        assert.deepEqual(await page.evaluate(() => tracker.calls),[]);
+        await update('on',1416,false);
+        await mute.and(tv.locator(':enabled')).waitFor();
+        assert.equal(await mute.getAttribute('aria-description'),null);
+        assert.equal(await mute.evaluate((button, previous) => button===previous, original),true);
+        assert.deepEqual(await mute.boundingBox(),position);
+        await mute.tap();
+        await page.waitForFunction(() => tracker.calls.length === 1);
+        assert.deepEqual(await page.evaluate(() => tracker.calls), [
+          {type:'call_service',domain:'media_player',service:'volume_mute',service_data:{is_volume_muted:true},
+            target:{entity_id:'media_player.fixture_other'}},
+        ]);
+        await update('on',1416,true);
+        await unmute.and(tv.locator(':enabled')).waitFor();
+        await update('off',1408);
+        await mute.waitFor({state:'hidden'});
+        await unmute.waitFor({state:'hidden'});
+        await update('unavailable',1416);
+        assert.equal(await mute.count(),0);
+        assert.equal(await page.evaluate(() => tracker.calls.length),1);
+        await original.dispose();
       }
 
       await page.goto(home + '?legacy' + hash);

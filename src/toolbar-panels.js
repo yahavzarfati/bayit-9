@@ -4,7 +4,7 @@ import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
 import { discoverOverviewEntities, isActiveOverviewEntity, isCompactAutomationActions, isCompactToolbarStatus, isReadingCards,
   isToolbarLightTile, isToolbarReadoutEntity, isToolbarReadouts, isVisibleEntity, isWeatherReadingsList,
   vacuumReadoutStateLabel } from './strategy-model.js';
-import { mediaServiceRegistered } from './media-device-support.mjs';
+import { compactMediaMutePlaceholder, mediaServiceRegistered } from './media-device-support.mjs';
 import { compactRoomLockCommand, roomShutdownTargets } from './device-control.mjs';
 import { calendarAgendaStyles, createCalendarAgenda } from './calendar-agenda.js';
 import { bindDeviceDetails } from './popup-motion.js';
@@ -316,9 +316,7 @@ export function createToolbarPanel(kind, configuration, context) {
     }));
     const volumeDown = ['volume', 'mdi:volume-minus', 'volume_down'];
     const volumeUp = ['volume', 'mdi:volume-plus', 'volume_up'];
-    const mute = [
-      ['volume', 'mdi:volume-mute', 'mute'], ['volume', 'mdi:volume-high', 'unmute'],
-    ];
+    const mute = ['volume', 'mdi:volume-mute', 'mute', 'unmute'];
     const rows = [
       ['transport', [
         ['transport', 'mdi:skip-previous', 'media_previous_track'],
@@ -326,8 +324,8 @@ export function createToolbarPanel(kind, configuration, context) {
         ['transport', 'mdi:skip-next', 'media_next_track'],
       ]],
       [profiles.volume ? 'volume' : 'power', profiles.power ? [
-        ['power', 'mdi:power', 'turn_on', 'turn_off'], volumeDown, volumeUp, ...mute,
-      ] : [volumeDown, ...mute, volumeUp]],
+        ['power', 'mdi:power', 'turn_on', 'turn_off'], volumeDown, volumeUp, mute,
+      ] : [volumeDown, mute, volumeUp]],
     ].flatMap(([groupRole, keys]) => {
       if (!profiles[groupRole]) return [];
       const group = make('div', 'media-remote-group');
@@ -338,11 +336,13 @@ export function createToolbarPanel(kind, configuration, context) {
         const { entity } = config;
         const power = role === 'power';
         const playPause = actions[0] === 'media_play_pause';
+        const isMute = actions[0] === 'mute';
         const control = button('control-button media-remote-key', t(actions[0]), glyph, true);
-        const symbol = playPause && control.querySelector('ha-icon');
+        const symbol = (playPause || isMute) && control.querySelector('ha-icon');
         const playbackState = ({ state }) => playPause && (state === 'playing' || state === 'paused') ? state : undefined;
+        const visible = hass => isVisibleEntity(entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities);
         const enabledAction = (hass, model) => {
-          if (!isVisibleEntity(entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities)) return;
+          if (!visible(hass)) return;
           return actions.find(action => {
             const planned = model.actions[action];
             return planned && mediaServiceRegistered(hass, planned.service ?? action);
@@ -360,8 +360,10 @@ export function createToolbarPanel(kind, configuration, context) {
         const update = model => {
           displayedAction = enabledAction(currentHass, model);
           const waiting = pending(entity);
-          control.hidden = !displayedAction;
-          control.disabled = control.hidden || waiting;
+          const mutePlaceholder = isMute && !displayedAction && settings.allow_standby &&
+            compactMediaMutePlaceholder(model) && visible(currentHass) && mediaServiceRegistered(currentHass, 'volume_mute');
+          control.hidden = !displayedAction && !mutePlaceholder;
+          control.disabled = !displayedAction || waiting;
           if (playPause) {
             const playback = displayedAction ? playbackState(model) : undefined;
             if (displayedPlayback !== playback) {
@@ -372,6 +374,14 @@ export function createToolbarPanel(kind, configuration, context) {
               label(control, t(playing ? 'media_pause' : paused ? 'media_play' : 'media_play_pause'));
               control.toggleAttribute('data-playback-paused', paused);
             }
+          }
+          if (isMute) {
+            const muted = displayedAction === 'unmute';
+            const currentIcon = muted ? 'mdi:volume-high' : glyph;
+            if (symbol.getAttribute('icon') !== currentIcon) symbol.setAttribute('icon', currentIcon);
+            label(control, t(muted ? 'unmute' : 'mute'));
+            if (mutePlaceholder) control.setAttribute('aria-description', t('unavailable'));
+            else control.removeAttribute('aria-description');
           }
           if (power) {
             label(control, t('media_power') + ' · ' + model.name);
