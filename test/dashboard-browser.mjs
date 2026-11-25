@@ -2856,6 +2856,70 @@ async function assertDeviceDisplayPickerAndFocus(browser) {
   }
 }
 
+async function assertRoomTargetLabels(browser) {
+  const labels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', sections:'Room sections',
+      layout:'Section arrangement', add:'Add section', sectionDevice:'Room device', move:'Move to this section',
+      remove:'Remove from section', readOnly:'Show status only for selected room devices',
+      shutdown:'Devices turned off by the room icon', save:'Save dashboard' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים', sections:'קבוצות בחדר',
+      layout:'סידור הקבוצות', add:'הוספת קבוצה', sectionDevice:'מכשיר בחדר', move:'העברה לקבוצה זו',
+      remove:'הסרה מהקבוצה', readOnly:'הצגת מצב בלבד למכשירים שנבחרו',
+      shutdown:'מכשירים לכיבוי דרך סמל החדר', save:'שמירת הדשבורד' },
+  ];
+  const lamp = 'light.demo_lamp';
+  const relay = 'switch.demo_heater';
+  const suffix = entity => 'Fixture adapter · ' + entity;
+  for (const [index, words] of labels.entries()) {
+    const page = await browser.newPage({ viewport:{ width:index ? 391 : 320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      await page.goto(base + '/fixture-home/home?configuration&device-display-picker&locale=' + words.locale);
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      const field = label => setup.getByLabel(label, { exact:true });
+      const optionText = (input, id) => input.locator('option[value="' + id + '"]').textContent();
+      const openRooms = async () => {
+        await page.getByRole('button', { name:words.appearance, exact:true }).tap();
+        await page.getByRole('button', { name:words.setup, exact:true }).tap();
+        await setup.getByText(words.rooms, { exact:true }).tap();
+      };
+      await openRooms();
+      const readOnly = field(words.readOnly);
+      const shutdown = field(words.shutdown);
+      assert.equal(await optionText(readOnly, lamp), suffix(lamp));
+      assert.equal(await optionText(readOnly, 'fan.demo_display'), 'Fixture fan');
+      assert.equal(await optionText(shutdown, relay), suffix(relay));
+      assert.deepEqual(await readOnly.selectOption({ label:suffix(relay) }), [relay]);
+      assert.equal(await shutdown.locator('option[value="' + relay + '"]').count(), 0);
+      assert.deepEqual(await shutdown.selectOption({ label:suffix(lamp) }), [lamp]);
+
+      await setup.getByText(words.sections, { exact:true }).tap();
+      await field(words.layout).selectOption('manual');
+      await setup.getByRole('button', { name:words.add, exact:true }).tap();
+      const picker = field(words.sectionDevice);
+      assert.equal(await optionText(picker, lamp), suffix(lamp));
+      assert.deepEqual(await picker.selectOption({ label:suffix(relay) }), [relay]);
+      await setup.getByRole('button', { name:words.move, exact:true }).tap();
+      await setup.getByRole('button', { name:words.remove + ' · ' + suffix(relay), exact:true }).waitFor();
+      assert.equal(await optionText(picker, lamp), suffix(lamp));
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call =>
+        call.domain || call.type === 'lovelace/config/save')), []);
+      await Promise.all([page.waitForEvent('load'), setup.getByRole('button', { name:words.save, exact:true }).tap()]);
+      const stored = await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      const room = stored.room_overrides.studio;
+      assert.deepEqual(room.read_only_entities, [relay]);
+      assert.deepEqual(room.turn_off_entities, [lamp]);
+      assert.deepEqual(room.sections[0].entities, [relay]);
+      await openRooms();
+      assert.equal(await readOnly.inputValue(), relay);
+      assert.equal(await shutdown.inputValue(), lamp);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertManualRoomOrderRestored(browser) {
   const labels = [
     { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', mode:'Rooms on the dashboard',
@@ -9993,6 +10057,7 @@ try {
 
     await run('Shortcut editor distinguishes same-named rooms and popups', () => assertDuplicateShortcutEditorLabels(browser));
     await run('Device appearance edits retain focus and distinguish same-named devices', () => assertDeviceDisplayPickerAndFocus(browser));
+    await run('Room setup distinguishes same-named devices in sections and power settings', () => assertRoomTargetLabels(browser));
 
     await run('Home glass and accessibility', async () => {
       await assertHomeMaterial(browser);

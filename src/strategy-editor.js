@@ -510,6 +510,11 @@ function distinctEditorLabels(items, identifiers) {
   return labels;
 }
 
+function distinctEntityLabels(ids, nameOf) {
+  return distinctEditorLabels(ids.map(id => ({ id, name: nameOf(id) || id })),
+    new Map(ids.map(id => [id, id])));
+}
+
 function node(name, properties = {}, children = []) {
   const element = Object.assign(document.createElement(name), properties);
   element.append(...children);
@@ -876,8 +881,9 @@ export class Bayit9StrategyEditor extends HTMLElement {
       children.push(attention);
     }
 
-    const entityName = entity => this.#hass.states?.[entity]?.attributes?.friendly_name || entity;
-    const members = active.entities.map(id => ({ id, name: entityName(id) }));
+    const entityIds = [...new Set([...chosen, ...active.entities])];
+    const captions = distinctEntityLabels(entityIds, id => this.#hass.states?.[id]?.attributes?.friendly_name);
+    const members = active.entities.map(id => ({ id, name: captions.get(id) }));
     children.push(members.length ? orderedList(members, (items, focusKey) =>
       update({ ...active, entities: items.map(item => item.id) }, focusKey),
       words, words.removeFromSection, false, 'section-devices') : node('p', { textContent: words.sectionEmpty }));
@@ -885,7 +891,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const activeMembers = new Set(active.entities);
     const candidates = chosen.filter(entity => !activeMembers.has(entity));
     if (candidates.length) {
-      const picker = addPicker(words.sectionDevice, candidates.map(entity => [entity, entityName(entity)]), words.addToSection, words.choose, entity => {
+      const picker = addPicker(words.sectionDevice, candidates.map(id => [id, captions.get(id)]), words.addToSection, words.choose, entity => {
         saveSections(sections.map(section => section.id === active.id
           ? { ...section, entities: [...section.entities, entity] }
           : { ...section, entities: section.entities.filter(id => id !== entity) }), 'room-section-device');
@@ -896,12 +902,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
     return body();
   }
 
-  #roomTargetList(room, selected, devices, { setting, focus, title, hint, reset }) {
+  #roomTargetList(room, selected, devices, { captions, setting, focus, title, hint, reset }) {
     const input = node('select', { multiple:true, size:Math.min(5, Math.max(2, devices.length)), disabled:!devices.length });
     input.dataset.roomFocus = focus;
     const current = new Set(selected);
     for (const device of devices) {
-      const item = option(device.entity, device.name || device.entity);
+      const item = option(device.entity, captions.get(device.entity));
       item.selected = current.has(device.entity);
       input.append(item);
     }
@@ -1052,8 +1058,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       }
       const profiles = Array.isArray(this.#config.profiles) ? this.#config.profiles.map(normalizeProfile).filter(Boolean) : [];
       const nameOf = id => profiles.find(profile => profile.entity === id)?.name || available.get(id)?.name || id;
-      const captions = distinctEditorLabels(entities.map(id => ({ id, name:nameOf(id) })),
-        new Map(entities.map(id => [id, id])));
+      const captions = distinctEntityLabels(entities, nameOf);
       const chosenEntity = this.#roomControlEditing.get(room.id);
       const picker = select(entities.map(id => [id, captions.get(id)]),
         entities.includes(chosenEntity) ? chosenEntity : entities[0]);
@@ -1449,11 +1454,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const editShutdown = shutdown.length > 0 || selectedShutdown.length > 0;
     const available = manual || editCount || editShutdown
       ? new Map(selectableRoomEntities(this.#config, this.#hass).map(entry => [entry.entity, entry])) : undefined;
+    const captions = distinctEntityLabels(chosen, id => states[id]?.attributes?.friendly_name || available?.get(id)?.name);
     if (chosen.length) {
       options.push(this.#roomControlDisplay(room, chosen, words));
       const selected = node('select', { multiple: true, size: Math.min(5, Math.max(2, chosen.length)) });
       for (const id of chosen) {
-        const item = option(id, this.#hass.states?.[id]?.attributes?.friendly_name ?? id);
+        const item = option(id, captions.get(id));
         item.selected = readOnly.has(id);
         selected.append(item);
       }
@@ -1469,13 +1475,13 @@ export class Bayit9StrategyEditor extends HTMLElement {
     }
     if (editCount) {
       options.push(this.#roomTargetList(room, selectedCount, lights.map(id => available.get(id)).filter(Boolean), {
-        setting:'lighting_count_entities', focus:'room-light-count', title:words.lightCount,
+        captions, setting:'lighting_count_entities', focus:'room-light-count', title:words.lightCount,
         hint:words.lightCountHint, reset:words.lightCountReset,
       }));
     }
     if (editShutdown) {
       options.push(this.#roomTargetList(room, selectedShutdown, shutdown.map(id => available.get(id)).filter(Boolean), {
-        setting:'turn_off_entities', focus:'room-turn-off', title:words.roomShutdown,
+        captions, setting:'turn_off_entities', focus:'room-turn-off', title:words.roomShutdown,
         hint:words.roomShutdownHint, reset:words.roomShutdownReset,
       }));
     }
