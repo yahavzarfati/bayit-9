@@ -24,6 +24,7 @@ import { normalizeMediaStage } from './now-playing.js';
 import { normalizeMediaRemote } from './media-device-support.mjs';
 import { calendarAccent, normalizeCalendarAgenda } from './calendar-agenda.js';
 import { createWallpaperController, createWallpaperGallery, personalWallpaperId, wallpaperChoices, wallpaperStyles } from './wallpapers.js';
+import { normalizeSharedWallpapers } from './shared-wallpapers.js';
 import { createPageChrome, homePreferencePaths } from './page-chrome.js';
 import { openBoilerHistory, boilerHistoryStyles } from './boiler-history.js';
 import { createBoilerSchedulePanel, isBoilerScheduleProfile } from './boiler-schedule.js';
@@ -386,13 +387,16 @@ export function normalizeDashboardConfig(config = {}) {
   const preferencePaths = preferenceKey ? [preferenceKey]
     : config.page === true ? homePreferencePaths(location.pathname) : [location.pathname];
   const [storageKey, ...fallbackStorageKeys] = preferencePaths.map(key => 'bayit-9.preferences.v1:' + key);
+  const sharedWallpapers = normalizeSharedWallpapers(config.shared_wallpapers);
+  const background = backgrounds.includes(config.background) || sharedWallpapers.some(item => item.id === config.background)
+    ? config.background : 'aurora';
   return {
     locale, rooms, overview, context, toolbar, page: config.page === true, fullscreen: config.fullscreen === true,
     hiddenEntities: new Set(Array.isArray(config.hidden_entities)
       ? config.hidden_entities.filter(id => typeof id === 'string' && entityPattern.test(id)) : []),
     popupAliases: new Map(Object.entries(normalizePopupAliases(config.popup_aliases))),
     title: text(config.title) || languages[locale].home,
-    background: backgrounds.includes(config.background) ? config.background : 'aurora',
+    background, sharedWallpapers,
     layout: options.layout.includes(config.layout) ? config.layout : 'classic',
     shape: options.shape.includes(config.shape) ? config.shape : 'soft',
     storageKey, fallbackStorageKeys,
@@ -679,8 +683,11 @@ export class BayitDashboard extends HTMLElement {
     }
     this.preferences = {};
     for (const [key, choices] of Object.entries(options)) {
-      if (choices.includes(saved?.[key]) || (key === 'background' && saved?.[key] === personalWallpaperId)) {
-        this.preferences[key] = saved[key];
+      const selected = saved?.[key];
+      const extraWallpaper = key === 'background' && (selected === personalWallpaperId ||
+        this.config.sharedWallpapers.some(item => item.id === selected));
+      if (choices.includes(selected) || extraWallpaper) {
+        this.preferences[key] = selected;
       }
     }
   }
@@ -713,18 +720,20 @@ export class BayitDashboard extends HTMLElement {
   }
 
   applySavedWallpaper() {
-    const { storageKey, fallbackStorageKeys, background } = this.config;
-    if (this.wallpaperKey !== storageKey) {
+    const { storageKey, fallbackStorageKeys, background, sharedWallpapers } = this.config;
+    const wallpaperKey = JSON.stringify([storageKey, sharedWallpapers.map(({ id, path }) => [id, path])]);
+    if (this.wallpaperKey !== wallpaperKey) {
       this.wallpaper?.destroy();
-      this.wallpaper = createWallpaperController(this.nodes.shell, { storageKey, fallbackStorageKeys });
-      this.wallpaperKey = storageKey;
+      this.wallpaper = createWallpaperController(this.nodes.shell, { storageKey, fallbackStorageKeys, sharedWallpapers });
+      this.wallpaperKey = wallpaperKey;
       this.activeWallpaper = this.pendingWallpaper = undefined;
     }
     const saved = this.preferences.background || background;
     if (this.activeWallpaper === saved || this.pendingWallpaper?.id === saved) return;
-    if (!this.activeWallpaper && saved === personalWallpaperId) {
-      void this.wallpaper.apply(background);
-      this.activeWallpaper = background;
+    if (!this.activeWallpaper && !backgrounds.includes(saved)) {
+      const fallback = backgrounds.includes(background) ? background : 'aurora';
+      void this.wallpaper.apply(fallback);
+      this.activeWallpaper = fallback;
     }
     void this.selectWallpaper(saved, { save: false });
   }
@@ -737,7 +746,13 @@ export class BayitDashboard extends HTMLElement {
     const applied = file ? await controller.upload(file) : await controller.apply(id);
     if (this.pendingWallpaper !== request || this.wallpaper !== controller) return false;
     this.pendingWallpaper = undefined;
-    if (!applied) return false;
+    if (!applied) {
+      const fallback = this.config.background;
+      if (!save && id !== fallback && this.activeWallpaper !== fallback) {
+        void this.selectWallpaper(fallback, { save: false });
+      }
+      return false;
+    }
     this.activeWallpaper = id;
     if (save) this.setPreference('background', id);
     this.wallpaperGallery?.select(id);
@@ -774,6 +789,11 @@ export class BayitDashboard extends HTMLElement {
     try {
       const current = await loadConfiguration(this._hass, location.pathname);
       if (this.config !== config || this.panel !== actions.panel) return;
+      const shared = config.sharedWallpapers.find(item => item.id === changes.background);
+      if (shared && !normalizeSharedWallpapers(current.strategy.shared_wallpapers)
+          .some(item => item.id === shared.id && item.path === shared.path)) {
+        throw Object.assign(new Error('Shared photo changed'), { code: 'setup_conflict' });
+      }
       await saveConfiguration(this._hass, current, { ...current.strategy, ...changes });
       if (this.config.storageKey !== config.storageKey) return;
       if (this.config === config) Object.assign(config, changes);
@@ -1771,7 +1791,7 @@ export class BayitDashboard extends HTMLElement {
     const deviceAppearance = make('section', 'appearance-preferences');
     deviceAppearance.setAttribute('aria-label', this.t('appearance_browser'));
     this.wallpaperGallery = createWallpaperGallery({ locale: this.config.locale, controller: this.wallpaper,
-      selected: this.activeWallpaper || this.config.background,
+      selected: this.activeWallpaper || this.config.background, sharedWallpapers: this.config.sharedWallpapers,
       onSelect: id => this.selectWallpaper(id), onUpload: file => this.selectWallpaper(personalWallpaperId, { file }) });
     deviceAppearance.append(this.wallpaperGallery.element);
     const arrange = make('details', 'appearance-disclosure appearance-layout');

@@ -17,7 +17,8 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 | `room_shortcuts` | Optional per-room lists of up to six visible entity IDs, in display order. A room without a list uses automatic shortcuts. An empty list hides that room's shortcuts. |
 | `popup_aliases` | Optional mapping of old URL fragments to visible popup routes on this dashboard. |
 | `light_effect_groups` | Optional categories for a light's advertised effects. Open the light's details, choose an effect and press **Apply**. |
-| `background` | A built-in wallpaper ID such as `aurora`, `lagoon`, `dunes` or `graphite`. The appearance options in the editor list all built-in backgrounds. |
+| `background` | A built-in wallpaper ID such as `aurora` or the ID of a shared photo listed in the same dashboard. |
+| `shared_wallpapers` | Ordered shared photos with an `id`, `name`, local image `path` and optional local `preview` path. |
 | `fullscreen` | Set to `true` to hide the Home Assistant header and sidebar on this standalone dashboard. Use **Home Assistant menu** in Bayit 9 Settings, or add `?disable_km=1` to the dashboard address, to restore them. |
 | `shape` | `soft`, `circle` or `square`. |
 | `layout` | `classic` or `header`. |
@@ -25,7 +26,9 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 | `toolbar` | Optional ordered entries with `kind`, `label`, `icon`, `entities` or `sections`. Set `placement: settings` to put a screen inside Settings. Link entries use a local Home Assistant `path`. Security entries can opt in to an Oref alert map. |
 | `profiles` | Climate, boiler and heater controls mapped to local entities. See [heating and timer profiles](heating.md). |
 
-The Settings appearance controls preview changes in the current browser. On a storage dashboard, an administrator can save built-in wallpaper, button shape, and room layout choices as household defaults. A device with a local override keeps it until **Use household defaults** is selected on that device. Personal photos stay in the browser that uploaded them.
+The Settings appearance controls preview changes in the current browser. On a storage dashboard, an administrator can save a built-in or shared wallpaper, button shape, and room layout as household defaults. Select **Use household defaults** on a device to reset its local override. Photos added through **My photo** stay in the browser that uploaded them.
+
+In **Customize home → Appearance → Shared photos**, add named pictures already served by Home Assistant under `/local/`. Supported formats are JPG, PNG, WebP and AVIF, up to 20 MB per image. An optional smaller preview loads in the gallery before the full-size image. Save the dashboard to make these choices available to its users. In YAML, the same entry can use `{ id: patio_photo, name: Patio, path: /local/wallpapers/patio.webp, preview: /local/wallpapers/patio-small.webp }` under `shared_wallpapers`.
 
 Entity-level room assignment takes precedence over device-level assignment. Home Assistant's disabled and hidden entities remain excluded. Diagnostic and configuration entities are omitted from automatic discovery. A room override with `entities` uses exactly the listed visible entities, in order. An empty list keeps the room with no devices. Omit `entities` to use automatic discovery. `entity_icons` is a mapping from entity ID to icon for that room. Assigning a device explicitly moves it out of automatically discovered rooms on this dashboard. You can include it in multiple rooms by listing it explicitly in each one. These choices leave Home Assistant area assignments as they are.
 

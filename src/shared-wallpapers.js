@@ -17,10 +17,10 @@ export function normalizeSharedWallpaperPath(value) {
 
 export function normalizeSharedWallpapers(value) {
   if (!Array.isArray(value)) return [];
-  const ids = new Set(['personal', ...Object.keys(catalog)]);
+  const ids = new Set(['personal']);
   return value.flatMap(entry => {
     const id = entry?.id;
-    if (typeof id !== 'string' || !wallpaperId.test(id) || ids.has(id)) return [];
+    if (typeof id !== 'string' || !wallpaperId.test(id) || id in catalog || ids.has(id)) return [];
     const name = typeof entry.name === 'string' ? entry.name.trim() : '';
     const path = normalizeSharedWallpaperPath(entry.path);
     const preview = normalizeSharedWallpaperPath(entry.preview);

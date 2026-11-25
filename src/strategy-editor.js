@@ -1,3 +1,4 @@
+import { normalizeSharedWallpaperPath, normalizeSharedWallpapers } from './shared-wallpapers.js';
 import {
   BACKGROUNDS, classicRoomTitle, CUSTOM_ROOM_PREFIX, dashboardRoomMemberships, dashboardRoomOptions, DEVICE_ICONS, discoverRooms,
   languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
@@ -70,6 +71,11 @@ const WORDS = {
     noDevices: 'No devices selected.', noMatches: 'No matching devices', missing: 'Unavailable',
     discovery: 'Automatic device selection', controls: 'Controls only', allDevices: 'All supported devices',
     appearance: 'Appearance', background: 'Wallpaper', layout: 'Room titles', shape: 'Button shape',
+    sharedWallpaper: 'Shared photos', sharedWallpaperItem: 'Shared wallpaper', newWallpaper: 'New photo',
+    wallpaperName: 'Photo name', wallpaperPath: 'Local image path', wallpaperPreview: 'Local thumbnail path (optional)',
+    wallpaperHint: 'Use a photo served by this Home Assistant under /local/.',
+    addWallpaper: 'Add photo', updateWallpaper: 'Update photo', removeWallpaper: 'Remove photo',
+    invalidWallpaperPath: 'Enter a local JPG, PNG, WebP, or AVIF path starting with /local/.',
     toolbar: 'Toolbar and extra screens', fullscreen: 'Hide Home Assistant chrome on this dashboard',
     boilerTimerWithDetails: 'Show the boiler timer with schedule or history',
     scheduleSave: 'Boiler schedule save script (optional)', scheduleDelete: 'Boiler schedule delete script (optional)',
@@ -156,6 +162,11 @@ const WORDS = {
     noDevices: 'לא נבחרו מכשירים.', noMatches: 'לא נמצאו מכשירים מתאימים', missing: 'לא זמין',
     discovery: 'בחירת מכשירים אוטומטית', controls: 'מכשירים נשלטים בלבד', allDevices: 'כל המכשירים הנתמכים',
     appearance: 'מראה', background: 'רקע', layout: 'שמות חדרים', shape: 'צורת כפתורים',
+    sharedWallpaper: 'תמונות משותפות', sharedWallpaperItem: 'רקע משותף', newWallpaper: 'תמונה חדשה',
+    wallpaperName: 'שם התמונה', wallpaperPath: 'נתיב התמונה המקומית', wallpaperPreview: 'נתיב תמונה ממוזערת (לא חובה)',
+    wallpaperHint: 'בחרו תמונה ש־Home Assistant מגיש בנתיב שמתחיל ב־‎/local/‎.',
+    addWallpaper: 'הוספת תמונה', updateWallpaper: 'עדכון תמונה', removeWallpaper: 'הסרת תמונה',
+    invalidWallpaperPath: 'הזינו נתיב מקומי לקובץ JPG, PNG, WebP או AVIF שמתחיל ב־‎/local/‎.',
     toolbar: 'סרגל ומסכים נוספים', fullscreen: 'הסתרת סרגל Home Assistant בדשבורד הזה',
     boilerTimerWithDetails: 'הצגת טיימר הדוד לצד התזמון או ההיסטוריה',
     scheduleSave: 'סקריפט לשמירת תזמון הדוד (אופציונלי)', scheduleDelete: 'סקריפט למחיקת תזמון הדוד (אופציונלי)',
@@ -1817,6 +1828,76 @@ export class Bayit9StrategyEditor extends HTMLElement {
     return panel;
   }
 
+  #wallpaperPanel(words, language) {
+    const current = () => normalizeSharedWallpapers(this.#config.shared_wallpapers);
+    const background = select([], '');
+    const updateBackground = () => {
+      const choices = [
+        ...Object.entries(BACKGROUNDS).map(([id, names]) => [id, names[language]]),
+        ...current().map(({ id, name }) => [id, name]),
+      ];
+      background.replaceChildren(...choices.map(([id, name]) => option(id, name)));
+      const selected = this.#config.background;
+      background.value = choices.some(([id]) => id === selected) ? selected : 'aurora';
+    };
+    updateBackground();
+    background.addEventListener('change', () => this.#commit({ background: background.value }));
+
+    const editList = () => {
+      const panel = node('div', { className:'stack' });
+      let selected = '';
+      function focus(target) {
+        requestAnimationFrame(() => target.isConnected && target.focus({ preventScroll:true }));
+      }
+      const render = (focusChoice = false) => {
+        const photos = current();
+        const record = photos.find(photo => photo.id === selected);
+        const picker = select([['', words.newWallpaper], ...photos.map(({id, name}) => [id, name])], record?.id ?? '');
+        picker.addEventListener('change', () => { selected = picker.value; render(true); });
+        const name = node('input', { value:record?.name ?? '', maxLength:80, required:true });
+        const path = node('input', { value:record?.path ?? '', placeholder:'/local/wallpapers/photo.webp',
+          maxLength:512, dir:'ltr', required:true });
+        const preview = node('input', { value:record?.preview ?? '', placeholder:'/local/wallpapers/preview.webp',
+          maxLength:512, dir:'ltr' });
+        for (const input of [name, path, preview]) input.addEventListener('input', () => input.setCustomValidity(''));
+        const save = button(record ? words.updateWallpaper : words.addWallpaper, () => {
+          for (const item of [path, preview]) {
+            const value = item.value.trim();
+            if ((item.required || value) && !normalizeSharedWallpaperPath(value)) item.setCustomValidity(words.invalidWallpaperPath);
+          }
+          if (!name.value.trim()) name.setCustomValidity(words.wallpaperName);
+          if (![name, path, preview].every(input => input.reportValidity())) return;
+          const random = record ? null : crypto.getRandomValues(new Uint32Array(2));
+          const id = record?.id ?? 'shared-' + Array.from(random, value => value.toString(36)).join('-');
+          const [photo] = normalizeSharedWallpapers([{ id, name:name.value, path:path.value.trim(), preview:preview.value.trim() }]);
+          if (!photo) return;
+          selected = id;
+          this.#commit({ shared_wallpapers:record ? photos.map(item => item.id === id ? photo : item) : [...photos, photo] });
+          updateBackground();
+          render(true);
+        });
+        const actions = node('div', { className:'actions' }, [save]);
+        if (record) actions.append(button(words.removeWallpaper, () => {
+          selected = '';
+          this.#commit({
+            shared_wallpapers:photos.filter(photo => photo.id !== record.id),
+            ...(this.#config.background === record.id && { background:'aurora' }),
+          });
+          updateBackground();
+          render(true);
+        }));
+        panel.replaceChildren(field(words.sharedWallpaperItem, picker), field(words.wallpaperName, name),
+          field(words.wallpaperPath, path), field(words.wallpaperPreview, preview), actions);
+        if (focusChoice) focus(picker);
+      };
+      render();
+      return [node('p', { textContent:words.wallpaperHint }), panel];
+    };
+
+    return [field(words.background, background),
+      disclosure(words.sharedWallpaper, this.#open.sharedWallpapers, open => { this.#open.sharedWallpapers = open; }, editList)];
+  }
+
   render() {
     if (!this.isConnected) return;
     const focused = this.shadowRoot.activeElement;
@@ -1847,7 +1928,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       pane(words.areas, 'rooms', () => this.#roomsPanel(words, language)),
       pane(words.appearance, 'appearance', () =>
         [node('div', { className: 'stack' }, [
-          appearance(words.background, 'background', Object.entries(BACKGROUNDS).map(([id, names]) => [id, names[language]]), 'aurora'),
+          ...this.#wallpaperPanel(words, language),
           appearance(words.layout, 'layout', [['classic', words.classic], ['header', words.header]], 'classic'),
           appearance(words.shape, 'shape', [['soft', words.soft], ['circle', words.circle], ['square', words.square]], 'soft'),
           checkbox(words.fullscreen, this.#config.fullscreen === true, value => this.#commit({fullscreen:value})),

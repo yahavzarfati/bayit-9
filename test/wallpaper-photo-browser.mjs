@@ -13,17 +13,34 @@ const files = new Map(await Promise.all([
 ].map(async ([file, contentType]) => [file, { contentType, body: await readFile(new URL(file, dist)) }])));
 
 const app = `
+  const shared = location.pathname.startsWith('/fixture-shared/');
+  const initial = {
+    type: 'custom:bayit-9', background: 'aurora', shared_wallpapers: [
+      { id:'shared-garden', name:'Garden photo', path:'/local/fixture/garden.webp', preview:'/local/fixture/garden-small.webp' },
+      { id:'shared-missing', name:'Missing photo', path:'/local/fixture/missing.webp' },
+      { id:'shared-redirect', name:'Redirected photo', path:'/local/fixture/redirect.webp' },
+    ],
+  };
+  const config = () => ({ strategy:shared ? JSON.parse(sessionStorage.getItem('shared-fixture') || JSON.stringify(initial)) : {} });
   const hass = {
-    user: { is_admin: false },
+    user: { is_admin: shared },
     locale: { language: 'en' },
     states: { 'light.studio': { state: 'off', attributes: { friendly_name: 'Studio light' } } },
     entities: { 'light.studio': { area_id: 'studio' } },
     areas: { studio: { area_id: 'studio', name: 'Studio' } },
-    callWS: async () => ({}),
+    async callWS(request) {
+      if (request.type === 'lovelace/dashboards/list') return [{ url_path:'fixture-shared', mode:'storage' }];
+      if (request.type === 'lovelace/config') return config();
+      if (request.type === 'lovelace/config/save') {
+        sessionStorage.setItem('shared-fixture',JSON.stringify(request.config.strategy));
+        return {};
+      }
+      return {};
+    },
   };
   const strategy = customElements.get('ll-strategy-dashboard-bayit-9');
   const card = document.createElement('bayit-dashboard');
-  card.setConfig(strategy.generate({}, hass).views[0].cards[0]);
+  card.setConfig(strategy.generate(config().strategy, hass).views[0].cards[0]);
   card.hass = hass;
   document.body.append(card);
 </script>`;
@@ -41,7 +58,14 @@ const server = http.createServer((req, res) => {
     const {contentType, body} = files.get(match[2]);
     res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=3600' });
     res.end(body);
-  } else if (url.pathname.startsWith('/fixture/')) {
+  } else if (['/local/fixture/garden.webp','/local/fixture/garden-small.webp','/local/fixture/night.webp'].includes(url.pathname)) {
+    const item = catalog.misty_lake.photo;
+    const { contentType, body } = files.get(url.pathname.endsWith('-small.webp') ? item.preview : item.full);
+    res.writeHead(200, { 'Content-Type':contentType });
+    res.end(body);
+  } else if (url.pathname === '/local/fixture/redirect.webp') {
+    res.writeHead(302, { Location:'/redirect-trap.webp' }).end();
+  } else if (url.pathname.startsWith('/fixture/') || url.pathname.startsWith('/fixture-shared/')) {
     const prefix = url.pathname.endsWith('marketplace') ? '/marketplace/frontend' : '/hacsfiles';
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(fixture(prefix + '/bayit-9/bayit-9.js?v=fixture'));
@@ -144,6 +168,84 @@ try {
       await page.locator('.shell[data-background=copper_dunes]').waitFor();
       assert.equal(await shellBackground(page), catalog.copper_dunes.background);
       console.log(engine + ' verified deferred same-origin previews, adaptive ink, late-load guard and saved fallbacks');
+      await page.close();
+
+      const family = await browser.newPage({ viewport:{ width:390, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+      family.setDefaultTimeout(10000);
+      const appearance = family.getByRole('dialog',{ name:'Appearance', exact:true });
+      const openSettings = async () => {
+        if (!await appearance.isVisible()) await family.getByRole('button',{ name:'Appearance', exact:true }).tap();
+        await appearance.waitFor();
+      };
+      const userFiles = [];
+      family.on('request', req => {
+        if (req.url().includes('/local/') || req.url().endsWith('/redirect-trap.webp')) userFiles.push(new URL(req.url()).pathname);
+      });
+      await family.goto(origin + '/fixture-shared/' + fixtureName);
+      await family.locator('.shell[data-background=aurora]').waitFor();
+      await family.getByRole('button',{ name:'Appearance', exact:true }).tap();
+      const familyGallery = family.locator('.wallpaper-gallery');
+      await familyGallery.locator('summary').tap();
+      assert.deepEqual(userFiles,[]);
+      const previewRequest = family.waitForResponse(res => res.url().endsWith('garden-small.webp') && res.ok());
+      await familyGallery.getByRole('button',{name:'Shared photos',exact:true}).tap();
+      await previewRequest;
+      assert.ok(!userFiles.includes('/local/fixture/garden.webp'), 'The supplied miniature should load without the full photo');
+      const garden = familyGallery.getByRole('button',{name:'Garden photo',exact:true});
+      await garden.tap();
+      await family.locator('.shell[data-background=shared-garden]').waitFor();
+      assert.match(await shellBackground(family), /blob:/);
+      await family.locator('.room[data-wallpaper-ink]').waitFor();
+      for (const name of ['Missing photo','Redirected photo']) {
+        await familyGallery.getByRole('button',{name,exact:true}).tap();
+        await familyGallery.getByText('Could not load this wallpaper.',{exact:true}).waitFor();
+        assert.equal(await garden.getAttribute('aria-pressed'),'true');
+      }
+      assert.ok(!userFiles.includes('/redirect-trap.webp'), 'The shared wallpaper cannot follow an HTTP redirect');
+      assert.equal(await family.locator('.appearance-layout').getAttribute('open'),null);
+      await family.getByRole('button',{name:'Save as household defaults',exact:true}).tap();
+      await family.waitForFunction(() => JSON.parse(sessionStorage.getItem('shared-fixture') ?? '{}').background === 'shared-garden');
+      await family.evaluate(() => localStorage.clear());
+      await family.reload();
+      await family.locator('.shell[data-background=shared-garden]').waitFor();
+
+      await openSettings();
+      await family.getByRole('button',{name:'Customize home',exact:true}).tap();
+      const setup = family.getByRole('dialog',{name:'Customize home',exact:true});
+      await setup.getByText('Appearance',{exact:true}).tap();
+      await setup.getByText('Shared photos',{exact:true}).tap();
+      const photoName = setup.getByLabel('Photo name',{exact:true});
+      const photoField = setup.getByLabel('Local image path',{exact:true});
+      await photoName.fill('Night photo');
+      await photoField.fill('https://elsewhere.example/night.webp');
+      await setup.getByRole('button',{name:'Add photo',exact:true}).tap();
+      assert.equal(await photoField.evaluate(field => field.checkValidity()),false);
+      await photoField.fill('/local/fixture/night.webp');
+      await setup.getByRole('button',{name:'Add photo',exact:true}).tap();
+      const addedId = await setup.getByLabel('Shared wallpaper',{exact:true}).inputValue();
+      assert.match(addedId,/^shared-/);
+      await setup.getByLabel('Wallpaper',{exact:true}).selectOption(addedId);
+      await setup.getByRole('button',{name:'Save dashboard',exact:true}).tap();
+      await setup.waitFor({state:'hidden'});
+      await family.reload();
+      await family.locator('.shell[data-background="' + addedId + '"]').waitFor();
+      const saved = await family.evaluate(() => JSON.parse(sessionStorage.getItem('shared-fixture')));
+      assert.equal(saved.background,addedId);
+      assert.deepEqual(saved.shared_wallpapers.find(item=>item.id===addedId),
+        { id:addedId, name:'Night photo', path:'/local/fixture/night.webp' });
+      await openSettings();
+      await family.getByRole('button',{name:'Customize home',exact:true}).tap();
+      await setup.getByText('Appearance',{exact:true}).tap();
+      await setup.getByText('Shared photos',{exact:true}).tap();
+      await setup.getByLabel('Shared wallpaper',{exact:true}).selectOption(addedId);
+      await setup.getByRole('button',{name:'Remove photo',exact:true}).tap();
+      await setup.getByRole('button',{name:'Save dashboard',exact:true}).tap();
+      await setup.waitFor({state:'hidden'});
+      await family.reload();
+      await family.locator('.shell[data-background=aurora]').waitFor();
+      assert.ok(!(await shellBackground(family)).includes('blob:'));
+      await family.close();
+      console.log(engine + ' verified shared photo gallery, safe local paths, household save and editor add/remove');
     } finally {
       await browser.close();
     }
