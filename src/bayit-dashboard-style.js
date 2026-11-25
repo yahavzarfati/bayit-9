@@ -823,6 +823,9 @@ export const styles = `
     grid-template-columns: repeat(auto-fit,minmax(min(44px,100%),1fr));
     gap: 4px;
   }
+  @container (max-width: 420px) {
+    .device[data-room-compact-device=media_player] .basic-actions { column-gap: 1px; }
+  }
   .device[data-room-compact-device] .basic-actions .control-button {
     min-width: 0;
     padding: 4px;

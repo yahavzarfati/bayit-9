@@ -7554,6 +7554,26 @@ async function assertCompactRoomDevicePair(browser) {
       await room.waitFor();
       assert.deepEqual(await calls(),[]);
 
+      await attrs(media,{is_volume_muted:true});
+      await state(media,'on');
+      await action(tv,'media_play').waitFor();
+      await action(tv,'unmute').waitFor();
+      assert.deepEqual(await actions(tv),['turn_off','media_play','unmute']);
+      for (const width of [391,320]) {
+        await page.setViewportSize({width,height:844});
+        const geometry = await tv.locator('.basic-actions > button').evaluateAll(controls => controls.map(button => {
+          const rect = button.getBoundingClientRect();
+          const lane = button.parentElement.getBoundingClientRect();
+          return { x:rect.x, top:rect.top, width:rect.width, height:rect.height,
+            inside:rect.left >= lane.left && rect.right <= lane.right + 0.01 };
+        }));
+        assert.equal(geometry.length,3);
+        assert.ok(geometry.every(target=>target.width >= 44 && target.height >= 44 && target.inside), JSON.stringify(geometry));
+        assert.equal(new Set(geometry.map(target=>target.top)).size,width === 391 ? 1 : 2,JSON.stringify(geometry));
+        assert.ok(geometry[0].x < geometry[1].x);
+        if (width === 391) assert.ok(geometry[1].x < geometry[2].x);
+      }
+
       await state(media,'off');
       const placeholder = tv.locator('[data-room-mute-placeholder]');
       await placeholder.waitFor();
