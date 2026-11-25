@@ -878,6 +878,16 @@ export function isAutomationScriptToggle(kind, section, item) {
     item.command === 'toggle_script' && idForDomain(item.entity, 'script');
 }
 
+export function supportsSecurityDangerAction(kind, section, item) {
+  return kind === 'security' && section === 'actions' && item?.role === 'action' &&
+    item.command === 'run_script' && Boolean(idForDomain(item.entity, 'script')) &&
+    (item.confirmation === true || (typeof item.confirmation === 'string' && Boolean(item.confirmation.trim())));
+}
+
+export function isSecurityDangerAction(kind, section, item) {
+  return item?.action_appearance === 'danger' && supportsSecurityDangerAction(kind, section, item);
+}
+
 export function isVacuumProgramAction(kind, section, item) {
   return kind === 'vacuum' && section === 'actions' && item?.role === 'action' &&
     item.command === 'vacuum_program' && Boolean(idForDomain(item.entity, 'button'));
@@ -1056,6 +1066,7 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
       const vacuumPanel = linkedGraph && !graphRoom && vacuumPanels.has(item.vacuum_panel_id) ? item.vacuum_panel_id : undefined;
       const accent = kind === 'calendar' && domain === 'calendar' ? calendarAccent(item.accent_color) : undefined;
       const readout = normalizeToolbarReadout(kind, section, item);
+      const dangerAction = isSecurityDangerAction(kind, section.kind, item);
       const seriesColor = comparison && sensorSeriesColor(item);
       const forecast = supportsHourlyWeatherForecast(kind, section, item);
       const hourlyForecast = forecast && item?.hourly_forecast === true;
@@ -1063,7 +1074,8 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
       const horizonCard = item?.horizon_card === true && supportsHorizonCard(kind, section, item);
       return [{ ...descriptor, ...(name && { name }), ...(ROOM_ICON.test(icon) && { icon }),
         ...(role && { role }), ...(command && { command }),
-        ...(confirmation !== undefined && { confirmation }), ...(hasGraphHours && { graph_hours: graphHours }),
+        ...(confirmation !== undefined && { confirmation }), ...(dangerAction && { action_appearance: 'danger' }),
+        ...(hasGraphHours && { graph_hours: graphHours }),
         ...(graphRoom && { graph_room_id: graphRoom }), ...(vacuumPanel && { vacuum_panel_id: vacuumPanel }),
         ...(accent && { accent_color: accent }), ...(readout && { readout }),
         ...(seriesColor && { series_color: seriesColor }), ...(hourlyForecast && { hourly_forecast: true }),

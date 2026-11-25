@@ -84,14 +84,38 @@ const readouts = options.has('readouts') && {
   ],
 };
 if (readouts) {
+  if (options.has('localized-readouts')) {
+    const names = options.has('he') ? ['התראה בבית', 'סטטוס', 'זמן להתמגן', 'כל האזורים']
+      : ['Home alert', 'Status', 'Shelter time', 'All areas'];
+    readouts.entities.forEach((item, index) => { item.name = names[index]; });
+  }
   for (const [item, state] of readouts.entities.map((item, index) => [item, ['on', 'SAFE', '15', 'off'][index]])) {
     hass.states[item.entity] = { state, attributes: { friendly_name: item.name } };
     hass.entities[item.entity] = {};
   }
 }
 if (options.has('two-readouts') && readouts) readouts.entities = readouts.entities.slice(0, 2);
+const securityActions = options.has('danger-action') && { kind: 'actions', entities: [
+  { entity: 'script.fixture_secure', name: 'Secure fixture', role: 'action', icon: 'mdi:shield-lock',
+    command: 'run_script', confirmation: 'Confirm fixture action?', action_appearance: 'danger' },
+  { entity: 'script.fixture_neutral', name: 'Neutral fixture', role: 'action', command: 'run_script', confirmation: true },
+  { entity: 'script.fixture_immediate', name: 'Immediate fixture', role: 'action',
+    command: 'run_script', confirmation: false, action_appearance: 'danger' },
+] };
+if (securityActions) {
+  for (const item of securityActions.entities) {
+    hass.states[item.entity] = { state: 'off', attributes: { friendly_name: item.name } };
+    hass.entities[item.entity] = {};
+  }
+  hass.services = { ...hass.services, script: { turn_on: {} } };
+  hass.callWS = async request => {
+    tracker.calls.push(request);
+    return {};
+  };
+}
+const sections = [securityActions, readouts].filter(Boolean);
 const config = { type: 'custom:bayit-9', toolbar: [
-  { kind: 'security', entities: ['lock.fixture'], ...(readouts && { sections: [readouts] }), oref_map: { enabled: !options.has('disabled'), auto_fit: false,
+  { kind: 'security', entities: ['lock.fixture'], ...(sections.length && { sections }), oref_map: { enabled: !options.has('disabled'), auto_fit: false,
     hebrew_basemap: false, show_pre_alert: false, show_location: true, show_home: true,
     tileLayer: 'https://fixture.invalid/', entities: ['zone.home'] } },
   { kind: 'settings' },
@@ -321,6 +345,91 @@ try {
       assert.deepEqual(await tiles.locator('.tile-state').allTextContents(), ['Unknown state', 'Normal', 'waiting', 'Unavailable']);
       assert.equal(await strip.locator('.security-readout[data-danger]').count(), 0);
       assert.deepEqual(await page.evaluate(() => ({ details: tracker.details, calls: tracker.calls })), { details: [], calls: [] });
+
+      for (const he of [false, true]) {
+        const localeFlag = he ? '&he' : '';
+        const openSecurity = () => page.getByRole('button', { name: he ? 'אבטחה' : 'Security', exact: true }).click();
+        await page.setViewportSize({ width: 391, height: 844 });
+        await openFixture('?readouts&localized-readouts&disabled' + localeFlag);
+        await openSecurity();
+        const caption = tiles.first().locator('.tile-label');
+        assert.equal(await caption.textContent(), he ? 'התראה בבית' : 'Home alert');
+        for (const width of [391, 320]) {
+          await page.setViewportSize({ width, height: 844 });
+          const placements = await tiles.evaluateAll(items => items.map(tile => {
+            const rect = tile.getBoundingClientRect();
+            const caption = tile.querySelector('.tile-label');
+            return { x:rect.x, top:rect.top, left:rect.left, right:rect.right,
+              direction:getComputedStyle(tile).direction, captionHeight:caption.getBoundingClientRect().height };
+          }));
+          assert.ok(placements.every(tile => tile.left >= 0 && tile.right <= width && tile.direction === (he ? 'rtl' : 'ltr')));
+          assert.ok(placements[0].captionHeight <= 15);
+          assert.equal(placements[0].top, placements[1].top);
+          assert.ok(placements[0].x < placements[1].x);
+          if (width === 391) {
+            assert.equal(placements[0].top, placements[3].top);
+            assert.ok(placements[1].x < placements[2].x && placements[2].x < placements[3].x);
+          } else {
+            assert.ok(placements[1].top < placements[2].top);
+            assert.ok(placements[2].x < placements[3].x);
+            assert.equal(placements[2].top, placements[3].top);
+          }
+        }
+        assert.deepEqual(await page.evaluate(() => tracker.calls), []);
+
+        await page.setViewportSize({ width: 391, height: 844 });
+        await openFixture('?danger-action&disabled' + localeFlag);
+        await openSecurity();
+        const action = page.getByRole('button', { name: 'Secure fixture', exact: true });
+        const neutral = page.getByRole('button', { name: 'Neutral fixture', exact: true });
+        const immediate = page.getByRole('button', { name: 'Immediate fixture', exact: true });
+        await action.waitFor();
+        assert.equal(await action.getAttribute('data-security-danger'), '');
+        assert.equal(await neutral.getAttribute('data-security-danger'), null);
+        assert.equal(await immediate.getAttribute('data-security-danger'), null);
+        assert.notEqual(await action.evaluate(button => getComputedStyle(button).borderTopColor),
+          await neutral.evaluate(button => getComputedStyle(button).borderTopColor));
+        await action.click();
+        const prompt = page.getByRole('dialog', { name: he ? 'אישור פעולה' : 'Confirm action', exact: true });
+        await prompt.getByText('Confirm fixture action?', { exact: true }).waitFor();
+        assert.deepEqual(await page.evaluate(() => tracker.calls), []);
+        await prompt.getByRole('button', { name: he ? 'ביטול' : 'Cancel', exact: true }).click();
+        assert.deepEqual(await page.evaluate(() => tracker.calls), []);
+        await action.click();
+        await prompt.getByRole('button', { name: he ? 'אישור' : 'Confirm', exact: true }).click();
+        await page.waitForFunction(() => tracker.calls.length === 1);
+        assert.deepEqual(await page.evaluate(() => tracker.calls),
+          [{ type:'call_service', domain:'script', service:'turn_on', service_data:{}, target:{ entity_id:'script.fixture_secure' } }]);
+        await page.evaluate(() => tracker.setState('script.fixture_secure', 'unavailable'));
+        await page.locator('[data-security-danger]').waitFor({ state:'detached' });
+
+        await openFixture('?danger-action&disabled&editor' + localeFlag);
+        const editor = page.locator('#editor');
+        await editor.getByText(he ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens', { exact: true }).click();
+        await editor.getByRole('button', { name: 'Secure fixture', exact: true }).click();
+        const warning = editor.getByLabel(he ? 'הדגשת הפעולה באדום' : 'Highlight this action in red', { exact: true });
+        const confirmation = editor.getByLabel(he ? 'אישור פעולה' : 'Confirmation', { exact: true });
+        const saved = () => page.evaluate(() => tracker.draft.toolbar[0].sections[0].entities[0]);
+        assert.equal(await warning.isChecked(), true);
+        await warning.uncheck();
+        assert.equal((await saved()).action_appearance, undefined);
+        await warning.check();
+        assert.equal((await saved()).action_appearance, 'danger');
+        await confirmation.selectOption('skip');
+        assert.equal(await warning.isVisible(), false);
+        assert.equal((await saved()).action_appearance, undefined);
+        assert.equal((await saved()).confirmation, false);
+        await confirmation.selectOption('ask');
+        assert.equal(await warning.isVisible(), true);
+        assert.equal(await warning.isChecked(), false);
+        await warning.check();
+        assert.equal((await saved()).confirmation, true);
+        await editor.getByLabel(he ? 'הפעלת התסריט מהכפתור' : 'Run script from this button', { exact: true }).uncheck();
+        assert.equal(await warning.count(), 0);
+        assert.equal((await saved()).action_appearance, undefined);
+        assert.deepEqual(await page.evaluate(() => tracker.calls), []);
+      }
+      await page.setViewportSize({ width: 390, height: 844 });
 
       await openFixture('?readouts&disabled&two-readouts');
       await security();

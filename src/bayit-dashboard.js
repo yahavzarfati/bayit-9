@@ -1,7 +1,7 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
 import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isToolbarReadouts, isVacuumProgramAction,
-  isCompactAutomationActions, isEnergyReadingCards, isReadingCards, isWeatherReadingsList,
+  isCompactAutomationActions, isEnergyReadingCards, isReadingCards, isSecurityDangerAction, isWeatherReadingsList,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeRoomIcon, normalizeShortcutDetailEntities,
   normalizeRoomVacuumSummary, normalizeToolbarReadout, normalizeRoomTemperatureGraphColor, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
   supportsRoomSectionColumns,
@@ -446,6 +446,7 @@ export function normalizeDashboardConfig(config = {}) {
           const entity = normalizeEntity(raw);
           if (isAutomationScriptToggle(item.kind, section.kind, raw)) entity.command = 'toggle_script';
           if (isVacuumProgramAction(item.kind, section.kind, raw)) entity.command = 'vacuum_program';
+          if (isSecurityDangerAction(item.kind, section.kind, raw)) entity.action_appearance = 'danger';
           const readout = normalizeToolbarReadout(item.kind, section, raw);
           if (readout) entity.readout = readout;
           const seriesColor = comparison && sensorSeriesColor(raw);

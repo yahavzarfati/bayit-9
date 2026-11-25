@@ -4,7 +4,7 @@ import {
   securityReadoutLabelStates, selectableRoomEntities, sensorComparisonMaxHours, sensorComparisonOptions,
   SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
   supportsCompactAutomationActions, supportsCompactToolbarStatus, supportsHorizonCard, supportsHourlyWeatherForecast, supportsReadingCards,
-  supportsOverviewLightsOff, supportsToolbarReadouts, supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
+  supportsOverviewLightsOff, supportsSecurityDangerAction, supportsToolbarReadouts, supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
 } from './strategy-model.js';
@@ -40,7 +40,8 @@ const WORDS = {
     overviewActiveOnly: 'Show active devices only', overviewClosing: 'Include closing covers',
     deviceLabel: 'Device label', deviceRole: 'Display as', editDevice: 'Edit device display',
     ask: 'Ask before running', skip: 'Run immediately', askCustom: 'Custom confirmation',
-    confirmation: 'Confirmation', confirmationText: 'Confirmation message', graphHours: 'History hours',
+    confirmation: 'Confirmation', confirmationText: 'Confirmation message', dangerAction: 'Highlight this action in red',
+    graphHours: 'History hours',
     graphDestination: 'Open on graph tap', noGraphLink: 'No shortcut', graphLinkUnavailable: 'Destination unavailable', graphRoom: 'Room',
     runScript: 'Run script from this button',
     scriptButton: 'Script button behavior', scriptStartOnly: 'Start script only', scriptToggle: 'Start or stop script',
@@ -118,7 +119,8 @@ const WORDS = {
     overviewActiveOnly: 'הצגת מכשירים פעילים בלבד', overviewClosing: 'הצגת תריסים בזמן סגירה',
     deviceLabel: 'תווית המכשיר', deviceRole: 'אופן התצוגה', editDevice: 'עריכת תצוגת המכשיר',
     ask: 'בקשת אישור לפני ההפעלה', skip: 'הפעלה מיידית', askCustom: 'הודעת אישור מותאמת',
-    confirmation: 'אישור פעולה', confirmationText: 'הודעת אישור', graphHours: 'שעות היסטוריה',
+    confirmation: 'אישור פעולה', confirmationText: 'הודעת אישור', dangerAction: 'הדגשת הפעולה באדום',
+    graphHours: 'שעות היסטוריה',
     graphDestination: 'פתיחה בלחיצה על הגרף', noGraphLink: 'ללא קיצור דרך', graphLinkUnavailable: 'היעד אינו זמין', graphRoom: 'חדר',
     runScript: 'הפעלת התסריט מהכפתור',
     scriptButton: 'פעולת כפתור התרחיש', scriptStartOnly: 'הפעלת תרחיש בלבד', scriptToggle: 'הפעלה או עצירה של תרחיש',
@@ -433,7 +435,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       ...(role.value && role.value !== 'forecast' && { hourly_forecast: undefined, clock_weather_card: undefined }),
       ...(role.value && role.value !== 'sun' && { horizon_card: undefined }),
       ...(role.value !== 'graph' && { graph_hours: undefined, graph_room_id: undefined, vacuum_panel_id: undefined, series_color: undefined }),
-      ...(role.value !== 'action' && { command: undefined,
+      ...(role.value !== 'action' && { command: undefined, action_appearance: undefined,
         ...(toolbar[entryIndex].sections[sectionIndex].entities[index]?.confirmation === false && { confirmation: undefined }) }),
     }, true));
     const fields = [
@@ -560,6 +562,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     if (record.role === 'action' && domain === 'script') {
       const setCommand = (command, focus) => save({
         command,
+        ...(command !== 'run_script' && { action_appearance: undefined }),
         ...(!command && toolbar[entryIndex].sections[sectionIndex].entities[index]?.confirmation === false
           && { confirmation: undefined }),
       }, true, focus);
@@ -586,20 +589,37 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       const canSkip = allowProgram || record.command === 'run_script' || (allowToggle && record.command === 'toggle_script');
       const confirmation = select([['', words.automatic], ['ask', words.ask],
         ...(canSkip ? [['skip', words.skip]] : []), ['custom', words.askCustom]], current);
+      const securityAction = supportsSecurityDangerAction(toolbar[entryIndex].kind, section.kind,
+        { ...record, confirmation: true });
+      const guarded = securityAction && supportsSecurityDangerAction(toolbar[entryIndex].kind, section.kind, record);
+      const danger = securityAction && node('input', {
+        type: 'checkbox', checked: record.action_appearance === 'danger' && guarded,
+      });
+      const dangerField = danger && node('label', { className: 'check', hidden: !guarded }, [danger, words.dangerAction]);
+      if (danger) danger.addEventListener('change', () => save({ action_appearance: danger.checked ? 'danger' : undefined }));
+      const saveConfirmation = value => {
+        const explicit = value === true || typeof value === 'string';
+        if (danger) {
+          dangerField.hidden = !explicit;
+          if (!explicit) danger.checked = false;
+        }
+        save({ confirmation: value, ...(!explicit && { action_appearance: undefined }) });
+      };
       const message = textField(words.confirmationText,
         typeof record.confirmation === 'string' ? record.confirmation : '',
-        value => save({ confirmation: value || true }), { maxLength: 200 });
+        value => saveConfirmation(value || true), { maxLength: 200 });
       message.field.hidden = current !== 'custom';
       confirmation.addEventListener('change', () => {
         message.field.hidden = confirmation.value !== 'custom';
         if (confirmation.value === 'custom') {
-          save({ confirmation: message.input.value.trim() || true });
+          saveConfirmation(message.input.value.trim() || true);
           message.input.focus();
         } else if (allowProgram && confirmation.value !== 'ask') {
           save({ command: confirmation.value === 'skip' ? 'vacuum_program' : undefined, confirmation: undefined });
-        } else save({ confirmation: ({ ask: true, skip: false })[confirmation.value] });
+        } else saveConfirmation(({ ask: true, skip: false })[confirmation.value]);
       });
       fields.push(field(words.confirmation, confirmation), message.field);
+      if (dangerField) fields.push(dangerField);
     }
     return node('div', { className: 'toolbar-editor-detail' }, fields);
   }

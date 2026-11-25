@@ -2053,6 +2053,35 @@ test('Security readouts require the explicit status layout and supported source 
   assert.ok(allSections.slice(1).flatMap(section => section.entities).every(item => !Object.hasOwn(item, 'readout')));
 });
 
+test('security danger appearance is opt-in on a confirmed Security script action', () => {
+  const hass = home();
+  const script = 'script.fixture_secure';
+  hass.states[script] = { state: 'off', attributes: {} };
+  hass.entities[script] = {};
+  const danger = { entity: script, role: 'action', command: 'run_script', action_appearance: 'danger', confirmation: true };
+  const cases = [
+    ['security', 'actions', {}, 'danger'],
+    ['security', 'actions', { confirmation: ' Proceed? ' }, 'danger'],
+    ['security', 'actions', { action_appearance: undefined }, undefined],
+    ['security', 'actions', { action_appearance: 'critical' }, undefined],
+    ['security', 'actions', { confirmation: false }, undefined],
+    ['security', 'actions', { confirmation: '   ' }, undefined],
+    ['security', 'actions', { confirmation: undefined }, undefined],
+    ['security', 'actions', { command: undefined }, undefined],
+    ['security', 'actions', { role: 'status' }, undefined],
+    ['security', 'status', {}, undefined],
+    ['automations', 'actions', {}, undefined],
+  ];
+  for (const [kind, section, changes, expected] of cases) {
+    const { toolbar } = generateDashboard({ toolbar: [{ kind, sections: [
+      { kind: section, entities: [{ ...danger, ...changes }] },
+    ] }] }, hass).views[0].cards[0];
+    const [item] = toolbar[0].sections[0].entities;
+    assert.equal(item.action_appearance, expected);
+    if (changes.confirmation === ' Proceed? ') assert.equal(item.confirmation, 'Proceed?');
+  }
+});
+
 test('Vacuum readouts retain only validated settings on explicit readings sections', () => {
   const hass = home();
   for (const entity of ['sensor.fixture_state', 'sensor.fixture_invalid', 'select.fixture_floor', 'binary_sensor.fixture_dock',

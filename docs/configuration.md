@@ -233,6 +233,8 @@ For a vacuum in a room, choose a panel under **Vacuum panel**, then select **Tap
 
 The Presence toolbar button uses different icons for zero, one, or multiple home occupants. It counts the people and device trackers configured for that panel and uses their reported Home Assistant states. **Change icon with the number of people at home** controls this behavior in the toolbar editor. In YAML, use `presence_dynamic_icon: true` or `false` on the Presence entry. An explicit `icon` defaults to a fixed icon and is retained when switching modes.
 
+In a **Security** actions section, a script configured with **Run script from this button** and an explicit confirmation can enable **Highlight this action in red**. In YAML set `action_appearance: danger` on that action alongside `role: action`, `command: run_script` and `confirmation: true` or a custom confirmation message.
+
 In a **Security** status section, enable **Show compact read-only status tiles** to display sensors and binary sensors as passive readouts. Edit each sensor to customize its labels or the unit shown beside a numeric value. Binary sensors can customize the on and off labels and highlight the reported on state in red. Unknown and unavailable states use the dashboard's standard messages.
 
 In YAML use `layout: readouts` on the status section. A binary sensor can use `readout: { state_labels: { 'on': Active, 'off': Quiet }, danger_on: true }`. A sensor can set `state_labels` for the reported `safe` and `ok` states, and `unit` for numeric readings.

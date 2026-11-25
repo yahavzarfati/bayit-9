@@ -218,6 +218,9 @@ export function createToolbarPanel(kind, configuration, context) {
       if (kind === 'automations' && itemKind === 'action' && model.domain === 'lock') {
         tile.toggleAttribute('data-automation-unlocked', model.available && model.state === 'unlocked');
       }
+      if (kind === 'security' && item.action_appearance === 'danger') {
+        tile.toggleAttribute('data-security-danger', action === 'run_script' && model.actions.run_script.requiresConfirmation === true);
+      }
       tile.disabled = (itemKind === 'action' && pending(item.entity)) || (!action && !model.actions.more_info);
       tile.setAttribute('aria-busy', String(pending(item.entity)));
       label(tile, model.name + (showState ? ' · ' + value.state : ''));
@@ -1120,12 +1123,16 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
     grid-template-columns: repeat(auto-fit,minmax(min(100%,max(60px,var(--readout-width))),1fr)); gap: 6px;
   }
   .toolbar-section[data-layout=readouts] > .toolbar-section-items > :not(.toolbar-readout) { grid-column: 1 / -1; }
+  .toolbar-section[data-security-section][data-layout=readouts] > .toolbar-section-items { direction: ltr; }
+  .shell[dir=rtl] .toolbar-section[data-security-section][data-layout=readouts] > .toolbar-section-items > * { direction: rtl; }
   .toolbar-readout {
     display: grid; box-sizing: border-box; justify-items: center; align-content: center; gap: 3px; min-width: 0; min-height: 62px;
     padding: 5px 4px; border: 1px solid var(--soft-line); border-radius: 8px; background: var(--control); text-align: center;
   }
   .toolbar-readout ha-icon { display: block; --mdc-icon-size: 18px; width: 18px; height: 18px; color: var(--secondary); }
   .toolbar-readout :is(.tile-label,.tile-state) { font-size: 11px; line-height: 1.15; }
+  .security-readout { padding-inline: 2px; }
+  .security-readout .tile-label { font-weight: 700; }
   .toolbar-readout[data-danger] { border-color: rgba(255,187,187,.42); background: rgba(255,146,151,.16); }
   .toolbar-readout[data-danger] :is(ha-icon,.tile-state) { color: var(--critical); }
   @media (max-width: 350px) {
@@ -1158,6 +1165,16 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .compact-lock-action[data-lock-transition]:disabled { color: var(--lock-pending-ink,#fbbf24); opacity: 1; }
   .tile-row { display: grid; justify-items: center; align-content: center; gap: 5px; min-height: 80px; width: 100%;
     padding: 8px 6px; border: 1px solid var(--soft-line); border-radius: 12px; background: var(--control); text-align: center; }
+  .tile-row[data-security-danger] {
+    --security-danger-ink: #ff8585;
+    background: rgba(255,133,133,.14);
+    border-color: color-mix(in srgb,var(--security-danger-ink) 52%,transparent);
+  }
+  .modal[data-wallpaper-ink=dark] .tile-row[data-security-danger] { --security-danger-ink: var(--critical); }
+  .tile-row[data-security-danger] .tile-mark > ha-icon { color: var(--security-danger-ink); }
+  @media (forced-colors: active) {
+    .tile-row[data-security-danger] { border-color: ButtonText; background: ButtonFace; }
+  }
   .toolbar-section[data-layout=compact-actions] :is(.toolbar-section-items,.script-toggle) > .tile-row {
     grid-template-columns: 25px minmax(0,1fr); grid-template-areas: "icon label" "icon state";
     justify-items: start; align-items: center; gap: 1px 9px; min-height: 56px; padding: 5px 12px;
