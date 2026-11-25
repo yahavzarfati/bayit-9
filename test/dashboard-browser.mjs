@@ -3911,7 +3911,19 @@ try {
         await currentRoom.selectOption('studio');
         const deviceMode = membershipSetup.getByLabel('Devices in this room', { exact: true });
         assert.equal(await deviceMode.inputValue(), 'auto');
+        await deviceMode.evaluate(control => control.scrollIntoView({ block: 'center' }));
+        const previousTop = (await deviceMode.boundingBox()).y;
         await deviceMode.selectOption('manual');
+        const deviceSearch = membershipSetup.getByRole('searchbox', { name: 'Find a device to add', exact: true });
+        const devicePicker = membershipSetup.getByLabel('Available devices', { exact: true });
+        const modalBody = await membershipSetup.locator('.modal-body').boundingBox();
+        const modeBounds = await deviceMode.boundingBox();
+        const searchBounds = await deviceSearch.boundingBox();
+        const pickerBounds = await devicePicker.boundingBox();
+        assert.ok(Math.abs(modeBounds.y - previousTop) <= 2, 'Changing membership should preserve the room editor scroll position');
+        assert.ok(searchBounds.y - modeBounds.y - modeBounds.height < 50, 'Device search should follow the membership mode');
+        assert.ok(pickerBounds.y + pickerBounds.height < modalBody.y + modalBody.height, 'The device picker should be reachable without more scrolling');
+        assert.equal(await deviceMode.evaluate(control => control.getRootNode().activeElement === control), true);
         const removal = membershipSetup.getByRole('button', { name: 'Remove · Room heater', exact: true });
         assert.equal(await removal.count(), empty ? 0 : 1);
         assert.equal(await membershipSetup.getByRole('button', { name: 'Remove · Desk lamp', exact: true }).count(), 0);
@@ -3926,15 +3938,30 @@ try {
         await deviceMode.selectOption('manual');
         assert.equal(await removal.count(), empty ? 0 : 1);
         assert.equal(await membershipSetup.getByRole('button', { name: 'Remove · Desk lamp', exact: true }).count(), 0);
+        if (!empty) {
+          await deviceSearch.fill('Lounge');
+          assert.deepEqual(await devicePicker.locator('option').evaluateAll(options => options.map(option => option.value)), ['', 'light.demo_lounge']);
+          await devicePicker.selectOption('light.demo_lounge');
+          await membershipSetup.getByRole('button', { name: 'Add device', exact: true }).tap();
+          assert.equal(await deviceSearch.inputValue(), 'Lounge');
+          assert.equal(await deviceSearch.evaluate(control => control.getRootNode().activeElement === control), true);
+          const removeLounge = membershipSetup.getByRole('button', { name: 'Remove · Lounge lamp', exact: true });
+          await removeLounge.press('Enter');
+          assert.equal(await removal.evaluate(control => control.getRootNode().activeElement === control), true);
+          await devicePicker.selectOption('light.demo_lounge');
+          await membershipSetup.getByRole('button', { name: 'Add device', exact: true }).tap();
+        }
 
         await saveRoomConfig(membershipSetup);
         await before.waitFor();
         assert.equal(await before.locator('[data-entity="light.demo_lamp"]').count(), 0);
+        assert.equal(await before.locator('[data-entity="light.demo_lounge"]').count(), empty ? 0 : 1);
         assert.equal(await movedLamp.count(), 1);
+        assert.equal(await membershipPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain).length), 0);
         assert.deepEqual(await membershipPage.evaluate(() =>
           JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.room_overrides), {
           lounge: { entities: ['light.demo_lamp'] },
-          studio: { entities: empty ? [] : ['switch.demo_heater'] },
+          studio: { entities: empty ? [] : ['switch.demo_heater', 'light.demo_lounge'] },
         });
         await membershipPage.close();
       }

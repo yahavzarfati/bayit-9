@@ -42,6 +42,7 @@ const WORDS = {
     moveUp: 'Move up', moveDown: 'Move down', hideRoom: 'Hide room',
     automaticDevices: 'Automatic', manualDevices: 'Choose devices and order',
     roomDevices: 'Devices in this room', deviceToAdd: 'Available devices', addDevice: 'Add device',
+    roomDeviceSearch: 'Find a device to add',
     readOnlyRoom: 'Show status only for selected room devices',
     applianceBadges: 'Appliance activity badges', applianceKind: 'Appliance', saveAppliance: 'Save badge', removeAppliance: 'Remove badge',
     applianceMissing: 'Choose the required sources to save this badge.',
@@ -117,6 +118,7 @@ const WORDS = {
     moveUp: 'העברה למעלה', moveDown: 'העברה למטה', hideRoom: 'הסתרת חדר',
     automaticDevices: 'בחירה אוטומטית', manualDevices: 'בחירת מכשירים וסדר',
     roomDevices: 'מכשירים בחדר', deviceToAdd: 'מכשירים זמינים', addDevice: 'הוספת מכשיר',
+    roomDeviceSearch: 'חיפוש מכשיר להוספה',
     readOnlyRoom: 'הצגת מצב בלבד למכשירים שנבחרו',
     applianceBadges: 'חיווי פעילות מכשירים', applianceKind: 'מכשיר', saveAppliance: 'שמירת חיווי', removeAppliance: 'הסרת חיווי',
     applianceMissing: 'בחרו את מקורות הנתונים הנדרשים לשמירת החיווי.',
@@ -410,12 +412,23 @@ export class Bayit9StrategyEditor extends HTMLElement {
 
   #commitRooms(change, focusKey) {
     this.#commit(change);
+    this.#renderRoomChange(focusKey);
+  }
+
+  #renderRoomChange(focusKey) {
+    // Replacing the form can reset scroll in the enclosing dashboard or Home Assistant dialog.
+    const scrollPositions = [];
+    for (let ancestor = this; ancestor; ancestor = ancestor.parentElement ?? ancestor.getRootNode().host) {
+      if (ancestor.scrollTop) scrollPositions.push([ancestor, ancestor.scrollTop]);
+    }
     this.render();
+    for (const [ancestor, top] of scrollPositions) ancestor.scrollTop = top;
     if (!focusKey) return;
     const matches = [...this.shadowRoot.querySelectorAll('[data-room-focus]')];
     const focus = matches.find(item => item.dataset.roomFocus === focusKey && !item.disabled)
       ?? matches.find(item => !item.disabled && item.dataset.roomFocus === focusKey.replace(/:(up|down)$/, (_, direction) => direction === 'up' ? ':down' : ':up'));
     focus?.focus({ preventScroll: true });
+    focus?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
 
   #roomOverride(room) {
@@ -513,8 +526,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     sectionPicker.dataset.roomFocus = 'room-section-edit';
     sectionPicker.addEventListener('change', () => {
       this.#sectionEditing = { roomId: room.id, id: sectionPicker.value };
-      this.render();
-      this.shadowRoot.querySelector('[data-room-focus="room-section-edit"]')?.focus({ preventScroll: true });
+      this.#renderRoomChange('room-section-edit');
     });
     const update = (section, focusKey) => saveSections(sections.map(item => item.id === active.id ? section : item), focusKey);
     const kind = select(ROOM_SECTION_TYPES.map(type => [type, typeTitle(type)]), active.kind);
@@ -741,6 +753,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const children = room.custom
       ? [node('h4', { className: 'room-choice-heading', textContent: words.roomDevices })]
       : [field(words.roomDevices, choice)];
+    const options = [];
     const chosen = this.#roomMembership(room, override, sections, language);
     const lights = chosen.filter(id => id.startsWith('light.'));
     const selectedCount = configuredIds(override.lighting_count_entities);
@@ -752,7 +765,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const available = manual || editCount || editShutdown
       ? new Map(selectableRoomEntities(this.#config, this.#hass).map(entry => [entry.entity, entry])) : undefined;
     if (chosen.length) {
-      children.push(this.#roomControlDisplay(room, chosen, words));
+      options.push(this.#roomControlDisplay(room, chosen, words));
       const selected = node('select', { multiple: true, size: Math.min(5, Math.max(2, chosen.length)) });
       for (const id of chosen) {
         const item = option(id, this.#hass.states?.[id]?.attributes?.friendly_name ?? id);
@@ -767,16 +780,16 @@ export class Bayit9StrategyEditor extends HTMLElement {
         else delete next.read_only_entities;
         this.#setRoomOverride(room.id, next, 'room-read-only');
       });
-      children.push(field(words.readOnlyRoom, selected));
+      options.push(field(words.readOnlyRoom, selected));
     }
     if (editCount) {
-      children.push(this.#roomTargetList(room, selectedCount, lights.map(id => available.get(id)).filter(Boolean), {
+      options.push(this.#roomTargetList(room, selectedCount, lights.map(id => available.get(id)).filter(Boolean), {
         setting:'lighting_count_entities', focus:'room-light-count', title:words.lightCount,
         hint:words.lightCountHint, reset:words.lightCountReset,
       }));
     }
     if (editShutdown) {
-      children.push(this.#roomTargetList(room, selectedShutdown, shutdown.map(id => available.get(id)).filter(Boolean), {
+      options.push(this.#roomTargetList(room, selectedShutdown, shutdown.map(id => available.get(id)).filter(Boolean), {
         setting:'turn_off_entities', focus:'room-turn-off', title:words.roomShutdown,
         hint:words.roomShutdownHint, reset:words.roomShutdownReset,
       }));
@@ -791,11 +804,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
       if (!targets.length) continue;
       const vacuum = kind === 'vacuum';
       const defaultName = vacuum ? words.roomVacuumDefault : words.roomMediaDefault;
-      const options = [['', words.roomMediaNone], ...targets.map(({ id, label }) =>
+      const panelOptions = [['', words.roomMediaNone], ...targets.map(({ id, label }) =>
         [id, label || (targets.length === 1 ? defaultName : id)])];
       const key = kind + '_panel_links';
       const chosenPanel = override[key]?.[id];
-      const input = select(options, targets.some(target => target.id === chosenPanel) ? chosenPanel : '');
+      const input = select(panelOptions, targets.some(target => target.id === chosenPanel) ? chosenPanel : '');
       const focusKey = 'room-panel-' + id;
       input.dataset.roomFocus = focusKey;
       input.addEventListener('change', () => {
@@ -808,9 +821,9 @@ export class Bayit9StrategyEditor extends HTMLElement {
         this.#setRoomOverride(room.id, next, focusKey);
       });
       const name = this.#hass.states?.[id]?.attributes?.friendly_name ?? id;
-      children.push(field((vacuum ? words.roomVacuumLink : words.roomMediaLink) + ' · ' + name, input));
+      options.push(field((vacuum ? words.roomVacuumLink : words.roomMediaLink) + ' · ' + name, input));
     }
-    if (!manual) return children;
+    if (!manual) return [...children, ...options];
 
     const areaNames = new Map(areas.map(area => [area.id, area.name]));
     const records = chosen.map(id => {
@@ -836,10 +849,15 @@ export class Bayit9StrategyEditor extends HTMLElement {
         const removed = new Set(chosen.filter(entity => !kept.has(entity)));
         next.sections = sections.map(section => ({ ...section, entities: section.entities.filter(entity => !removed.has(entity)) }));
       }
+      if (!focusKey) {
+        const removedIndex = chosen.findIndex((id, index) => id !== entities[index]);
+        const nextDevice = entities[Math.min(removedIndex, entities.length - 1)];
+        focusKey = nextDevice ? 'devices:' + nextDevice + ':remove' : 'room-device-search';
+      }
       this.#setRoomOverride(room.id, next, focusKey);
     };
-    children.push(records.length ? orderedList(records, change, words, words.remove, false, 'devices')
-      : node('p', { textContent: words.noDevices }));
+    const membership = records.length ? orderedList(records, change, words, words.remove, false, 'devices')
+      : node('p', { textContent: words.noDevices });
 
     const selected = new Set(chosen);
     const devices = [...available.values()].filter(device => !selected.has(device.entity)).map(device => ({
@@ -850,10 +868,9 @@ export class Bayit9StrategyEditor extends HTMLElement {
     for (const device of devices) nameCounts.set(device.name, (nameCounts.get(device.name) ?? 0) + 1);
 
     const picker = addPicker(words.deviceToAdd, [], words.addDevice, words.choose, id => {
-      this.#setRoomOverride(room.id, { ...override, entities: [...chosen, id] }, 'room-device-picker');
+      this.#setRoomOverride(room.id, { ...override, entities: [...chosen, id] }, 'room-device-search');
     });
-    picker.input.dataset.roomFocus = 'room-device-picker';
-    const filter = node('input', { type: 'search', placeholder: words.searchable, value: this.#roomDeviceQuery });
+    const filter = node('input', { type: 'search', value: this.#roomDeviceQuery });
     filter.dataset.roomFocus = 'room-device-search';
     const refresh = () => {
       const query = filter.value.trim().toLocaleLowerCase(language);
@@ -872,8 +889,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     };
     filter.addEventListener('input', () => { this.#roomDeviceQuery = filter.value; refresh(); });
     refresh();
-    children.push(field(words.searchable, filter), picker.wrapper);
-    return children;
+    return [...children, field(words.roomDeviceSearch, filter), picker.wrapper, membership, ...options];
   }
 
   #customRoomForm(rooms, selection, words) {
@@ -1036,8 +1052,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       picker.addEventListener('change', () => {
         this.#roomEditing = picker.value;
         this.#roomDeviceQuery = '';
-        this.render();
-        this.shadowRoot.querySelector('[data-room-focus="room-edit"]')?.focus({ preventScroll: true });
+        this.#renderRoomChange('room-edit');
       });
       const override = this.#roomOverride(active.id);
       const input = node('input', { value: override.name ?? '', maxLength: 80, placeholder: active.name, required: Boolean(active.custom) });
