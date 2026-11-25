@@ -225,12 +225,32 @@ export const styles = `
     line-height: 1.13;
     font-weight: 700;
   }
-  .room-title > ha-icon:first-child {
+  .room-title > ha-icon:first-child, .room-turn-off > ha-icon {
     grid-area: icon;
     width: 26px;
     height: 26px;
     --mdc-icon-size: 26px;
   }
+  .room:has(.room-turn-off) .room-title > ha-icon:first-child { visibility: hidden; }
+  .room-turn-off {
+    grid-area: title;
+    position: relative;
+    display: grid;
+    align-items: center;
+    justify-items: start;
+    align-self: end;
+    justify-self: start;
+    min-inline-size: 30px;
+    min-block-size: 26px;
+    margin-block-end: 3px;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+  }
+  .room-turn-off > ha-icon { grid-area: auto; }
+  .room-turn-off[aria-disabled=true] { cursor: not-allowed; }
+  .room-turn-off[aria-busy=true] { opacity: .55; }
   .room-title > :is(.room-name,span:first-of-type:not(.room-count)) {
     grid-area: label;
     min-width: 0;
@@ -260,6 +280,7 @@ export const styles = `
     grid-template-rows: 1fr;
     align-self: stretch;
   }
+  .shell[data-layout=header] .room-turn-off { align-self: center; margin-block-end: 0; }
   .shell[data-layout=header] .room-title > :is(.room-name,span:first-of-type:not(.room-count)) {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -759,7 +780,7 @@ export const styles = `
   @container (max-width: 373px) {
     .room { --shortcut-width: 39px; --shortcut-gap: 3px; padding: 6px; }
     .room-title { grid-template-columns: 21px minmax(0,1fr); font-size: 13px; }
-    .room-title > ha-icon:first-child { width: 21px; height: 21px; --mdc-icon-size: 21px; }
+    .room-title > ha-icon:first-child, .room-turn-off > ha-icon { width: 21px; height: 21px; --mdc-icon-size: 21px; }
   }
   @container (max-width: 346px) {
     .toolbar-actions { justify-content: center; }
@@ -772,11 +793,12 @@ export const styles = `
       grid-template-rows: auto 21px;
     }
     .shell[data-layout=header] .room-title > .room-name { text-align: center; }
+    .shell[data-layout=header] .room-turn-off { align-self: end; }
   }
   @container (max-width: 320px) {
     .room { --shortcut-width: 35px; --shortcut-height: 32px; padding: 5px; }
     .room-title { grid-template-columns: 19px minmax(0,1fr); column-gap: 2px; }
-    .room-title > ha-icon:first-child { width: 19px; height: 19px; --mdc-icon-size: 19px; }
+    .room-title > ha-icon:first-child, .room-turn-off > ha-icon { width: 19px; height: 19px; --mdc-icon-size: 19px; }
     .quick-button ha-icon { width: 18px; height: 18px; --mdc-icon-size: 18px; }
   }
   @container (max-width: 420px) {
@@ -808,8 +830,13 @@ export const styles = `
       font-size: 12px;
       padding-block: 1px;
     }
-    .shell[data-page=true][data-layout=classic] .room-title > ha-icon:first-child { width: 22px; height: 22px; --mdc-icon-size: 22px; }
-    .shell[data-page=true][data-layout=classic] .room-title > :is(ha-icon,.room-count,.room-name) { translate: 0 3px; }
+    .shell[data-page=true][data-layout=classic] :is(.room-title > ha-icon:first-child,.room-turn-off > ha-icon) {
+      width: 22px; height: 22px; --mdc-icon-size: 22px;
+    }
+    .shell[data-page=true][data-layout=classic] .room-turn-off { min-block-size: 31px; margin-block-end: 0; }
+    .shell[data-page=true][data-layout=classic] :is(.room-title > :is(ha-icon,.room-count,.room-name),.room-turn-off > ha-icon) {
+      translate: 0 3px;
+    }
     .shell[data-page=true][data-layout=classic] .room-title > .room-name { text-align: left; padding-inline-end: 3px; }
   }
   @container (min-width: 320px) and (max-width: 420px) {

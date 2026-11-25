@@ -1,5 +1,5 @@
 import { normalizeRoomActivities } from './room-appliance.mjs';
-import { HEATING_DOMAINS } from './device-control.mjs';
+import { HEATING_DOMAINS, supportsRoomShutdown } from './device-control.mjs';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
 import { wallpaperChoices } from './wallpapers.js';
@@ -204,6 +204,7 @@ function dashboardAreas(config, hass) {
       panelHidden: idList(override.panel_hidden_entities),
       inlineLights: new Set(idList(override.inline_light_entities)),
       lightingCount: idList(override.lighting_count_entities),
+      shutdown: idList(override.turn_off_entities).filter(supportsRoomShutdown),
       activities: override.activities,
       panelLinks: Object.fromEntries([...ROOM_PANEL_KINDS.values()].flatMap(kind => {
         const links = override[kind + '_panel_links'];
@@ -251,7 +252,7 @@ function presentEntity(entity, state, registry, profile) {
   };
 }
 
-function isVisibleEntity(entity, states, registry, hidden) {
+export function isVisibleEntity(entity, states, registry, hidden) {
   if (!ENTITY_ID.test(entity) || hidden.has(entity) || !Object.hasOwn(states, entity) || states[entity] == null) {
     return false;
   }
@@ -399,6 +400,11 @@ export function discoverRooms(config, hass, locale) {
       const lights = new Set(entities.filter(item => domainOf(item.entity) === 'light').map(item => item.entity));
       const scope = area.lightingCount.filter(entity => lights.has(entity));
       if (scope.length) room.lighting_count_entities = scope;
+    }
+    if (area.shutdown?.length) {
+      const members = new Set(entities.map(device => device.entity));
+      const targets = area.shutdown.filter(entity => members.has(entity) && !area.readOnly?.has(entity));
+      if (targets.length) room.turn_off_entities = targets;
     }
     const activities = normalizeRoomActivities(area.activities, visible).filter(activity => activity.kind !== 'boiler' ||
       entities.some(device => device.entity === activity.boiler_entity && device.kind === 'boiler'));

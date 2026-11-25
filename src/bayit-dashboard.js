@@ -1,8 +1,9 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
-import { classicRoomTitle, isAutomationScriptToggle, MAX_ROOM_SHORTCUTS, normalizeRoomControlName, overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
+import { classicRoomTitle, isAutomationScriptToggle, isVisibleEntity, MAX_ROOM_SHORTCUTS,
+  normalizeRoomControlName, overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
-import { createDeviceController, getDeviceModel } from './device-control.mjs';
+import { createDeviceController, getDeviceModel, roomShutdownTargets, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupHistory, normalizePopupAliases, popupRouteFragment, resolvePopupRoute } from './popup-routes.js';
 import { buildPanelControls, climateOptionLabel, panelControlStyles } from './panel-controls.js';
@@ -274,6 +275,10 @@ export function normalizeDashboardConfig(config = {}) {
       const lightingCount = new Set(room.lighting_count_entities.filter(entity =>
         typeof entity === 'string' && entity.startsWith('light.') && unique.has(entity)));
       if (lightingCount.size) parsed.lightingCount = lightingCount;
+    }
+    if (Array.isArray(room.turn_off_entities)) {
+      parsed.turnOff = [...new Set(room.turn_off_entities)].filter(supportsRoomShutdown)
+        .map(entity => unique.get(entity)).filter(device => device && device.role !== 'status');
     }
     if (Array.isArray(room.shortcuts)) {
       parsed.shortcuts = [...new Set(room.shortcuts)].filter(entity => unique.has(entity)).slice(0, MAX_ROOM_SHORTCUTS);
@@ -839,14 +844,45 @@ export class BayitDashboard extends HTMLElement {
         quick.append(el);
       }
       article.append(status, quick, heading);
+      let turnOff;
+      if (room.turnOff?.length) {
+        turnOff = button('room-turn-off', this.t('turn_off_room').replace('{name}', room.name), room.icon, true);
+        turnOff.onclick = () => this.turnOffRoom(room);
+        article.append(turnOff);
+      }
       n.rooms.append(article);
       this.roomViews.set(room.id, {
-        room, article, heading, name, count, temperature, activityBadges: [activity],
+        room, article, heading, name, count, turnOff, temperature, activityBadges: [activity],
         activityAnchor: appliances[0]?.badge.element ?? availability.element, appliances, boilerActivity, availability, shortcut,
       });
       if (this.isConnected && (appliances.length || boilerActivity)) this.applianceObserver?.observe(article);
     }
     n.empty.hidden = this.roomViews.size > 0;
+  }
+
+  roomOffTargets(room) {
+    const states = this._hass?.states ?? {};
+    const devices = room.turnOff.filter(({ entity }) =>
+      isVisibleEntity(entity, states, this._hass?.entities, this.config.hiddenEntities));
+    return roomShutdownTargets(devices, states);
+  }
+
+  async turnOffRoom(room) {
+    const entities = this.roomOffTargets(room);
+    if (!entities.length || room.turnOff.some(device => this.pending.has(device.entity))) return;
+    const token = { id: 'turn_off' };
+    for (const entity of entities) this.pending.set(entity, token);
+    this.announce(this.t('sending').replace('{name}', room.name));
+    this.update();
+    try {
+      const status = await this.controller.turnOffRoom(entities);
+      this.announce(this.t(status).replace('{name}', room.name));
+    } catch {
+      this.announce(this.t('send_error'));
+    } finally {
+      for (const entity of entities) if (this.pending.get(entity) === token) this.pending.delete(entity);
+      if (this.isConnected) this.update();
+    }
   }
 
   tone(model) {
@@ -1014,6 +1050,12 @@ export class BayitDashboard extends HTMLElement {
         label: this.t('unavailable') + ' · ' + unavailable.join(', '),
       });
       const lightingStatus = lit || (lightUnavailable ? '—' : this.t('off'));
+      if (view.turnOff) {
+        const targets = this.roomOffTargets(view.room);
+        const busy = view.room.turnOff.some(device => this.pending.has(device.entity));
+        view.turnOff.setAttribute('aria-busy', String(busy));
+        view.turnOff.setAttribute('aria-disabled', String(busy || !targets.length));
+      }
       setText(view.count, lightingStatus);
       const lightingDescription = this.t('room_lights') + ' · ' + (lightingStatus === '—' ? this.t('unavailable') : lightingStatus);
       if (view.heading.getAttribute('aria-description') !== lightingDescription) {

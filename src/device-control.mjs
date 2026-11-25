@@ -6,6 +6,7 @@ const ENTITY_ID = /^[a-z][a-z0-9_]*\.[a-z0-9_]+$/;
 const VARIABLE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export const HEATING_DOMAINS = Object.freeze(["switch", "climate", "fan", "water_heater"]);
 const HVAC_MODES = ["off", "heat", "cool", "heat_cool", "auto", "dry", "fan_only"];
+const ROOM_SHUTDOWN_DOMAINS = new Set(["light", "switch", "fan", "climate", "water_heater", "media_player"]);
 
 const LIGHT_EFFECT = 4;
 const COVER = { open: 1, close: 2, position: 4, stop: 8 };
@@ -395,6 +396,19 @@ export function getDeviceModel(config, states, nowMs = Date.now()) {
   return deviceModel(normalizedConfig(config), states, nowMs);
 }
 
+export function supportsRoomShutdown(entity) {
+  return isEntity(entity) && ROOM_SHUTDOWN_DOMAINS.has(entity.split(".")[0]);
+}
+
+export function roomShutdownTargets(devices, states) {
+  return devices.filter(device => {
+    if (!supportsRoomShutdown(device.entity)) return false;
+    const action = getDeviceModel(device, states).actions.turn_off;
+    return action && !action.requiresConfirmation && !action.requiresCode &&
+      (action.service === undefined || action.service === "turn_off");
+  }).map(device => device.entity);
+}
+
 function validNumber(value, { min, max, step }) {
   if (!Number.isFinite(value) || value < min || value > max) return false;
   if (!step) return true;
@@ -645,6 +659,19 @@ export function createDeviceController({
   const latest = new Map();
 
   return {
+    async turnOffRoom(entities) {
+      const hass = getHass();
+      if (!entities.length || entities.some(entity => !supportsRoomShutdown(entity))) {
+        throw new DeviceControlError("invalid_target", "Choose the room devices to turn off.");
+      }
+      if (typeof hass?.callWS !== "function") {
+        throw new DeviceControlError("service_unavailable", "The Home Assistant connection is unavailable.");
+      }
+      const request = { type: "call_service", domain: "homeassistant", service: "turn_off", service_data: {},
+        target: { entity_id: entities } };
+      const reply = await boundRequest(Promise.resolve(hass.callWS(request)), requestTimeoutMs);
+      return reply === REQUEST_TIMED_OUT ? "unconfirmed" : "sent";
+    },
     async execute(config, actionId, value, options) {
       const hass = getHass();
       const plan = planDeviceAction(config, hass?.states, actionId, value, options);

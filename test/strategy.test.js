@@ -916,10 +916,10 @@ test('an optional lighting count selection changes only the scope of the room ba
     hass.states[entity] = {state:'on', attributes:{}};
   }
   hass.entities['light.fixture_hidden'] = {hidden:true};
-  const entities = ['light.demo_lamp','light.fixture_detail','light.fixture_hidden','switch.demo_heater'];
+  const entities = ['light.demo_lamp','light.fixture_detail','light.fixture_hidden','switch.demo_boiler'];
   const scope = ['light.demo_lamp','light.demo_lamp','light.fixture_hidden','light.fixture_elsewhere','switch.demo_heater'];
-  const build = lighting_count_entities => generateDashboard({
-    room_overrides:{studio:{entities, lighting_count_entities}},
+  const build = (lighting_count_entities, turn_off_entities) => generateDashboard({
+    room_overrides:{studio:{entities, lighting_count_entities, turn_off_entities}},
     room_shortcuts:{studio:['light.fixture_detail']},
   }, hass).views[0].cards[0].rooms.find(room => room.id === 'studio');
   const automatic = build();
@@ -928,4 +928,6 @@ test('an optional lighting count selection changes only the scope of the room ba
   assert.deepEqual(automatic.shortcuts, ['light.fixture_detail']);
   assert.deepEqual(build([]),automatic);
   assert.deepEqual(build(['light.fixture_elsewhere']),automatic);
+  assert.deepEqual(build(scope, ['light.fixture_detail','light.fixture_hidden','light.fixture_elsewhere','switch.demo_boiler']),
+    { ...automatic, lighting_count_entities:['light.demo_lamp'], turn_off_entities:['light.fixture_detail','switch.demo_boiler'] });
 });

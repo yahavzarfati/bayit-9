@@ -1,11 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDeviceController, DeviceControlError, getDeviceModel, planDeviceAction } from "../src/device-control.mjs";
+import { createDeviceController, DeviceControlError, getDeviceModel, planDeviceAction, roomShutdownTargets } from "../src/device-control.mjs";
 
 const entity = (state, attributes = {}) => ({ state, attributes });
 const config = (id, fields) => ({ entity: id, ...fields });
 const code = value => error => error instanceof DeviceControlError && error.code === value;
 const actionIds = model => Object.keys(model.actions).sort();
+
+test("room shutdown uses one exact native off target list and skips protected or unsupported controls", async () => {
+  const devices = [config("light.desk"), config("switch.outlet"), config("light.offline"),
+    config("light.status", { role: "status" }), config("switch.confirm", { confirmation: true }),
+    config("fan.unsupported"), config("automation.safety"),
+    config("switch.timed_heat", { kind: "heater", timed: { stop_script: "script.stop_heat" } })];
+  const states = Object.fromEntries(devices.map(device => [device.entity, entity("on")]));
+  states["light.offline"] = entity("unavailable");
+  states["script.stop_heat"] = entity("off");
+  const targets = roomShutdownTargets(devices, states);
+  assert.deepEqual(targets, ["light.desk", "switch.outlet"]);
+  const calls = [];
+  const controller = createDeviceController({ getHass: () => ({ callWS: async request => calls.push(request) }) });
+  await assert.rejects(controller.turnOffRoom([]), code("invalid_target"));
+  await assert.rejects(controller.turnOffRoom(["light.desk", "automation.safety"]), code("invalid_target"));
+  assert.equal(await controller.turnOffRoom(targets), "sent");
+  assert.deepEqual(calls, [{ type: "call_service", domain: "homeassistant", service: "turn_off", service_data: {},
+    target: { entity_id: ["light.desk", "switch.outlet"] } }]);
+});
 
 test('media and vacuum issue only available native commands and validate their source and volume', () => {
   const media = config('media_player.speaker');

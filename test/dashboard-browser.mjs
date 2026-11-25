@@ -29,6 +29,7 @@ document.addEventListener('hass-more-info', event => {
 const coverRequests = [];
 let finishLevel;
 let finishPreselect;
+let finishRoomOff;
 let scriptSerial = 0;
 function observeScript(state) {
   const id = 'script.demo_toggle';
@@ -108,6 +109,16 @@ const hass = {
       sessionStorage.setItem(storedKey, JSON.stringify(request.config));
       sessionStorage.setItem(storedKey + '-hash-at-save', location.hash);
       return Promise.resolve();
+    }
+    if (request.domain === 'homeassistant' && request.service === 'turn_off' && query.has('room-shutdown')) {
+      return new Promise((resolve, reject) => {
+        finishRoomOff = failed => {
+          if (failed) return reject(new Error('Fixture rejected room shutdown'));
+          for (const entity of request.target.entity_id) states[entity] = { ...states[entity], state: 'off' };
+          card.hass = { ...hass, states: { ...states } };
+          resolve({});
+        };
+      });
     }
     if (request.domain === 'light') {
       if (rejectInlineLight) {
@@ -398,6 +409,7 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
 } : query.has('room-grid') ? {
   room_overrides: { studio: { entities: ['light.demo_lamp', 'light.demo_wall', 'light.demo_pendant', 'light.demo_monitor'],
     read_only_entities: ['light.demo_monitor'],
+    ...(query.has('room-shutdown') && {turn_off_entities:['light.demo_lamp', 'light.demo_pendant', 'light.demo_monitor']}),
     ...(query.has('lighting-count') && {lighting_count_entities:['light.demo_wall']}) } },
   ...(query.has('grouped-effects') && { light_effect_groups: {
     'light.demo_pendant': [
@@ -514,6 +526,7 @@ window.bayitTest = {
   },
   finishLevel: () => finishLevel(),
   finishPreselect: () => finishPreselect(),
+  finishRoomOff: failed => finishRoomOff(failed),
   heatingState: () => [states[heaterFan].state, states[heaterRelay].state, states[heaterTimer].attributes.timer_state],
   setHeaterPower: state => {
     states[heaterFan].state = states[heaterRelay].state = state;
@@ -1223,6 +1236,42 @@ try {
       assert.ok(draft.entities.includes('light.demo_pendant'));
       assert.deepEqual(draft.read_only_entities,['light.demo_monitor']);
       await lightingPage.close();
+
+      const shutdownPage = await browser.newPage({ viewport:{width:390,height:844}, hasTouch:true, reducedMotion:'reduce' });
+      const shutdownUrl = base + '?room-grid&lighting-count&room-shutdown';
+      await shutdownPage.goto(shutdownUrl);
+      const roomIcon = shutdownPage.getByRole('button', { name:'Turn off selected devices in Studio', exact:true });
+      const shutdownCalls = () => shutdownPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain === 'homeassistant'));
+      const shutdownRoomTitle = shutdownPage.getByRole('button', { name:'Studio', exact:true });
+      await roomIcon.tap();
+      assert.equal(await roomIcon.getAttribute('aria-busy'), 'true');
+      await roomIcon.press('Enter');
+      assert.deepEqual(await shutdownCalls(), [{type:'call_service',domain:'homeassistant',service:'turn_off',service_data:{},
+        target:{entity_id:['light.demo_lamp','light.demo_pendant']}}]);
+      assert.equal(await shutdownPage.locator('dialog.modal[open]').count(), 0);
+      await shutdownPage.evaluate(() => window.bayitTest.finishRoomOff(true));
+      await shutdownPage.getByText('Could not complete the action.', { exact:true }).waitFor();
+      await shutdownPage.evaluate(() => window.bayitTest.setRoomState('light.demo_lamp','unavailable'));
+      await shutdownPage.getByRole('img', { name:/Unavailable · Desk lamp/ }).waitFor();
+      await roomIcon.press('Enter');
+      assert.deepEqual((await shutdownCalls()).at(-1).target, {entity_id:['light.demo_pendant']});
+      await shutdownPage.evaluate(() => window.bayitTest.finishRoomOff(false));
+      await shutdownRoomTitle.tap();
+      await shutdownPage.getByRole('dialog',{name:'Studio',exact:true}).getByRole('button',{name:'Pendant lamp · Turn on',exact:true}).waitFor();
+      assert.equal(await shutdownRoomTitle.getAttribute('aria-description'),'Lights · 1');
+      assert.equal((await shutdownCalls()).length,2);
+      await shutdownPage.goto(shutdownUrl + '&editor');
+      await shutdownPage.getByText('Rooms',{exact:true}).tap();
+      const shutdownEditor = shutdownPage.getByLabel('Devices turned off by the room icon',{exact:true});
+      assert.deepEqual(await shutdownEditor.locator('option:checked').evaluateAll(nodes => nodes.map(option => option.value)),
+        ['light.demo_lamp','light.demo_pendant']);
+      assert.equal(await shutdownEditor.locator('option[value="light.demo_monitor"]').count(),0);
+      await shutdownEditor.selectOption(['light.demo_wall']);
+      assert.deepEqual(await shutdownPage.evaluate(() => window.latest.room_overrides.studio.turn_off_entities), ['light.demo_wall']);
+      await shutdownPage.getByRole('button',{name:'Remove room icon action',exact:true}).tap();
+      assert.equal(await shutdownPage.evaluate(() => window.latest.room_overrides.studio.turn_off_entities), undefined);
+      await shutdownPage.close();
+      console.log(engine + ': independent room icon shutdown, native targets, failure and room editor');
 
       const roomGridPage = await browser.newPage({ viewport: { width: 320, height: 690 } });
       await roomGridPage.goto(base + '?room-grid&locale=he');

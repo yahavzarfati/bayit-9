@@ -7,7 +7,7 @@ import {
 import { languages } from './bayit-dashboard-i18n.js';
 import { buildToolbarEditor } from './toolbar-editor.js';
 import { activityKinds, activitySources, normalizeRoomActivities } from './room-appliance.mjs';
-import { getDeviceModel } from './device-control.mjs';
+import { getDeviceModel, supportsRoomShutdown } from './device-control.mjs';
 import { normalizeLightEffectGroups } from './light-effects.js';
 
 const WORDS = {
@@ -31,6 +31,9 @@ const WORDS = {
     roomPanelShow: 'Show device in room panel', roomPanelHint: 'For quick access from Home, add the device in Room shortcuts.',
     lightCount: 'Lights in the room count', lightCountHint: 'With no lights selected, the count includes every room light.',
     lightCountReset: 'Use automatic lighting count',
+    roomShutdown: 'Devices turned off by the room icon',
+    roomShutdownHint: 'Select the devices to turn off when you tap the room icon. Leave the list empty to open the room from the icon.',
+    roomShutdownReset: 'Remove room icon action',
     newRoom: 'Create room', customRoom: 'Dashboard room', deleteRoom: 'Delete dashboard room',
     noRooms: 'No rooms to customize yet.',
     moveUp: 'Move up', moveDown: 'Move down', hideRoom: 'Hide room',
@@ -100,6 +103,9 @@ const WORDS = {
     roomPanelShow: 'הצגת המכשיר בחלונית החדר', roomPanelHint: 'לגישה מהירה ממסך הבית, הוסיפו את המכשיר בהגדרה קיצורים בחדרים.',
     lightCount: 'תאורה שנכללת במונה החדר', lightCountHint: 'כשלא מסומן אף פריט, המונה כולל את כל התאורה בחדר.',
     lightCountReset: 'חזרה לספירת תאורה אוטומטית',
+    roomShutdown: 'מכשירים לכיבוי דרך סמל החדר',
+    roomShutdownHint: 'בחרו אילו מכשירים יכבו בלחיצה על סמל החדר. כשהרשימה ריקה, לחיצה על הסמל פותחת את החדר.',
+    roomShutdownReset: 'הסרת פעולת הכיבוי מהסמל',
     newRoom: 'יצירת חדר', customRoom: 'חדר בדשבורד', deleteRoom: 'מחיקת חדר מהדשבורד',
     noRooms: 'עדיין אין חדרים להתאמה.',
     moveUp: 'העברה למעלה', moveDown: 'העברה למטה', hideRoom: 'הסתרת חדר',
@@ -546,27 +552,26 @@ export class Bayit9StrategyEditor extends HTMLElement {
     return body();
   }
 
-  #roomLightingCount(room, selected, lights, words) {
-    const key = 'room-light-count';
-    const input = node('select', { multiple:true, size:Math.min(5, Math.max(2, lights.length)), disabled:!lights.length });
-    input.dataset.roomFocus = key;
+  #roomTargetList(room, selected, devices, { setting, focus, title, hint, reset }) {
+    const input = node('select', { multiple:true, size:Math.min(5, Math.max(2, devices.length)), disabled:!devices.length });
+    input.dataset.roomFocus = focus;
     const current = new Set(selected);
-    for (const light of lights) {
-      const item = option(light.entity, light.name || light.entity);
-      item.selected = current.has(light.entity);
+    for (const device of devices) {
+      const item = option(device.entity, device.name || device.entity);
+      item.selected = current.has(device.entity);
       input.append(item);
     }
     const save = entities => {
       const next = { ...this.#roomOverride(room.id) };
-      if (entities.length) next.lighting_count_entities = entities;
-      else delete next.lighting_count_entities;
-      this.#setRoomOverride(room.id, next, entities.length || lights.length > 1 ? key : 'room-edit');
+      if (entities.length) next[setting] = entities;
+      else delete next[setting];
+      const minimum = setting === 'lighting_count_entities' ? 2 : 1;
+      this.#setRoomOverride(room.id, next, entities.length || devices.length >= minimum ? focus : 'room-edit');
     };
     input.addEventListener('change', () => save([...input.selectedOptions].map(item => item.value)));
-    const reset = button(words.lightCountReset, () => save([]));
-    reset.hidden = !selected.length;
-    const hint = node('small', { textContent:words.lightCountHint });
-    return node('div', { className:'stack' }, [field(words.lightCount, input), hint, reset]);
+    const resetButton = button(reset, () => save([]));
+    resetButton.hidden = !selected.length;
+    return node('div', { className:'stack' }, [field(title, input), node('small', { textContent:hint }), resetButton]);
   }
 
   #roomControlDisplay(room, chosen, words) {
@@ -685,11 +690,14 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const lights = chosen.filter(id => id.startsWith('light.'));
     const selectedCount = configuredIds(override.lighting_count_entities);
     const editCount = lights.length > 1 || selectedCount.length > 0;
-    const available = manual || editCount
+    const readOnly = new Set(configuredIds(override.read_only_entities));
+    const shutdown = chosen.filter(id => supportsRoomShutdown(id) && !readOnly.has(id));
+    const selectedShutdown = configuredIds(override.turn_off_entities);
+    const editShutdown = shutdown.length > 0 || selectedShutdown.length > 0;
+    const available = manual || editCount || editShutdown
       ? new Map(selectableRoomEntities(this.#config, this.#hass).map(entry => [entry.entity, entry])) : undefined;
     if (chosen.length) {
       children.push(this.#roomControlDisplay(room, chosen, words));
-      const readOnly = new Set(configuredIds(override.read_only_entities));
       const selected = node('select', { multiple: true, size: Math.min(5, Math.max(2, chosen.length)) });
       for (const id of chosen) {
         const item = option(id, this.#hass.states?.[id]?.attributes?.friendly_name ?? id);
@@ -707,7 +715,16 @@ export class Bayit9StrategyEditor extends HTMLElement {
       children.push(field(words.readOnlyRoom, selected));
     }
     if (editCount) {
-      children.push(this.#roomLightingCount(room, selectedCount, lights.map(id => available.get(id)).filter(Boolean), words));
+      children.push(this.#roomTargetList(room, selectedCount, lights.map(id => available.get(id)).filter(Boolean), {
+        setting:'lighting_count_entities', focus:'room-light-count', title:words.lightCount,
+        hint:words.lightCountHint, reset:words.lightCountReset,
+      }));
+    }
+    if (editShutdown) {
+      children.push(this.#roomTargetList(room, selectedShutdown, shutdown.map(id => available.get(id)).filter(Boolean), {
+        setting:'turn_off_entities', focus:'room-turn-off', title:words.roomShutdown,
+        hint:words.roomShutdownHint, reset:words.roomShutdownReset,
+      }));
     }
     const linkedDevices = chosen.flatMap(id => {
       const kind = ROOM_PANEL_KINDS.get(id.split('.')[0]);
@@ -749,7 +766,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const change = (items, focusKey) => {
       const entities = items.map(item => item.id);
       const next = { ...override, entities };
-      for (const key of ['read_only_entities', 'lighting_count_entities', 'panel_hidden_entities', 'inline_light_entities']) {
+      for (const key of ['read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities', 'inline_light_entities']) {
         if (!Array.isArray(next[key])) continue;
         next[key] = next[key].filter(id => entities.includes(id));
         if (!next[key].length) delete next[key];
