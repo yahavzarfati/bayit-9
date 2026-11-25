@@ -1184,9 +1184,14 @@ export class BayitDashboard extends HTMLElement {
     if (type === 'setup') void this.paintSetup();
     if (type === 'activity') this.paintActivity();
     const kind = type === 'room' || type === 'device' ? type : 'toolbar';
+    const roomPosition = usesRoomPopupPosition(toolbar);
+    // Settings, Energy and secondary navigation use the available room band.
+    const centeredToolbar = kind === 'toolbar' && !roomPosition &&
+      (type === 'settings' || type === 'energy' || !n.toolbarActions.contains(source ?? null));
     this.popupMotion.open(source, {
       kind,
-      roomPosition: usesRoomPopupPosition(toolbar),
+      roomPosition,
+      centeredToolbar,
       highlighted: type === 'room' ? this.roomViews.get(room.id)?.article : source,
     });
     n.modalBody.scrollTop = type === 'room' ? this.roomScroll.get(room.id) || 0 : 0;

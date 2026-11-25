@@ -422,18 +422,18 @@ export const styles = `
     overscroll-behavior: contain;
     transform-origin: var(--motion-x,50%) var(--motion-y,34%);
   }
-  .modal:is([data-kind=room],[data-kind=device],[data-room-position]) {
+  .modal:is([data-kind=room],[data-kind=device],[data-room-position],[data-centered-toolbar]) {
     --panel-top: clamp(14px,var(--bayit-popup-area-top,142px),max(14px,calc(var(--panel-bottom) - 180px)));
   }
   .modal:is([data-kind=room],[data-kind=toolbar]) { width: min(860px,calc(100% - 2 * var(--edge))); }
-  .modal[data-kind=device] {
-    --device-bottom-gap: calc(16px + env(safe-area-inset-bottom,0px));
-    width: min(520px,calc(100% - 2 * var(--edge)));
-    bottom: max(var(--device-bottom-gap),calc(100dvh - var(--panel-bottom) + var(--device-bottom-gap)));
-    max-height: calc(var(--panel-bottom) - var(--panel-top) - var(--device-bottom-gap));
+  .modal:is([data-kind=device],[data-centered-toolbar]) {
+    --center-bottom-gap: calc(16px + env(safe-area-inset-bottom,0px));
+    bottom: max(var(--center-bottom-gap),calc(100dvh - var(--panel-bottom) + var(--center-bottom-gap)));
+    max-height: calc(var(--panel-bottom) - var(--panel-top) - var(--center-bottom-gap));
     margin-block: auto;
   }
-  .modal[data-kind=toolbar]:not([data-room-position]) {
+  .modal[data-kind=device] { width: min(520px,calc(100% - 2 * var(--edge))); }
+  .modal[data-kind=toolbar]:not([data-room-position],[data-centered-toolbar]) {
     --panel-top: clamp(14px,calc(var(--bayit-popup-area-top,142px) - 78px),max(14px,calc(var(--panel-bottom) - 180px)));
   }
   .modal[open] { display: flex; flex-direction: column; }

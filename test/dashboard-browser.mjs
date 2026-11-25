@@ -1690,6 +1690,91 @@ try {
       await motionResizePage.close();
       console.log(engine + ': room popup easing survives duplicate resize, true geometry changes and close restoration');
 
+      const toolbarPlacementPage = await browser.newPage({
+        viewport:{width:391,height:845}, isMobile:true, hasTouch:true, reducedMotion:'reduce',
+      });
+      const rtlPlacement = engine === 'WebKit';
+      const toolbarPlacementUrl = base + '/fixture-home/home?toolbar-panels&security-cover-rail&locale=' + (rtlPlacement ? 'he' : 'en');
+      await toolbarPlacementPage.goto(toolbarPlacementUrl);
+      const placementDialog = toolbarPlacementPage.locator('dialog.modal:not(.confirm)');
+      const toolbarButton = kind => toolbarPlacementPage.locator('.toolbar-actions [data-role="' + kind + '"]');
+      const readToolbarPlacement = () => placementDialog.evaluate(dialog => {
+        const bounds = dialog.getBoundingClientRect();
+        const outer = dialog.getRootNode();
+        const body = dialog.querySelector('.modal-body');
+        return { top:bounds.top, bottom:bounds.bottom,height:bounds.height,
+          areaTop:parseFloat(dialog.style.getPropertyValue('--bayit-popup-area-top')),
+          bandBottom:parseFloat(dialog.style.getPropertyValue('--bayit-popup-view-bottom')) - 16,
+          centered:dialog.hasAttribute('data-centered-toolbar'), opener:outer.querySelector('[data-popup-origin]')?.dataset.role,
+          scrollRange:body.scrollHeight-body.clientHeight };
+      });
+      const assertCenteredPlacement = frame => {
+        assert.equal(frame.centered, true);
+        assert.ok(Math.abs(frame.top - (frame.areaTop + frame.bandBottom - frame.height) / 2) <= 1, JSON.stringify(frame));
+        assert.ok(frame.top >= frame.areaTop - 1 && frame.bottom <= frame.bandBottom + 1, JSON.stringify(frame));
+      };
+      const closePlacement = async () => {
+        await placementDialog.locator('[data-role=close]').tap();
+        await placementDialog.waitFor({state:'hidden'});
+        assert.equal(await placementDialog.getAttribute('data-centered-toolbar'), null);
+      };
+      for (const kind of ['automations','security','presence','weather','energy','settings']) {
+        const source = toolbarButton(kind);
+        await source.tap();
+        const frame = await readToolbarPlacement();
+        assert.equal(frame.opener, kind);
+        assert.equal(await placementDialog.evaluate(dialog =>
+          dialog.getRootNode().activeElement === dialog.querySelector('[data-role=close]')), true);
+        if (['energy','settings'].includes(kind)) assertCenteredPlacement(frame);
+        else {
+          assert.equal(frame.centered, false);
+          assert.ok(Math.abs(frame.top - (frame.areaTop - 78)) <= 1, JSON.stringify(frame));
+        }
+        await closePlacement();
+        assert.equal(await source.evaluate(button => button.getRootNode().activeElement === button), true);
+      }
+
+      await toolbarPlacementPage.goto(toolbarPlacementUrl + '#panel/fixture-security');
+      await placementDialog.waitFor();
+      assertCenteredPlacement(await readToolbarPlacement());
+      assert.equal((await readToolbarPlacement()).opener, undefined);
+      await placementDialog.locator('[data-role=content]').evaluate(content => {
+        const longContent = document.createElement('div');
+        longContent.style.blockSize = '1300px';
+        content.append(longContent);
+      });
+      assert.ok((await readToolbarPlacement()).scrollRange > 0);
+      const fullHeight = await readToolbarPlacement();
+      assert.ok(Math.abs(fullHeight.top - fullHeight.areaTop) <= 1);
+      await toolbarPlacementPage.setViewportSize({width:391,height:650});
+      await toolbarPlacementPage.waitForFunction(() => document.querySelector('bayit-dashboard').shadowRoot
+        .querySelector('dialog.modal').style.getPropertyValue('--bayit-popup-view-bottom') === '650px');
+      const reducedHeight = await readToolbarPlacement();
+      assertCenteredPlacement(reducedHeight);
+      assert.ok(reducedHeight.height < fullHeight.height && reducedHeight.scrollRange > 0);
+      await closePlacement();
+      await toolbarPlacementPage.setViewportSize({width:391,height:845});
+
+      await toolbarButton('settings').tap();
+      const settingsPlacement = await readToolbarPlacement();
+      const settingsCalendar = toolbarPlacementPage.getByRole('button',{name:rtlPlacement ? 'יומן' : 'Calendar',exact:true});
+      await settingsCalendar.tap();
+      await toolbarPlacementPage.waitForURL(url=>url.hash.startsWith('#panel/') && !url.hash.endsWith('/settings'));
+      const calendarPlacement = await readToolbarPlacement();
+      assertCenteredPlacement(calendarPlacement);
+      assert.equal(calendarPlacement.opener,'settings');
+      await toolbarPlacementPage.evaluate(()=>history.back());
+      await settingsCalendar.waitFor();
+      const settingsAfterBack = await readToolbarPlacement();
+      assertCenteredPlacement(settingsAfterBack);
+      assert.ok(Math.abs(settingsAfterBack.top-settingsPlacement.top) <= 1);
+      await toolbarPlacementPage.evaluate(()=>history.forward());
+      await toolbarPlacementPage.getByRole('dialog',{name:rtlPlacement ? 'יומן' : 'Calendar',exact:true}).waitFor();
+      assertCenteredPlacement(await readToolbarPlacement());
+      assert.deepEqual(await toolbarPlacementPage.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service')),[]);
+      await toolbarPlacementPage.close();
+      console.log(engine + ': source-aware toolbar positioning, centered links, tall content, viewport and history');
+
       const entryPositionPage = await browser.newPage({
         viewport: { width:391, height:845 }, isMobile:true, hasTouch:true, reducedMotion:'reduce',
       });
@@ -1708,7 +1793,8 @@ try {
         const close = rectangle(popup.querySelector('[data-role=close]'));
         const title = rectangle(popup.querySelector('.modal-header h2'));
         return { frame:{ x, y, width, header, close, title }, kind:popup.dataset.kind,
-          roomPosition:popup.hasAttribute('data-room-position'), source:root.querySelector('[data-popup-origin]')?.dataset.role };
+          roomPosition:popup.hasAttribute('data-room-position'), centered:popup.hasAttribute('data-centered-toolbar'),
+          source:root.querySelector('[data-popup-origin]')?.dataset.role };
       });
       await entryPositionPage.getByRole('button', { name:'Studio', exact:true }).tap();
       const realRoomFrame = await popupFrame();
@@ -1720,11 +1806,13 @@ try {
       const launchSettings = entryPositionPage.locator('.chrome-button[data-role=settings]');
       await launchSettings.tap();
       const settingsFrame = await popupFrame();
+      assert.equal(settingsFrame.centered, true);
       const entranceLink = entryPositionPage.getByRole('button', { name:'כניסה', exact:true });
       await entranceLink.tap();
       const entranceFrame = await popupFrame();
       assert.equal(entranceFrame.kind, 'toolbar');
       assert.equal(entranceFrame.roomPosition, true);
+      assert.equal(entranceFrame.centered, false);
       assert.equal(entranceFrame.source, 'settings');
       assert.deepEqual(entranceFrame.frame, realRoomFrame.frame);
       assert.equal(new URL(entryPositionPage.url()).hash, '#panel/entry');
@@ -1735,7 +1823,7 @@ try {
       assert.equal((await popupFrame()).roomPosition, false);
       assert.equal((await popupFrame()).frame.y, settingsFrame.frame.y);
       await entryPositionPage.getByRole('button', { name:'חלונית רגילה', exact:true }).tap();
-      assert.equal((await popupFrame()).frame.y, settingsFrame.frame.y);
+      assert.equal((await popupFrame()).centered, true);
       assert.equal(new URL(entryPositionPage.url()).hash, '#panel/regular-device');
       await entryPositionPage.goto(entryPositionUrl + '&locale=he#panel/entry');
       await entryPositionPage.getByRole('dialog', { name:'כניסה', exact:true }).waitFor();
