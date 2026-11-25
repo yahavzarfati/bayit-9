@@ -9745,7 +9745,8 @@ try {
       });
       await compactTimerPage.goto(base + '/fixture-home/home?device-panel&locale=he#device/studio/climate.demo_air');
       const compactTimerDialog = compactTimerPage.getByRole('dialog', { name: 'Studio air conditioner', exact: true });
-      const timerDimensions = await compactTimerDialog.locator('.device-timer[data-compact]').evaluate(timer => {
+      const compactTimer = compactTimerDialog.locator('.device-timer[data-compact]');
+      const timerDimensions = await compactTimer.evaluate(timer => {
         const body = timer.closest('.modal-body');
         const slider = timer.querySelector('.timer-range');
         const button = timer.querySelector('.timer-preset');
@@ -9765,6 +9766,11 @@ try {
       assert.equal(timerDimensions.inset, '6px');
       assert.ok(timerDimensions.overflowY <= 1 && timerDimensions.overflowX <= 1);
       assert.ok(timerDimensions.timerHeight <= 152);
+      const wrappedPresets = await compactTimer.evaluate(timer => {
+        timer.style.fontFamily = '"Courier New", monospace';
+        return timer.getBoundingClientRect().height;
+      });
+      assert.ok(wrappedPresets <= 152, 'Longer font metrics keep the timer compact even if a preset wraps');
       await compactTimerDialog.getByText('120 דק׳', { exact: true }).first().waitFor();
       assert.equal(await compactTimerDialog.locator('.timer-range').getAttribute('aria-valuetext'), '120 דקות');
       assert.deepEqual(await compactTimerPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);

@@ -498,11 +498,16 @@ export const panelControlStyles = `
   .device-timer, .heat-level { min-width: 0; text-align: center; border-top: 1px solid var(--soft-line); padding-top: 6px; }
   .timer-clock { margin: 1px 0 0; font-size: 18px; font-weight: 780; font-variant-numeric: tabular-nums; }
   .timer-clock-history {
-    min-inline-size: 44px; min-block-size: 24px; padding: 0 4px;
+    display: block; min-inline-size: 44px; min-block-size: 24px; margin-inline: auto; padding: 0 4px;
     border: 0; border-radius: 6px; background: transparent; line-height: inherit;
     -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
   }
   .timer-clock-history:disabled { opacity: 1; }
+  /* Keep baseline differences from adding height below the two timer readings. */
+  .device-timer[data-compact] .timer-clock-readings:has(.timer-clock-history:not([hidden])) {
+    display: grid; justify-items: center;
+  }
+  .device-timer[data-compact] .timer-clock:has(.timer-clock-history:not([hidden])) { margin-block-start: 0; }
   .timer-clock-row:has(.timer-history:not([hidden])) {
     display: grid; grid-template-columns: 44px minmax(0,1fr) 44px; align-items: center;
   }
@@ -521,6 +526,7 @@ export const panelControlStyles = `
   .timer-presets, .heat-level-options { display: grid; gap: 4px; direction: ltr; }
   .timer-presets { grid-template-columns: repeat(auto-fit,minmax(48px,1fr)); }
   .timer-preset { padding-inline: 3px; }
+  .device-timer[data-compact]:has(.timer-clock-history) .timer-preset { line-height: 1.2; }
   .device-timer[data-compact] {
     --timer-rail: color-mix(in srgb,var(--ink) 10%,transparent);
   }
