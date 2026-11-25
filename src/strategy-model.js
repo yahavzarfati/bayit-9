@@ -6,7 +6,7 @@ import { normalizeMediaStage } from './now-playing.js';
 import { normalizeMediaRemote } from './media-device-support.mjs';
 import { wallpaperChoices } from './wallpapers.js';
 import { normalizeSharedWallpapers } from './shared-wallpapers.js';
-import { normalizeLightEffectGroups } from './light-effects.js';
+import { normalizeLightEffectFavoriteLights, normalizeLightEffectGroups } from './light-effects.js';
 import { normalizePopupAliases, popupRouteFragment } from './popup-routes.js';
 import { calendarAccent, normalizeCalendarAgenda, supportsDailyForecast } from './calendar-agenda.js';
 
@@ -603,6 +603,7 @@ export function dashboardRoomMemberships(config, hass, locale) {
 
 export function discoverRooms(config, hass, locale) {
   const areas = dashboardAreas(config, hass);
+  const favoriteLights = new Set(normalizeLightEffectFavoriteLights(config.light_effect_favorites));
   const panelKinds = new Map([...areas.values()].some(area => Object.keys(area.panelLinks ?? {}).length)
     ? roomPanelOptions(config, hass).map(panel => [panel.id, panel.kind]) : []);
   const detailPanels = [...areas.values()].some(area => area.shortcutDetailRoutes)
@@ -719,7 +720,10 @@ export function discoverRooms(config, hass, locale) {
       if (area.compactLightReadings?.has(device.entity)) device.room_compact_light_reading = true;
       if (!Object.hasOwn(config.light_effect_groups ?? {}, device.entity)) continue;
       const groups = normalizeLightEffectGroups(config.light_effect_groups[device.entity]);
-      if (groups.length) device.effect_groups = groups;
+      if (groups.length) {
+        device.effect_groups = groups;
+        if (favoriteLights.has(device.entity)) device.effect_favorites = true;
+      }
     }
     if (area.sections !== undefined) {
       const byId = new Map(entities.map(entity => [entity.entity, entity]));

@@ -3,6 +3,8 @@ import { supportsLightColor } from './light-color.mjs';
 const iconPattern = /^mdi:[a-z0-9-]+$/;
 const effectAction = 'set_effect';
 const pageSize = 6;
+const favoriteKeyPrefix = 'bayit-9.light-effect-favorites.v1:';
+const maxFavoriteStorageLength = 65536;
 const lightModes = [
   [effectAction, 'light_mode_effects'],
   ['set_light_color', 'light_mode_color'],
@@ -27,7 +29,20 @@ export function normalizeLightEffectGroups(groups) {
   });
 }
 
-export function createLightEffectGallery(groups, advertised, { make, button, icon, t, request }) {
+export function normalizeLightEffectFavoriteLights(value) {
+  return Array.isArray(value) ? [...new Set(value.filter(entity => typeof entity === 'string' && /^light\.[a-z0-9_]+$/.test(entity)))] : [];
+}
+
+function favoritesFor(view, key) {
+  try {
+    const raw = view.localStorage.getItem(key);
+    if (!raw || raw.length > maxFavoriteStorageLength) return new Set();
+    const items = JSON.parse(raw);
+    return new Set(Array.isArray(items) ? items.filter(value => typeof value === 'string' && value.trim()) : []);
+  } catch { return new Set(); }
+}
+
+export function createLightEffectGallery(groups, advertised, { make, button, icon, t, request, personalFavorites }) {
   if (!groups?.length) return null;
   const available = new Set(advertised);
   const assigned = new Set();
@@ -46,6 +61,31 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
   const gallery = make('section', 'light-effect-gallery');
   gallery.setAttribute('aria-label', name);
   const caption = make('p', 'light-effect-caption', name);
+  const heading = make('div', 'light-effect-heading');
+  heading.append(caption);
+  const favoriteMessage = make('p', 'light-effect-favorite-message');
+  favoriteMessage.setAttribute('role', 'status');
+  favoriteMessage.hidden = true;
+  let favoriteActions;
+  let star;
+  let starIcon;
+  let favoriteFilter;
+  if (personalFavorites) {
+    favoriteActions = make('div', 'light-effect-personal-actions');
+    favoriteActions.hidden = true;
+    star = button('control-button');
+    star.dataset.effectFavoriteControl = 'star';
+    starIcon = icon('mdi:star-outline');
+    starIcon.setAttribute('aria-hidden', 'true');
+    star.append(starIcon);
+    favoriteFilter = button('control-button');
+    favoriteFilter.dataset.effectFavoriteControl = 'filter';
+    const filterIcon = icon('mdi:star-box-outline');
+    filterIcon.setAttribute('aria-hidden', 'true');
+    favoriteFilter.append(filterIcon);
+    favoriteActions.append(star, favoriteFilter);
+    heading.append(favoriteActions);
+  }
   const categoryBar = make('div', 'light-effect-categories');
   categoryBar.setAttribute('role', 'group');
   categoryBar.setAttribute('aria-label', t('effect_categories'));
@@ -64,19 +104,28 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
   const pageLabel = make('span');
   pageLabel.setAttribute('aria-live', 'polite');
   pager.append(previous, pageLabel, next);
-  gallery.append(caption, categoryBar, pager, choices, footer);
+  gallery.append(personalFavorites ? heading : caption, categoryBar, pager, choices, favoriteMessage, footer);
 
   let categoryIndex = 0;
   let pageIndex = 0;
   let draft;
   let current;
   let canRequest = false;
+  let favoriteKey;
+  let favorites = new Set();
+  let favoritesOnly = false;
+  let favoriteTarget;
+  let favoriteError = false;
   const displayNames = new Map(categories.flatMap(({ effects }) =>
     effects.filter(({ name }) => name).map(({ effect, name }) => [effect, name])));
   const displayName = effect => displayNames.get(effect) ?? effect;
+  const effectDetails = new Map(categories.flatMap(({ effects }) => effects.map(effect => [effect.effect, effect])));
+  const favoriteEffects = () => [...available].filter(effect => favorites.has(effect)).map(effect => effectDetails.get(effect));
+  const categoryEffects = () => favoritesOnly ? favoriteEffects() : categories[categoryIndex].effects;
   let choiceButtons = [];
   const chooseCategory = index => {
-    if (categoryIndex === index) return;
+    if (!categories[index] || !favoritesOnly && categoryIndex === index) return;
+    favoritesOnly = false;
     categoryIndex = index;
     pageIndex = 0;
     renderChoices();
@@ -96,12 +145,18 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
       option.value = String(index);
       categorySelect.append(option);
     }
+    if (personalFavorites) {
+      const selectedFavorites = make('option', '', t('light_favorites'));
+      selectedFavorites.value = 'favorites';
+      selectedFavorites.disabled = selectedFavorites.hidden = true;
+      categorySelect.append(selectedFavorites);
+    }
     categorySelect.onchange = () => chooseCategory(Number(categorySelect.value));
     categoryBar.append(categorySelect);
   } else if (categoryButtons.length > 1) categoryBar.append(...categoryButtons);
   else categoryBar.hidden = true;
 
-  const pageCount = () => Math.ceil(categories[categoryIndex].effects.length / pageSize);
+  const pageCount = () => Math.max(1, Math.ceil(categoryEffects().length / pageSize));
   for (const [control, offset] of [[previous, -1], [next, 1]]) {
     control.dataset.action = effectAction;
     control.onclick = () => {
@@ -112,9 +167,12 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
   }
 
   function refresh() {
-    if (categorySelect) categorySelect.disabled = !canRequest;
+    if (categorySelect) {
+      categorySelect.disabled = !canRequest;
+      categorySelect.value = favoritesOnly ? 'favorites' : String(categoryIndex);
+    }
     categoryButtons.forEach((control, index) => {
-      control.setAttribute('aria-pressed', String(categoryIndex === index));
+      control.setAttribute('aria-pressed', String(!favoritesOnly && categoryIndex === index));
       control.disabled = !canRequest;
     });
     for (const { control, effect } of choiceButtons) {
@@ -128,14 +186,34 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
     const statusText = draft ? t('selected_effect') + ' · ' + displayName(draft)
       : current ? t('current_effect') + ' · ' + displayName(current) : t('no_current_effect');
     if (status.textContent !== statusText) status.textContent = statusText;
+    if (favoriteActions) {
+      favoriteActions.hidden = !favoriteKey;
+      const saved = favorites.has(favoriteTarget);
+      const starLabel = t(saved ? 'light_favorite_remove' : 'light_favorite_add');
+      star.setAttribute('aria-label', favoriteTarget ? starLabel + ' · ' + displayName(favoriteTarget) : starLabel);
+      star.title = starLabel;
+      star.disabled = !favoriteKey || !favoriteTarget;
+      star.setAttribute('aria-pressed', String(saved));
+      starIcon.setAttribute('icon', saved ? 'mdi:star' : 'mdi:star-outline');
+      const filterLabel = t('light_favorites_filter');
+      favoriteFilter.setAttribute('aria-label', filterLabel);
+      favoriteFilter.title = filterLabel;
+      favoriteFilter.setAttribute('aria-pressed', String(favoritesOnly));
+      const count = favoritesOnly && favoriteEffects().length;
+      const message = favoriteError ? t('light_favorites_error') : favoritesOnly
+        ? count ? t('light_favorites_count').replace('{count}', count) : t('light_favorites_empty') : '';
+      if (favoriteMessage.textContent !== message) favoriteMessage.textContent = message;
+      favoriteMessage.hidden = !message;
+    }
   }
 
   function renderChoices() {
     const total = pageCount();
+    pageIndex = Math.min(pageIndex, total - 1);
     pager.hidden = total <= 1;
     pageLabel.textContent = t('effect_page_number').replace('{page}', pageIndex + 1).replace('{total}', total);
     const firstIndex = pageIndex * pageSize;
-    choiceButtons = categories[categoryIndex].effects.slice(firstIndex, firstIndex + pageSize).map(({ effect, name, icon: symbol }) => {
+    choiceButtons = categoryEffects().slice(firstIndex, firstIndex + pageSize).map(({ effect, name, icon: symbol }) => {
       const control = button('control-button');
       control.dataset.action = effectAction;
       if (symbol) control.append(icon(symbol));
@@ -148,22 +226,76 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
       return { control, effect };
     });
     choices.replaceChildren(...choiceButtons.map(({ control }) => control));
+    choices.hidden = !choiceButtons.length;
     refresh();
   }
 
   apply.onclick = () => {
     if (!apply.disabled) request(draft, apply);
   };
+  function syncFavorites() {
+    if (!personalFavorites) return false;
+    const user = personalFavorites.user();
+    const key = typeof user === 'string' && user.trim() && user.length <= 256
+      ? favoriteKeyPrefix + JSON.stringify([user, personalFavorites.entity]) : undefined;
+    if (favoriteKey === key) return false;
+    if (favoriteKey) draft = undefined;
+    favoriteKey = key;
+    favorites = key ? favoritesFor(personalFavorites.view, key) : new Set();
+    favoriteError = favoritesOnly = false;
+    pageIndex = 0;
+    return true;
+  }
+  if (personalFavorites) {
+    star.onclick = () => {
+      if (syncFavorites()) renderChoices();
+      if (star.disabled || !favoriteKey || !favoriteTarget) return;
+      const next = favoritesFor(personalFavorites.view, favoriteKey);
+      if (next.has(favoriteTarget)) next.delete(favoriteTarget);
+      else next.add(favoriteTarget);
+      try {
+        const encoded = JSON.stringify([...next]);
+        if (encoded.length > maxFavoriteStorageLength) throw new Error('Too many favorites');
+        personalFavorites.view.localStorage.setItem(favoriteKey, encoded);
+        favorites = next;
+        favoriteError = false;
+        if (favoritesOnly) renderChoices();
+        else refresh();
+      } catch {
+        favoriteError = true;
+        refresh();
+      }
+    };
+    favoriteFilter.onclick = () => {
+      syncFavorites();
+      if (!favoriteKey) return;
+      favorites = favoritesFor(personalFavorites.view, favoriteKey);
+      favoritesOnly = !favoritesOnly;
+      pageIndex = 0;
+      renderChoices();
+    };
+  }
+  syncFavorites();
+  const restore = personalFavorites?.restore;
+  if (favoriteKey && restore?.key === favoriteKey) {
+    favoritesOnly = restore.favoritesOnly;
+    categoryIndex = categories[restore.categoryIndex] ? restore.categoryIndex : 0;
+    pageIndex = restore.pageIndex;
+    if (available.has(restore.draft)) draft = restore.draft;
+  }
   renderChoices();
   return {
     content: gallery,
+    capture() { return personalFavorites && { key: favoriteKey, favoritesOnly, categoryIndex, pageIndex, draft }; },
     update(model, enabled) {
       const effect = model.attributes.effect;
+      favoriteTarget = model.available && ['on', 'off'].includes(model.state) && available.has(effect) ? effect : undefined;
       current = model.state === 'on' && typeof effect === 'string' && effect.trim() &&
         (available.has(effect) || effect !== 'off') ? effect : undefined;
       canRequest = enabled;
       if (draft === current) draft = undefined;
-      refresh();
+      if (syncFavorites()) renderChoices();
+      else refresh();
     },
   };
 }
@@ -220,6 +352,12 @@ export const lightEffectStyles = `
   }
   .light-effect-gallery { display:grid; gap:8px; min-width:0; }
   .light-effect-caption { margin:0; font-size:.87rem; font-weight:650; }
+  .light-effect-heading { display:flex; justify-content:space-between; align-items:center; gap:6px; }
+  .light-effect-personal-actions { display:flex; gap:6px; }
+  .light-effect-personal-actions[hidden], .light-effect-favorite-message[hidden] { display:none; }
+  .light-effect-gallery .light-effect-personal-actions .control-button { min-width:44px; min-height:44px; justify-content:center; }
+  .light-effect-personal-actions ha-icon { --mdc-icon-size:20px; }
+  .light-effect-favorite-message { margin:0; font-size:.78rem; color:var(--secondary); }
   .light-effect-categories { display:flex; flex-wrap:wrap; gap:6px; }
   .light-effect-categories[hidden] { display:none; }
   .light-effect-categories select { width:100%; font-size:16px; }

@@ -14,12 +14,13 @@ import { climateOptionLabel } from './panel-controls.js';
 import { buildToolbarEditor } from './toolbar-editor.js';
 import { activityKinds, activitySources, normalizeRoomActivities } from './room-appliance.mjs';
 import { getDeviceModel, supportsRoomShutdown } from './device-control.mjs';
-import { normalizeLightEffectGroups } from './light-effects.js';
+import { normalizeLightEffectFavoriteLights, normalizeLightEffectGroups } from './light-effects.js';
 import { isPopupFragment, normalizePopupAliases } from './popup-routes.js';
 
 const WORDS = {
   en: {
     lightEffects: 'Light effect categories', effectLight: 'Light', effectGroup: 'Category',
+    effectFavorites: 'Allow personal favorites on this device',
     newEffectGroup: 'New category', effectGroupName: 'Category name', addEffectGroup: 'Add category',
     removeEffectGroup: 'Delete category', availableEffect: 'Available effect', chooseEffect: 'Select an effect',
     addEffect: 'Add effect', removeEffect: 'Remove effect',
@@ -136,6 +137,7 @@ const WORDS = {
   },
   he: {
     lightEffects: 'קטגוריות אפקטים לתאורה', effectLight: 'תאורה', effectGroup: 'קטגוריה',
+    effectFavorites: 'אפשר סימון מועדפים אישיים במכשיר',
     newEffectGroup: 'קטגוריה חדשה', effectGroupName: 'שם קטגוריה', addEffectGroup: 'הוספת קטגוריה',
     removeEffectGroup: 'מחיקת קטגוריה', availableEffect: 'אפקט זמין', chooseEffect: 'בחירת אפקט',
     addEffect: 'הוספת אפקט', removeEffect: 'הסרת אפקט',
@@ -2064,6 +2066,16 @@ export class Bayit9StrategyEditor extends HTMLElement {
       }
 
       const groups = groupsFor(entity);
+      if (groups.length) {
+        const enabled = new Set(normalizeLightEffectFavoriteLights(this.#config.light_effect_favorites));
+        const favorites = node('input', { type:'checkbox', checked:enabled.has(entity) });
+        favorites.addEventListener('change', () => {
+          if (favorites.checked) enabled.add(entity);
+          else enabled.delete(entity);
+          this.#commit({ light_effect_favorites: [...enabled] });
+        });
+        fields.push(node('label', { className:'check' }, [favorites, words.effectFavorites]));
+      }
       const index = this.#lightEffectGroup;
       const group = groups[index];
       const reported = new Set(source.options);

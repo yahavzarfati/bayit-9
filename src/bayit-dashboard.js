@@ -290,7 +290,10 @@ function normalizeEntity(item) {
   }
   if (entity.startsWith('light.') && entry.role !== 'status') {
     const groups = normalizeLightEffectGroups(item.effect_groups);
-    if (groups.length) entry.effect_groups = groups;
+    if (groups.length) {
+      entry.effect_groups = groups;
+      if (item.effect_favorites === true) entry.effect_favorites = true;
+    }
   }
   if (item.command === 'run_script') entry.command = item.command;
   if (typeof item.confirmation === 'boolean' || typeof item.confirmation === 'string') entry.confirmation = item.confirmation;
@@ -2392,6 +2395,7 @@ export class BayitDashboard extends HTMLElement {
     const active = this.shadowRoot.activeElement;
     const focused = active && view.group.contains(active) ? active.dataset : undefined;
     view.fields = [];
+    if (view.config.effect_favorites && view.effectGallery) view.effectGallerySession = view.effectGallery.capture();
     view.effectGallery = null;
     const basic = make('div', 'basic-actions');
     const complex = new Map();
@@ -2436,7 +2440,12 @@ export class BayitDashboard extends HTMLElement {
       if (action.color && this.panel?.type !== 'device') continue;
       if (id === 'set_effect' && this.panel?.type === 'device') {
         view.effectGallery = createLightEffectGallery(view.config.effect_groups, action.options, { make, button, icon,
-          t: key => this.t(key), request: (value, control) => this.requestAction(view.config, id, value, control) });
+          t: key => this.t(key), request: (value, control) => this.requestAction(view.config, id, value, control),
+          ...(view.config.effect_favorites && { personalFavorites: {
+            entity: view.config.entity, view: this.ownerDocument.defaultView, user: () => this._hass?.user?.id,
+            restore: view.effectGallerySession,
+          } }),
+        });
         if (view.effectGallery) {
           complex.set(id, view.effectGallery.content);
           continue;
@@ -2478,10 +2487,11 @@ export class BayitDashboard extends HTMLElement {
     view.climateExtraControls = hasAdvanced ? advancedClimate : undefined;
     view.group.replaceChildren(...(basic.childElementCount ? [basic] : []), ...view.special.content, ...complex.values(),
       ...(hasAdvanced ? [advancedClimate] : []));
-    if (focused?.action || focused?.lightMode) {
-      const successor = [...view.group.querySelectorAll('[data-action], [data-light-mode]')].find(el =>
+    if (focused?.action || focused?.lightMode || focused?.effectFavoriteControl) {
+      const successor = [...view.group.querySelectorAll('[data-action], [data-light-mode], [data-effect-favorite-control]')].find(el =>
         !el.closest('[hidden]') && (focused.action && el.dataset.action === focused.action ||
-          focused.lightMode && el.dataset.lightMode === focused.lightMode));
+          focused.lightMode && el.dataset.lightMode === focused.lightMode ||
+          focused.effectFavoriteControl && !el.disabled && el.dataset.effectFavoriteControl === focused.effectFavoriteControl));
       (successor || view.more || view.tile).focus({ preventScroll: true });
     }
   }

@@ -554,6 +554,9 @@ test('maps effect categories to visible controllable lights and preserves native
     { entity: 'light.demo_read_only', role: 'status' }, { entity: 'switch.demo_switch' },
   ]);
   assert.equal(effects[0].title, ' Nature ');
+  config.light_effect_favorites = ['light.demo_lamp', 'light.demo_hidden', 'switch.demo_switch', 'light.demo_read_only'];
+  assert.deepEqual(discoverRooms(config, { states }, 'en')[0].entities.map(device => device.effect_favorites),
+    [true, undefined, undefined]);
 });
 
 test('projects a scoped hold destination only to an active shortcut and an admitted screen', () => {
