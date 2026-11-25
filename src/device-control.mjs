@@ -136,6 +136,10 @@ function normalizedConfig(config) {
   if (config.level_read_entity !== undefined && (!config.level_steps || !isEntity(config.level_read_entity, "input_number"))) {
     throw new DeviceControlError("invalid_config", "Fan heating level feedback requires a numeric helper.");
   }
+  if (config.boiler_detail_preference !== undefined &&
+      (domain !== "input_boolean" || config.role !== "action" || config.boiler_detail_preference !== true)) {
+    throw new DeviceControlError("invalid_config", "A shared boiler view requires an input boolean helper.");
+  }
   if (config.light_status_refresh_for !== undefined &&
       (domain !== "button" || config.role !== "action" || !isEntity(config.light_status_refresh_for, "light"))) {
     throw new DeviceControlError("invalid_config", "A light status refresh requires a button assigned to its light.");
@@ -289,6 +293,12 @@ function supportedActions(config, states, record, timer, nowMs, roomBoilerQuickP
     case "switch":
     case "automation":
       power();
+      break;
+    case "input_boolean":
+      if (config.boiler_detail_preference === true) {
+        if (record.state === "off") add("turn_on");
+        if (record.state === "on") add("turn_off");
+      }
       break;
     case "script": {
       const curated = config.role === "action";
@@ -604,7 +614,7 @@ function expectedState(config, action, value, states) {
       if (config.domain === 'climate' && config.room_climate_power === true) {
         return { entity: config.entity, anyState: HVAC_MODES.slice(1) };
       }
-      return ["light", "switch", "fan", "automation"].includes(config.domain) ? state("on") : null;
+      return ["light", "switch", "fan", "automation", "input_boolean"].includes(config.domain) ? state("on") : null;
     case "turn_off":
     case "stop_script":
       return state("off");
@@ -875,6 +885,13 @@ export function createDeviceController({
     },
     async execute(config, actionId, value, options) {
       const hass = getHass();
+      if (config.boiler_detail_preference) {
+        const info = hass?.entities?.[config.entity];
+        if (!["turn_on", "turn_off"].includes(actionId) || !Object.hasOwn(hass?.services?.input_boolean ?? {}, actionId) ||
+            info?.hidden || info?.hidden_by || info?.disabled_by) {
+          throw new DeviceControlError("action_unavailable", "The shared boiler view helper is unavailable.");
+        }
+      }
       if (config.light_status_refresh_for && (
         !isPairedLightStatusRefresh(config.light_status_refresh_for, config.entity, hass?.entities) ||
         !hass?.states?.[config.light_status_refresh_for] || !Object.hasOwn(hass?.services?.button ?? {}, "press")

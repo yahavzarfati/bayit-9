@@ -261,6 +261,11 @@ function normalizeEntity(item) {
       (/^sensor\.[a-z0-9_]+$/.test(entry.timed?.simple_timer_entity ?? '') ||
        /^timer\.[a-z0-9_]+$/.test(entry.timed?.timer_entity ?? ''))) {
     entry.boiler_timer_with_details = true;
+    const preference = item.boiler_detail_preference_entity;
+    if (supportsNativeShortcutDetails(item) && /^sensor\.[a-z0-9_]+$/.test(entry.timed?.simple_timer_entity ?? '') &&
+        typeof preference === 'string' && /^input_boolean\.[a-z0-9_]+$/.test(preference)) {
+      entry.boiler_detail_preference_entity = preference;
+    }
   }
   if (entry.kind === 'boiler' && item.schedule && typeof item.schedule === 'object') {
     entry.schedule = Object.fromEntries(['save_script', 'delete_script'].flatMap(key =>
@@ -2037,6 +2042,13 @@ export class BayitDashboard extends HTMLElement {
     const tabs = make('div', 'boiler-tabs');
     tabs.dir = 'ltr';
     let panel;
+    const popup = this.panel;
+    const isCurrent = () => {
+      const { modal } = this.nodes;
+      const { location } = this.ownerDocument.defaultView;
+      return this.isConnected && this.panel === popup && modal.open && !modal.hasAttribute('data-closing') &&
+        (!popup?.routeHash || (location.pathname === this.popupHistoryPath && location.hash === popup.routeHash));
+    };
     const stacked = config.boiler_timer_with_details === true;
     const choices = [
       {label:'timed', icon:'mdi:timer-outline', element:controls},
@@ -2047,13 +2059,6 @@ export class BayitDashboard extends HTMLElement {
       const scheduleHost = make('div','boiler-pane boiler-schedule-host');
       scheduleHost.hidden = true;
       choices.splice(1,0,{label:'boiler_schedule',icon:'mdi:calendar-clock',element:scheduleHost,open:() => {
-        const popup = this.panel;
-        const isCurrent = () => {
-          const { modal } = this.nodes;
-          const { location } = this.ownerDocument.defaultView;
-          return this.isConnected && this.panel === popup && modal.open && !modal.hasAttribute('data-closing') &&
-            (!popup?.routeHash || (location.pathname === this.popupHistoryPath && location.hash === popup.routeHash));
-        };
         const pauseScrollMemory = stacked && popup?.scrollHash ? () => {
           this.popupScroll.stop();
           return () => { if (isCurrent()) this.restorePopupScroll(popup); };
@@ -2070,6 +2075,20 @@ export class BayitDashboard extends HTMLElement {
     const [timer, ...secondary] = choices;
     const selectable = stacked ? secondary : choices;
     const detailPreference = this.config.storageKey + ':boiler-detail:' + config.entity;
+    const schedulePane = secondary.find(item => item.label === 'boiler_schedule');
+    const historyPane = secondary.find(item => item.label === 'boiler_history');
+    const linkedPane = detail === 'schedule' ? schedulePane : undefined;
+    const helper = stacked && schedulePane ? config.boiler_detail_preference_entity : undefined;
+    const target = helper ? { entity:helper, role:'action', boiler_detail_preference:true } : undefined;
+    const readPreference = hass => {
+      const states = hass?.states ?? {};
+      if (!helper || ![config.entity, helper].every(id => isVisibleEntity(id, states, hass?.entities, this.config.hiddenEntities))) return;
+      const state = states[helper].state;
+      if (state === 'on' || state === 'off') return state;
+    };
+    const paneFor = state => state === 'on' ? historyPane : state === 'off' ? schedulePane : undefined;
+    let sharedState = readPreference(this._hass);
+    let linkedOverride = Boolean(linkedPane);
     let active = timer;
     let returnButton;
     let timerScroll = 0;
@@ -2099,6 +2118,17 @@ export class BayitDashboard extends HTMLElement {
         try { localStorage.setItem(detailPreference, item.label); } catch {}
       }
     };
+    const updateSharedView = hass => {
+      if (!helper) return;
+      const reported = readPreference(hass);
+      if (reported !== sharedState) {
+        sharedState = reported;
+        if (reported && !linkedOverride) activate(paneFor(reported));
+      }
+      const pending = this.pending.has(helper);
+      tabs.setAttribute('aria-busy', String(pending));
+      for (const choice of selectable) choice.tab.setAttribute('aria-disabled', String(pending));
+    };
     for (const item of selectable) {
       const tab = button('control-button', this.t(item.label), item.icon);
       tab.id = 'boiler-tab-' + item.label;
@@ -2108,7 +2138,22 @@ export class BayitDashboard extends HTMLElement {
       tab.setAttribute('aria-controls', item.element.id);
       tab.hidden = compactNavigation && item === timer;
       tab.setAttribute('aria-pressed', String(item === active));
-      tab.onclick = () => activate(item, true);
+      tab.onclick = () => {
+        if (active === item || (helper && (!isCurrent() || this.pending.has(helper)))) return;
+        linkedOverride = false;
+        const current = readPreference(this._hass);
+        const action = item === historyPane ? 'turn_on' : 'turn_off';
+        if (current && paneFor(current) === item) {
+          activate(item);
+          return;
+        }
+        if (current && Object.hasOwn(this._hass.services?.input_boolean ?? {}, action) &&
+            typeof this._hass.callWS === 'function' && this.model(target).actions[action]) {
+          this.requestAction(target, action, undefined, tab);
+          return;
+        }
+        activate(item, true);
+      };
       tabs.append(tab);
       item.tab = tab;
     }
@@ -2116,13 +2161,19 @@ export class BayitDashboard extends HTMLElement {
     const secondaryPanes = secondary.map(item => item.element);
     if (stacked || compactNavigation) content.append(controls, tabs, ...secondaryPanes);
     else content.append(tabs, controls, ...secondaryPanes);
-    this.boilerView = {update:hass=>panel?.update(hass), dispose:()=>panel?.dispose()};
-    const linkedPane = detail === 'schedule' && secondary.find(item => item.label === 'boiler_schedule');
+    this.boilerView = {
+      update: hass => {
+        const prior = panel;
+        updateSharedView(hass);
+        if (panel === prior) panel?.update(hass);
+      },
+      dispose: () => panel?.dispose(),
+    };
     if (linkedPane) activate(linkedPane);
     else if (stacked) {
       let saved;
       try { saved = localStorage.getItem(detailPreference); } catch {}
-      activate(secondary.find(item => item.label === saved) ?? secondary[0]);
+      activate(paneFor(sharedState) ?? secondary.find(item => item.label === saved) ?? secondary[0]);
     }
   }
 

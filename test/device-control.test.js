@@ -61,6 +61,35 @@ test("a paired light refresh can press a first-use button and refuses stale or h
   assert.equal(calls.length,1);
 });
 
+test("a shared boiler detail action sends only a supported change to its visible toggle helper", async () => {
+  const helper = "input_boolean.fixture_boiler_view";
+  const target = { entity:helper, role:"action", boiler_detail_preference:true };
+  const calls = [];
+  const hass = {
+    states:{[helper]:entity("off")}, entities:{[helper]:{}}, services:{input_boolean:{turn_on:{},turn_off:{}}},
+    callWS: request => { calls.push(request); hass.states[helper] = entity(request.service === "turn_on" ? "on" : "off"); },
+  };
+  const controller = createDeviceController({getHass:()=>hass});
+  assert.equal(getDeviceModel({entity:helper},hass.states).actions.turn_on,undefined);
+  assert.throws(() => planDeviceAction({...target,entity:"switch.fixture_boiler"},
+    {"switch.fixture_boiler":entity("off")},"turn_on"),code("invalid_config"));
+  const result = await controller.execute(target,"turn_on");
+  assert.equal(result.status,"confirmed");
+  await assert.rejects(controller.execute(target,"turn_on"),code("action_unavailable"));
+  hass.entities[helper].hidden_by = "user";
+  await assert.rejects(controller.execute(target,"turn_off"),code("action_unavailable"));
+  delete hass.entities[helper].hidden_by;
+  delete hass.services.input_boolean.turn_off;
+  await assert.rejects(controller.execute(target,"turn_off"),code("action_unavailable"));
+  hass.services.input_boolean.turn_off = {};
+  assert.equal((await controller.execute(target,"turn_off")).status,"confirmed");
+  hass.states[helper] = entity("unavailable");
+  await assert.rejects(controller.execute(target,"turn_on"),code("action_unavailable"));
+  assert.deepEqual(calls,["turn_on","turn_off"].map(service => ({
+    type:"call_service",domain:"input_boolean",service,target:{entity_id:helper},service_data:{},
+  })));
+});
+
 test("boiler quick power revalidates the latest relay, timer and native service before dispatch", async () => {
   const relay = "switch.fixture_boiler";
   const sensor = "sensor.fixture_runtime";

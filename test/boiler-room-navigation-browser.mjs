@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { once } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { chromium, webkit } from 'playwright-core';
@@ -7,17 +7,22 @@ import { chromium, webkit } from 'playwright-core';
 const bundle = await readFile(new URL('../dist/bayit-9.js', import.meta.url));
 
 const fixture = '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">' +
-  '<script type="module">import "/dashboard.js";(' + function () {
+  '<script type="module">import "/dashboard.js";(' + async function () {
     const params = new URL(location.href).searchParams;
     const locale = params.get('locale');
     const guardedSchedule = params.has('guarded-schedule');
     const idleZero = params.has('idle-zero');
+    const shared = params.has('shared-preference');
+    const preference = 'input_boolean.fixture_boiler_view';
+    const hiddenPreference = 'input_boolean.fixture_hidden';
+    const timerTarget = 'input_boolean.fixture_climate_timer';
     const timing = params.has('compact') ? { max_minutes: 300, presets: [],
       ...(idleZero ? { min_minutes: 15, step_minutes: 15, idle_zero_duration: true }
         : { min_minutes: 1, step_minutes: 1 }),
     } : { min_minutes: 15, max_minutes: 60, step_minutes: 15 };
     const boiler = { entity: 'switch.fixture_boiler', name: 'Fixture boiler', kind: 'boiler',
       ...(params.has('stacked') && { boiler_timer_with_details: true }),
+      ...(shared && !params.has('unbound-preference') && { boiler_detail_preference_entity:preference }),
       ...(guardedSchedule && { schedule: { save_script: 'script.fixture_schedule_save', delete_script: 'script.fixture_schedule_delete' } }),
       ...(!params.has('untimed') && { timed: { simple_timer_entity: 'sensor.fixture_runtime', ...timing } }) };
     const sensors = Array.from({ length: 12 }, (_, index) => ({
@@ -30,6 +35,11 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
         entry_id: 'fixture-runtime', switch_entity_id: boiler.entity, timer_state: 'idle', device_active: false,
       } },
     };
+    if (shared) {
+      states[preference] = { state:await window.fixtureReadBoilerView(), attributes:{} };
+      states[hiddenPreference] = { state:'off', attributes:{} };
+      states[timerTarget] = { state:'off', attributes:{} };
+    }
     if (params.has('wrong-runtime-target')) states['sensor.fixture_runtime'].attributes.switch_entity_id = 'switch.another';
     const names = ['Morning', 'Evening'];
     if (guardedSchedule) names.push(...Array.from({ length: 10 }, (_, index) => 'Fixture schedule ' + index));
@@ -56,6 +66,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
       { id: 'monitor', name: 'Monitor', entities: [{ ...boiler, role: 'status' }], shortcuts: [boiler.entity] },
     ] });
     const services = { simple_timer: { start_timer: {} } };
+    if (shared) services.input_boolean = { turn_on:{}, turn_off:{} };
     if (!params.has('without-scheduler')) services.scheduler = { add: {} };
     if (scheduleActions) {
       services.scheduler.edit = {};
@@ -68,10 +79,19 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
       pausedScheduleRead = undefined;
       return new Promise(resolve => { releaseScheduleRead = () => resolve(data); });
     };
+    const preferenceCalls = [];
     const hass = {
-      user: { is_admin: true }, states, services,
+      user: { id:params.get('account'), is_admin: true }, states, services,
+      entities:{ [hiddenPreference]:{ hidden_by:'user' } },
       callWS(request) {
         requests.push(request.type);
+        if (shared && request.type === 'call_service') {
+          preferenceCalls.push(request);
+          if (request.domain !== 'input_boolean' || request.target?.entity_id !== preference) {
+            return Promise.reject(new Error('Unexpected state write in view preference fixture'));
+          }
+          return window.fixtureWriteBoilerView(request);
+        }
         if (idleZero && request.type === 'call_service' && request.domain === 'simple_timer') {
           timerCalls.push(request);
           return Promise.resolve({});
@@ -121,13 +141,28 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     card.addEventListener('hass-more-info', event => moreInfo.push(event.detail.entityId));
     if (params.has('editor')) {
       const editor = document.createElement('bayit-9-strategy-editor');
-      editor.setConfig({ type: 'custom:bayit-9', locale, profiles: [boiler] });
+      editor.setConfig({ type: 'custom:bayit-9', locale, profiles: [boiler, ...(shared ? [{
+        entity:'climate.fixture_heating', kind:'climate',
+        timed:{ simple_timer_entity:'sensor.fixture_climate_runtime', simple_timer_target:timerTarget },
+      }] : [])] });
       editor.hass = hass;
       editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
       document.body.append(editor);
     } else document.body.append(card);
     window.fixture = {
-      requests, moreInfo, scheduleCalls, timerCalls,
+      requests, moreInfo, scheduleCalls, timerCalls, preferenceCalls,
+      reportPreference(next) {
+        states[preference] = { state:next, attributes:{} };
+        card.hass = { ...hass, states:{ ...states } };
+      },
+      setPreferenceService(enabled) {
+        services.input_boolean = enabled ? {turn_on:{},turn_off:{}} : {};
+        card.hass = { ...hass, services:{ ...services } };
+      },
+      setPreferenceVisibility(visible) {
+        hass.entities[preference] = visible ? {} : { hidden_by:'user' };
+        card.hass = { ...hass, entities:{ ...hass.entities } };
+      },
       pauseScheduleRead(type = 'scheduler') { pausedScheduleRead = type; },
       scheduleReadWaiting() { return Boolean(releaseScheduleRead); },
       releaseScheduleRead() {
@@ -161,6 +196,125 @@ const server = createServer((request, response) => {
 });
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
+
+async function assertSharedBoilerView(browser, locale) {
+  const home = 'http://127.0.0.1:' + server.address().port + '?stacked&routed&shared-preference&locale=' + locale;
+  const route = '#device/bath/switch.fixture_boiler';
+  const helper = 'input_boolean.fixture_boiler_view';
+  const he = locale === 'he';
+  const words = {
+    schedule:he ? 'תזמון' : 'Schedule', history:he ? 'היסטוריית שימוש' : 'Usage history',
+    profiles:he ? 'שליטה בדוד ובתנורים' : 'Boiler and heater controls', edit:he ? 'עריכה' : 'Edit',
+    save:he ? 'שמירת בקר' : 'Save profile',
+    helper:he ? 'בורר משותף לתזמון ולהיסטוריה' : 'Shared Schedule and History helper',
+  };
+  let reported = 'on';
+  const writes = [];
+  const events = new EventEmitter();
+  const clients = [];
+  const client = async account => {
+    const page = await browser.newPage({ viewport:{width:340,height:844}, hasTouch:true, reducedMotion:'reduce' });
+    clients.push(page);
+    page.setDefaultTimeout(8000);
+    await page.exposeFunction('fixtureReadBoilerView', () => reported);
+    await page.exposeFunction('fixtureWriteBoilerView', request => new Promise((resolve,reject) => {
+      writes.push({request,resolve,reject});
+      events.emit('write');
+    }));
+    const dialog = page.getByRole('dialog',{name:'Fixture boiler',exact:true});
+    const tabs = dialog.locator('.boiler-tabs');
+    const ready = active => tabs.locator('button[aria-pressed=true]').filter({hasText:words[active]}).waitFor();
+    const tab = name => tabs.getByRole('button',{name:words[name],exact:true});
+    const reflect = state => page.evaluate(value => fixture.reportPreference(value),state);
+    const calls = () => page.evaluate(() => fixture.preferenceCalls);
+    const open = (suffix = '', hash = route) => page.goto(home + '&account=' + account + suffix + hash);
+    return {page,tabs,ready,tab,reflect,calls,open};
+  };
+  const waitForWrites = async total => {
+    if (writes.length < total) await once(events,'write',{signal:AbortSignal.timeout(8000)});
+    assert.equal(writes.length,total);
+  };
+  const publish = async (state,...views) => {
+    reported = state;
+    await Promise.all(views.map(view => view.reflect(state)));
+  };
+  try {
+    const first = await client('account-a');
+    const second = await client('account-b');
+    assert.notEqual(first.page.context(),second.page.context());
+    await Promise.all([first.open(),second.open()]);
+    await Promise.all([first.ready('history'),second.ready('history')]);
+    assert.deepEqual(await first.calls(),[]);
+    assert.deepEqual(await second.calls(),[]);
+
+    await first.tab('schedule').press('Enter');
+    await waitForWrites(1);
+    assert.deepEqual(writes[0].request,{type:'call_service',domain:'input_boolean',service:'turn_off',
+      target:{entity_id:helper},service_data:{}});
+    await first.tabs.locator('button[aria-disabled=true]').first().waitFor();
+    await first.ready('history');
+    await second.ready('history');
+    assert.equal(await first.tab('schedule').evaluate(node => node.getRootNode().activeElement === node),true);
+    await publish('off',first,second);
+    writes[0].resolve({});
+    await Promise.all([first.ready('schedule'),second.ready('schedule')]);
+    await first.tabs.locator('button[aria-disabled=false]').first().waitFor();
+    await second.page.reload();
+    await second.ready('schedule');
+    assert.deepEqual(await second.calls(),[]);
+
+    await first.tab('history').tap();
+    await waitForWrites(2);
+    assert.deepEqual(writes[1].request,{type:'call_service',domain:'input_boolean',service:'turn_on',
+      target:{entity_id:helper},service_data:{}});
+    writes[1].reject(new Error('Fixture rejected the change'));
+    await first.tabs.locator('button[aria-disabled=false]').first().waitFor();
+    await first.ready('schedule');
+    assert.deepEqual(await first.calls(),writes.map(write => write.request));
+
+    // The direct schedule route takes precedence without persisting a new view.
+    reported = 'on';
+    await second.open('&schedule-link',route + '/schedule');
+    await second.ready('schedule');
+    await publish('off',second);
+    await publish('on',second);
+    await second.ready('schedule');
+    assert.equal(writes.length,2);
+    assert.deepEqual(await second.calls(),[]);
+
+    // Invalid, hidden or unavailable helper states leave local tab navigation useful.
+    await first.reflect('unavailable');
+    await first.tab('history').tap();
+    await first.ready('history');
+    await first.reflect('off');
+    await first.ready('schedule');
+    await first.page.evaluate(() => fixture.setPreferenceVisibility(false));
+    await first.tab('history').tap();
+    await first.ready('history');
+    await first.page.evaluate(() => fixture.setPreferenceVisibility(true));
+    await first.ready('schedule');
+    await first.page.evaluate(() => fixture.setPreferenceService(false));
+    await first.tab('history').tap();
+    await first.ready('history');
+    assert.equal(writes.length,2);
+    await first.reflect('off');
+    reported = 'unavailable';
+    await first.page.reload();
+    await first.ready('history');
+    assert.deepEqual(await first.calls(),[]);
+
+    reported = 'off';
+    await first.open('&editor&unbound-preference','');
+    await first.page.getByText(words.profiles,{exact:true}).click();
+    await first.page.getByRole('button',{name:words.edit,exact:true}).first().click();
+    const helperPicker = first.page.getByLabel(words.helper,{exact:true});
+    assert.deepEqual(await helperPicker.locator('option').evaluateAll(items => items.map(item => item.value)),['',helper]);
+    await helperPicker.selectOption(helper);
+    await first.page.getByRole('button',{name:words.save,exact:true}).click();
+    assert.equal(await first.page.evaluate(() => window.latest.profiles[0].boiler_detail_preference_entity),helper);
+    assert.deepEqual(await first.calls(),[]);
+  } finally { await Promise.all(clients.map(page => page.close())); }
+}
 
 async function assertDedicatedBoilerPresentation(browser, locale) {
   const page = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
@@ -495,6 +649,7 @@ try {
     try {
       for (const language of ['en', 'he']) {
         await assertDedicatedBoilerPresentation(browser, language);
+        await assertSharedBoilerView(browser, language);
         await assertIdleZeroBoilerDuration(browser, language);
       }
       const routed = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true });

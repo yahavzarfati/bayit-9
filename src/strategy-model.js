@@ -201,6 +201,8 @@ export function normalizeProfile(value) {
   if (!startScript && !simpleTimer && !timer && !stopScript) return profile;
   if (profile.kind === 'boiler' && value.boiler_timer_with_details === true && (simpleTimer || timer)) {
     profile.boiler_timer_with_details = true;
+    const preference = simpleTimer && idForDomain(value.boiler_detail_preference_entity, 'input_boolean');
+    if (preference) profile.boiler_detail_preference_entity = preference;
   }
   const min = numberOr(timed.min_minutes, 15);
   const max = Math.max(min, numberOr(timed.max_minutes, 60));
@@ -233,6 +235,12 @@ function profilesOf(items) {
   for (const item of Array.isArray(items) ? items : []) {
     const profile = normalizeProfile(item);
     if (profile && !profiles.has(profile.entity)) profiles.set(profile.entity, profile);
+  }
+  const timerTargets = new Set([...profiles.values()].map(profile => profile.timed?.simple_timer_target));
+  for (const profile of profiles.values()) {
+    if (profile.boiler_detail_preference_entity && timerTargets.has(profile.boiler_detail_preference_entity)) {
+      delete profile.boiler_detail_preference_entity;
+    }
   }
   return profiles;
 }
@@ -493,6 +501,7 @@ function presentEntity(entity, state, registry, profile) {
     ...(profile?.home_heater_cutoff_automation && { home_heater_cutoff_automation: profile.home_heater_cutoff_automation }),
     ...(profile?.schedule && { schedule: profile.schedule }),
     ...(profile?.boiler_timer_with_details && { boiler_timer_with_details: true }),
+    ...(profile?.boiler_detail_preference_entity && { boiler_detail_preference_entity: profile.boiler_detail_preference_entity }),
   };
 }
 
@@ -1211,7 +1220,8 @@ export function generateDashboard(config = {}, hass = {}) {
   if (toolbar !== undefined) card.toolbar = toolbar;
   const hidden = idList(config.hidden_entities);
   if (hidden.length && (toolbar?.some(entry => entry.sections?.some(section => section.discover)) ||
-      card.rooms.some(room => room.entities.some(device => device.effect_category_source)))) card.hidden_entities = hidden;
+      card.rooms.some(room => room.entities.some(device => device.effect_category_source ||
+        device.boiler_detail_preference_entity)))) card.hidden_entities = hidden;
   const sharedWallpapers = normalizeSharedWallpapers(config.shared_wallpapers);
   if (sharedWallpapers.length) card.shared_wallpapers = sharedWallpapers;
   if (Object.hasOwn(BACKGROUNDS, config.background) || sharedWallpapers.some(item => item.id === config.background)) {

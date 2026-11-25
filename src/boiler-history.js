@@ -189,6 +189,7 @@ export const boilerHistoryStyles = `
     border-radius: 8px;
     background: color-mix(in srgb,var(--ink) 4%,transparent);
   }
+  .boiler-tabs > .control-button[aria-disabled=true] { cursor: wait; }
   .boiler-tabs > .control-button[aria-pressed=true] {
     background: color-mix(in srgb,var(--boiler-heat) 14%,transparent);
     border-color: color-mix(in srgb,var(--boiler-heat) 45%,transparent);

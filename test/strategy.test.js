@@ -862,6 +862,31 @@ test('only an opted-in timed boiler projects the combined timer and detail layou
   assert.equal(normalizeProfile({ ...profile, boiler_timer_with_details: 'true' }).boiler_timer_with_details, undefined);
 });
 
+test('shared boiler detail preferences use a dedicated input boolean on a combined Simple Timer profile', () => {
+  const helper = 'input_boolean.demo_boiler_view';
+  const profile = {
+    entity: 'switch.demo_boiler', kind: 'boiler', boiler_timer_with_details: true,
+    timed: { simple_timer_entity: 'sensor.demo_timer' }, boiler_detail_preference_entity: helper,
+  };
+  assert.equal(normalizeProfile(profile).boiler_detail_preference_entity,helper);
+  for (const invalid of [
+    { boiler_detail_preference_entity:'switch.other' },
+    { boiler_timer_with_details:false },
+    { kind:'heater' },
+    { timed:{timer_entity:'timer.demo_boiler'} },
+  ]) {
+    assert.equal(normalizeProfile({ ...profile, ...invalid }).boiler_detail_preference_entity,undefined);
+  }
+  const project = profiles => generateDashboard({profiles,hidden_entities:[helper]},home()).views[0].cards[0];
+  const boiler = card => card.rooms.flatMap(room => room.entities).find(device => device.entity === profile.entity);
+  assert.equal(boiler(project([profile])).boiler_detail_preference_entity,helper);
+  assert.deepEqual(project([profile]).hidden_entities,[helper]);
+  assert.equal(boiler(project([profile,{
+    entity:'climate.demo_ac',kind:'climate',
+    timed:{simple_timer_entity:'sensor.demo_ac_timer',simple_timer_target:helper},
+  }])).boiler_detail_preference_entity,undefined);
+});
+
 test('resolves appearance and filters unknown options', () => {
   const configured = generateDashboard({
     locale: 'en', title: ' Demo ', background: 'lagoon',

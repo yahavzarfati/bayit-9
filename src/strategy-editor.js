@@ -120,6 +120,9 @@ const WORDS = {
     popupLinkConflict: 'This fragment already opens a popup on this dashboard.',
     popupLinkSelect: 'Choose an available popup on this dashboard.', popupLinkLimit: 'This dashboard has reached the limit for popup links.',
     boilerTimerWithDetails: 'Show the boiler timer with schedule or history',
+    boilerDetailPreference: 'Shared Schedule and History helper',
+    boilerDetailPreferenceHint: 'Use a dedicated Toggle helper. On opens History and off opens Schedule.',
+    boilerDetailPreferenceError: 'Choose an available Toggle helper dedicated to this view.',
     scheduleSave: 'Boiler schedule save script (optional)', scheduleDelete: 'Boiler schedule delete script (optional)',
     classic: 'Alongside the controls', header: 'At the top', soft: 'Rounded', circle: 'Circle', square: 'Square',
     devices: 'Device visibility', hidden: 'Hide devices', included: 'Add other entities',
@@ -257,6 +260,9 @@ const WORDS = {
     popupLinkConflict: 'המקטע הזה כבר פותח חלונית בדשבורד.',
     popupLinkSelect: 'בחרו חלונית זמינה בדשבורד הזה.', popupLinkLimit: 'הגעתם למספר המרבי של קישורים לחלוניות בדשבורד.',
     boilerTimerWithDetails: 'הצגת טיימר הדוד לצד התזמון או ההיסטוריה',
+    boilerDetailPreference: 'בורר משותף לתזמון ולהיסטוריה',
+    boilerDetailPreferenceHint: 'בחרו מתג עזר ייעודי. כשהוא פועל תוצג ההיסטוריה וכשהוא כבוי יוצג התזמון.',
+    boilerDetailPreferenceError: 'בחרו מתג עזר זמין שמיועד לתצוגה הזו בלבד.',
     scheduleSave: 'סקריפט לשמירת תזמון הדוד (אופציונלי)', scheduleDelete: 'סקריפט למחיקת תזמון הדוד (אופציונלי)',
     classic: 'לצד הכפתורים', header: 'בראש הכרטיס', soft: 'מעוגל', circle: 'עיגול', square: 'ריבוע',
     devices: 'הצגת מכשירים', hidden: 'הסתרת מכשירים', included: 'הוספת ישויות נוספות',
@@ -2170,6 +2176,18 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const simpleFields = node('div', { className: 'stack' }, [field(words.simpleTimerDevice, simple), targetField, cutoffField, resetUsage]);
     const boilerDetailsInput = node('input', { type: 'checkbox', checked: current.boiler_timer_with_details === true });
     const boilerDetails = node('label', { className: 'check' }, [boilerDetailsInput, words.boilerTimerWithDetails]);
+    const availableViewHelper = id => /^input_boolean\.[a-z0-9_]+$/.test(id) &&
+      ['on','off'].includes(this.#hass.states?.[id]?.state) &&
+      !(Array.isArray(this.#config.profiles) && this.#config.profiles.some(profile => profile?.timed?.simple_timer_target === id)) &&
+      isVisibleEntity(id, this.#hass.states ?? {}, this.#hass.entities,
+        new Set(Array.isArray(this.#config.hidden_entities) ? this.#config.hidden_entities : []));
+    const viewHelper = entityInput('input_boolean', current.boiler_detail_preference_entity, availableViewHelper);
+    const viewHelperField = field(words.boilerDetailPreference, viewHelper);
+    const viewHelperHint = node('small', {
+      id: viewHelper.getAttribute('aria-labelledby') + '-hint', textContent: words.boilerDetailPreferenceHint,
+    });
+    viewHelperField.append(viewHelperHint);
+    viewHelper.setAttribute('aria-describedby', viewHelperHint.id);
     const usage = entityInput('sensor', timed.daily_usage_entity);
     const presets = node('input', {
       value: Array.isArray(timed.presets) ? timed.presets.join(', ') : '',
@@ -2210,6 +2228,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       syncIdleZero();
       schedule.hidden = kind.value !== 'boiler' || !usingSimple;
       boilerDetails.hidden = kind.value !== 'boiler' || !(usingSimple ? simple.value : timer.value);
+      viewHelperField.hidden = boilerDetails.hidden || !usingSimple || !boilerDetailsInput.checked;
       const prefix = kind.value === 'climate' && domain === 'climate' ? 'input_boolean.' : fanHeater ? 'switch.' : '';
       const linked = attributesFor(simple.value)?.switch_entity_id ?? (simple.value === timed.simple_timer_entity ? timed.simple_timer_target : undefined);
       const compatible = prefix && typeof linked === 'string' && linked.startsWith(prefix) && linked !== entity.value;
@@ -2228,7 +2247,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       if (entity.value.split('.')[0] === 'climate' && entity.value !== current.entity) kind.value = 'climate';
       sync();
     });
-    for (const control of [kind, level, timerSource, simple, timer, usage]) control.addEventListener('change', sync);
+    for (const control of [kind, level, timerSource, simple, timer, usage, boilerDetailsInput]) control.addEventListener('change', sync);
 
     const saveProfile = () => {
       const latest = Array.isArray(this.#config.profiles) ? this.#config.profiles : [];
@@ -2246,6 +2265,13 @@ export class Bayit9StrategyEditor extends HTMLElement {
         simple.focus();
         return;
       }
+      const viewPreference = viewHelperField.hidden ? undefined : viewHelper.value;
+      if (viewPreference && viewPreference !== current.boiler_detail_preference_entity && !availableViewHelper(viewPreference)) {
+        error.textContent = words.boilerDetailPreferenceError;
+        error.hidden = false;
+        viewHelper.focus();
+        return;
+      }
       const presetValues = presets.value.trim() ? presets.value.trim().split(/[,;\s]+/).map(Number)
         : Array.isArray(timed.presets) ? [] : undefined;
       const levelSelectId = !fanLevels.hidden && usingSimple ? levelSelect.value : '';
@@ -2257,6 +2283,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         level_activity_script: levelActivityId, level_preselect_entity: nextLevelId, unreported_swing_mode: swingMode,
         home_heater_cutoff_automation: cutoffField.hidden ? undefined : cutoff.value,
         boiler_timer_with_details: !boilerDetails.hidden && boilerDetailsInput.checked,
+        boiler_detail_preference_entity: viewPreference,
         schedule: {save_script:scheduleSave.value,delete_script:scheduleDelete.value},
         timed: {
           ...(usingSimple
@@ -2308,7 +2335,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     children.push(
       field(words.entity, entity), field(words.kind, kind), field(words.displayName, title), swingField,
       field(words.level, level), fanLevels,
-      field(words.timerSource, timerSource), serverFields, simpleFields, boilerDetails, schedule,
+      field(words.timerSource, timerSource), serverFields, simpleFields, boilerDetails, viewHelperField, schedule,
       field(words.dailyUsage, usage), field(words.presets, presets),
       node('div', { className: 'grid' }, [field(words.min, min), field(words.max, max), field(words.step, step)]),
       idleZero, error,
