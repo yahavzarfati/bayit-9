@@ -27,21 +27,31 @@ jobs:
         home-assistant: ['2026.5.0', '2026.11.2']
     steps:
       - uses: actions/checkout@v4
+        id: source
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm test
+      - name: Install Node dependencies
+        id: node_dependencies
+        run: npm ci
+      - name: Run JavaScript tests
+        run: npm test
       - name: Install Chromium
+        if: ${{ !cancelled() && steps.node_dependencies.outcome == 'success' }}
+        id: chromium
         run: npx playwright-core install --with-deps chromium
       - name: Create and exercise Bayit 9 inside Home Assistant
+        if: ${{ !cancelled() && steps.chromium.outcome == 'success' }}
         run: bash scripts/run-ha-acceptance.sh ${{ matrix.home-assistant }}
       - name: Exercise timed heating blueprints inside Home Assistant
-        if: matrix.home-assistant == '2026.11.2'
+        if: ${{ !cancelled() && steps.source.outcome == 'success' && matrix.home-assistant == '2026.11.2' }}
         run: |
           docker run --rm --network none --volume "${PWD}:/bayit:ro" \
             --entrypoint python ghcr.io/home-assistant/home-assistant:2026.11.2 /bayit/tests/test_heating_core.py
+      - name: Exercise timed heating schedules inside Home Assistant
+        if: ${{ !cancelled() && steps.source.outcome == 'success' && matrix.home-assistant == '2026.11.2' }}
+        run: |
           docker run --rm --network none --volume "${PWD}:/bayit:ro" \
             --entrypoint python ghcr.io/home-assistant/home-assistant:2026.11.2 /bayit/tests/test_heating_schedule.py
       - name: Collect synthetic screenshots and diagnostics
