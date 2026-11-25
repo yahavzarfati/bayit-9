@@ -4046,7 +4046,8 @@ try {
       const opensDetails = shortcutSetup.getByLabel('Open details with a long press · Room heater', { exact: true });
       assert.equal(await opensDetails.isChecked(), false);
       await opensDetails.check();
-      await saveRoomConfig(shortcutSetup);
+      await Promise.all([shortcutModePage.waitForEvent('load'), saveRoomConfig(shortcutSetup)]);
+      await shortcutModePage.waitForFunction(() => Boolean(window.bayitTest));
       const savedShortcut = await shortcutModePage.evaluate(() => {
         const { room_overrides, room_shortcuts } = JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy;
         return { hidden: room_overrides.studio.panel_hidden_entities, suppressed: !!room_overrides.studio.shortcut_no_details,
