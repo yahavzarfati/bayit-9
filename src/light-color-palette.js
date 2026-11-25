@@ -30,7 +30,7 @@ export function createLightColorPalette({ make, button, label, t, request }) {
   };
   const hue = range('hue', 360, '°');
   const saturation = range('saturation', 100, '%');
-  element.firstElementChild.append(preview);
+  hue.input.before(preview);
   const swatches = make('div', 'light-color-swatches');
   swatches.setAttribute('role', 'group');
   swatches.setAttribute('aria-label', t('light_quick_colors'));

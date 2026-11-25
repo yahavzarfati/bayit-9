@@ -8623,6 +8623,9 @@ async function assertCompactColorPalette(browser) {
         assert.equal(await hue.getAttribute('aria-valuetext'),'45\u00b0');
         assert.equal(await saturation.getAttribute('aria-valuetext'),'2%');
         assert.equal(await swatches.locator('[aria-pressed=true]').count(),0);
+        const [sampleBounds, railBounds] = await Promise.all([preview.boundingBox(), hue.boundingBox()]);
+        assert.ok(sampleBounds && railBounds && sampleBounds.y + sampleBounds.height <= railBounds.y + 1,
+          'The color sample sits alongside the Hue caption above the slider');
       }
       assert.equal((await commands()).length,7, 'Viewing a white light as a starting point sends nothing');
       await stage(hue,120);
