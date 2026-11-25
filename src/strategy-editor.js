@@ -625,8 +625,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
           saveText();
         });
         fields.replaceChildren(showDevice, show, field(words.roomControlName, input));
-        if (id.startsWith('light.') && !configuredIds(override.read_only_entities).includes(id)) {
-          const inline = checkbox(words.roomInlineLight, configuredIds(override.inline_light_entities).includes(id), checked => {
+        const inlineLight = configuredIds(override.inline_light_entities).includes(id);
+        const lightActions = id.startsWith('light.') && getDeviceModel({ entity: id }, this.#hass.states).actions;
+        if (lightActions && !configuredIds(override.read_only_entities).includes(id) &&
+            (inlineLight || lightActions.set_brightness || lightActions.set_color_temp_kelvin)) {
+          const inline = checkbox(words.roomInlineLight, inlineLight, checked => {
             const next = { ...this.#roomOverride(room.id) };
             const inlineLights = new Set(configuredIds(next.inline_light_entities));
             if (checked) inlineLights.add(id);
