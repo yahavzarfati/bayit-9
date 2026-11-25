@@ -1,5 +1,5 @@
 import {
-  discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactToolbarStatus, isToolbarLightTile, LOCAL_ROUTE,
+  discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactToolbarStatus, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
   normalizeOverviewDiscovery, overviewSectionOptions, roomPanelOptions, selectableRoomEntities,
   TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
 } from './strategy-model.js';
@@ -43,6 +43,7 @@ const WORDS = {
     show_end: 'Show end-of-alert notices',
     vacuumMapTitle: 'Roborock floor maps', vacuumMap: 'Show calibrated floor maps',
     vacuumMapHint: 'Requires the Xiaomi Vacuum Map Card and calibrated Roborock image entities.',
+    vacuumMapPosition: 'Show map before section', vacuumMapEnd: 'End of the screen',
     vacuumDevice: 'Roborock vacuum', vacuumSelector: 'Selected-map entity',
     floorOption: 'Map option', floorImage: 'Calibrated map image', floorName: 'Display name',
     addFloor: 'Add floor', removeFloor: 'Remove floor',
@@ -92,6 +93,7 @@ const WORDS = {
     show_end: 'הצגת הודעות סיום',
     vacuumMapTitle: 'מפות קומות של Roborock', vacuumMap: 'הצגת מפות קומות מכוילות',
     vacuumMapHint: 'נדרשים כרטיס Xiaomi Vacuum Map וישויות מפה מכוילות של Roborock.',
+    vacuumMapPosition: 'הצגת המפה לפני הקבוצה', vacuumMapEnd: 'בסוף המסך',
     vacuumDevice: 'שואב Roborock', vacuumSelector: 'ישות לבחירת מפה',
     floorOption: 'אפשרות מפה', floorImage: 'תמונת מפה מכוילת', floorName: 'שם לתצוגה',
     addFloor: 'הוספת קומה', removeFloor: 'הסרת קומה',
@@ -422,9 +424,11 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     const effectiveRole = record.role ?? (section.kind === 'actions' ? 'action' : undefined);
     if (['action', 'lock', 'cover', 'device', 'light_tile', 'now_playing'].includes(effectiveRole)
         || ['locks', 'covers', 'devices'].includes(section.kind) && !['status', 'graph'].includes(effectiveRole)) {
-      const current = record.confirmation === true ? 'ask' : record.confirmation === false ? 'skip'
-        : typeof record.confirmation === 'string' ? 'custom' : '';
-      const canSkip = record.command === 'run_script' || (allowToggle && record.command === 'toggle_script');
+      const allowProgram = isVacuumProgramAction(toolbar[entryIndex].kind, section.kind, { ...record, command: 'vacuum_program' });
+      const immediate = allowProgram && record.command === 'vacuum_program';
+      const current = record.confirmation === true ? 'ask' : typeof record.confirmation === 'string' ? 'custom'
+        : immediate || !allowProgram && record.confirmation === false ? 'skip' : '';
+      const canSkip = allowProgram || record.command === 'run_script' || (allowToggle && record.command === 'toggle_script');
       const confirmation = select([['', words.automatic], ['ask', words.ask],
         ...(canSkip ? [['skip', words.skip]] : []), ['custom', words.askCustom]], current);
       const message = textField(words.confirmationText,
@@ -434,8 +438,10 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       confirmation.addEventListener('change', () => {
         message.field.hidden = confirmation.value !== 'custom';
         if (confirmation.value === 'custom') {
-          if (!message.input.value) save({ confirmation: true });
+          save({ confirmation: message.input.value.trim() || true });
           message.input.focus();
+        } else if (allowProgram && confirmation.value !== 'ask') {
+          save({ command: confirmation.value === 'skip' ? 'vacuum_program' : undefined, confirmation: undefined });
         } else save({ confirmation: ({ ask: true, skip: false })[confirmation.value] });
       });
       fields.push(field(words.confirmation, confirmation), message.field);
@@ -579,6 +585,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       enabled: current.enabled === true,
       vacuum: typeof current.vacuum === 'string' ? current.vacuum : '',
       selector: typeof current.selector === 'string' ? current.selector : '',
+      ...(typeof current.before_section === 'string' && { before_section: current.before_section }),
       floors: Array.isArray(current.floors) ? current.floors.filter(floor => typeof floor?.option === 'string')
         .map(floor => ({ option: floor.option, image: floor.image, name: floor.name })) : [],
     };
@@ -595,6 +602,16 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       node('small', { textContent: words.vacuumMapHint }),
     ];
     if (!settings.enabled) return node('fieldset', { className: 'toolbar-editor-detail' }, output);
+
+    const mapPositions = (entry.sections ?? []).map(section => [section.id, sectionName(section)]);
+    if (settings.before_section && !mapPositions.some(([id]) => id === settings.before_section)) {
+      mapPositions.push([settings.before_section, settings.before_section + ' · ' + words.unavailable]);
+    }
+    if (mapPositions.length) {
+      const placement = select([['', words.vacuumMapEnd], ...mapPositions], settings.before_section ?? '');
+      placement.addEventListener('change', () => save({ before_section: placement.value || undefined }));
+      output.push(field(words.vacuumMapPosition, placement));
+    }
 
     const entityChoices = domains => candidates.filter(item => domains.includes(item.entity.split('.')[0]))
       .map(item => [item.entity, item.name || item.entity]);

@@ -1,6 +1,7 @@
 const TAG = 'xiaomi-vacuum-map-card';
 const ENTITY = /^[a-z_][a-z0-9_]*\.[a-z0-9_]+$/;
 const ROOM = /^[1-9][0-9]{0,5}$/;
+const SECTION_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const unavailable = new Set(['unavailable', 'unknown']);
 
 const domain = id => id.split('.')[0];
@@ -30,7 +31,9 @@ export function normalizeVacuumMap(value, visible = () => true, registry) {
     images.add(image);
     return [{ option, image, ...(name && { name }) }];
   });
-  return floors.length ? { enabled: true, vacuum: value.vacuum, selector: value.selector, floors } : undefined;
+  const beforeSection = typeof value.before_section === 'string' && SECTION_ID.test(value.before_section);
+  return floors.length ? { enabled: true, vacuum: value.vacuum, selector: value.selector, floors,
+    ...(beforeSection && { before_section: value.before_section }) } : undefined;
 }
 
 function localMapPicture(entity, value, origin) {

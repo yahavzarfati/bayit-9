@@ -455,6 +455,8 @@ export function createToolbarPanel(kind, configuration, context) {
     host.append(nativeCard({type:'calendar', entities:[...new Set(calendarItems.map(item=>item.entity))], initial_view:'listWeek'},fallback));
   }
   const forecastPages = new Map();
+  const beforeMap = configuration.vacuumMap?.before_section;
+  let vacuumMapAnchor;
   let forecastClock;
   let clockTimer;
   const updateClock = () => {
@@ -498,6 +500,7 @@ export function createToolbarPanel(kind, configuration, context) {
     }
     panel.append(items);
     host.append(panel);
+    if (beforeMap && beforeMap === section.id) vacuumMapAnchor = panel;
     if (kind === 'weather' && ['forecast', 'sun'].includes(section.kind)) forecastPages.set(section.kind, panel);
     if (kind === 'weather' && section.kind === 'forecast' && !forecastClock) {
       forecastClock = make('div','forecast-clock');
@@ -572,7 +575,7 @@ export function createToolbarPanel(kind, configuration, context) {
     panel.append(make('h3', 'toolbar-section-title', t('vacuum_map')));
     const body = make('div', 'toolbar-section-items');
     panel.append(body);
-    host.append(panel);
+    host.insertBefore(panel, vacuumMapAnchor ?? null);
     vacuumMap = createVacuumMap({ host: body, dialog, config: configuration.vacuumMap, context });
   }
   if (!host.childElementCount) host.append(make('p', 'empty', t('empty_room')));

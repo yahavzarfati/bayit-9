@@ -47,6 +47,22 @@ test('media and vacuum issue only available native commands and validate their s
   assert.throws(()=>planDeviceAction(reset,{[reset.entity]:entity('unavailable')},'press_button',undefined,{confirmed:true}),code('action_unavailable'));
 });
 
+test('a selected vacuum program uses one native press with explicit confirmation taking precedence', async () => {
+  const program = config('button.fixture_clean', { role: 'action', command: 'vacuum_program' });
+  const helper = { ...program, entity: 'input_button.fixture_clean' };
+  const states = { [program.entity]: entity('unknown'), [helper.entity]: entity('unknown') };
+  for (const guarded of [{ ...program, command: undefined }, { ...program, role: 'device' },
+    { ...program, confirmation: true }, { ...program, confirmation: 'Start cleaning?' }, helper]) {
+    assert.throws(() => planDeviceAction(guarded, states, 'press_button'), code('confirmation_required'));
+  }
+  assert.throws(() => planDeviceAction({ ...program, role: 'status' }, states, 'press_button'), code('action_unavailable'));
+  const calls = [];
+  const controller = createDeviceController({ getHass: () => ({ states, callWS: async request => calls.push(request) }) });
+  await controller.execute(program, 'press_button');
+  assert.deepEqual(calls, [{ type: 'call_service', domain: 'button', service: 'press', service_data: {},
+    target: { entity_id: program.entity } }]);
+});
+
 test("opt-in media remote isolates transport, volume, real services and standby", async () => {
   const speaker = config("media_player.fixture_transport", { media_remote_role: "transport", media_remote_standby: true });
   const audio = config("media_player.fixture_volume", { media_remote_role: "volume", media_remote_standby: true });

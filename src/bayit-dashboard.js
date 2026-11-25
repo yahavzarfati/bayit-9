@@ -1,6 +1,6 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
-import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isVisibleEntity,
+import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isVacuumProgramAction, isVisibleEntity,
   MAX_ROOM_SHORTCUTS, normalizeRoomControlName, overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { createDeviceController, getDeviceModel, roomShutdownTargets, supportsRoomShutdown } from './device-control.mjs';
@@ -330,6 +330,7 @@ export function normalizeDashboardConfig(config = {}) {
         const members = selected.map(raw => {
           const entity = normalizeEntity(raw);
           if (isAutomationScriptToggle(item.kind, section.kind, raw)) entity.command = 'toggle_script';
+          if (isVacuumProgramAction(item.kind, section.kind, raw)) entity.command = 'vacuum_program';
           if (item.kind === 'sensors' && section.kind !== 'series' && entity.role === 'graph' &&
               domainFor(entity) === 'sensor' && known.has(raw.graph_room_id)) entity.graph_room_id = raw.graph_room_id;
           return entity;

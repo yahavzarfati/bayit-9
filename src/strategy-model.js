@@ -488,6 +488,11 @@ export function isAutomationScriptToggle(kind, section, item) {
     item.command === 'toggle_script' && idForDomain(item.entity, 'script');
 }
 
+export function isVacuumProgramAction(kind, section, item) {
+  return kind === 'vacuum' && section === 'actions' && item?.role === 'action' &&
+    item.command === 'vacuum_program' && Boolean(idForDomain(item.entity, 'button'));
+}
+
 export function isToolbarLightTile(kind, section, item) {
   return kind === 'devices' && section === 'devices' && item?.role === 'light_tile' && Boolean(idForDomain(item.entity, 'light'));
 }
@@ -521,7 +526,8 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
       const icon = typeof item?.icon === 'string' ? item.icon.trim() : '';
       const role = TOOLBAR_ROLES.has(item?.role) ? item.role : undefined;
       const runScript = role === 'action' && domain === 'script' && item.command === 'run_script';
-      const command = runScript || isAutomationScriptToggle(kind, section.kind, item) ? item.command : undefined;
+      const command = runScript || isAutomationScriptToggle(kind, section.kind, item) ||
+        isVacuumProgramAction(kind, section.kind, item) ? item.command : undefined;
       const confirmation = typeof item?.confirmation === 'string'
         ? item.confirmation.trim().slice(0, 200) || undefined
         : item?.confirmation === true || (item?.confirmation === false && command) ? item.confirmation : undefined;

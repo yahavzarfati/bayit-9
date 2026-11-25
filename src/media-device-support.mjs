@@ -75,7 +75,10 @@ export function addSpecialDeviceActions(config, record, supports, add, options) 
     if (supports(VACUUM.speed)) options('set_fan_speed', attributes.fan_speed_list);
   }
   if (['input_select','select'].includes(config.domain)) options('select_option', attributes.options);
-  if (['input_button','button'].includes(config.domain)) add('press_button', { service: 'press', requiresConfirmation: true });
+  if (['input_button','button'].includes(config.domain)) {
+    const immediate = config.domain === 'button' && config.role === 'action' && config.command === 'vacuum_program';
+    add('press_button', { service: 'press', requiresConfirmation: !immediate });
+  }
 }
 
 export function specialDeviceRequest(config, action, value) {

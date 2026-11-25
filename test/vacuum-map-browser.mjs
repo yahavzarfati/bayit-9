@@ -33,6 +33,11 @@ const hass = {
     'select.wrong': { state: 'Lower', attributes: { friendly_name: 'Other robot selector', options: ['Lower','Upper'] } },
     [downstairs]: image(downstairs, 2), [upstairs]: image(upstairs, 8),
     'image.hidden': image('image.hidden', 6),
+    'button.fixture_daily': { state:'unknown', attributes:{ friendly_name:'Daily cleaning' } },
+    'button.fixture_night': { state:'unknown', attributes:{ friendly_name:'Night cleaning' } },
+    'button.fixture_reset': { state:'unknown', attributes:{ friendly_name:'Reset counter' } },
+    'button.fixture_other': { state:'unknown', attributes:{ friendly_name:'Other button' } },
+    'sensor.fixture_reading': { state:'47', attributes:{ friendly_name:'Vacuum battery' } },
   },
   areas: {}, devices: {},
   entities: { [vacuum]: { di:'robot' }, [selector]: { di:'robot' }, 'select.wrong': { di:'other' },
@@ -60,9 +65,24 @@ window.loadCardHelpers = async () => {
   } };
 };
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
+const before = options.get('before');
 const config = { type: 'custom:bayit-9', toolbar: [
-  { kind: 'vacuum', sections: [{ kind: 'vacuum', entities: [{ entity: vacuum, role: 'device' }] }],
+  { kind: 'vacuum', sections: [{ id:'robot', kind: 'vacuum', entities: [{ entity: vacuum, role: 'device' }] },
+    ...(options.has('programs') ? [
+      {id:'programs',kind:'actions',title:'Programs',entities:[
+        {entity:'button.fixture_daily',role:'action',command:'vacuum_program'},
+        {entity:'button.fixture_night',role:'action',command:'vacuum_program',confirmation:'Start night cleaning?'},
+        {entity:'button.fixture_other',role:'action'},
+      ]},
+      {id:'status',kind:'readings',title:'Status and maintenance',entities:[
+        {entity:'sensor.fixture_reading',role:'status'},
+      ]},
+      {id:'resets',kind:'actions',title:'Maintenance resets',entities:[
+        {entity:'button.fixture_reset',role:'action',confirmation:'Reset the counter?'},
+      ]},
+    ] : [])],
     vacuum_map: { enabled: !options.has('disabled'), vacuum, selector,
+      ...(before && { before_section: before }),
       ...(options.has('editor') ? { floors: [] } : { floors: [
         { option: 'Lower', name: 'Lower floor', image: downstairs },
         { option: 'Upper', name: 'Upper floor', image: upstairs },
@@ -210,8 +230,61 @@ try {
       await image.selectOption('image.lower');
       assert.deepEqual(await page.evaluate(() => tracker.draft.toolbar[0].vacuum_map.floors),
         [{ option:'Lower',image:'image.lower',name:undefined }]);
+
+      const mapOrder = () => page.locator('dialog[open] .toolbar-panes > .toolbar-section').evaluateAll(
+        sections => sections.map(section => section.dataset.section));
+      for (const target of ['status', 'no-longer-present', '[invalid]']) {
+        await openFixture('?programs&before=' + encodeURIComponent(target));
+        await open();
+        await map.waitFor();
+        assert.deepEqual(await mapOrder(), target === 'status'
+          ? ['vacuum', 'actions', 'vacuum-map', 'readings', 'actions']
+          : ['vacuum', 'actions', 'readings', 'actions', 'vacuum-map']);
+        assert.deepEqual(await page.evaluate(() => tracker.calls), []);
+      }
+      await openFixture('?programs&before=status');
+      await open();
+      const callLog = () => page.evaluate(() => tracker.calls);
+      const dialog = page.getByRole('dialog', { name:'Robot vacuum', exact:true });
+      const confirm = page.locator('dialog.confirm[open]');
+      const expected = entity_id => ({ type:'call_service', domain:'button', service:'press', service_data:{}, target:{entity_id} });
+      await dialog.getByRole('button', { name:'Daily cleaning', exact:true }).click();
+      assert.equal(await confirm.count(), 0);
+      assert.deepEqual(await callLog(), [expected('button.fixture_daily')]);
+      for (const [button, prompt] of [
+        ['Night cleaning', 'Start night cleaning?'], ['Reset counter', 'Reset the counter?'],
+        ['Other button', 'Continue with Press button on Other button?'],
+      ]) {
+        await dialog.getByRole('button', { name:button, exact:true }).click();
+        await confirm.getByText(prompt, { exact:true }).waitFor();
+        assert.deepEqual(await callLog(), [expected('button.fixture_daily')]);
+        await confirm.getByRole('button', { name:'Cancel', exact:true }).click();
+      }
+      await dialog.getByRole('button', { name:'Night cleaning', exact:true }).click();
+      await confirm.getByRole('button', { name:'Confirm', exact:true }).click();
+      assert.deepEqual(await callLog(), [expected('button.fixture_daily'), expected('button.fixture_night')]);
+
+      await openFixture('?editor&programs&before=status');
+      await page.getByText('Toolbar and extra screens', { exact:true }).click();
+      const placement = page.getByLabel('Show map before section', { exact:true });
+      assert.equal(await placement.inputValue(), 'status');
+      await placement.selectOption({ label:'End of the screen' });
+      assert.equal(await page.evaluate(() => tracker.draft.toolbar[0].vacuum_map.before_section), undefined);
+      await placement.selectOption('programs');
+      assert.equal(await page.evaluate(() => tracker.draft.toolbar[0].vacuum_map.before_section), 'programs');
+      await page.getByRole('button', { name:'Programs', exact:true }).click();
+      await page.locator('#editor').getByRole('button', { name:'Other button', exact:true }).click();
+      const programConfirm = page.getByLabel('Confirmation', { exact:true });
+      await programConfirm.selectOption({ label:'Run immediately' });
+      const programDraft = () => page.evaluate(() => tracker.draft.toolbar[0].sections.find(section => section.id === 'programs')
+        .entities.find(item => item.entity === 'button.fixture_other'));
+      assert.equal((await programDraft()).command, 'vacuum_program');
+      await programConfirm.selectOption({ label:'Ask before running' });
+      assert.equal((await programDraft()).confirmation, true);
+      await programConfirm.selectOption({ label:'Automatic' });
+      assert.equal((await programDraft()).command, undefined);
       assert.deepEqual(errors, []);
-      console.log(name + ': calibrated floor map, explicit selection and filtered command scope passed');
+      console.log(name + ': calibrated map placement, explicit selection, and scoped program commands');
     } finally {
       await browser.close();
     }

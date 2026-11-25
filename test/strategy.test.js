@@ -911,6 +911,23 @@ test('only Devices status sections retain the compact layout without changing en
   assert.ok(toolbar.every(item => item.sections.every(section => section.entities[0].role === 'status')));
 });
 
+test('only selected vacuum action buttons can retain one-tap program behavior', () => {
+  const hass = home();
+  const item = { entity: 'button.fixture_clean', role: 'action', command: 'vacuum_program', confirmation: 'Start now?' };
+  const helper = { ...item, entity: 'input_button.fixture_clean' };
+  for (const device of [item, helper]) hass.states[device.entity] = { state: 'unknown', attributes: {} };
+  const actions = { kind: 'actions', entities: [item, helper] };
+  const { toolbar } = generateDashboard({
+    toolbar: [
+      { kind: 'vacuum', sections: [actions, { ...actions, kind: 'status' }] },
+      { kind: 'automations', sections: [actions] },
+    ],
+  }, hass).views[0].cards[0];
+  assert.deepEqual(toolbar.map(entry => entry.sections.map(section => section.entities.map(device => device.command))),
+    [[['vacuum_program', undefined], [undefined, undefined]], [[undefined, undefined]]]);
+  assert.equal(toolbar[0].sections[0].entities[0].confirmation, 'Start now?');
+});
+
 test('script toggles stay scoped to explicit Automations actions and preserve confirmation settings', () => {
   const item = { entity: 'script.demo_start', role: 'action', command: 'toggle_script', confirmation: false };
   const section = (kind, entities) => ({ kind, entities });
