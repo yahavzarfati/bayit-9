@@ -50,7 +50,8 @@ export function climateOptionLabel(action, value, options, t) {
 }
 
 export function buildPanelControls(model, {
-  make, button, icon, label, t, request, compactTimer = false, timerPreferenceKey, buildClimateDetail,
+  make, button, icon, label, t, request, compactTimer = false, compactClimateControls = false,
+  timerPreferenceKey, buildClimateDetail,
   usageInfo, canShowUsage, canResetUsage, resetOptIn, unreportedSwingMode,
 }) {
   const used = new Set();
@@ -134,7 +135,12 @@ export function buildPanelControls(model, {
       field.append(icon(glyph), input);
       row.append(field);
     }
-    if (row.childElementCount) content.push(row);
+    if (row.childElementCount && compactClimateControls) {
+      row.dataset.controlCount = row.childElementCount;
+      const rail = make('div', 'compact-climate-rail');
+      rail.append(row);
+      content.push(rail);
+    } else if (row.childElementCount) content.push(row);
     const horizontalSwing = 'set_swing_horizontal_mode';
     if (actions[horizontalSwing]) {
       used.add(horizontalSwing);
@@ -323,6 +329,36 @@ export const panelControlStyles = `
     padding: 0 4px; background: transparent; font-size: 13px; font-weight: 730; }
   .shell[dir=rtl] .climate-selector select { direction: rtl; }
   .climate-selector option { background: #262626; color: white; }
+  .compact-climate-rail { container: bayit-climate-rail / inline-size; min-width: 0; }
+  .compact-climate-rail .climate-controls {
+    display: grid;
+    grid-template-columns: repeat(2,minmax(0,1fr));
+    --climate-first-column: minmax(58px,1fr);
+  }
+  .compact-climate-rail .climate-controls:has(> .temperature-stepper) { --climate-first-column: minmax(98px,1.18fr); }
+  .compact-climate-rail .climate-controls[data-control-count="1"] { grid-template-columns: minmax(0,1fr); }
+  .compact-climate-rail .temperature-stepper { gap: 0; }
+  .compact-climate-rail .step-control { min-width: 27px; }
+  .compact-climate-rail .target-reading { min-width: 0; }
+  .compact-climate-rail .target-value { font-size: 15px; white-space: nowrap; }
+  @container bayit-climate-rail (min-width: 224px) {
+    .compact-climate-rail .climate-controls[data-control-count="3"] {
+      grid-template-columns: var(--climate-first-column) repeat(2,minmax(58px,1fr));
+    }
+  }
+  @container bayit-climate-rail (min-width: 287px) {
+    .compact-climate-rail .climate-controls[data-control-count="4"] {
+      grid-template-columns: var(--climate-first-column) repeat(3,minmax(58px,1fr));
+    }
+  }
+  @container bayit-climate-rail (min-width: 224px) and (max-width: 270px) {
+    .compact-climate-rail .climate-controls[data-control-count="3"] .climate-selector { padding-inline-start: 0; }
+    .compact-climate-rail .climate-controls[data-control-count="3"] .climate-selector > ha-icon { display: none; }
+  }
+  @container bayit-climate-rail (min-width: 287px) and (max-width: 336px) {
+    .compact-climate-rail .climate-controls[data-control-count="4"] .climate-selector { padding-inline-start: 0; }
+    .compact-climate-rail .climate-controls[data-control-count="4"] .climate-selector > ha-icon { display: none; }
+  }
   .climate-extra-controls { min-width: 0; border-top: 1px solid var(--soft-line); }
   .climate-extra-controls > summary { min-height: 44px; padding: 11px 4px; cursor: pointer; }
   .climate-extra-controls > .field-row + .field-row { margin-block-start: 5px; }

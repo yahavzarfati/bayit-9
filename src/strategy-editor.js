@@ -44,6 +44,7 @@ const WORDS = {
     roomBoilerQuickPower: 'Boiler quick power',
     roomBoilerQuickPowerHint: 'Tap for manual power. Hold to choose a timer duration.',
     roomClimatePower: 'Show quick power for this climate device',
+    roomCompactClimateControls: 'Arrange thermostat controls in a compact row',
     climatePresetShortcut: 'Preset shortcut', climatePresetNone: 'No shortcut', climatePresetLabel: 'Shortcut label',
     climatePresetIcon: 'Shortcut icon', climatePresetHighlight: 'Highlight when this preset is reported',
     climatePresetHighlightDefault: 'When the shortcut preset is active', climatePresetUnavailable: 'Unavailable preset',
@@ -162,6 +163,7 @@ const WORDS = {
     roomBoilerQuickPower: 'הפעלה מהירה של הדוד',
     roomBoilerQuickPowerHint: 'לחיצה קצרה להפעלה או לכיבוי ידני. לחיצה ארוכה לבחירת משך הטיימר.',
     roomClimatePower: 'הצגת כפתור הפעלה וכיבוי מהיר למזגן',
+    roomCompactClimateControls: 'סידור פקדי המזגן בשורה קומפקטית',
     climatePresetShortcut: 'קיצור לתוכנית מזגן', climatePresetNone: 'ללא קיצור', climatePresetLabel: 'שם הקיצור',
     climatePresetIcon: 'סמל הקיצור', climatePresetHighlight: 'הדגשה כשהמזגן מדווח על תוכנית זו',
     climatePresetHighlightDefault: 'כשתוכנית הקיצור פעילה', climatePresetUnavailable: 'תוכנית לא זמינה',
@@ -931,7 +933,18 @@ export class Bayit9StrategyEditor extends HTMLElement {
             this.#setRoomOverride(room.id, next, 'room-climate-power');
           });
           power.firstElementChild.dataset.roomFocus = 'room-climate-power';
-          fields.append(power, ...this.#climatePresetFields(room, profile ?? { entity: id }, words));
+          const compact = checkbox(words.roomCompactClimateControls,
+            configuredIds(override.compact_climate_controls_entities).includes(id), checked => {
+              const next = { ...this.#roomOverride(room.id) };
+              const ids = new Set(configuredIds(next.compact_climate_controls_entities));
+              if (checked) ids.add(id);
+              else ids.delete(id);
+              if (ids.size) next.compact_climate_controls_entities = [...ids];
+              else delete next.compact_climate_controls_entities;
+              this.#setRoomOverride(room.id, next, 'room-compact-climate-controls');
+            });
+          compact.firstElementChild.dataset.roomFocus = 'room-compact-climate-controls';
+          fields.append(power, compact, ...this.#climatePresetFields(room, profile ?? { entity: id }, words));
         }
         if (supportsRoomApplianceTile(profile ?? {entity:id})) {
           const appliance = checkbox(words.roomApplianceTile, configuredIds(override.appliance_tile_entities).includes(id), checked => {
@@ -1289,7 +1302,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       for (const key of ['keep_in_automatic_room_entities', 'read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
         'inline_light_entities', 'dual_light_detail_entities', 'compact_light_reading_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details',
         'vacuum_panel_hold_entities', 'climate_power_entities', 'media_compact_entities', 'appliance_tile_entities',
-        'boiler_quick_power_entities', 'compact_device_entities']) {
+        'boiler_quick_power_entities', 'compact_device_entities', 'compact_climate_controls_entities']) {
         if (!Array.isArray(next[key])) continue;
         next[key] = next[key].filter(id => entities.includes(id));
         if (!next[key].length) delete next[key];

@@ -260,6 +260,7 @@ function normalizeEntity(item) {
   }
   if (domain === 'climate' && entry.role !== 'status' && !['heater', 'boiler'].includes(entry.kind)) {
     if (item.room_climate_power === true) entry.room_climate_power = true;
+    if (item.room_climate_controls_compact === true) entry.room_climate_controls_compact = true;
     const shortcut = normalizeClimatePresetShortcut(item.room_climate_preset);
     if (shortcut) entry.room_climate_preset = shortcut;
     const unreported = item.kind === 'climate' && normalizeUnreportedSwingMode(item.unreported_swing_mode);
@@ -1707,6 +1708,7 @@ export class BayitDashboard extends HTMLElement {
     const vacuumStatusLabels = vacuumSummary?.status_entity && panelTarget.sections?.flatMap(section => section.entities)
       .find(entry => entry.entity === vacuumSummary.status_entity && entry.readout?.state_labels)?.readout.state_labels;
     const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactHeater,
+      compactClimateControls: Boolean(room || showRoomPreset) && config.room_climate_controls_compact === true,
       standaloneBoiler, compactCover: cover, vacuumCleaningControls: vacuumDisplay === 'cleaning-controls',
       vacuumSummary, vacuumStatusLabels, roomPowerTile, compactDevice,
       compactMedia: !!room && domain === 'media_player' && (compactDevice || config.room_media_compact === true),
@@ -2434,6 +2436,7 @@ export class BayitDashboard extends HTMLElement {
     view.special = buildPanelControls(model, { make, button, icon, label, t: key => this.t(key),
       compactTimer: view.inlineClimate || view.compactHeater || standaloneClimate ||
         (view.standaloneBoiler && hideIdleTimedOff), timerPreferenceKey,
+      compactClimateControls: view.compactClimateControls,
       unreportedSwingMode: view.config.unreported_swing_mode,
       usageInfo: (entity, source) => { if (this.canShowTimerUsage(entity)) this.moreInfo({ entity }, source); },
       canShowUsage: entity => this.canShowTimerUsage(entity),

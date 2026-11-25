@@ -1023,6 +1023,24 @@ test('supports additional dashboard-only rooms in the room order and retains emp
   assert.ok(automatic.some(room => room.id === custom));
 });
 
+test('the compact climate rail projects only for selected writable thermostats in the selected room', () => {
+  const hass = home();
+  const entities = ['climate.fixture_selected','climate.fixture_read_only','climate.fixture_hidden',
+    'climate.fixture_heater','switch.fixture_other'];
+  for (const entity of entities) {
+    hass.states[entity] = {state:'off',attributes:{}};
+    hass.entities[entity] = {};
+  }
+  const check = generateDashboard({area_ids:['studio','lounge'],show_unassigned:false,
+    profiles:[{entity:entities[3],kind:'heater'}],room_overrides:{
+      studio:{entities,compact_climate_controls_entities:entities,read_only_entities:[entities[1]],panel_hidden_entities:[entities[2]]},
+      lounge:{entities},
+    },
+  },hass).views[0].cards[0].rooms;
+  assert.deepEqual(check[0].entities.filter(item=>item.room_climate_controls_compact).map(item=>item.entity),[entities[0]]);
+  assert.ok(check[1].entities.every(item=>item.room_climate_controls_compact === undefined));
+});
+
 test('scopes optional climate preset shortcuts to visible, writable room thermostats', () => {
   const hass = home();
   const thermostat = 'climate.demo_thermostat';

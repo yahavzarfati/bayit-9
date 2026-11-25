@@ -397,6 +397,7 @@ function dashboardAreas(config, hass) {
       shutdown: idList(override.turn_off_entities).filter(supportsRoomShutdown),
       activities: override.activities,
       climatePower: new Set(idList(override.climate_power_entities)),
+      compactClimateControls: new Set(idList(override.compact_climate_controls_entities)),
       compactMedia: new Set(idList(override.media_compact_entities)),
       compactDevices: new Set(idList(override.compact_device_entities)),
       applianceTiles: new Set(idList(override.appliance_tile_entities)),
@@ -681,8 +682,9 @@ export function discoverRooms(config, hass, locale) {
         if (shortcut) device.room_climate_preset = shortcut;
       }
       if (domainOf(device.entity) === 'climate' && device.role !== 'status' && !['heater', 'boiler'].includes(device.kind) &&
-          area.climatePower?.has(device.entity) && !room.panel_hidden_entities?.includes(device.entity)) {
-        device.room_climate_power = true;
+          !room.panel_hidden_entities?.includes(device.entity)) {
+        if (area.climatePower?.has(device.entity)) device.room_climate_power = true;
+        if (area.compactClimateControls?.has(device.entity) && !isReadOnlyRole(device.role)) device.room_climate_controls_compact = true;
       }
       if (domainOf(device.entity) === 'media_player' && device.role !== 'status' && area.compactMedia?.has(device.entity) &&
           !room.panel_hidden_entities?.includes(device.entity)) device.room_media_compact = true;
