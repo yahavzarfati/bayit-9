@@ -880,7 +880,9 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
     direction: ltr;
     grid-template-columns: repeat(auto-fit,minmax(min(100%,max(110px,calc((100% - 8px) / 2))),1fr));
   }
-  .shell[dir=rtl] .toolbar-section[data-layout=compact] > .toolbar-section-items > * { direction: rtl; }
+  .toolbar-section[data-layout=compact-actions] { padding-inline: 3px; }
+  .toolbar-section[data-layout=compact-actions] > .toolbar-section-items { direction: ltr; }
+  .shell[dir=rtl] .toolbar-section:is([data-layout=compact],[data-layout=compact-actions]) > .toolbar-section-items > * { direction: rtl; }
   .toolbar-section[data-layout=readings-list] > .toolbar-section-items { row-gap: 0; }
   .toolbar-section[data-layout=readings-list] > .toolbar-section-items > :not(.weather-reading) {
     margin-block: 4px;

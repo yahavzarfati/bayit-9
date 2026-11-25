@@ -53,6 +53,7 @@ if (query.has('overview-climate-discovery')) {
       temperature: 24, current_temperature: 22, hvac_modes: ['off', 'cool', 'heat'] } };
   }
 }
+if (query.has('automation-compact')) states['script.demo_start'].last_changed = '2026-01-01T00:00:00.000Z';
 if (query.has('lock-status-palette')) states['lock.fixture_entry'] = {
   state: 'locked', attributes: { friendly_name: 'Fixture lock' },
 };
@@ -2372,6 +2373,7 @@ async function assertCompactAutomationActions(browser) {
     await page.goto(url);
     await openActions();
     assert.ok((await panel.locator('.tile-row').boundingBox()).height >= 80);
+    assert.equal(await panel.locator('[data-section=actions]').evaluate(section => getComputedStyle(section).paddingInlineStart), '8px');
     await panel.getByRole('button', { name:'Close', exact:true }).tap();
     await panel.waitFor({ state:'hidden' });
 
@@ -2386,37 +2388,52 @@ async function assertCompactAutomationActions(browser) {
         await new Promise(requestAnimationFrame);
       });
       assert.equal(await buttons.count(), 2);
-      const measure = wrapLock => buttons.evaluateAll((tiles, wrap) => {
-        if (wrap) {
-          const label = tiles[0].querySelector('.tile-label');
-          const [first, ...rest] = label.textContent.trim().split(' ');
-          label.replaceChildren(first + ' ', document.createElement('br'), rest.join(' '));
+      const measure = labelType => buttons.evaluateAll((tiles, labelType) => {
+        const lockLabel = tiles[0].querySelector('.tile-label');
+        const isHebrew = getComputedStyle(tiles[0]).direction === 'rtl';
+        if (labelType === 'two lines') {
+          const [first, second] = isHebrew ? ['מנעול', 'כניסה'] : ['Fixture', 'lock'];
+          lockLabel.replaceChildren(first + ' ', document.createElement('br'), second);
+        } else if (labelType === 'long') {
+          lockLabel.textContent = (isHebrew ? 'מנעולכניסהלבית' : 'AnExtraLongEntranceLockName').repeat(3);
         }
-        return tiles.map(tile => {
+        const section = tiles[0].closest('[data-layout=compact-actions]');
+        const sectionBox = section.getBoundingClientRect();
+        const entries = tiles.map(tile => {
           const label = tile.querySelector('.tile-label');
           const caption = tile.querySelector('.tile-state');
           const mark = tile.querySelector('.tile-mark').getBoundingClientRect();
           const text = label.getBoundingClientRect();
           const font = getComputedStyle(label);
           const rtl = getComputedStyle(tile).direction === 'rtl';
+          const bounds = tile.getBoundingClientRect();
           return { name:label.textContent, caption:caption.textContent, rtl, font:font.fontFamily,
-            offsetHeight:tile.offsetHeight, height:tile.getBoundingClientRect().height,
+            left:bounds.left, right:bounds.right, top:bounds.top, offsetHeight:tile.offsetHeight, height:bounds.height,
             scrollWidth:tile.scrollWidth, clientWidth:tile.clientWidth,
             scrollHeight:tile.scrollHeight, clientHeight:tile.clientHeight,
             lines:Math.round(text.height / parseFloat(font.lineHeight)),
             iconClearance:rtl ? mark.left - text.right : text.left - mark.right };
         });
-      }, wrapLock);
-      for (const wrapLock of [false, true]) {
-        const tiles = await measure(wrapLock);
-        const metrics = JSON.stringify({ locale, wrapLock, tiles });
-        if (wrapLock) assert.equal(tiles[0].lines, 2, metrics);
-        for (const tile of tiles) {
-          assert.equal(tile.offsetHeight, 56, metrics);
+        return { entries, sectionLeft:sectionBox.left, sectionRight:sectionBox.right };
+      }, labelType);
+      for (const labelType of ['configured', 'two lines', 'long']) {
+        const { entries, sectionLeft, sectionRight } = await measure(labelType);
+        const [first, second] = entries;
+        const metrics = JSON.stringify({ locale, labelType, sectionLeft, sectionRight, entries });
+        assert.ok(Math.abs(first.left - sectionLeft - 4) < .5 && Math.abs(sectionRight - second.right - 4) < .5, metrics);
+        assert.ok(Math.abs(second.left - first.right - 8) < .5 && Math.abs(first.top - second.top) < .5, metrics);
+        if (labelType === 'two lines') assert.equal(first.lines, 2, metrics);
+        if (labelType === 'long') assert.ok(first.lines > 2 && first.offsetHeight > 56, metrics);
+        for (const tile of entries) {
+          assert.equal(tile.rtl, locale === 'he', metrics);
+          if (labelType !== 'long') assert.equal(tile.offsetHeight, 56, metrics);
           assert.ok(tile.scrollWidth <= tile.clientWidth && tile.scrollHeight <= tile.clientHeight, metrics);
           assert.ok(tile.iconClearance >= 0, metrics);
         }
       }
+      await buttons.first().focus();
+      await page.keyboard.press('Tab');
+      assert.equal(await buttons.nth(1).evaluate(button => button.getRootNode().activeElement === button), true);
       await page.keyboard.press('Escape');
       await panel.waitFor({ state:'hidden' });
     }
