@@ -417,14 +417,23 @@ export const styles = `
     justify-content: start;
   }
 
+  .quick-button:is([data-transition=opening], [data-transition=closing]):not([data-popup-origin]) {
+    box-shadow: inset 0 0 0 1px currentColor;
+  }
   .quick-button:is([data-transition=opening], [data-transition=closing])::before {
-    content: ""; position: absolute; inset-block-end: 3px; left: calc(50% - 3px);
-    width: 6px; height: 6px; border-top: 1.5px solid currentColor; border-right: 1.5px solid currentColor;
+    position: absolute; inset-block-start: 0; right: 1px; display: grid; place-items: center;
+    box-sizing: border-box; width: 13px; height: 13px; border: 1px solid #16345c; border-radius: 50%;
+    background: #a4c8ff; color: #001e4d; font: 900 11px/1 sans-serif;
     pointer-events: none; animation: cover-direction .8s ease-in-out infinite alternate;
   }
-  .quick-button[data-transition=opening]::before { rotate: -45deg; --cover-shift: -1px; }
-  .quick-button[data-transition=closing]::before { rotate: 135deg; --cover-shift: 1px; }
-  @keyframes cover-direction { from { opacity: .55; } to { transform: translateY(var(--cover-shift)); } }
+  .quick-button[data-transition=opening]::before { content: "↑"; }
+  .quick-button[data-transition=closing]::before { content: "↓"; }
+  @keyframes cover-direction { from { opacity: .78; } to { opacity: 1; } }
+  @media (forced-colors: active) {
+    .quick-button:is([data-transition=opening], [data-transition=closing])::before {
+      background: Highlight; color: HighlightText; border-color: ButtonText; forced-color-adjust: none;
+    }
+  }
   .quick-button[data-tone=warm], .current[data-tone=warm] { color: var(--warm); }
   .quick-button[data-tone=moving], .current[data-tone=moving] { color: var(--moving); }
   .quick-button[data-tone=critical], .current[data-tone=critical] { color: var(--critical); }

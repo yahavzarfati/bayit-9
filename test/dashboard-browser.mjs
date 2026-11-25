@@ -10793,10 +10793,28 @@ try {
           '.quick-button[data-tone="moving"][data-transition="' + direction + '"][aria-busy="' + busy + '"]'));
         const state = value => page.evaluate(value => window.bayitTest.setRoomState('cover.demo_window', value), value);
         const finish = (index, failed) => page.evaluate(([index, failed]) => window.bayitTest.finishCover(index, failed), [index, failed]);
+        const marker = () => shade.evaluate(el => {
+          const badge = getComputedStyle(el, '::before');
+          return { arrow:badge.content, top:badge.top, right:badge.right, left:badge.left,
+            width:badge.width, height:badge.height, ink:badge.color, fill:badge.backgroundColor,
+            pointer:badge.pointerEvents, animation:badge.animationName };
+        });
+        const assertMarker = async arrow => {
+          for (const width of [320,391]) {
+            await page.setViewportSize({ width, height:844 });
+            const badge = await marker();
+            assert.deepEqual([badge.arrow,badge.top,badge.right,badge.width,badge.height,badge.pointer],
+              ['"' + arrow + '"','0px','1px','13px','13px','none']);
+            assert.equal(badge.animation, reduce ? 'none' : 'cover-direction');
+            assert.ok(Number.parseFloat(badge.left) > Number.parseFloat(badge.width));
+            assert.notEqual(badge.ink,badge.fill);
+          }
+          await page.setViewportSize({ width:320, height:844 });
+        };
         await shade.tap();
         await indicator('opening', true).waitFor();
         assert.match(await shade.getAttribute('aria-label'), reduce ? /נשלחה בקשת פתיחה · עצירה/ : /Opening requested · Stop/);
-        assert.equal(await shade.evaluate(el => getComputedStyle(el, '::before').animationName), reduce ? 'none' : 'cover-direction');
+        await assertMarker('\u2191');
 
         // A second tap stops the same cover before either movement or acknowledgement is reported.
         await shade.tap();
@@ -10814,13 +10832,18 @@ try {
         await state('open');
         await shade.tap();
         await indicator('closing', true).waitFor();
+        await assertMarker('\u2193');
         assert.match(await shade.getAttribute('aria-label'), reduce ? /נשלחה בקשת סגירה/ : /Closing requested/);
         await state('closing');
         await shade.and(page.getByRole('button', { name: reduce ? /^Window shade · נסגר ·/ : /^Window shade · Closing ·/ })).waitFor();
+        const progressRing = await shade.evaluate(el => getComputedStyle(el).boxShadow);
         await shade.press('Shift+Enter');
         const details = page.getByRole('dialog');
         const stop = details.locator('[data-action="stop"]');
         await stop.waitFor();
+        assert.notEqual(await shade.getAttribute('data-popup-origin'), null);
+        assert.notEqual(await shade.evaluate(el => getComputedStyle(el).boxShadow), progressRing,
+          'The contextual popup outline remains distinct on a moving shortcut');
         assert.equal(await stop.isEnabled(), true);
         assert.equal(await details.locator('[data-action="open"]').isDisabled(), true);
         await stop.tap();
@@ -10835,6 +10858,7 @@ try {
         await indicator('opening', true).waitFor();
         await state('unavailable');
         await shade.and(page.locator('[data-transition=""][data-tone="quiet"][aria-busy="false"]')).waitFor();
+        assert.equal((await marker()).arrow,'none');
         assert.match(await room.locator('[data-badge="availability"]').getAttribute('aria-label'), /Window shade/);
         await finish(4, true);
         await note.filter({ hasText: reduce ? 'הפעולה לא הושלמה.' : 'Could not complete the action.' }).waitFor();
