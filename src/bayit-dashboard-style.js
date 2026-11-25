@@ -590,6 +590,21 @@ export const styles = `
   .device-tile .current { margin: 0; font-weight: 600; }
   .device-tile[aria-pressed] .current { display: none; }
   .device-tile .device-name { font-size: 13px; font-weight: 700; }
+  .device[data-inline-light] .device-tile {
+    min-height: 44px; height: auto;
+    grid-template-columns: 32px minmax(0,1fr);
+    justify-items: start; align-items: center;
+    text-align: start;
+  }
+  .device[data-inline-light] .device-tile > ha-icon { width: 32px; height: 32px; }
+  .device[data-inline-light] .action-list { margin: 0; padding: 0 8px 8px; gap: 2px; }
+  .device[data-inline-light] .field-row { grid-template-columns: minmax(0,1fr); }
+  .device[data-inline-light] .field-row label {
+    display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 0 4px;
+    align-items: center;
+  }
+  .device[data-inline-light] .field-row input { grid-column: 1 / -1; grid-row: 2; }
+  .device[data-inline-light] .field-row output { grid-column: 2; grid-row: 1; white-space: nowrap; }
   .action-list, .basic-actions { display: grid; gap: 7px; }
   .action-list:empty { display: none; }
   .action-list { margin-block-start: 8px; }

@@ -66,6 +66,7 @@ const isTemperatureSensor = (domain, attributes) => domain === 'sensor' &&
 const movement = new Set(['open','close','set_position']);
 const scriptOperations = new Set(['start_script', 'stop_script']);
 const coverMovingStates = new Set(['opening', 'closing']);
+const inlineLightActions = new Set(['set_brightness', 'set_color_temp_kelvin']);
 const rangeActions = new Set(['set_position', 'set_brightness', 'set_color_temp_kelvin', 'set_percentage', 'volume_set']);
 const stateKeys = {
   set_position: 'current_position', set_percentage: 'percentage', set_brightness: 'brightness',
@@ -169,6 +170,7 @@ function normalizeEntity(item) {
   if (text(item.name)) entry.name = text(item.name);
   const roomName = normalizeRoomControlName(item.room_name);
   if (roomName !== undefined) entry.room_name = roomName;
+  if (item.room_light_controls === true && entity.startsWith('light.')) entry.room_light_controls = true;
   if (iconPattern.test(text(item.icon))) entry.icon = item.icon;
   if (['heater', 'boiler'].includes(item.kind)) entry.kind = item.kind;
   if (entityPattern.test(text(item.level_entity)) && item.level_entity.startsWith('number.')) {
@@ -1181,7 +1183,8 @@ export class BayitDashboard extends HTMLElement {
     glyph.className = 'device-icon';
     const name = make(tileMode || panelTarget ? 'span' : room ? 'h4' : 'h3', 'device-name');
     const state = make('span', 'current');
-    const view = { config, item, glyph, name, state, fields: [], room, inlineClimate };
+    const inlineLight = tileMode && domain === 'light' && config.role !== 'status' && config.room_light_controls === true;
+    const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight };
     if (tileMode) {
       item.dataset.compact = 'tile';
       const tile = button('device-tile');
@@ -1191,6 +1194,11 @@ export class BayitDashboard extends HTMLElement {
       bindDeviceDetails(tile, () => this.openPanel('device', tile, room, config.entity));
       view.tile = tile;
       item.append(tile);
+      if (inlineLight) {
+        item.dataset.inlineLight = '';
+        view.group = make('div', 'action-list');
+        item.append(view.group);
+      }
     } else {
       const details = make(panelTarget ? 'span' : 'div', 'device-detail');
       details.append(name, state);
@@ -1347,12 +1355,12 @@ export class BayitDashboard extends HTMLElement {
         if (toggles) view.tile.setAttribute('aria-pressed', String(model.state === 'on'));
         else view.tile.removeAttribute('aria-pressed');
         view.tile.setAttribute('aria-busy', String(!!pending));
-        continue;
+        if (!view.inlineLight) continue;
       }
       if (view.panelLaunch) {
         label(view.more, labelName + ' · ' + view.panelLaunch.action);
         if (view.more.title !== view.panelLaunch.hint) view.more.title = view.panelLaunch.hint;
-      } else {
+      } else if (view.more) {
         view.more.hidden = !model.actions.more_info;
         if (view.inlineClimate) label(view.more, this.t('more_info') + ' · ' + labelName);
       }
@@ -1547,6 +1555,7 @@ export class BayitDashboard extends HTMLElement {
     for (const id of actionsInOrder) {
       const action = model.actions[id];
       if (!action || view.special.used.has(id) || (view.room && model.domain === 'cover' && id === 'set_position')) continue;
+      if (view.inlineLight && !inlineLightActions.has(id)) continue;
       if (action.color && this.panel?.type !== 'device') continue;
       if (id === 'set_effect' && this.panel?.type === 'device') {
         view.effectGallery = createLightEffectGallery(view.config.effect_groups, action.options, { make, button, icon,
@@ -1575,7 +1584,7 @@ export class BayitDashboard extends HTMLElement {
       const successor = [...view.group.querySelectorAll('[data-action], [data-light-mode]')].find(el =>
         !el.closest('[hidden]') && (focused.action && el.dataset.action === focused.action ||
           focused.lightMode && el.dataset.lightMode === focused.lightMode));
-      (successor || view.more).focus({ preventScroll: true });
+      (successor || view.more || view.tile).focus({ preventScroll: true });
     }
   }
 
@@ -1613,7 +1622,7 @@ export class BayitDashboard extends HTMLElement {
     } else field.input = this.numberInput(action, isRange ? 'range' : 'number');
     if (id === 'set_effect') field.valid = Boolean;
     field.input.dataset.action = id;
-    if (id === 'set_color_temp_kelvin') field.input.setAttribute('aria-label', title);
+    if (view.inlineLight || id === 'set_color_temp_kelvin') field.input.setAttribute('aria-label', title);
     caption.append(field.input);
     if (id === 'set_temperature_range') {
       field.input.setAttribute('aria-label', title + ' · ' +this.t('min'));
@@ -1627,7 +1636,8 @@ export class BayitDashboard extends HTMLElement {
       caption.append(field.output);
     }
     if (isRange) field.unit = id === 'set_color_temp_kelvin' ? ' K' : '%';
-    const apply = button('control-button', id === 'start_timed' ? this.actionLabel(id) : this.t('apply'));
+    const apply = view.inlineLight ? field.input
+      : button('control-button', id === 'start_timed' ? this.actionLabel(id) : this.t('apply'));
     field.apply = apply;
     const touched = () => {
       field.dirty = true;
@@ -1638,22 +1648,28 @@ export class BayitDashboard extends HTMLElement {
     if (action.color) field.input.addEventListener('change', touched);
     field.second?.addEventListener('input', touched);
     apply.dataset.action = id;
-    label(apply, id === 'start_timed' ? this.actionLabel(id) : this.t('apply') + ' · ' + title);
-    apply.onclick = () => {
+    if (!view.inlineLight) label(apply, id === 'start_timed' ? this.actionLabel(id) : this.t('apply') + ' · ' + title);
+    const commit = () => {
       const single = action.color || field.input.localName === 'select' ? field.input.value : field.input.valueAsNumber;
       const value = field.second ? { low: field.input.valueAsNumber, high: field.second.valueAsNumber } : single;
       this.requestAction(view.config, id, value, apply);
     };
+    if (view.inlineLight) {
+      field.input.addEventListener('change', commit);
+      row.append(caption);
+    } else {
+      apply.onclick = commit;
+      row.append(caption, apply);
+    }
     view.fields.push(field);
     this.syncField(field, model);
-    row.append(caption, apply);
     return row;
   }
 
-  syncField(field, model) {
+  syncField(field, model, force = false) {
     const { id, input, second, action } = field;
     const active = this.shadowRoot.activeElement;
-    if (field.dirty || active === input || (second && active === second)) return;
+    if (!force && (field.dirty || active === input || (second && active === second))) return;
     const attrs = model.attributes;
     if (second) {
       input.value = String(attrs.target_temp_low ?? action.min ?? 18);
@@ -1718,18 +1734,14 @@ export class BayitDashboard extends HTMLElement {
     this.pending.set(config.entity, token);
     this.announce(this.t('sending').replace('{name}', model.name));
     this.update();
+    let confirmedByHomeAssistant = false;
     try {
       const result = await this.controller.execute(config, id, value, { confirmed });
       if (this.pending.get(config.entity) !== token) return;
       const key = ['confirmed','sent','unconfirmed'].includes(result?.status) ? result.status : 'sent';
       const status = key === 'confirmed' && id === 'preselect_heating_level' ? 'heating_preselect_saved' : key;
       this.announce(this.t(status).replace('{name}', model.name));
-      if (result?.status === 'confirmed') {
-        for (const view of this.deviceViews) {
-          if (view.config.entity !== config.entity) continue;
-          for (const field of view.fields) if (field.id === id) field.dirty = false;
-        }
-      }
+      confirmedByHomeAssistant = result?.status === 'confirmed';
     } catch (error) {
       if (this.pending.get(config.entity) === token) {
         const changed = scriptOperations.has(id) && ['stale_script_state', 'action_unavailable'].includes(error?.code);
@@ -1738,6 +1750,14 @@ export class BayitDashboard extends HTMLElement {
     } finally {
       if (this.pending.get(config.entity) === token) {
         this.pending.delete(config.entity);
+        for (const view of this.deviceViews) {
+          if (view.config.entity !== config.entity || (!confirmedByHomeAssistant && !view.inlineLight)) continue;
+          for (const field of view.fields) {
+            if (field.id !== id) continue;
+            field.dirty = false;
+            if (view.inlineLight) this.syncField(field, this.model(view.config), true);
+          }
+        }
         if (this.isConnected) this.update();
       }
     }

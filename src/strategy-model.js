@@ -194,6 +194,7 @@ function dashboardAreas(config, hass) {
       sections,
       readOnly: new Set(idList(override.read_only_entities)),
       panelHidden: idList(override.panel_hidden_entities),
+      inlineLights: new Set(idList(override.inline_light_entities)),
       lightingCount: idList(override.lighting_count_entities),
       activities: override.activities,
       panelLinks: Object.fromEntries([...ROOM_PANEL_KINDS.values()].flatMap(kind => {
@@ -404,8 +405,9 @@ export function discoverRooms(config, hass, locale) {
         const target = links[device.entity];
         if (panelKinds.get(target) === panelKind) device[panelKind + '_panel_id'] = target;
       }
-      if (device.role === 'status' || domainOf(device.entity) !== 'light' ||
-          !Object.hasOwn(config.light_effect_groups ?? {}, device.entity)) continue;
+      if (device.role === 'status' || domainOf(device.entity) !== 'light') continue;
+      if (area.inlineLights?.has(device.entity)) device.room_light_controls = true;
+      if (!Object.hasOwn(config.light_effect_groups ?? {}, device.entity)) continue;
       const groups = normalizeLightEffectGroups(config.light_effect_groups[device.entity]);
       if (groups.length) device.effect_groups = groups;
     }

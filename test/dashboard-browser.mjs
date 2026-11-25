@@ -19,6 +19,7 @@ const states = {
   'timer.demo_heater': { state: 'idle', attributes: { friendly_name: 'Demo timer' } },
 };
 const calls = [];
+let rejectInlineLight = false;
 const moreInfoCalls = [];
 const moreInfoHashes = [];
 document.addEventListener('hass-more-info', event => {
@@ -53,6 +54,15 @@ const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection'
       bayit_room_den: { name: 'Den', entities: ['light.demo_lamp'] },
     },
   }),
+  ...(query.has('inline-room-lights') && {
+    show_unassigned: false, area_ids: ['studio', 'bayit_room_den'],
+    room_overrides: {
+      studio: { entities: ['light.demo_lamp', 'light.demo_room_read_only'],
+        inline_light_entities: ['light.demo_lamp', 'light.demo_room_read_only', 'switch.demo_heater'],
+        read_only_entities: ['light.demo_room_read_only'] },
+      bayit_room_den: { name: 'Den', entities: ['light.demo_lamp'] },
+    },
+  }),
   ...(query.has('room-panel-visibility') && {
     show_unassigned: false, area_ids: ['studio', 'bayit_room_den'],
     room_shortcuts: { studio: ['light.demo_lamp'] },
@@ -70,6 +80,13 @@ const readShared = () => fetch(sharedURL).then(response => response.json());
 const sharedConfig = sharedURL ? await readShared() : undefined;
 const stored = () => sharedConfig ?? JSON.parse(sessionStorage.getItem(storedKey) ||
   JSON.stringify({ strategy: initialStrategy }));
+if (query.has('inline-room-lights')) {
+  const attributes = { supported_color_modes: ['color_temp'], brightness: 102,
+    min_color_temp_kelvin: 2000, max_color_temp_kelvin: 6500, color_temp_kelvin: 3000 };
+  Object.assign(states['light.demo_lamp'].attributes, attributes);
+  states['light.demo_lamp'].state = 'on';
+  states['light.demo_room_read_only'] = { state: 'on', attributes: { ...attributes, friendly_name: 'Read-only lamp' } };
+}
 const hass = {
   user: { is_admin: query.has('configuration') && !query.has('member') },
   locale: { language: new URL(location.href).searchParams.get('locale') || 'en' },
@@ -93,9 +110,14 @@ const hass = {
       return Promise.resolve();
     }
     if (request.domain === 'light') {
+      if (rejectInlineLight) {
+        rejectInlineLight = false;
+        return Promise.reject(new Error('Fixture rejected inline light command'));
+      }
       const id = request.target.entity_id;
-      const { color_temp_kelvin, effect, rgb_color } = request.service_data ?? {};
+      const { brightness_pct, color_temp_kelvin, effect, rgb_color } = request.service_data ?? {};
       const attributes = { ...states[id].attributes };
+      if (brightness_pct !== undefined) attributes.brightness = Math.round(brightness_pct * 255 / 100);
       if (color_temp_kelvin !== undefined) attributes.color_temp_kelvin = color_temp_kelvin;
       if (rgb_color) Object.assign(attributes, { rgb_color: [255, 135, 75], xy_color: [0.574, 0.359], color_mode: 'xy' });
       if (effect !== undefined) attributes.effect = effect;
@@ -462,6 +484,7 @@ window.bayitTest = {
   loadPopupHass() { card.hass = hass; },
   observeScript,
   finishCover: (index, failed = false) => coverRequests[index](failed),
+  rejectNextInlineLight() { rejectInlineLight = true; },
   setRoomState(entity, state) {
     states[entity] = { ...states[entity], state };
     card.hass = { ...hass, states: { ...states } };
@@ -2464,6 +2487,63 @@ try {
       }), { hidden: ['switch.demo_heater'], shortcuts: ['light.demo_lamp'] });
       await panelPage.close();
       console.log(engine + ' 320: room-only panel exclusions, retained shortcuts and direct links, and editor persistence');
+
+      const inlinePage = await newRoomConfigPage();
+      const inlineUrl = base + '/fixture-home/home?configuration&inline-room-lights';
+      await inlinePage.goto(inlineUrl);
+      const inlineStudio = inlinePage.getByRole('button', { name: 'Studio', exact: true });
+      await inlineStudio.tap();
+      const inlineRoom = inlinePage.getByRole('dialog', { name: 'Studio', exact: true });
+      const inlineCard = inlineRoom.locator('[data-inline-light]');
+      await inlineCard.waitFor();
+      assert.equal(await inlineCard.count(), 1);
+      const brighter = inlineCard.getByRole('slider', { name: 'Brightness', exact: true });
+      const warmer = inlineCard.getByRole('slider', { name: 'White temperature', exact: true });
+      assert.equal(await brighter.inputValue(), '40');
+      assert.equal(await warmer.inputValue(), '3000');
+      assert.ok(await inlineCard.evaluate(card => card.scrollWidth <= card.clientWidth));
+      assert.ok(await brighter.evaluate(slider => slider.offsetHeight >= 44));
+      assert.equal(await inlineCard.getByRole('button', { name: /^Apply/ }).count(), 0);
+      await brighter.press('ArrowRight');
+      await inlinePage.waitForFunction(() => window.bayitTest.calls.length >= 1);
+      await inlineCard.locator('input[data-action="set_color_temp_kelvin"]:not(:disabled)').waitFor();
+      await warmer.press('ArrowRight');
+      await inlinePage.waitForFunction(() => window.bayitTest.calls.length >= 2);
+      assert.deepEqual(await inlinePage.evaluate(() => window.bayitTest.calls.map(call =>
+        [call.domain, call.service, call.target.entity_id, call.service_data])), [
+        ['light', 'turn_on', 'light.demo_lamp', { brightness_pct: 41 }],
+        ['light', 'turn_on', 'light.demo_lamp', { color_temp_kelvin: 3001 }],
+      ]);
+      await inlineCard.locator('input[data-action="set_brightness"]:not(:disabled)').waitFor();
+      await inlinePage.evaluate(() => window.bayitTest.rejectNextInlineLight());
+      await brighter.press('ArrowRight');
+      await inlineRoom.getByText('Could not complete the action.', { exact: true }).waitFor();
+      await inlineCard.locator('input[data-action="set_brightness"]:not(:disabled)').waitFor();
+      assert.equal(await brighter.inputValue(), '41', 'A rejected change returns to the reported brightness');
+      await inlineCard.getByRole('button', { name: 'Desk lamp · Turn off', exact: true }).press('Shift+Enter');
+      const inlineDetail = inlinePage.getByRole('dialog', { name: 'Desk lamp', exact: true });
+      await inlineDetail.getByRole('button', { name: 'Apply · Brightness', exact: true }).waitFor();
+      await inlinePage.keyboard.press('Escape');
+      await inlinePage.locator('dialog.modal[data-kind]').waitFor({ state: 'detached' });
+      await inlinePage.getByRole('button', { name: 'Den', exact: true }).tap();
+      const inlineOther = inlinePage.getByRole('dialog', { name: 'Den', exact: true });
+      await inlineOther.getByRole('button', { name: 'Desk lamp · Turn off', exact: true }).waitFor();
+      assert.equal(await inlineOther.getByRole('slider').count(), 0);
+      await inlinePage.keyboard.press('Escape');
+      await inlinePage.locator('dialog.modal[data-kind]').waitFor({ state: 'detached' });
+      const inlineEditor = await openRoomEditor(inlinePage);
+      await inlineEditor.getByLabel('Room to customize', { exact: true }).selectOption('studio');
+      await inlineEditor.getByText('Device display', { exact: true }).tap();
+      await inlineEditor.getByLabel('Device to customize', { exact: true }).selectOption('light.demo_lamp');
+      const inlineOption = inlineEditor.getByRole('checkbox', { name: 'Show brightness and temperature in this room', exact: true });
+      assert.equal(await inlineOption.isChecked(), true);
+      await inlineOption.uncheck();
+      await inlineEditor.getByRole('button', { name: 'Save dashboard', exact: true }).tap();
+      await inlineStudio.waitFor();
+      assert.equal(await inlinePage.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture'))
+        .strategy.room_overrides.studio.inline_light_entities?.includes('light.demo_lamp')), false);
+      await inlinePage.close();
+      console.log(engine + ': inline room light controls, native commands, isolation, and editor');
 
       const lastRoomPage = await newRoomConfigPage();
       await lastRoomPage.goto(roomConfigUrl + '&sole-room');

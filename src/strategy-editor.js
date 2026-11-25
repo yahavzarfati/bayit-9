@@ -26,6 +26,7 @@ const WORDS = {
     roomName: 'Room display name', roomToEdit: 'Room to customize', roomIcon: 'Room icon', defaultRoomIcon: 'Default icon',
     roomControlDisplay: 'Device display', roomControlDevice: 'Device to customize', roomControlName: 'Name in this room',
     roomControlShow: 'Show name in this room',
+    roomInlineLight: 'Show brightness and temperature in this room',
     roomPanelShow: 'Show device in room panel', roomPanelHint: 'For quick access from Home, add the device in Room shortcuts.',
     lightCount: 'Lights in the room count', lightCountHint: 'With no lights selected, the count includes every room light.',
     lightCountReset: 'Use automatic lighting count',
@@ -92,6 +93,7 @@ const WORDS = {
     roomName: 'שם החדר לתצוגה', roomToEdit: 'חדר להתאמה אישית', roomIcon: 'סמל החדר', defaultRoomIcon: 'סמל ברירת המחדל',
     roomControlDisplay: 'תצוגת מכשירים', roomControlDevice: 'מכשיר להתאמה אישית', roomControlName: 'שם המכשיר בחדר הזה',
     roomControlShow: 'הצגת שם המכשיר בחדר הזה',
+    roomInlineLight: 'הצגת בהירות וגוון אור בתוך החדר',
     roomPanelShow: 'הצגת המכשיר בחלונית החדר', roomPanelHint: 'לגישה מהירה ממסך הבית, הוסיפו את המכשיר בהגדרה קיצורים בחדרים.',
     lightCount: 'תאורה שנכללת במונה החדר', lightCountHint: 'כשלא מסומן אף פריט, המונה כולל את כל התאורה בחדר.',
     lightCountReset: 'חזרה לספירת תאורה אוטומטית',
@@ -623,6 +625,19 @@ export class Bayit9StrategyEditor extends HTMLElement {
           saveText();
         });
         fields.replaceChildren(showDevice, show, field(words.roomControlName, input));
+        if (id.startsWith('light.') && !configuredIds(override.read_only_entities).includes(id)) {
+          const inline = checkbox(words.roomInlineLight, configuredIds(override.inline_light_entities).includes(id), checked => {
+            const next = { ...this.#roomOverride(room.id) };
+            const inlineLights = new Set(configuredIds(next.inline_light_entities));
+            if (checked) inlineLights.add(id);
+            else inlineLights.delete(id);
+            if (inlineLights.size) next.inline_light_entities = [...inlineLights];
+            else delete next.inline_light_entities;
+            this.#setRoomOverride(room.id, next, 'room-inline-light');
+          });
+          inline.firstElementChild.dataset.roomFocus = 'room-inline-light';
+          fields.append(inline);
+        }
       };
       picker.addEventListener('change', () => {
         this.#roomControlEditing.set(room.id, picker.value);
@@ -727,7 +742,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const change = (items, focusKey) => {
       const entities = items.map(item => item.id);
       const next = { ...override, entities };
-      for (const key of ['read_only_entities', 'lighting_count_entities', 'panel_hidden_entities']) {
+      for (const key of ['read_only_entities', 'lighting_count_entities', 'panel_hidden_entities', 'inline_light_entities']) {
         if (!Array.isArray(next[key])) continue;
         next[key] = next[key].filter(id => entities.includes(id));
         if (!next[key].length) delete next[key];
