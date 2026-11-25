@@ -10,7 +10,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { allowsCoverRailAction, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightStatusRefresh, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
-  simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
+  simpleTimerStatusEntity, simpleTimerUsageResetAvailable, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupScrollMemory } from './popup-scroll.js';
 import { createPopupHistory, normalizePopupAliases, popupRouteFragment, resolvePopupRoute } from './popup-routes.js';
@@ -2096,6 +2096,16 @@ export class BayitDashboard extends HTMLElement {
     if (this.model(target).actions.press_button) return target;
   }
 
+  timerHistoryEntity(config, model) {
+    const timer = model.timer?.entity;
+    if (!this.canShowTimerUsage(timer)) return;
+    if (config.timed?.simple_timer_entity === timer) {
+      const status = simpleTimerStatusEntity(this._hass, timer);
+      if (this.canShowTimerUsage(status)) return status;
+    }
+    return timer;
+  }
+
   canShowTimerUsage(entity) {
     return typeof entity === 'string' &&
       isVisibleEntity(entity, this._hass?.states ?? {}, this._hass?.entities, this.config.hiddenEntities);
@@ -2578,6 +2588,13 @@ export class BayitDashboard extends HTMLElement {
       timerPreferenceKey,
       compactClimateControls: view.compactClimateControls,
       unreportedSwingMode: view.config.unreported_swing_mode,
+      historyFor: current => this.timerHistoryEntity(view.config, current),
+      historyInfo: (entity, source) => {
+        if (source.isConnected && this.nodes.modal.open && !this.nodes.modal.hasAttribute('data-closing') &&
+            entity && entity === this.timerHistoryEntity(view.config, this.model(view.config))) {
+          this.moreInfo({ entity }, source);
+        }
+      },
       usageInfo: (entity, source) => { if (this.canShowTimerUsage(entity)) this.moreInfo({ entity }, source); },
       canShowUsage: entity => this.canShowTimerUsage(entity),
       canResetUsage: entity => this.canResetTimerUsage(entity),

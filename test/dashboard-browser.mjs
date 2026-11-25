@@ -570,6 +570,17 @@ if (query.has('device-panel')) {
     hass.services = { simple_timer: { reset_daily_usage: {} } };
     states['sensor.demo_read_only_usage'] = { state: '30', attributes: { unit_of_measurement: 'min' } };
   }
+  if (query.has('timer-history')) {
+    const runtime = 'sensor.demo_air_usage';
+    const status = 'sensor.demo_air_timer_status';
+    const foreign = 'sensor.demo_other_timer_status';
+    Object.assign(states[runtime].attributes, { status_entity_id: status });
+    states[status] = { state: 'idle', attributes: {} };
+    states[foreign] = { state: 'idle', attributes: {} };
+    hass.entities[runtime] = { pl: 'simple_timer', di: 'fixture-timer-device', config_entry_id: 'fixture-timer-entry' };
+    hass.entities[status] = { platform: 'simple_timer', device_id: 'fixture-timer-device', config_entry_id: 'fixture-timer-entry' };
+    hass.entities[foreign] = { pl: 'simple_timer', di: 'other', config_entry_id: 'other' };
+  }
   if (query.has('preset-shortcut')) {
     Object.assign(attributes, { supported_features: attributes.supported_features | 16,
       preset_modes: ['none', 'eco', 'boost'], preset_mode: 'eco' });
@@ -1702,6 +1713,59 @@ async function assertNativeRoomCoverHeader(browser) {
     await page.getByRole('dialog', { name: 'Window shade', exact: true }).waitFor();
   } finally {
     await page.close();
+  }
+}
+
+async function assertTimerHistory(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({ viewport: {width:320,height:780}, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(6000);
+    const he = locale === 'he';
+    const runtime = 'sensor.demo_air_usage';
+    const status = 'sensor.demo_air_timer_status';
+    const native = page.getByRole('dialog', { name:'Native entity details', exact:true });
+    const panel = page.getByRole('dialog', { name:'Studio air conditioner', exact:true });
+    const history = panel.getByRole('button', { name:he ? 'היסטוריית הטיימר' : 'Timer history', exact:true });
+    const infoCalls = () => page.evaluate(() => window.bayitTest.moreInfoCalls);
+    const setTarget = id => page.evaluate(id=>window.bayitTest.setFixtureAttributes('sensor.demo_air_usage',{status_entity_id:id}),id);
+    const setVisibility = (id, hidden) => page.evaluate(([id,hidden])=>window.bayitTest.setFixtureEntityVisibility(id,hidden),[id,hidden]);
+    const finish = async expected => {
+      await native.waitFor();
+      await page.waitForURL(url => url.searchParams.get('more-info-entity-id') === expected);
+      await native.getByRole('button', { name:'Close native details', exact:true }).tap();
+      await page.waitForURL(url => !url.searchParams.has('more-info-entity-id'));
+      await panel.waitFor();
+    };
+    try {
+      await page.goto(base + '/fixture-home/home?device-panel&timer-history&timer-usage&native-more-info=modern&native-focus-anchor&locale=' + locale);
+      await page.locator('.quick-button[data-entity="climate.demo_air"]').press('Shift+Enter');
+      await history.waitFor();
+      assert.ok((await history.boundingBox()).height >= 44);
+      await panel.locator('.timer-clock').tap();
+      assert.deepEqual(await infoCalls(),[]);
+      await history.press('Shift+Enter');
+      await finish(status);
+      await page.waitForFunction(() => document.querySelector('bayit-dashboard').shadowRoot.activeElement?.classList.contains('timer-history'));
+
+      await setTarget('sensor.demo_other_timer_status');
+      await history.tap();
+      await finish(runtime);
+      await setTarget(status);
+      await setVisibility(status,true);
+      await history.click({delay:620});
+      await finish(runtime);
+      assert.deepEqual(await infoCalls(),[status,runtime,runtime]);
+
+      const usage = panel.locator('.timer-usage');
+      await usage.tap();
+      await finish(runtime);
+      await setVisibility(runtime,true);
+      await history.waitFor({state:'hidden'});
+      assert.deepEqual(await infoCalls(),[status,runtime,runtime,runtime]);
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service')),[]);
+    } finally {
+      await page.close();
+    }
   }
 }
 
@@ -6681,6 +6745,7 @@ try {
       await assertHomeShortcutPower(browser);
       await assertHomeHeaterShortcut(browser);
       await assertCompactInlineLightLayout(browser);
+      await assertTimerHistory(browser);
       await assertCompactRoomHeater(browser);
       await assertSharedHeaterLevelInterop(browser);
       await assertHeaterHomeFeedback(browser);

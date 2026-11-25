@@ -1,11 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { allowsCoverRailAction, createDeviceController, DeviceControlError, getDeviceModel, homeHeaterPowerAction, planDeviceAction, roomBoilerQuickPowerAction, roomShutdownTargets } from "../src/device-control.mjs";
+import { allowsCoverRailAction, createDeviceController, DeviceControlError, getDeviceModel, homeHeaterPowerAction, planDeviceAction, roomBoilerQuickPowerAction, roomShutdownTargets, simpleTimerStatusEntity } from "../src/device-control.mjs";
 
 const entity = (state, attributes = {}) => ({ state, attributes });
 const config = (id, fields) => ({ entity: id, ...fields });
 const code = value => error => error instanceof DeviceControlError && error.code === value;
 const actionIds = model => Object.keys(model.actions).sort();
+
+test("reads the status sensor pointer only between matching Simple Timer entries", () => {
+  const runtime = "sensor.fixture_runtime";
+  const status = "sensor.fixture_status";
+  const source = {pl:"simple_timer", di:"timer-device", config_entry_id:"timer-entry"};
+  const companion = {platform:"simple_timer", device_id:"timer-device", config_entry_id:"timer-entry"};
+  const hass = {
+    states:{ [runtime]:entity("200",{status_entity_id:status}), [status]:entity("idle") },
+    entities:{ [runtime]:source, [status]:companion },
+  };
+  assert.equal(simpleTimerStatusEntity(hass,runtime),status);
+  for (const metadata of [undefined, {...companion,platform:"template"},
+    {...companion,device_id:"other"}, {...companion,config_entry_id:"other"}]) {
+    assert.equal(simpleTimerStatusEntity({ ...hass, entities:{...hass.entities,[status]:metadata} },runtime),undefined);
+  }
+  for (const target of [null, runtime, "switch.fixture"]) {
+    assert.equal(simpleTimerStatusEntity({ ...hass, states:{...hass.states,[runtime]:entity("200",{
+      status_entity_id:target,
+    })} },runtime),undefined);
+  }
+});
 
 test("a paired light refresh can press a first-use button and refuses stale or hidden devices", async () => {
   const light = "light.fixture_lamp";

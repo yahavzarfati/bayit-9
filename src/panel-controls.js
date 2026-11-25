@@ -56,7 +56,7 @@ export function climateOptionLabel(action, value, options, t) {
 export function buildPanelControls(model, {
   make, button, icon, label, t, request, compactTimer = false, compactClimateControls = false,
   timerPreferenceKey, buildClimateDetail,
-  usageInfo, canShowUsage, canResetUsage, resetOptIn, unreportedSwingMode,
+  historyFor, historyInfo, usageInfo, canShowUsage, canResetUsage, resetOptIn, unreportedSwingMode,
 }) {
   const used = new Set();
   const updates = [];
@@ -178,9 +178,17 @@ export function buildPanelControls(model, {
     const visibleDuration = value => value + ' ' + t(compactTimer ? 'duration_short' : 'duration');
     const spokenDuration = value => value + ' ' + t('duration');
     card.setAttribute('aria-label', t('timed'));
+    const clockRow = make('div', 'timer-clock-row');
     const time = make('p', 'timer-clock');
     time.setAttribute('aria-label', t('remaining_time'));
     time.dir = 'ltr';
+    const history = button('round-action timer-history', t('timer_history'), 'mdi:history', true);
+    history.hidden = true;
+    let currentHistory;
+    const openHistory = () => { if (currentHistory) historyInfo(currentHistory, history); };
+    history.onclick = openHistory;
+    bindDeviceDetails(history, openHistory);
+    clockRow.append(time, history);
     const today = make('p', 'timer-today');
     const usage = button('timer-today timer-usage');
     usage.setAttribute('aria-haspopup', 'dialog');
@@ -205,6 +213,8 @@ export function buildPanelControls(model, {
       const remaining = currentTimer ? currentTimer.remainingMs : 0;
       const countdown = clock(remaining === null ? null : remaining / 1000, showSeconds, nativePrecision ? Math.round : Math.ceil);
       if (time.textContent !== countdown) time.textContent = countdown;
+      currentHistory = historyFor(current);
+      history.hidden = !currentHistory;
       currentUsage = current.usageSource;
       const hasReading = Number.isFinite(currentTimer?.usedSeconds);
       const tappable = hasReading && canShowUsage(currentUsage);
@@ -229,7 +239,7 @@ export function buildPanelControls(model, {
         usage.title = t('more_info');
       }
     });
-    card.append(time, today, usage);
+    card.append(clockRow, today, usage);
     const tools = make('div', 'timer-tools');
     let input;
     if (duration) {
@@ -420,6 +430,11 @@ export const panelControlStyles = `
   .climate-extra-controls > .field-row + .field-row { margin-block-start: 5px; }
   .device-timer, .heat-level { min-width: 0; text-align: center; border-top: 1px solid var(--soft-line); padding-top: 6px; }
   .timer-clock { margin: 1px 0 0; font-size: 18px; font-weight: 780; font-variant-numeric: tabular-nums; }
+  .timer-clock-row:has(.timer-history:not([hidden])) {
+    display: grid; grid-template-columns: 44px 1fr 44px; align-items: center;
+  }
+  .timer-clock-row:has(.timer-history:not([hidden])) .timer-clock { grid-column: 2; }
+  .timer-history { grid-column: 3; justify-self: end; }
   .timer-today, .heat-level-title { margin: 0; font-size: 12px; font-weight: 740; color: var(--secondary); }
   .timer-usage {
     min-height: 32px; padding: 0 7px; background: transparent; border: 0; border-radius: 8px;

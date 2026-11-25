@@ -207,6 +207,21 @@ function readSimpleTimer(entity, device, states, nowMs) {
   };
 }
 
+export function simpleTimerStatusEntity(hass, runtime) {
+  const status = hass?.states?.[runtime]?.attributes?.status_entity_id;
+  if (!isEntity(runtime, "sensor") || !isEntity(status, "sensor") || status === runtime) return;
+  const sourceInfo = hass?.entities?.[runtime];
+  const statusInfo = hass?.entities?.[status];
+  if ((sourceInfo?.platform ?? sourceInfo?.pl) !== "simple_timer" ||
+      (statusInfo?.platform ?? statusInfo?.pl) !== "simple_timer") return;
+  const device = sourceInfo.device_id ?? sourceInfo.di;
+  const statusDevice = statusInfo.device_id ?? statusInfo.di;
+  const entry = sourceInfo.config_entry_id;
+  const statusEntry = statusInfo.config_entry_id;
+  if (device && statusDevice && device !== statusDevice || entry && statusEntry && entry !== statusEntry) return;
+  return status;
+}
+
 export function simpleTimerUsageResetAvailable(hass, sensor) {
   const entity = hass?.entities?.[sensor];
   return (entity?.platform ?? entity?.pl) === "simple_timer" &&

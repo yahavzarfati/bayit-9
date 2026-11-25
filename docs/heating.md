@@ -8,6 +8,8 @@ Set `timed.min_minutes`, `timed.max_minutes`, and `timed.step_minutes` to match 
 
 To let users clear the duration selection while a Simple Timer is idle, turn on **Allow an unselected timer duration (0 minutes)** in the profile editor. In YAML, set `timed.idle_zero_duration: true`. This option requires the same value for `min_minutes` and `step_minutes`, such as 15 minutes. At zero minutes the start button is disabled. The timer can still be extended while running using the configured positive durations.
 
+The history button alongside a timer's countdown opens its history in Home Assistant. For Simple Timer it opens the linked status sensor when available, or the runtime sensor otherwise.
+
 Tap a timer's **Used today** reading to open details for the sensor supplying that value. For a directly linked Simple Timer, the profile editor also offers **Allow reset of this daily usage counter**. When enabled, press and hold the reading or press Shift+Enter, then confirm to reset that timer’s daily counter. A separate usage sensor can open its details.
 
 In YAML, use `allow_daily_usage_reset: true` under the profile’s `timed` settings. Reset is available for the linked Simple Timer’s own usage reading while it reports a positive value and publishes the reset service.
