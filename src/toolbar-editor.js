@@ -1,7 +1,7 @@
 import {
   discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactToolbarStatus, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
   isToolbarReadoutEntity, isToolbarReadouts, isWeatherReadingsList, normalizeOverviewDiscovery, normalizeToolbarReadout, overviewSectionOptions, roomPanelOptions,
-  securityReadoutLabelStates, selectableRoomEntities,
+  securityReadoutLabelStates, selectableRoomEntities, sensorComparisonOptions, supportsSensorComparison,
   supportsCompactToolbarStatus, supportsOverviewLightsOff, supportsToolbarReadouts, supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
@@ -62,6 +62,8 @@ const WORDS = {
     calendarAccent: 'Calendar accent', calendarInvalidAccent: 'Enter a six-digit color such as #80BFFF.',
     compactStatus: 'Show status items side by side',
     weatherReadingsList: 'Show readings as a compact read-only list',
+    sensorComparison: 'Compare trends in a single chart', comparisonHours: 'Time range in hours',
+    comparisonInterval: 'Average interval in minutes', seriesColor: 'Line color for this sensor',
     compactReadouts: 'Show compact read-only status tiles', readoutOn: 'Label for on', readoutOff: 'Label for off',
     readoutSafe: 'Label for safe', readoutOk: 'Label for ok',
     readoutDanger: 'Highlight the on state in red', readoutUnit: 'Display unit for numeric readings',
@@ -126,6 +128,8 @@ const WORDS = {
     calendarAccent: 'צבע היומן', calendarInvalidAccent: 'הזינו צבע בן שש ספרות, למשל ‎#80BFFF‎.',
     compactStatus: 'הצגת פריטי הסטטוס זה לצד זה',
     weatherReadingsList: 'הצגת המדדים ברשימה קומפקטית לקריאה בלבד',
+    sensorComparison: 'השוואת מגמות בגרף אחד', comparisonHours: 'טווח תצוגה בשעות',
+    comparisonInterval: 'מרווח ממוצע בדקות', seriesColor: 'צבע הקו של החיישן',
     compactReadouts: 'הצגת אריחי מצב קומפקטיים לקריאה בלבד', readoutOn: 'תווית למצב פעיל', readoutOff: 'תווית למצב כבוי',
     readoutSafe: 'תווית למצב בטוח', readoutOk: 'תווית למצב תקין',
     readoutDanger: 'הדגשת מצב פעיל באדום', readoutUnit: 'יחידת תצוגה לערך מספרי',
@@ -384,7 +388,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     role.addEventListener('change', () => save({
       role: role.value || undefined,
       ...(role.value && role.value !== 'status' && { readout: undefined }),
-      ...(role.value !== 'graph' && { graph_hours: undefined, graph_room_id: undefined, vacuum_panel_id: undefined }),
+      ...(role.value !== 'graph' && { graph_hours: undefined, graph_room_id: undefined, vacuum_panel_id: undefined, series_color: undefined }),
       ...(role.value !== 'action' && { command: undefined,
         ...(toolbar[entryIndex].sections[sectionIndex].entities[index]?.confirmation === false && { confirmation: undefined }) }),
     }, true));
@@ -454,7 +458,12 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         }
       }
     }
-    if (record.role === 'graph') {
+    const comparison = sensorComparisonOptions(toolbar[entryIndex].kind, section);
+    if (record.role === 'graph' && domain === 'sensor' && comparison) {
+      fields.push(textField(words.seriesColor, record.series_color, value => save({ series_color: value || undefined }),
+        { dir:'ltr', maxLength:7, placeholder:'#80BFFF', pattern:/^#[0-9a-f]{6}$/i,
+          error:words.calendarInvalidAccent }).field);
+    } else if (record.role === 'graph') {
       const hours = node('input', { type: 'number', min: '1', max: '336', step: '1',
         value: record.graph_hours === undefined ? '' : String(record.graph_hours), placeholder: '24' });
       hours.addEventListener('change', () => {
@@ -653,6 +662,28 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       readings.addEventListener('change', () =>
         changeSection({ layout: readings.checked ? 'readings-list' : undefined }, true, 'weather-readings-list'));
       fields.push(node('label', { className: 'check' }, [readings, words.weatherReadingsList]));
+    }
+    if (supportsSensorComparison(kind, active)) {
+      const options = sensorComparisonOptions(kind, active);
+      const toggle = node('input', { type:'checkbox', checked:!!options });
+      toggle.dataset.toolbarFocus = 'comparison-chart';
+      toggle.addEventListener('change', () => changeSection({
+        comparison: toggle.checked ? sensorComparisonOptions(kind, { ...active, comparison:{enabled:true} }) : undefined,
+      }, true, 'comparison-chart'));
+      fields.push(node('label', { className:'check' }, [toggle, words.sensorComparison]));
+      if (options) {
+        const saveComparison = updates => changeSection({
+          comparison: { ...getSections()[sectionIndex].comparison, ...updates },
+        });
+        const hours = node('input', { type:'number', min:'1', max:'72', step:'1', required:true, value:String(options.hours) });
+        hours.addEventListener('change', () => {
+          if (hours.validity.valid) saveComparison({ hours: hours.valueAsNumber });
+        });
+        const choices = [5, 10, 15, 30, 60].map(value => [String(value), String(value)]);
+        const interval = select(choices, String(options.bucket_minutes));
+        interval.addEventListener('change', () => saveComparison({ bucket_minutes: Number(interval.value) }));
+        fields.push(field(words.comparisonHours, hours), field(words.comparisonInterval, interval));
+      }
     }
     const { discover } = overviewSectionOptions(kind, active);
     if (kind === 'overview' && ['status', 'covers'].includes(active.kind)) fields.push(...overviewFilters(active, discover));

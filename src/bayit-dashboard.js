@@ -5,7 +5,7 @@ import { classicRoomTitle, DEVICE_ICONS, hasDynamicPresenceIcon, isAutomationScr
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
   normalizeToolbarReadout, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
   ROOM_PANEL_KINDS, roomShortcutDevices, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
-  supportsShortcutWithoutDetails,
+  sensorComparisonOptions, sensorSeriesColor, supportsShortcutWithoutDetails,
   toolbarPlacement, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { allowsCoverRailAction, createDeviceController, getDeviceModel, roomShutdownTargets,
@@ -354,12 +354,15 @@ export function normalizeDashboardConfig(config = {}) {
         const overview = overviewSectionOptions(item.kind, section);
         const selected = Array.isArray(section.entities) ? section.entities : overview.discover ? [] : null;
         if (!selected) return [];
+        const comparison = sensorComparisonOptions(item.kind, section);
         const members = selected.map(raw => {
           const entity = normalizeEntity(raw);
           if (isAutomationScriptToggle(item.kind, section.kind, raw)) entity.command = 'toggle_script';
           if (isVacuumProgramAction(item.kind, section.kind, raw)) entity.command = 'vacuum_program';
           const readout = normalizeToolbarReadout(item.kind, section, raw);
           if (readout) entity.readout = readout;
+          const seriesColor = comparison && sensorSeriesColor(raw);
+          if (seriesColor) entity.series_color = seriesColor;
           if (item.kind === 'sensors' && section.kind !== 'series' && entity.role === 'graph' &&
               domainFor(entity) === 'sensor' && known.has(raw.graph_room_id)) entity.graph_room_id = raw.graph_room_id;
           return entity;
@@ -368,6 +371,7 @@ export function normalizeDashboardConfig(config = {}) {
           ...(isCompactToolbarStatus(item.kind, section) && { layout: 'compact' }),
           ...(isToolbarReadouts(item.kind, section) && { layout: 'readouts' }),
           ...(isWeatherReadingsList(item.kind, section) && { layout: 'readings-list' }),
+          ...(comparison && { comparison }),
           ...(section.filter === 'active' && {filter:'active'}), ...overview, entities: members }];
       }) }) }];
   }) : null;

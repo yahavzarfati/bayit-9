@@ -722,12 +722,34 @@ export function normalizeToolbarReadout(kind, section, item) {
   return Object.keys(settings).length ? settings : undefined;
 }
 
+export function supportsSensorComparison(kind, section) {
+  return kind === 'sensors' && section?.kind === 'series';
+}
+
+export function sensorComparisonOptions(kind, section) {
+  const options = section?.comparison;
+  if (!supportsSensorComparison(kind, section) || options?.enabled !== true) return undefined;
+  const { hours, bucket_minutes: bucket } = options;
+  return {
+    enabled: true,
+    hours: Number.isInteger(hours) && hours >= 1 && hours <= 72 ? hours : 24,
+    bucket_minutes: [5, 10, 15, 30, 60].includes(bucket) ? bucket : 30,
+  };
+}
+
+export function sensorSeriesColor(item) {
+  return item?.role === 'graph' && typeof item.entity === 'string' && domainOf(item.entity) === 'sensor' &&
+    typeof item.series_color === 'string' && /^#[a-f\d]{6}$/i.test(item.series_color)
+    ? item.series_color.toUpperCase() : undefined;
+}
+
 function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
   if (!Array.isArray(value)) return undefined;
   const seenSections = new Set();
   return value.flatMap((section, index) => {
     if (!TOOLBAR_SECTION_KINDS.has(section?.kind)) return [];
     const overview = overviewSectionOptions(kind, section);
+    const comparison = sensorComparisonOptions(kind, section);
     const selected = Array.isArray(section.entities) ? section.entities : overview.discover ? [] : null;
     if (!selected) return [];
     const id = layoutId(section.id, 'section-' + (index + 1), seenSections);
@@ -759,16 +781,19 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
       const vacuumPanel = linkedGraph && !graphRoom && vacuumPanels.has(item.vacuum_panel_id) ? item.vacuum_panel_id : undefined;
       const accent = kind === 'calendar' && domain === 'calendar' ? calendarAccent(item.accent_color) : undefined;
       const readout = normalizeToolbarReadout(kind, section, item);
+      const seriesColor = comparison && sensorSeriesColor(item);
       return [{ ...descriptor, ...(name && { name }), ...(ROOM_ICON.test(icon) && { icon }),
         ...(role && { role }), ...(command && { command }),
         ...(confirmation !== undefined && { confirmation }), ...(hasGraphHours && { graph_hours: graphHours }),
         ...(graphRoom && { graph_room_id: graphRoom }), ...(vacuumPanel && { vacuum_panel_id: vacuumPanel }),
-        ...(accent && { accent_color: accent }), ...(readout && { readout }) }];
+        ...(accent && { accent_color: accent }), ...(readout && { readout }),
+        ...(seriesColor && { series_color: seriesColor }) }];
     });
     return [{ id, kind: section.kind, ...(title !== undefined && { title }),
       ...(isCompactToolbarStatus(kind, section) && { layout: 'compact' }),
       ...(isToolbarReadouts(kind, section) && { layout: 'readouts' }),
       ...(isWeatherReadingsList(kind, section) && { layout: 'readings-list' }),
+      ...(comparison && { comparison }),
       ...(section.filter === 'active' && { filter:'active' }), ...overview, entities }];
   });
 }

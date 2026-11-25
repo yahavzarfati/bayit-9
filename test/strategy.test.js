@@ -1230,6 +1230,32 @@ test('compact readings are opt-in for Weather readings and preserve graph config
   assert.equal(history.entities[0].graph_hours, 24);
 });
 
+test('an optional Sensors comparison retains only valid graph colors and bounded options', () => {
+  const hass = home();
+  const sensors = ['inside', 'outside', 'hidden'].map(name => 'sensor.fixture_' + name);
+  for (const entity of sensors) hass.states[entity] = { state: '20', attributes: { unit_of_measurement: '°C' } };
+  hass.entities[sensors[2]] = { hidden_by:'user' };
+  const [inside, outside, hidden] = sensors;
+  const entities = [
+    { entity: inside, role:'graph', graph_hours:24, series_color:'#397bd6' },
+    { entity: outside, role:'status', series_color:'#228A60' },
+    { entity: hidden, role:'graph', series_color:'#F4C95D' },
+  ];
+  const series = { kind:'series', entities, comparison:{enabled:true, hours:500, bucket_minutes:3} };
+  const { toolbar } = generateDashboard({ toolbar:[
+    { kind:'sensors', sections:[series, { ...series, kind:'readings' }, { ...series, comparison:{enabled:false} }] },
+    { kind:'weather', sections:[series] },
+  ] }, hass).views[0].cards[0];
+  const [active, ...legacy] = toolbar.flatMap(entry => entry.sections);
+  assert.deepEqual(active.comparison, { enabled:true, hours:24, bucket_minutes:30 });
+  assert.deepEqual(active.entities.map(item => [item.entity,item.series_color]), [[inside,'#397BD6'],[outside,undefined]]);
+  assert.equal(active.entities[0].graph_hours,24);
+  for (const section of legacy) {
+    assert.equal(section.comparison,undefined);
+    assert.ok(section.entities.every(item => item.series_color === undefined));
+  }
+});
+
 test('Security readouts require the explicit status layout and supported source entity and state types', () => {
   const hass = home();
   const binary = 'binary_sensor.fixture_signal';
