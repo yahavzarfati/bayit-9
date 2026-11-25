@@ -525,17 +525,19 @@ export const styles = `
     }
   }
   .modal-heading { display: contents; }
-  .modal[data-standalone-heater] { --modal-header-end: 6px; --modal-title-height: 0px; }
-  .modal[data-standalone-heater] .modal-heading {
+  .modal-heading-actions { display: flex; flex: none; }
+  .modal:is([data-standalone-heater],[data-standalone-climate]) { --modal-header-end: 6px; --modal-title-height: 0px; }
+  .modal[data-standalone-climate] .modal-header { gap: 8px; }
+  .modal:is([data-standalone-heater],[data-standalone-climate]) .modal-heading {
     flex: 1; min-width: 0; display: grid; align-items: center; column-gap: 8px;
     grid-template-columns: 44px minmax(0,1fr); grid-template-areas: "info title" "info state";
   }
-  .modal[data-standalone-heater] .modal-heading h2 {
+  .modal:is([data-standalone-heater],[data-standalone-climate]) .modal-heading h2 {
     grid-area: title; display: block; align-self: end; border: 0; padding: 0;
   }
-  .heater-heading-info { grid-area: info; place-self: center; }
-  .heater-heading-info > .device-icon { color: inherit; }
-  .modal[data-standalone-heater] .modal-heading .current {
+  .compact-device-heading-info { grid-area: info; place-self: center; }
+  .compact-device-heading-info > .device-icon { color: inherit; }
+  .modal:is([data-standalone-heater],[data-standalone-climate]) .modal-heading .current {
     grid-area: state; align-self: start; margin: 2px 0 0; direction: inherit;
     text-align: left; unicode-bidi: plaintext;
   }
@@ -675,6 +677,7 @@ export const styles = `
     width: 44px; height: 44px; grid-template-rows: 16px 11px; align-content: center; gap: 2px;
     color: var(--secondary);
   }
+  .compact-climate-preset-row { display: flex; justify-content: end; }
   .climate-preset-shortcut[data-highlighted] { color: var(--warm); }
   .climate-preset-shortcut > ha-icon { width: 16px; height: 16px; --mdc-icon-size: 16px; }
   .climate-preset-shortcut > span {

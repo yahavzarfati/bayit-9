@@ -427,6 +427,20 @@ export const panelControlStyles = `
     .compact-climate-rail .climate-controls[data-control-count="4"] { gap: 4px; }
     .compact-climate-rail .climate-controls[data-control-count="4"] .climate-selector { gap: 0; padding-inline: 1px; }
   }
+  .modal[data-standalone-climate] .compact-climate-rail .step-control { flex: 0 0 44px; min-width: 44px; }
+  /* WebKit can let the invisible native select text overflow the bounded visual caption. */
+  .modal[data-standalone-climate] .compact-climate-rail .climate-selector { overflow: clip; }
+  @container bayit-climate-rail (min-width: 287px) and (width < 317px) {
+    .modal[data-standalone-climate] .climate-controls[data-control-count="4"] .climate-selector > ha-icon:not(.climate-selector-chevron) {
+      display: none;
+    }
+  }
+  @container bayit-climate-rail (min-width: 317px) and (max-width: 336px) {
+    .modal[data-standalone-climate] .climate-controls[data-control-count="4"] .climate-selector { gap: 0; padding-inline: 1px; }
+    .modal[data-standalone-climate] .climate-controls[data-control-count="4"] .climate-selector-chevron {
+      width: 9px; height: 9px; --mdc-icon-size: 9px;
+    }
+  }
   .climate-extra-controls { min-width: 0; border-top: 1px solid var(--soft-line); }
   .climate-extra-controls > summary { min-height: 44px; padding: 11px 4px; cursor: pointer; }
   .climate-extra-controls > .field-row + .field-row { margin-block-start: 5px; }
@@ -459,23 +473,28 @@ export const panelControlStyles = `
     --timer-thumb-border: #20100a;
   }
   :is(.device[data-treatment=boiler],.modal[data-standalone-heater] .device) .device-timer[data-compact] .timer-range { accent-color: var(--timer-thumb); }
+  .modal[data-standalone-climate] .device-timer[data-compact] {
+    --timer-thumb: #7aa7ff;
+    --timer-thumb-border: #172849;
+    --timer-rail: color-mix(in srgb,var(--ink) 8%,transparent);
+  }
   .device[data-treatment=boiler] .device-timer[data-compact] .timer-command[data-action=stop_timed] {
     background: color-mix(in srgb,var(--boiler-heat) 22%,transparent);
     border-color: color-mix(in srgb,var(--boiler-heat) 48%,transparent);
   }
   @media (prefers-contrast: more) {
-    :is(.device[data-treatment=boiler],.modal[data-standalone-heater] .device) .device-timer[data-compact] {
+    :is(.device[data-treatment=boiler],.modal:is([data-standalone-heater],[data-standalone-climate]) .device) .device-timer[data-compact] {
       --timer-rail: color-mix(in srgb,var(--ink) 42%,transparent);
     }
   }
   @media (forced-colors: active) {
-    :is(.device[data-treatment=boiler],.modal[data-standalone-heater] .device) .device-timer[data-compact] {
+    :is(.device[data-treatment=boiler],.modal:is([data-standalone-heater],[data-standalone-climate]) .device) .device-timer[data-compact] {
       --timer-thumb: Highlight;
       --timer-thumb-border: Canvas;
       --timer-rail: CanvasText;
     }
-    :is(.device[data-treatment=boiler],.modal[data-standalone-heater] .device) .device-timer[data-compact] .timer-range { forced-color-adjust: none; }
-    :is(.device[data-treatment=boiler],.modal[data-standalone-heater] .device) .device-timer[data-compact] .timer-range:focus-visible { outline-color: Highlight; }
+    :is(.device[data-treatment=boiler],.modal:is([data-standalone-heater],[data-standalone-climate]) .device) .device-timer[data-compact] .timer-range { forced-color-adjust: none; }
+    :is(.device[data-treatment=boiler],.modal:is([data-standalone-heater],[data-standalone-climate]) .device) .device-timer[data-compact] .timer-range:focus-visible { outline-color: Highlight; }
   }
   .device-timer[data-compact] .timer-clock { line-height: 1.2; }
   .device-timer[data-compact] .timer-range {
@@ -546,7 +565,10 @@ export const panelControlStyles = `
   .modal[data-standalone-heater] .device[data-compact-heater] .device-timer[data-compact] {
     padding-top: 0; border-top: 0;
   }
-  .modal[data-standalone-heater] .timer-usage { min-height: 44px; }
+  .modal[data-standalone-climate] .device { padding: 3px 0 0; border: 0; }
+  .modal[data-standalone-climate] .action-list { margin-block-start: 0; }
+  .modal:is([data-standalone-heater],[data-standalone-climate]) .timer-usage { min-height: 44px; }
+  .modal[data-standalone-climate] .climate-extra-controls > summary { color: var(--secondary); font-size: 13px; }
   .heat-level-options {
     margin-top: 5px;
     grid-template-columns: repeat(auto-fit,minmax(25px,1fr));

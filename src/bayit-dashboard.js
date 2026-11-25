@@ -495,6 +495,7 @@ const layout = `
           <ha-icon aria-hidden="true"></ha-icon>
         </button>
         <div class="modal-heading"><h2></h2></div>
+        <div class="modal-heading-actions" hidden></div>
         <button type="button" class="round-action" data-role="close" autofocus>
           <ha-icon icon="mdi:close" aria-hidden="true"></ha-icon>
         </button>
@@ -529,6 +530,7 @@ export class BayitDashboard extends HTMLElement {
       empty: get('.home-empty'), emptyMessage: role('empty-message'), emptySetup: role('empty-setup'),
       back: role('back'), close: role('close'),
       modal: get('dialog:not(.confirm)'), modalHeading: get('.modal-heading'), modalTitle: get('dialog:not(.confirm) h2'),
+      modalHeadingActions: get('.modal-heading-actions'),
       modalBody: get('dialog:not(.confirm) .modal-body'), content: role('content'), setupFooter: role('setup-footer'),
       confirm: get('.confirm'), confirmTitle: get('.confirm h2'), confirmText: get('.confirmation-text'),
       accept: role('accept'), abort: role('abort'), pageNotice: role('page-notice'), modalNotice: role('modal-notice'),
@@ -1557,6 +1559,9 @@ export class BayitDashboard extends HTMLElement {
     const model = selected ? this.model(selected) : null;
     const boilerControls = selected?.kind === 'boiler' && selected.role !== 'status';
     const standaloneHeater = selected?.kind === 'heater' && !!selected.timed && selected.role !== 'status';
+    const standaloneClimate = model?.domain === 'climate' && model.kind === 'climate' && !!selected.timed &&
+      selected.room_climate_controls_compact === true && selected.role !== 'status';
+    const compactDeviceHeading = standaloneHeater || standaloneClimate;
     const fromRoomDetail = selected && this.panel?.type === 'room' &&
       this.panel.room === room && n.modal.open && n.content.contains(source);
     const fromLinkedRoom = (type === 'media' || type === 'vacuum') && returnFromRoom && this.panel?.type === 'room' &&
@@ -1586,13 +1591,16 @@ export class BayitDashboard extends HTMLElement {
     const title = selected?.popup_name || model?.name || room?.name || toolbar?.name || toolbar?.label || this.t(type);
     n.modal.setAttribute('aria-label', title);
     n.modal.toggleAttribute('data-standalone-heater', standaloneHeater);
+    n.modal.toggleAttribute('data-standalone-climate', standaloneClimate);
     n.modalHeading.replaceChildren(n.modalTitle);
-    if (standaloneHeater) n.modalTitle.replaceChildren(title);
+    n.modalHeadingActions.replaceChildren();
+    n.modalHeadingActions.hidden = true;
+    if (compactDeviceHeading) n.modalTitle.replaceChildren(title);
     else n.modalTitle.replaceChildren(icon(glyph), title);
     if (type === 'room') this.buildDevices(room.entities, room);
     if (selected) {
       const titleInDialog = ['light', 'climate'].includes(domainFor(selected)) || ['heater', 'boiler'].includes(selected.kind);
-      this.buildDevices([selected], undefined, { titleInDialog, standaloneHeater, showRoomPreset: !room.panelHidden?.has(entity) });
+      this.buildDevices([selected], undefined, { titleInDialog, compactDeviceHeading, showRoomPreset: !room.panelHidden?.has(entity) });
       if (boilerControls) this.buildBoilerView(selected, navigation.detail);
     }
     if (type === 'overview') {
@@ -1762,7 +1770,7 @@ export class BayitDashboard extends HTMLElement {
 
   buildDevice(config, parent, room, groupKey, {
     titleInDialog = false, inlineClimate = false, toolbarLightTile = false, toolbarCoverRail = false, showRoomPreset = false,
-    tileStatus, standaloneHeater = false,
+    tileStatus, compactDeviceHeading = false,
   } = {}) {
     const item = make('section', 'device');
     const domain = domainFor(config);
@@ -1884,7 +1892,7 @@ export class BayitDashboard extends HTMLElement {
       if (titleInDialog) {
         head.classList.add('device-state-head');
         head.classList.toggle('boiler-state-head', standaloneBoiler);
-        glyph.hidden = !standaloneBoiler && !standaloneHeater;
+        glyph.hidden = !standaloneBoiler && !compactDeviceHeading;
         name.hidden = true;
       }
       if (panelTarget) {
@@ -1907,7 +1915,7 @@ export class BayitDashboard extends HTMLElement {
           view.lightPower = power;
         }
         if ((room || showRoomPreset) && config.room_climate_power === true) {
-          const compact = view.compactClimateControls;
+          const compact = view.compactClimateControls && !compactDeviceHeading;
           const power = button('round-action room-climate-power', this.t('climate_power'),
             compact ? config.icon || 'mdi:air-conditioner' : 'mdi:power', true);
           power.toggleAttribute('data-compact', compact);
@@ -1954,11 +1962,20 @@ export class BayitDashboard extends HTMLElement {
         head.append(more);
       }
       const group = make('div', 'action-list');
-      if (standaloneHeater) {
-        more.classList.add('heater-heading-info');
+      if (compactDeviceHeading) {
+        more.classList.add('compact-device-heading-info');
         more.setAttribute('aria-haspopup', 'dialog');
         more.replaceChildren(glyph);
         this.nodes.modalHeading.append(more, state);
+        if (view.climatePower) {
+          this.nodes.modalHeadingActions.append(view.climatePower);
+          this.nodes.modalHeadingActions.hidden = false;
+        }
+        if (view.presetShortcut) {
+          head.className = 'compact-climate-preset-row';
+          head.replaceChildren(view.presetShortcut);
+          item.append(head);
+        }
       } else item.append(head);
       item.append(group);
       Object.assign(view, { more, group });

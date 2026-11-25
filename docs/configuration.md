@@ -98,7 +98,7 @@ In **Rooms → Device display**, choose **Show as an appliance tile** for an ord
 
 In **Rooms**, enable **Show quick power for this climate device** under **Device display** to add a power button to the room and device popups. Hold it to open Home Assistant details. The button follows the climate device's reported state and uses only supported on or off commands. In YAML, list the climate entities under `climate_power_entities` in the room override.
 
-In **Rooms → Device display**, enable **Arrange thermostat controls in a compact row** for the selected thermostat. The room and its dedicated popup arrange the available controls together and use two balanced rows on narrow screens. In YAML, use `compact_climate_controls_entities` on the room override.
+In **Rooms → Device display**, enable **Arrange thermostat controls in a compact row** for the selected thermostat. The room and its dedicated popup arrange the available controls together and use two balanced rows on narrow screens. If the thermostat also has a configured timer, its dedicated popup shows the reported mode and temperature alongside its title, with separate access to Home Assistant details and any enabled quick power. In YAML, use `compact_climate_controls_entities` on the room override.
 
 In **Rooms**, use **Temperature on home card** to choose a room temperature sensor or a climate device's current temperature. With a sensor selected, **Fallback room temperature** can use a specific climate device when the sensor has no usable reading. Use **Automatic** to let Bayit 9 choose. In YAML, set `room_temperature_entity` and, optionally, `room_temperature_fallback_entity` on the room override.
 
