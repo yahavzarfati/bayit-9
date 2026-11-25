@@ -5773,10 +5773,12 @@ async function assertLightStatusRefresh(browser) {
       await waitEnabled();
       await refresh.tap();
       await lightDialog.locator('.light-status-refresh[aria-busy=true]').waitFor();
+      await lightDialog.getByText(he ? 'מבקש עדכון למצב המנורה…' : 'Requesting light status…', { exact: true }).waitFor();
       await refresh.evaluate(control=>control.onclick());
       assert.deepEqual(await calls(),[{type:'call_service',domain:'button',service:'press',service_data:{},target:{entity_id:helper}}]);
       await page.evaluate(()=>window.bayitTest.finishLightStatusRefresh());
       await waitEnabled();
+      await lightDialog.getByText(he ? 'נשלחה בקשה לרענון מצב המנורה.' : 'Light status refresh requested.', { exact: true }).waitFor();
       await page.keyboard.press('Escape');
       await lightDialog.waitFor({state:'hidden'});
       await page.locator('.light-status-refresh').waitFor({state:'hidden'});

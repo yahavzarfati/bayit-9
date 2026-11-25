@@ -2877,16 +2877,18 @@ export class BayitDashboard extends HTMLElement {
         }
       }
     }
+    const lightStatusRefresh = id === 'press_button' && Boolean(config.light_status_refresh_for);
     this.pending.set(config.entity, token);
-    this.announce(this.t('sending').replace('{name}', model.name));
+    this.announce(this.t(lightStatusRefresh ? 'light_refresh_requesting' : 'sending').replace('{name}', model.name));
     this.update();
     let confirmedByHomeAssistant = false;
     try {
       const result = await this.controller.execute(config, id, value, { confirmed, roomBoilerQuickPower });
       if (this.pending.get(config.entity) !== token) return;
       const key = ['confirmed','sent','unconfirmed'].includes(result?.status) ? result.status : 'sent';
-      const status = key === 'confirmed' ? ({preselect_heating_level: 'heating_preselect_saved',
+      let status = key === 'confirmed' ? ({preselect_heating_level: 'heating_preselect_saved',
         reset_daily_usage: 'timer_usage_reset'}[id] ?? key) : key;
+      if (lightStatusRefresh) status = key === 'unconfirmed' ? 'light_refresh_unconfirmed' : 'light_refresh_requested';
       this.announce(this.t(status).replace('{name}', model.name));
       confirmedByHomeAssistant = result?.status === 'confirmed';
     } catch (error) {
