@@ -1,3 +1,5 @@
+import { createForecastFeed } from './weather-forecast-feed.js';
+
 const icons = {
   'clear-night': 'weather-night', cloudy: 'weather-cloudy', exceptional: 'weather-cloudy-alert',
   fog: 'weather-fog', hail: 'weather-hail', lightning: 'weather-lightning', 'lightning-rainy': 'weather-lightning-rainy',
@@ -11,6 +13,10 @@ const dateTime = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT.*(?:Z|
   ? Date.parse(value) : NaN;
 const rainfall = value => Number.isFinite(value) && value >= 0 && value <= 100
   ? Math.round(value / 10) * 10 || undefined : undefined;
+export const weatherIconName = condition => 'mdi:' + (typeof condition === 'string' && Object.hasOwn(icons, condition)
+  ? icons[condition] : 'weather-cloudy-alert');
+export const weatherCondition = condition => typeof condition === 'string' && Object.hasOwn(icons, condition)
+  ? condition : undefined;
 
 export function hourlyWeatherItems(forecast, now, sun, currentTemperature) {
   if (!Array.isArray(forecast)) return [];
@@ -23,7 +29,7 @@ export function hourlyWeatherItems(forecast, now, sun, currentTemperature) {
       at,
       temperature: Number.isFinite(entry.temperature) ? entry.temperature : undefined,
       probability: rainfall(entry.precipitation_probability),
-      condition: typeof condition === 'string' && Object.hasOwn(icons, condition) ? condition : undefined,
+      condition: weatherCondition(condition),
     });
   }
   const sorted = [...byTime.values()].sort((left, right) => left.at - right.at);
@@ -44,79 +50,6 @@ export function hourlyWeatherItems(forecast, now, sun, currentTemperature) {
   return selected.sort((left, right) => left.at - right.at).slice(0, count);
 }
 
-const hourlyStreams = new WeakMap();
-
-function hourlyStream(connection, entity) {
-  if (!hourlyStreams.has(connection)) hourlyStreams.set(connection, new Map());
-  const streams = hourlyStreams.get(connection);
-  if (streams.has(entity)) return streams.get(entity);
-
-  const listeners = new Set();
-  let subscription;
-  let latest;
-
-  function retire(entry) {
-    entry.retiring = true;
-    if (!entry.stop || entry.ending) return;
-    entry.ending = true;
-    void Promise.resolve().then(() => entry.stop()).catch(() => {}).finally(() => {
-      subscription = undefined;
-      reconcile();
-    });
-  }
-
-  function reconcile() {
-    if (!listeners.size) {
-      latest = undefined;
-      if (subscription && !subscription.failed) retire(subscription);
-      else streams.delete(entity);
-      return;
-    }
-    if (subscription) return;
-    const entry = {};
-    subscription = entry;
-    const unavailable = () => {
-      if (entry.retiring) {
-        subscription = undefined;
-        reconcile();
-      } else {
-        entry.failed = true;
-        latest = undefined;
-        for (const listener of listeners) listener.failed();
-      }
-    };
-    try {
-      const pending = connection.subscribeMessage(data => {
-        if (subscription !== entry || entry.retiring || entry.failed || data?.type !== 'hourly') return;
-        latest = data;
-        for (const listener of listeners) listener.received(data);
-      }, { type: 'weather/subscribe_forecast', entity_id: entity, forecast_type: 'hourly' });
-      void Promise.resolve(pending).then(stop => {
-        if (typeof stop !== 'function') return unavailable();
-        entry.stop = stop;
-        if (entry.retiring) retire(entry);
-      }, unavailable);
-    } catch {
-      unavailable();
-    }
-  }
-
-  const stream = {
-    listen(listener) {
-      listeners.add(listener);
-      if (subscription?.failed) listener.failed();
-      else if (latest) listener.received(latest);
-      reconcile();
-      return () => {
-        listeners.delete(listener);
-        reconcile();
-      };
-    },
-  };
-  streams.set(entity, stream);
-  return stream;
-}
-
 export function createHourlyWeather({ entity, sunEntity, make, icon, t, locale, visible }) {
   const root = make('section', 'hourly-weather');
   root.setAttribute('aria-label', t('forecast_hourly'));
@@ -129,11 +62,8 @@ export function createHourlyWeather({ entity, sunEntity, make, icon, t, locale, 
   root.append(list, notice);
 
   let hass;
-  let connection;
-  let unsubscribe;
-  let failed = false;
+  const feed = createForecastFeed(entity, 'hourly', render);
   let disposed = false;
-  let event;
   let painted;
   const reported = () => {
     const state = hass?.states?.[entity];
@@ -150,7 +80,7 @@ export function createHourlyWeather({ entity, sunEntity, make, icon, t, locale, 
     const weather = hass.states[entity].attributes;
     const sun = sunEntity && visible(hass, sunEntity) && hass.states[sunEntity];
     const sunlight = sun && ['above_horizon', 'below_horizon'].includes(sun.state) ? sun.attributes : null;
-    const items = hourlyWeatherItems(event?.forecast, now, sunlight, weather.temperature);
+    const items = hourlyWeatherItems(feed.forecast, now, sunlight, weather.temperature);
     let clock;
     const clockOptions = { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
     try { clock = new Intl.DateTimeFormat(locale, { ...clockOptions, timeZone: hass.config?.time_zone }); }
@@ -166,8 +96,7 @@ export function createHourlyWeather({ entity, sunEntity, make, icon, t, locale, 
         time.dateTime = new Date(item.at).toISOString();
         if (!item.now) time.dir = 'ltr';
         row.append(time);
-        const glyph = item.event ? 'weather-' + item.event : icons[item.condition];
-        const symbol = icon('mdi:' + (glyph || 'weather-cloudy-alert'));
+        const symbol = icon(item.event ? 'mdi:weather-' + item.event : weatherIconName(item.condition));
         const condition = item.condition && hass.formatEntityState?.({ ...hass.states[entity], state: item.condition });
         if (condition) {
           symbol.setAttribute('role', 'img');
@@ -194,31 +123,12 @@ export function createHourlyWeather({ entity, sunEntity, make, icon, t, locale, 
     }
     list.hidden = !items.length;
     notice.hidden = !!items.length;
-    const status = event || failed || typeof hass.connection?.subscribeMessage !== 'function'
-      ? 'forecast_unavailable' : 'forecast_loading';
-    const message = items.length ? '' : t(status);
+    const message = items.length ? '' : t('forecast_' + feed.status);
     if (notice.textContent !== message) notice.textContent = message;
   }
 
   function sync() {
-    const nextConnection = reported() && typeof hass.connection?.subscribeMessage === 'function' ? hass.connection : undefined;
-    if (connection !== nextConnection) {
-      unsubscribe?.();
-      event = undefined;
-      failed = false;
-      connection = nextConnection;
-      unsubscribe = connection && hourlyStream(connection, entity).listen({
-        received(data) {
-          event = data;
-          render();
-        },
-        failed() {
-          event = undefined;
-          failed = true;
-          render();
-        },
-      });
-    }
+    feed.update(reported() ? hass.connection : undefined);
     render();
   }
 
@@ -228,7 +138,7 @@ export function createHourlyWeather({ entity, sunEntity, make, icon, t, locale, 
     refreshTime: render,
     dispose() {
       disposed = true;
-      sync();
+      feed.dispose();
     },
   };
 }
@@ -236,7 +146,8 @@ export function createHourlyWeather({ entity, sunEntity, make, icon, t, locale, 
 export const hourlyWeatherStyles = String.raw`
   .hourly-weather { min-width: 0; color: var(--ink); }
   .hourly-weather-list {
-    display: flex; flex-direction: row; overflow-x: auto; overflow-y: hidden; overscroll-behavior-inline: contain;
+    display: flex; flex-direction: row; direction: ltr;
+    overflow-x: auto; overflow-y: hidden; overscroll-behavior-inline: contain;
     list-style: none; margin: 0; padding: 6px 0 8px; gap: 6px; scrollbar-width: thin;
     border: 1px solid var(--soft-line); border-radius: 12px; touch-action: pan-x pan-y pinch-zoom;
   }

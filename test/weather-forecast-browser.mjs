@@ -14,6 +14,7 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
     const forecastCalls = [];
     const created = [];
     const hourlyReaders = [];
+    const details = [];
     let maximumConnected = 0;
     let maximumHourly = 0;
     let success;
@@ -24,6 +25,11 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
     const forecast = Array.from({ length:27 }, (_, index) => ({
       datetime:iso(start + hour * index), temperature:15.5, condition:index === 1 ? 'rainy' : 'cloudy',
       precipitation_probability:[0,14,37,4,undefined,120,'39',-5][index],
+    }));
+    const today = Date.UTC(2026, 10, 25);
+    const dailyForecast = Array.from({ length:7 }, (_, index) => ({
+      datetime:iso(today + 24 * hour * index), templow:[14,10,14,14,15,18,19][index],
+      temperature:[24,26,28,27,24,29,27][index], condition:index === 1 ? 'rainy' : 'cloudy',
     }));
     const activate = reader => {
       connected.add(reader);
@@ -44,11 +50,19 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
           next_rising:iso(start + 6.5 * hour), next_setting:iso(start + 2.5 * hour) } },
       },
       connection: { subscribeMessage(callback, message) {
-        if (message.type !== 'weather/subscribe_forecast' || message.forecast_type !== 'hourly' || message.entity_id !== entity) {
+        const mode = message.forecast_type;
+        if (message.type !== 'weather/subscribe_forecast' || !['hourly', 'daily'].includes(mode) || message.entity_id !== entity) {
           throw new Error('Unexpected forecast subscription');
         }
+        if (mode === 'daily') {
+          if (options.has('daily-error')) return Promise.reject(new Error('unavailable'));
+          const reader = { callback, dataset:{mode:'daily',slots:'5'} };
+          activate(reader);
+          callback({ type:'daily', forecast:dailyForecast });
+          return Promise.resolve(() => connected.delete(reader));
+        }
         if (options.has('weather-error')) return Promise.reject(new Error('unavailable'));
-        const reader = { callback, dataset:{mode:'hourly',slots:'24'} };
+        const reader = { callback, dataset:{ mode, slots:'24' } };
         hourlyReaders.push(reader);
         activate(reader);
         maximumHourly = Math.max(maximumHourly, [...connected].filter(value => value.dataset.mode === 'hourly').length);
@@ -61,6 +75,7 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
       } },
       callWS(request) { throw new Error('Unexpected Home Assistant request: ' + request.type); },
     };
+    if (options.has('no-subscriptions')) delete hass.connection;
     if (!options.has('no-native')) window.loadCardHelpers = async () => {
       if (options.has('delayed')) await new Promise(resolve => { success = resolve; });
       return { createCardElement(config) {
@@ -83,8 +98,9 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
     const dashboard = document.createElement('bayit-dashboard');
     dashboard.setConfig(Strategy.generate(config, hass).views[0].cards[0]);
     dashboard.hass = hass;
+    dashboard.addEventListener('hass-more-info', event => details.push(event.detail.entityId));
     const tracker = {
-      created, forecastCalls,
+      created, forecastCalls, details,
       active: () => [...connected].map(card => card.dataset.mode + ':' + card.dataset.slots),
       maximum: () => maximumConnected,
       maximumHourly: () => maximumHourly,
@@ -93,6 +109,10 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
       deliverStale: () => hourlyReaders[0].callback({ type:'hourly', forecast:[] }),
       setFeatures(features, state = 'cloudy') {
         hass.states[entity] = { state, attributes:{ ...hass.states[entity].attributes, supported_features:features } };
+        dashboard.hass = { ...hass, states:{ ...hass.states } };
+      },
+      setTemperature(value) {
+        hass.states[entity] = { ...hass.states[entity], attributes:{ ...hass.states[entity].attributes, temperature:value } };
         dashboard.hass = { ...hass, states:{ ...hass.states } };
       },
       readyToFinish: () => typeof success === 'function',
@@ -124,7 +144,7 @@ try {
     try {
       const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
       page.setDefaultTimeout(8000);
-      await page.clock.setFixedTime(new Date('2026-11-25T09:10:00Z'));
+      await page.clock.install({ time:new Date('2026-11-25T09:10:00Z') });
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
       const open = extra => page.goto(base + '?locale=' + locale + extra + '#panel/weather-fixture');
@@ -133,21 +153,16 @@ try {
       const forecasts = modal.locator('fixture-weather-forecast');
       const hourly = modal.locator('.hourly-weather');
       const list = hourly.locator('.hourly-weather-list');
-      const daily = forecasts.and(modal.getByRole('group', { name:rtl ? 'תחזית יומית' : 'Daily forecast' })
-        .locator('fixture-weather-forecast'));
+      const daily = modal.locator('.daily-weather');
+      const header = modal.locator('.weather-current-summary');
       const show = async (...modes) => {
-        const native = modes.filter(entry => !entry.startsWith('hourly'));
-        for (const entry of native) {
-          const [mode, slots] = entry.split(':');
-          await forecasts.and(modal.locator('[data-mode="' + mode + '"][data-slots="' + slots + '"]')).waitFor();
-        }
         await page.waitForFunction(expected => tracker.active().slice().sort().join(',') === expected, modes.slice().sort().join(','));
-        assert.deepEqual(await forecasts.evaluateAll(nodes => nodes.map(node => node.dataset.mode + ':' + node.dataset.slots)), native);
       };
       await open('');
       await show('hourly:24', 'daily:5');
       await list.waitFor();
       assert.equal(await list.locator('li').count(), 24);
+      assert.equal(await list.evaluate(node => getComputedStyle(node).direction), 'ltr');
       assert.equal(await list.locator('.hourly-weather-time').first().textContent(), rtl ? 'עכשיו' : 'Now');
       assert.equal(await list.locator('.hourly-weather-time').nth(1).textContent(), '12:00');
       assert.equal(await list.locator('.hourly-weather-temperature').first().textContent(), '19°');
@@ -155,12 +170,30 @@ try {
       assert.deepEqual(await list.locator('.hourly-weather-rain').allTextContents(), ['10%', '40%']);
       assert.deepEqual(await list.locator('.hourly-weather-event').allTextContents(), rtl ? ['שקיעה','זריחה'] : ['Sunset','Sunrise']);
       assert.equal(await list.locator('.hourly-weather-time').nth(3).textContent(), '13:30');
-      assert.equal(await daily.getAttribute('data-current'), 'true');
+      await daily.waitFor();
+      assert.equal(await daily.locator('li').count(), 5);
+      assert.equal(await daily.locator('.daily-weather-day').first().textContent(), rtl ? 'היום' : 'Today');
+      assert.deepEqual(await daily.locator('.daily-weather-low').allTextContents(), ['14°C', '10°C', '14°C', '14°C', '15°C']);
+      assert.deepEqual(await daily.locator('.daily-weather-high').allTextContents(), ['24°C', '26°C', '28°C', '27°C', '24°C']);
+      assert.equal(await daily.locator('li').nth(1).locator('ha-icon').getAttribute('icon'), 'mdi:weather-rainy');
+      assert.equal(await daily.locator('.daily-weather-marker').count(), 1);
+      assert.ok(Math.abs(parseFloat(await daily.locator('.daily-weather-marker').evaluate(node => node.style.getPropertyValue('--weather-range-marker'))) - 47.78) < .1);
+      assert.equal(await header.locator('.weather-current-icon').getAttribute('icon'), 'mdi:weather-cloudy');
+      assert.equal(await header.locator('.weather-current-temperature span').textContent(), '19°C');
+      assert.equal(await header.locator('.weather-current-condition').textContent(), rtl ? 'מעונן' : 'Cloudy');
+      assert.equal(await header.locator('.weather-current-time').textContent(), '11:10');
+      assert.match(await header.locator('.weather-current-date time').textContent(), rtl ? /נובמבר/ : /November 25/);
+      await page.clock.fastForward(60000);
+      await header.locator('.weather-current-time').getByText('11:11').waitFor();
+      assert.equal(await modal.locator('.forecast-clock').count(), 0);
+      assert.equal(await forecasts.count(), 0);
       assert.ok(await hourly.evaluate(node => {
         const root = node.closest('.weather-forecast-stack');
-        const daily = root.querySelector('fixture-weather-forecast[data-mode=daily]');
+        const current = root.querySelector('.weather-current-summary');
+        const daily = root.querySelector('.daily-weather');
         const scroller = node.querySelector('.hourly-weather-list');
         return root.scrollWidth <= root.clientWidth && scroller.scrollWidth > scroller.clientWidth &&
+          current.getBoundingClientRect().bottom <= node.getBoundingClientRect().top &&
           node.getBoundingClientRect().bottom <= daily.getBoundingClientRect().top;
       }));
       const originalRoute = new URL(page.url()).hash;
@@ -173,6 +206,8 @@ try {
       assert.equal(await sun.isHidden(), true, 'Swiping the hourly strip does not navigate to the sun panel');
       assert.equal(new URL(page.url()).hash, originalRoute);
       const extraReads = await page.evaluate(() => tracker.forecastCalls.slice());
+      await page.evaluate(() => tracker.setTemperature(22.4));
+      await header.locator('.weather-current-temperature').getByText('22°C').waitFor();
       await modal.getByRole('button', { name:rtl ? 'שמש' : 'Sun', exact:true }).tap();
       await sun.waitFor();
       await modal.getByRole('button', { name:rtl ? 'תחזית' : 'Forecast', exact:true }).tap();
@@ -189,25 +224,24 @@ try {
       await page.evaluate(() => tracker.setFeatures(2));
       await show('hourly:24');
       await daily.waitFor({ state:'hidden' });
-      await modal.getByRole('button', { name:/Fixture Outlook/ }).waitFor();
+      await header.waitFor();
       assert.deepEqual(await page.evaluate(() => tracker.forecastCalls), withBoth, 'The hourly subscription stays active');
       await page.evaluate(() => tracker.setFeatures(3, 'unavailable'));
       await show();
       await page.evaluate(() => tracker.setFeatures(3));
       await show('hourly:24', 'daily:5');
       assert.equal(await page.evaluate(() => tracker.maximum()), 2);
-      assert.deepEqual(await page.evaluate(() => tracker.created), ['daily:5']);
+      assert.deepEqual(await page.evaluate(() => tracker.created), []);
       await modal.getByRole('button', { name:rtl ? 'סגירה' : 'Close', exact:true }).tap();
       await modal.waitFor({ state:'hidden' });
       await page.waitForFunction(() => tracker.active().length === 0);
 
-      await open('&delayed');
+      await open('&legacy&delayed');
       await page.waitForFunction(() => tracker.readyToFinish());
-      await page.evaluate(() => tracker.setFeatures(1));
-      await hourly.waitFor({ state:'hidden' });
       await page.evaluate(() => tracker.finish());
       await show('daily:5');
-      assert.deepEqual(await page.evaluate(() => tracker.forecastCalls), ['hourly:24', 'daily:5']);
+      assert.equal(await forecasts.count(), 1);
+      assert.deepEqual(await page.evaluate(() => tracker.forecastCalls), ['daily:5']);
 
       await open('&delay-hourly');
       await show('hourly:24', 'daily:5');
@@ -244,12 +278,24 @@ try {
       await open('&weather-error');
       await show('daily:5');
       await hourly.getByText(rtl ? 'תחזית לפי שעות אינה זמינה' : 'Hourly forecast unavailable', { exact:true }).waitFor();
+      assert.equal(await daily.locator('li').count(), 5);
+      await open('&daily-error');
+      await show('hourly:24');
+      await daily.getByText(rtl ? 'התחזית היומית אינה זמינה' : 'Daily forecast unavailable', { exact:true }).waitFor();
+      assert.equal(await list.locator('li').count(), 24);
       await open('&no-native');
-      await modal.getByRole('button', { name:/Fixture Outlook/ }).waitFor();
-      assert.equal(await modal.getByRole('button', { name:/Fixture Outlook/ }).count(), 1);
+      await show('hourly:24', 'daily:5');
+      await header.tap();
+      await page.waitForFunction(() => tracker.details.length === 1);
+      assert.deepEqual(await page.evaluate(() => tracker.details), ['weather.fixture']);
+      await open('&no-subscriptions');
+      await show('daily:5');
+      assert.equal(await forecasts.count(), 1);
+      await daily.waitFor({ state:'hidden' });
 
       await open('&legacy');
       await show('daily:5');
+      assert.equal(await forecasts.count(), 1);
       assert.equal(await hourly.count(), 0);
 
       await page.goto(base + '?editor&legacy&locale=' + locale);
@@ -271,7 +317,7 @@ try {
       await setting.waitFor({ state:'hidden' });
       assert.equal(await savedOption(), undefined);
       assert.deepEqual(errors, []);
-      console.log(engine.name() + ' at 320 px (' + locale + '): stacked hourly and daily weather, one subscription per type, touch, fallbacks, and editor');
+      console.log(engine.name() + ' at 320 px (' + locale + '): combined weather header, five daily ranges, one subscription per type, fallbacks, and editor');
     } finally {
       await browser.close();
     }

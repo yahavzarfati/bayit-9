@@ -9,6 +9,7 @@ import { calendarAgendaStyles, createCalendarAgenda } from './calendar-agenda.js
 import { bindDeviceDetails } from './popup-motion.js';
 import { comparisonSources, createTemperatureComparison, temperatureComparisonStyles } from './temperature-comparison-view.js';
 import { createHourlyWeather, hourlyWeatherStyles } from './hourly-weather.js';
+import { createDailyWeather, createWeatherSummary, weatherSummaryStyles } from './weather-summary.js';
 
 const sectionKeys = {
   actions: 'automations', locks: 'toolbar_locks', covers: 'room_covers', status: 'toolbar_status',
@@ -122,7 +123,7 @@ export function createToolbarPanel(kind, configuration, context) {
   const handlers = [];
   const mediaViews = [];
   const comparisons = [];
-  const hourlyWeather = [];
+  const weatherForecasts = [];
   const useLockPalette = ['overview', 'devices', 'security'].includes(kind);
   let live = true;
   let currentHass = context.hass;
@@ -558,22 +559,39 @@ export function createToolbarPanel(kind, configuration, context) {
       handlers.push(paint);
       paint();
     });
-    const build = mode => nativeCard({
-      type: 'weather-forecast', entity: item.entity, name: item.name, show_current: true,
+    const build = (mode, showCurrent = true) => nativeCard({
+      type: 'weather-forecast', entity: item.entity, name: item.name, show_current: showCurrent,
       show_forecast: Boolean(mode), forecast_type: mode ?? 'daily', forecast_slots: 5, tap_action: { action: 'none' },
     }, fallback());
     if (!item.hourly_forecast) return build(knownForecast(getState()?.attributes?.supported_features));
 
     const region = make('div', 'weather-forecast-stack');
     region.dataset.weatherForecastScroll = '';
-    const current = fallback();
+    const visible = (hass, entity) => isVisibleEntity(entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities);
+    const current = createWeatherSummary({
+      make, icon, button, t, locale: context.locale, state: getState, fallbackState: () => amount(item).state,
+      canOpen: () => visible(currentHass, item.entity) && modelFor(item).actions.more_info,
+      onDetails: anchor => moreInfo(item, anchor),
+    });
     const sunEntity = sections.find(section => section.kind === 'sun')?.entities
       .find(source => domain(source) === 'sun' && (!source.role || source.role === 'sun'))?.entity;
     const hourly = createHourlyWeather({
       entity: item.entity, sunEntity, make, icon, t, locale: context.locale,
-      visible: (hass, entity) => isVisibleEntity(entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities),
+      visible,
     });
-    hourlyWeather.push(hourly);
+    const daysView = createDailyWeather({ entity: item.entity, make, icon, t, locale: context.locale });
+    const refreshCurrent = () => current.update(Date.now(), currentHass?.config?.time_zone);
+    weatherForecasts.push({
+      refreshTime() {
+        refreshCurrent();
+        hourly.refreshTime();
+        daysView.refreshTime();
+      },
+      dispose() {
+        hourly.dispose();
+        daysView.dispose();
+      },
+    });
     const daily = make('div', 'weather-forecast-view');
     const views = new Map();
     function showDaily(mode) {
@@ -585,7 +603,7 @@ export function createToolbarPanel(kind, configuration, context) {
       }
       daily.dataset.mode = mode;
       if (!views.has(mode)) {
-        const card = build(mode);
+        const card = build(mode, false);
         card.setAttribute('role', 'group');
         card.setAttribute('aria-label', t(mode === 'daily' ? 'forecast_daily' : 'toolbar_forecast'));
         views.set(mode, card);
@@ -595,16 +613,19 @@ export function createToolbarPanel(kind, configuration, context) {
 
     function update() {
       const state = getState();
-      const features = state && !['unknown', 'unavailable'].includes(state.state)
+      region.hidden = !visible(currentHass, item.entity);
+      const features = !region.hidden && state && !['unknown', 'unavailable'].includes(state.state)
         ? state.attributes?.supported_features : undefined;
       const preferred = knownForecast(features);
       const days = preferred && preferred !== 'hourly' ? preferred : undefined;
-      current.hidden = Boolean(days);
+      const customDaily = days === 'daily' && typeof currentHass?.connection?.subscribeMessage === 'function';
+      refreshCurrent();
       hourly.update(currentHass);
-      showDaily(days);
+      showDaily(customDaily ? undefined : days);
+      daysView.update(currentHass, customDaily);
     }
 
-    region.append(current, hourly.root, daily);
+    region.append(current.root, hourly.root, daysView.root, daily);
     handlers.push(update);
     update();
     return region;
@@ -688,11 +709,12 @@ export function createToolbarPanel(kind, configuration, context) {
   let forecastClock;
   let clockTimer;
   const updateClock = () => {
-    if (!forecastClock) return;
     const now = new Date();
-    forecastClock.firstChild.textContent = format({hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(now);
-    forecastClock.lastChild.textContent = format({weekday:'long',day:'numeric',month:'long'}).format(now);
-    for (const forecast of hourlyWeather) forecast.refreshTime();
+    if (forecastClock) {
+      forecastClock.firstChild.textContent = format({hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(now);
+      forecastClock.lastChild.textContent = format({weekday:'long',day:'numeric',month:'long'}).format(now);
+    }
+    for (const forecast of weatherForecasts) forecast.refreshTime();
   };
   for (const section of sections) {
     if (!section.entities.length && !section.discover) continue;
@@ -759,10 +781,12 @@ export function createToolbarPanel(kind, configuration, context) {
     host.append(panel);
     if (beforeMap && beforeMap === section.id) vacuumMapAnchor = panel;
     if (kind === 'weather' && ['forecast', 'sun'].includes(section.kind)) forecastPages.set(section.kind, panel);
-    if (kind === 'weather' && section.kind === 'forecast' && !forecastClock) {
-      forecastClock = make('div','forecast-clock');
-      forecastClock.append(make('strong'),make('span'));
-      panel.insertBefore(forecastClock, items);
+    if (kind === 'weather' && section.kind === 'forecast' && !clockTimer) {
+      if (!section.entities.some(item => item.hourly_forecast)) {
+        forecastClock = make('div','forecast-clock');
+        forecastClock.append(make('strong'),make('span'));
+        panel.insertBefore(forecastClock, items);
+      }
       updateClock();
       clockTimer = view.setInterval(updateClock,30000);
     }
@@ -858,14 +882,15 @@ export function createToolbarPanel(kind, configuration, context) {
       calendarAgenda?.dispose();
       for (const player of mediaViews) player.dispose();
       for (const comparison of comparisons) comparison.dispose();
-      for (const forecast of hourlyWeather) forecast.dispose();
+      for (const forecast of weatherForecasts) forecast.dispose();
       if (clockTimer) view.clearInterval(clockTimer);
       native.dispose();
     },
   };
 }
 
-export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temperatureComparisonStyles + hourlyWeatherStyles + `
+export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temperatureComparisonStyles +
+  hourlyWeatherStyles + weatherSummaryStyles + `
   .toolbar-panes, .toolbar-section-items { display: grid; gap: 8px; min-width: 0; }
   .toolbar-section { min-width: 0; border: 1px solid var(--soft-line); border-radius: 13px; padding: 8px; }
   .toolbar-section-title { margin: 0 0 8px; text-align: center; font-size: 14px; }
