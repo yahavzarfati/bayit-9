@@ -1063,6 +1063,31 @@ try {
       assert.equal(await roomGridPage.evaluate(() => window.bayitTest.calls.length), 3);
       await roomGridPage.close();
 
+      const rememberedTimerPage = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
+      const rememberedRoom = rememberedTimerPage.getByRole('dialog', { name: 'Studio', exact: true });
+      const rememberedRoomButton = rememberedTimerPage.getByRole('button', { name: 'Studio', exact: true });
+      await rememberedTimerPage.goto(base + '?device-panel');
+      await rememberedRoomButton.tap();
+      const rememberedRoomRange = rememberedRoom.locator('input.timer-range');
+      await rememberedRoomRange.waitFor();
+      assert.equal(await rememberedRoomRange.inputValue(), '120');
+      await rememberedRoomRange.fill('45');
+      await rememberedRoom.getByRole('button', { name: 'Close', exact: true }).click();
+      await rememberedRoom.waitFor({ state: 'hidden' });
+      await rememberedRoomButton.tap();
+      assert.equal(await rememberedRoomRange.inputValue(), '45');
+      await rememberedRoom.getByRole('button', { name: 'Close', exact: true }).click();
+      await rememberedRoom.waitFor({ state: 'hidden' });
+      await rememberedTimerPage.locator('.quick-button[data-entity="climate.demo_air"]').press('Shift+Enter');
+      const rememberedDevice = rememberedTimerPage.getByRole('dialog', { name: 'Studio air conditioner', exact: true });
+      const rememberedDeviceRange = rememberedDevice.locator('input.timer-range');
+      assert.equal(await rememberedDeviceRange.inputValue(), '45');
+      await rememberedTimerPage.reload();
+      assert.equal(await rememberedDeviceRange.inputValue(), '45');
+      assert.deepEqual(await rememberedTimerPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+      await rememberedTimerPage.close();
+      console.log(engine + ': timer duration survives reopening, detail navigation and reload');
+
       const geometryPage = await browser.newPage({
         viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce',
       });

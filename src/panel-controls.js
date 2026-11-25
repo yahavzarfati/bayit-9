@@ -42,7 +42,7 @@ function climateOptionLabel(action, value, options, t) {
   return t(value);
 }
 
-export function buildPanelControls(model, { make, button, icon, label, t, request }) {
+export function buildPanelControls(model, { make, button, icon, label, t, request, timerPreferenceKey }) {
   const used = new Set();
   const updates = [];
   const content = [];
@@ -143,10 +143,21 @@ export function buildPanelControls(model, { make, button, icon, label, t, reques
       input.max = duration.max;
       input.step = duration.step;
       input.value = duration.max;
+      if (timerPreferenceKey) {
+        try {
+          const saved = localStorage.getItem(timerPreferenceKey);
+          if (saved && /^\d+$/.test(saved) && Number.isSafeInteger(Number(saved))) input.value = saved;
+        } catch { /* Timer actions remain available when browser storage is blocked. */ }
+      }
       input.setAttribute('aria-label', t('duration'));
       const amount = make('output', 'timer-amount');
       amount.textContent = input.value + ' ' + t('duration');
-      input.oninput = () => { amount.textContent = input.value + ' ' + t('duration'); };
+      input.oninput = () => {
+        amount.textContent = input.value + ' ' + t('duration');
+        if (timerPreferenceKey) {
+          try { localStorage.setItem(timerPreferenceKey, input.value); } catch {}
+        }
+      };
       const go = button('control-button timer-command', t(id), running ? 'mdi:plus' : 'mdi:play', true);
       go.onclick = () => request(id, input.valueAsNumber, go);
       go.dataset.action = id;

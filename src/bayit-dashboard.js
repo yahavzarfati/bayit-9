@@ -1414,7 +1414,10 @@ export class BayitDashboard extends HTMLElement {
     const basic = make('div', 'basic-actions');
     const complex = new Map();
     const curtain = model.domain === 'cover' && model.attributes.device_class === 'curtain';
-    view.special = buildPanelControls(model, { make, button, icon, label, t: key => this.t(key),
+    const timing = view.config.timed;
+    const timerPreferenceKey = timing && 'bayit-9.timer-duration.v1:' +
+      (timing.simple_timer_entity ?? timing.timer_entity ?? view.config.entity);
+    view.special = buildPanelControls(model, { make, button, icon, label, timerPreferenceKey, t: key => this.t(key),
       request: (id, value, control) => this.requestAction(view.config, id, value, control) });
     for (const id of actionsInOrder) {
       const action = model.actions[id];
