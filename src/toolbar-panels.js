@@ -566,7 +566,6 @@ export function createToolbarPanel(kind, configuration, context) {
     if (!item.hourly_forecast) return build(knownForecast(getState()?.attributes?.supported_features));
 
     const region = make('div', 'weather-forecast-stack');
-    region.dataset.weatherForecastScroll = '';
     const visible = (hass, entity) => isVisibleEntity(entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities);
     const current = createWeatherSummary({
       make, icon, button, t, locale: context.locale, state: getState, fallbackState: () => amount(item).state,
@@ -1029,6 +1028,7 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .weather-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   [data-weather-swipe] { touch-action: pan-y pinch-zoom; }
   [data-weather-swipe]:has([data-weather-forecast-scroll]) { touch-action: auto; }
+  [data-weather-swipe] .daily-weather { touch-action: pan-y pinch-zoom; }
   .weather-forecast-stack { display: grid; gap: 8px; min-width: 0; }
   .weather-forecast-view { display: contents; }
   .weather-forecast-view > .native-panel-card:empty { display: none; }

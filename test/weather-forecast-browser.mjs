@@ -142,7 +142,7 @@ try {
     const rtl = locale === 'he';
     const browser = await engine.launch();
     try {
-      const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+      const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, isMobile:true, reducedMotion:'reduce' });
       page.setDefaultTimeout(8000);
       await page.clock.install({ time:new Date('2026-11-25T09:10:00Z') });
       const errors = [];
@@ -150,6 +150,7 @@ try {
       const open = extra => page.goto(base + '?locale=' + locale + extra + '#panel/weather-fixture');
       const modal = page.getByRole('dialog', { name:'Fixture Weather', exact:true });
       const sun = modal.locator('[data-section=sun]');
+      const forecastPanel = modal.locator('[data-section=forecast]');
       const forecasts = modal.locator('fixture-weather-forecast');
       const hourly = modal.locator('.hourly-weather');
       const list = hourly.locator('.hourly-weather-list');
@@ -197,14 +198,23 @@ try {
           node.getBoundingClientRect().bottom <= daily.getBoundingClientRect().top;
       }));
       const originalRoute = new URL(page.url()).hash;
-      await hourly.evaluate((target, rtl) => {
-        for (const [type, x] of [['pointerdown', 150], ['pointerup', rtl ? 260 : 40]]) {
+      const direction = rtl ? 1 : -1;
+      const swipe = (locator, dx, dy = 0) => locator.evaluate((target, motion) => {
+        for (const [type, x, y] of [['pointerdown', 150, 100], ['pointerup', 150 + motion.dx, 100 + motion.dy]]) {
           target.dispatchEvent(new PointerEvent(type, { bubbles:true, composed:true, pointerType:'touch',
-            pointerId:5, isPrimary:true, clientX:x, clientY:100 }));
+            pointerId:5, isPrimary:true, clientX:x, clientY:y }));
         }
-      }, rtl);
+      }, { dx, dy });
+      await swipe(list.locator('li').first(), direction * 110);
       assert.equal(await sun.isHidden(), true, 'Swiping the hourly strip does not navigate to the sun panel');
+      await swipe(daily.locator('.daily-weather-range').first(), direction * 15, 110);
+      assert.equal(await sun.isHidden(), true, 'Vertical weather scrolling does not switch pages');
+      await swipe(daily.locator('.daily-weather-range').first(), direction * 110);
+      await sun.waitFor();
+      await swipe(sun.locator('.sun-panel'), -direction * 110);
+      await forecastPanel.waitFor();
       assert.equal(new URL(page.url()).hash, originalRoute);
+      assert.deepEqual(await page.evaluate(() => tracker.details), [], 'A swipe does not open native weather details');
       const extraReads = await page.evaluate(() => tracker.forecastCalls.slice());
       await page.evaluate(() => tracker.setTemperature(22.4));
       await header.locator('.weather-current-temperature').getByText('22°C').waitFor();
@@ -297,6 +307,10 @@ try {
       await show('daily:5');
       assert.equal(await forecasts.count(), 1);
       assert.equal(await hourly.count(), 0);
+      await swipe(forecastPanel, direction * 110);
+      await sun.waitFor();
+      await swipe(sun.locator('.sun-panel'), -direction * 110);
+      await forecastPanel.waitFor();
 
       await page.goto(base + '?editor&legacy&locale=' + locale);
       await page.getByText(rtl ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens', { exact:true }).tap();
@@ -316,8 +330,36 @@ try {
       await page.getByLabel(rtl ? 'אופן התצוגה' : 'Display as', { exact:true }).selectOption('status');
       await setting.waitFor({ state:'hidden' });
       assert.equal(await savedOption(), undefined);
+      if (engine === chromium) {
+        await open('');
+        await show('hourly:24', 'daily:5');
+        const mobile = await page.context().newCDPSession(page);
+        const touchSwipe = async (locator, direction) => {
+          const box = await locator.boundingBox();
+          assert.ok(box && box.y + box.height / 2 < 844);
+          const x = Math.round(box.x + box.width * (direction < 0 ? .82 : .18));
+          const y = Math.round(box.y + box.height / 2);
+          await mobile.send('Input.dispatchTouchEvent', { type:'touchStart', touchPoints:[{ x, y }] });
+          for (const offset of [25, 60, 110]) {
+            await mobile.send('Input.dispatchTouchEvent', { type:'touchMove', touchPoints:[{ x:x + direction * offset, y }] });
+          }
+          await mobile.send('Input.dispatchTouchEvent', { type:'touchEnd', touchPoints:[] });
+        };
+        try {
+          await touchSwipe(daily.locator('li').first(), -1);
+          await sun.waitFor();
+          await touchSwipe(sun.locator('.sun-panel'), 1);
+          await forecastPanel.waitFor();
+          await touchSwipe(list, -1);
+          await page.waitForFunction(() => document.querySelector('bayit-dashboard').shadowRoot
+            .querySelector('.hourly-weather-list').scrollLeft > 0);
+          assert.equal(await sun.isHidden(), true);
+        } finally {
+          await mobile.detach();
+        }
+      }
       assert.deepEqual(errors, []);
-      console.log(engine.name() + ' at 320 px (' + locale + '): combined weather header, five daily ranges, one subscription per type, fallbacks, and editor');
+      console.log(engine.name() + ' at 320 px (' + locale + '): forecast/Sun swipe, hourly scrolling, daily ranges, subscriptions, and editor');
     } finally {
       await browser.close();
     }

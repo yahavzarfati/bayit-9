@@ -54,6 +54,7 @@ export function createHourlyWeather({ entity, sunEntity, make, icon, t, locale, 
   const root = make('section', 'hourly-weather');
   root.setAttribute('aria-label', t('forecast_hourly'));
   const list = make('ol', 'hourly-weather-list');
+  list.dataset.weatherForecastScroll = '';
   list.tabIndex = 0;
   list.setAttribute('role', 'list');
   list.setAttribute('aria-label', t('forecast_hourly'));
