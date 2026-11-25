@@ -1,6 +1,6 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
-import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isToolbarReadouts, isVacuumProgramAction,
+import { classicRoomTitle, DEVICE_ICONS, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isToolbarReadouts, isVacuumProgramAction,
   isWeatherReadingsList,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities,
   normalizeToolbarReadout, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
@@ -43,14 +43,6 @@ const controlIcons = {
   locate: 'mdi:map-marker-radius-outline', press_button: 'mdi:gesture-tap-button', run_script: 'mdi:play',
 };
 const curtainControlIcons = { open: 'mdi:arrow-expand-horizontal', close: 'mdi:arrow-collapse-horizontal' };
-const deviceIcons = {
-  light:'mdi:lightbulb-outline', switch:'mdi:toggle-switch-outline', fan:'mdi:fan',
-  cover:'mdi:blinds', climate:'mdi:thermostat', lock:'mdi:lock-outline',
-  heater:'mdi:radiator', boiler:'mdi:water-boiler', water_heater:'mdi:water-boiler',
-  sensor:'mdi:gauge', binary_sensor:'mdi:motion-sensor', calendar:'mdi:calendar-outline',
-  alarm_control_panel:'mdi:shield-home-outline', weather:'mdi:weather-partly-cloudy',
-  person:'mdi:account-outline', vacuum:'mdi:robot-vacuum', camera:'mdi:cctv', media_player:'mdi:speaker',
-};
 const contextKeys = ['automations', 'security', 'presence', 'weather', 'energy', 'media', 'vacuum', 'calendar', 'sensors', 'devices'];
 const automaticToolbarContext = contextKeys.slice(0, 5);
 const toolbarIcons = {
@@ -790,7 +782,7 @@ export class BayitDashboard extends HTMLElement {
   model(config) {
     try {
       const model = getDeviceModel(config, this._hass?.states ?? {});
-      return { ...model, icon: validIcon(model.icon, deviceIcons[model.kind || model.domain]) };
+      return { ...model, icon: validIcon(model.icon, DEVICE_ICONS[model.kind || model.domain]) };
     }
     catch {
       return { ...config, name: config.name || config.entity, icon: validIcon(config.icon),
@@ -1438,7 +1430,7 @@ export class BayitDashboard extends HTMLElement {
       if (cover) item.dataset.compact = 'cover';
       const more = launchFromHeader ? button('device-head device-panel-launch')
         : button('round-action', this.t(hasPanel ? 'device_controls' : 'more_info'),
-          cover ? config.icon || deviceIcons.cover : 'mdi:information-outline', true);
+          cover ? config.icon || DEVICE_ICONS.cover : 'mdi:information-outline', true);
       if (hasPanel || nativeRoomCover) more.setAttribute('aria-haspopup', 'dialog');
       more.onclick = () => {
         if (hasPanel) this.openPanel('device', more, room, config.entity);

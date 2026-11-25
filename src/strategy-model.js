@@ -37,6 +37,14 @@ export const TOOLBAR_ROLE_DOMAINS = new Map([
   ['now_playing', 'media_player'], ['light_tile', 'light'],
 ]);
 export const ROOM_PANEL_KINDS = new Map([['media_player', 'media'], ['vacuum', 'vacuum']]);
+export const DEVICE_ICONS = {
+  light:'mdi:lightbulb-outline', switch:'mdi:toggle-switch-outline', fan:'mdi:fan',
+  cover:'mdi:blinds', climate:'mdi:thermostat', lock:'mdi:lock-outline',
+  heater:'mdi:radiator', boiler:'mdi:water-boiler', water_heater:'mdi:water-boiler',
+  sensor:'mdi:gauge', binary_sensor:'mdi:motion-sensor', calendar:'mdi:calendar-outline',
+  alarm_control_panel:'mdi:shield-home-outline', weather:'mdi:weather-partly-cloudy',
+  person:'mdi:account-outline', vacuum:'mdi:robot-vacuum', camera:'mdi:cctv', media_player:'mdi:speaker',
+};
 const ROOM_ICON = /^mdi:[a-z0-9-]+$/;
 const SHORTCUT_DOMAINS = new Set(['light', 'switch', 'fan', 'cover', 'lock', 'climate', 'water_heater']);
 const CONTROL_DOMAINS = new Set(['light', 'switch', 'cover', 'climate', 'fan', 'lock', 'water_heater']);
@@ -184,6 +192,11 @@ export function roomLightTilePlacement(entity, sections = []) {
   return !placements.length || placements.some(section => section.kind === 'lights');
 }
 
+export function normalizeRoomIcon(icon) {
+  const value = typeof icon === 'string' ? icon.trim() : '';
+  return ROOM_ICON.test(value) ? value : undefined;
+}
+
 export function normalizeRoomControlName(value) {
   if (typeof value !== 'string') return undefined;
   if (value === '') return '';
@@ -273,7 +286,7 @@ function dashboardAreas(config, hass) {
     const area = areas.get(id);
     const name = typeof override.name === 'string' ? override.name.trim().slice(0, 80) : '';
     if (!area && (!CUSTOM_ROOM_ID.test(id) || !name)) continue;
-    const icon = typeof override.icon === 'string' ? override.icon.trim() : '';
+    const icon = normalizeRoomIcon(override.icon);
     const entityIcons = override.entity_icons;
     const entityNames = override.entity_names;
     const presetShortcuts = override.climate_preset_shortcuts;
@@ -283,7 +296,7 @@ function dashboardAreas(config, hass) {
     areas.set(id, {
       name: name || area?.name,
       classicTitleBreak: override.classic_title_break,
-      icon: ROOM_ICON.test(icon) ? icon : area?.icon ?? 'mdi:home-outline',
+      icon: icon ?? area?.icon ?? 'mdi:home-outline',
       entityIds,
       sections,
       readOnly: new Set(idList(override.read_only_entities)),
@@ -510,8 +523,8 @@ export function discoverRooms(config, hass, locale) {
     if (area.entityIcons) {
       for (const entity of entities) {
         if (!Object.hasOwn(area.entityIcons, entity.entity)) continue;
-        const icon = area.entityIcons[entity.entity];
-        if (typeof icon === 'string' && ROOM_ICON.test(icon.trim())) entity.icon = icon.trim();
+        const icon = normalizeRoomIcon(area.entityIcons[entity.entity]);
+        if (icon) entity.icon = icon;
       }
     }
     const room = { id, name: area.name, icon: area.icon, entities };

@@ -1196,6 +1196,81 @@ async function assertNativeRoomLightHold(browser) {
   }
 }
 
+async function assertRoomDeviceIcons(browser) {
+  for (const nativePicker of [false, true]) {
+    const page = await browser.newPage({ viewport: { width: 320, height: 780 }, hasTouch: true, reducedMotion: 'reduce' });
+    try {
+      if (nativePicker) {
+        await page.addInitScript(() => {
+          customElements.define('ha-icon-picker', class extends HTMLElement {});
+        });
+      }
+      await page.goto(base + '/fixture-home/home?configuration&room-control-names');
+      const editor = page.getByRole('dialog', { name: 'Customize home', exact: true });
+      const open = async () => {
+        await page.getByRole('button', { name: 'Appearance', exact: true }).tap();
+        await page.getByRole('button', { name: 'Customize home', exact: true }).tap();
+        await editor.getByText('Rooms', { exact: true }).tap();
+        await editor.getByLabel('Room to customize', { exact: true }).selectOption('studio');
+        await editor.getByText('Device display', { exact: true }).tap();
+        await editor.getByLabel('Device to customize', { exact: true }).selectOption('light.demo_lamp');
+      };
+      const save = async () => {
+        await editor.getByRole('button', { name: 'Save dashboard', exact: true }).tap();
+        await editor.waitFor({ state: 'hidden' });
+        await page.waitForURL(url => url.hash === '');
+      };
+      const input = nativePicker ? editor.locator('ha-icon-picker[aria-label="Icon in this room"]')
+        : editor.getByLabel('Icon in this room', { exact: true });
+      const icon = 'mdi:ceiling-light';
+      const preview = editor.locator('.room-icon-preview ha-icon');
+      const reset = editor.getByRole('button', { name: 'Use default icon', exact: true });
+      const storedOverride = () => page.evaluate(() => {
+        const { studio, bayit_room_den: den } = JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.room_overrides;
+        return { studio: studio.entity_icons ?? null, den: den.entity_icons ?? null };
+      });
+      const waitForHomeIcon = (room, expected) => page.locator('.room[data-room="' + room +
+        '"] .quick-button[data-entity="light.demo_lamp"] ha-icon[icon="' + expected + '"]').waitFor({ state: 'attached' });
+
+      await open();
+      assert.equal(await preview.last().getAttribute('icon'), 'mdi:lightbulb-outline');
+      if (nativePicker) {
+        await input.evaluate((element, value) => element.dispatchEvent(new CustomEvent('value-changed', { detail: { value } })), icon);
+      } else {
+        await input.fill('invalid-icon-prefix');
+        await input.press('Enter');
+        assert.equal(await input.evaluate(element => element.checkValidity()), false);
+        assert.equal(await reset.count(), 0);
+        await input.fill(icon);
+        assert.equal(await preview.last().getAttribute('icon'), icon);
+        await input.press('Enter');
+      }
+      await reset.waitFor();
+      await save();
+      assert.deepEqual(await storedOverride(), { studio: { 'light.demo_lamp': icon }, den: null });
+      await waitForHomeIcon('studio', icon);
+      await waitForHomeIcon('bayit_room_den', 'mdi:lightbulb-outline');
+      await page.getByRole('button', { name: 'Studio', exact: true }).tap();
+      const room = page.getByRole('dialog', { name: 'Studio', exact: true });
+      await room.locator('[data-entity="light.demo_lamp"] .device-icon[icon="' + icon + '"]').waitFor();
+      await room.getByRole('button', { name: 'Close', exact: true }).tap();
+      await room.waitFor({ state: 'hidden' });
+
+      await open();
+      assert.equal(await input.evaluate(element => element.value), icon);
+      await reset.tap();
+      assert.equal(await input.evaluate(element => element.value), '');
+      assert.equal(await preview.last().getAttribute('icon'), 'mdi:lightbulb-outline');
+      await save();
+      assert.deepEqual(await storedOverride(), { studio: null, den: null });
+      await waitForHomeIcon('studio', 'mdi:lightbulb-outline');
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertSetupFooterLayout(browser) {
   const page = await browser.newPage({ viewport: { width: 391, height: 845 }, reducedMotion: 'reduce' });
   try {
@@ -1815,6 +1890,8 @@ try {
       console.log(engine + ': native room cover header, focus restoration, editor and device isolation');
       await assertNativeRoomLightHold(browser);
       console.log(engine + ': opt-in native room light holds, regular taps, focus and room isolation');
+      await assertRoomDeviceIcons(browser);
+      console.log(engine + ': per-room device icon editing, native picker, fallback and reset');
       await assertHeaderRoomLayout(browser);
       console.log(engine + ': top-title room layout, shortcut lanes and keyboard focus');
       await assertSetupFooterLayout(browser);
