@@ -1056,6 +1056,7 @@ try {
       const delayedUrl = routeUrl + '&defer-popup-hass';
       const routeDialog = routesPage.getByRole('dialog');
       const routeClose = routeDialog.getByRole('button', { name: rtlRoutes ? 'סגירה' : 'Close', exact: true });
+      const routeBack = routeDialog.getByRole('button', { name: rtlRoutes ? 'חזרה לחדר' : 'Back to room', exact: true });
       const deskHeading = routeDialog.getByRole('heading', { name: 'Desk lamp', exact: true });
       const studioHeading = routeDialog.getByRole('heading', { name: 'Studio', exact: true });
       const routeErrors = [];
@@ -1067,6 +1068,7 @@ try {
       await routesPage.evaluate(() => window.bayitTest.loadPopupHass());
       await deskHeading.waitFor();
       assert.equal(await routesPage.locator('[data-popup-origin]').count(), 0);
+      assert.equal(await routeBack.count(), 0);
       assert.equal(await routeClose.evaluate(button => button.getRootNode().activeElement === button), true);
       assert.equal(new URL(routesPage.url()).hash, '#legacy-lamp');
       await routesPage.reload();
@@ -1087,9 +1089,16 @@ try {
       assert.equal(new URL(routesPage.url()).hash, '#room-studio');
       assert.equal(await routesPage.locator('.room[data-popup-origin]').count(), 1);
       assert.equal(await routesPage.locator('.room[data-current]').count(), 1);
-      await routeDialog.locator('[data-entity="light.demo_lamp"] .device-tile').press('Shift+Enter');
+      const roomLamp = routeDialog.locator('[data-entity="light.demo_lamp"] .device-tile');
+      await roomLamp.press('Shift+Enter');
       await deskHeading.waitFor();
       assert.equal(new URL(routesPage.url()).hash, '#device/studio/light.demo_lamp');
+      await routeBack.tap();
+      await studioHeading.waitFor();
+      assert.equal(new URL(routesPage.url()).hash, '#room-studio');
+      assert.equal(await roomLamp.evaluate(button => button.getRootNode().activeElement === button), true);
+      await roomLamp.press('Shift+Enter');
+      await deskHeading.waitFor();
       await routesPage.evaluate(() => history.back());
       await studioHeading.waitFor();
       assert.equal(await routesPage.locator('[data-popup-origin]').count(), 0);

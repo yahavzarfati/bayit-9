@@ -1149,8 +1149,7 @@ export class BayitDashboard extends HTMLElement {
     if (type === 'device' && !selected) return;
     const model = selected ? this.model(selected) : null;
     const boilerControls = selected?.kind === 'boiler' && selected.role !== 'status';
-    const coverControls = model?.domain === 'cover' && selected.role !== 'status';
-    const fromRoomDetail = (boilerControls || coverControls) && this.panel?.type === 'room' &&
+    const fromRoomDetail = selected && this.panel?.type === 'room' &&
       this.panel.room === room && n.modal.open && n.content.contains(source);
     const fromLinkedRoom = (type === 'media' || type === 'vacuum') && returnFromRoom && this.panel?.type === 'room' &&
       this.panel.room === returnFromRoom.room && n.modal.open && n.content.contains(source);
@@ -1232,7 +1231,7 @@ export class BayitDashboard extends HTMLElement {
     if (!source) return;
     this.openPanel('room', source, room, undefined, undefined, undefined, navigation);
     const view = Array.from(this.deviceViews).find(item => item.config.entity === entity);
-    view?.more?.focus({ preventScroll: true });
+    (view?.more ?? view?.tile)?.focus({ preventScroll: true });
   }
 
   dismissPanel(options) {

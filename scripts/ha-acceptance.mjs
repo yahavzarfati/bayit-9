@@ -146,7 +146,8 @@ try {
 
   const roomRoute = page.url();
   const beforeDetails = await deviceState();
-  await device.getByRole('button', { name: / · (Turn on|Turn off)$/ }).press('Shift+Enter');
+  const roomLight = device.getByRole('button', { name: / · (Turn on|Turn off)$/ });
+  await roomLight.press('Shift+Enter');
   const deviceDialog = card.locator('dialog[data-kind="device"][open]');
   const moreInfo = deviceDialog.getByRole('button', { name: 'More info', exact: true });
   await moreInfo.waitFor();
@@ -165,6 +166,7 @@ try {
   await deviceDialog.getByRole('button', { name: 'Back to room', exact: true }).click();
   await page.waitForURL(roomRoute);
   await room.waitFor();
+  assert.equal(await roomLight.evaluate(button => button.getRootNode().activeElement === button), true);
   assert.equal(await deviceState(), beforeDetails);
   console.log('Native More info returned to the same Bayit device controls and room');
 
