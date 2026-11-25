@@ -1293,6 +1293,8 @@ async function assertRoomDeviceIcons(browser) {
       await open();
       assert.equal(await preview.last().getAttribute('icon'), 'mdi:lightbulb-outline');
       if (nativePicker) {
+        assert.match(await input.evaluate(element =>
+          getComputedStyle(element).getPropertyValue('--ha-color-fill-primary-quiet-resting')), /color-mix/);
         await input.evaluate((element, value) => element.dispatchEvent(new CustomEvent('value-changed', { detail: { value } })), icon);
       } else {
         await input.fill('invalid-icon-prefix');
