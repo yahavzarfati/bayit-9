@@ -149,6 +149,12 @@ if (query.has('room-grid')) {
       ...Array.from({ length: 7 }, (_, i) => 'Preset ' + (i + 1)));
   }
 }
+if (query.has('cover-grid')) {
+  for (const [id, name] of [['cover.demo_shade', 'Window shade'], ['cover.demo_curtain', 'Long living room curtain']]) {
+    states[id] = { state: 'closed', attributes: { friendly_name: name, current_position: 0, supported_features: 15 } };
+    hass.entities[id] = { area_id: 'studio' };
+  }
+}
 if (query.has('device-panel')) {
   states['climate.demo_air'] = { state: 'off', attributes: {
     friendly_name: 'Studio air conditioner', supported_features: 425, hvac_modes: ['off','cool','heat'],
@@ -853,6 +859,9 @@ try {
       }));
       assert.equal(firstTile[0], secondTile[0], 'Simple lights share one row');
       assert.notEqual(firstTile[1], secondTile[1]);
+      assert.equal(await compactLights.first().locator('.current').isVisible(), false);
+      assert.equal(await compactLights.first().locator('.device-tile').getAttribute('aria-pressed'), 'false');
+      assert.ok(await compactLights.first().evaluate(tile => tile.offsetHeight >= 108));
       const dimmable = lightGroup.locator('[data-entity="light.demo_pendant"] .device-tile');
       await dimmable.getByText('Pendant lamp', { exact: true }).waitFor();
       assert.equal(await lightGroup.getByRole('slider').count(), 0);
@@ -957,6 +966,39 @@ try {
       await geometryDialog.waitFor({ state: 'hidden' });
       assert.equal(await geometryShortcut.evaluate(button => button.getRootNode().activeElement === button), true);
       await geometryPage.close();
+
+      for (const [locale, width] of [['he', 320], ['en', 375], ['he', 390]]) {
+        const coverGridPage = await browser.newPage({ viewport: { width, height: 800 }, hasTouch: true, reducedMotion: 'reduce' });
+        await coverGridPage.goto(base + '?cover-grid&locale=' + locale);
+        await coverGridPage.getByRole('button', { name: 'Studio', exact: true }).tap();
+        const dialog = coverGridPage.getByRole('dialog', { name: 'Studio', exact: true });
+        const covers = dialog.locator('[data-group="room_covers"] > [data-compact="cover"]');
+        await covers.nth(1).waitFor();
+        const geometry = await covers.evaluateAll(tiles => tiles.map(tile => ({
+          top: tile.getBoundingClientRect().top,
+          left: tile.getBoundingClientRect().left,
+          scroll: tile.scrollWidth > tile.clientWidth,
+          buttons: [...tile.querySelectorAll('.basic-actions button')].map(button => {
+            const rect = button.getBoundingClientRect();
+            return [button.dataset.action, rect.top, rect.width, rect.height];
+          }),
+        })));
+        const [first, second] = geometry;
+        assert.equal(first.top, second.top);
+        assert.ok(first.left < second.left, 'Room cover order matches the grid in either language');
+        for (const tile of geometry) {
+          assert.equal(tile.scroll, false);
+          assert.deepEqual(tile.buttons.map(([action]) => action), ['open', 'stop', 'close']);
+          assert.equal(new Set(tile.buttons.map(([, top]) => top)).size, 1, 'Cover actions stay on one line');
+          assert.ok(tile.buttons.every(([, , width, height]) => width >= 28 && height >= 44));
+        }
+        await dialog.locator('[data-entity="cover.demo_shade"] [data-action="open"]').tap();
+        assert.deepEqual(await coverGridPage.evaluate(() => window.bayitTest.calls), [
+          { type: 'call_service', domain: 'cover', service: 'open_cover', service_data: {}, target: { entity_id: 'cover.demo_shade' } },
+        ]);
+        await coverGridPage.close();
+      }
+      console.log(engine + ': room cover rails stay on one line at 320–390 px');
 
       for (const [locale, width] of [['he', 320], ['en', 390]]) {
         const effectsPage = await browser.newPage({ viewport: { width, height: 760 }, hasTouch: true });
