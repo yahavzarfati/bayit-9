@@ -56,6 +56,7 @@ const WORDS = {
     climatePresetIcon: 'Shortcut icon', climatePresetHighlight: 'Highlight when this preset is reported',
     climatePresetHighlightDefault: 'When the shortcut preset is active', climatePresetUnavailable: 'Unavailable preset',
     roomPanelShow: 'Show device in room panel', roomPanelHint: 'For quick access from Home, add the device in Room shortcuts.',
+    roomHomeActivity: 'Show device activity on the room card',
     lightCount: 'Lights in the room count', lightCountHint: 'With no lights selected, the count includes every room light.',
     lightCountReset: 'Use automatic lighting count',
     roomShutdown: 'Devices turned off by the room icon',
@@ -196,6 +197,7 @@ const WORDS = {
     climatePresetIcon: 'סמל הקיצור', climatePresetHighlight: 'הדגשה כשהמזגן מדווח על תוכנית זו',
     climatePresetHighlightDefault: 'כשתוכנית הקיצור פעילה', climatePresetUnavailable: 'תוכנית לא זמינה',
     roomPanelShow: 'הצגת המכשיר בחלונית החדר', roomPanelHint: 'לגישה מהירה ממסך הבית, הוסיפו את המכשיר בהגדרה קיצורים בחדרים.',
+    roomHomeActivity: 'הצגת פעילות המכשיר בכרטיס החדר במסך הבית',
     lightCount: 'תאורה שנכללת במונה החדר', lightCountHint: 'כשלא מסומן אף פריט, המונה כולל את כל התאורה בחדר.',
     lightCountReset: 'חזרה לספירת תאורה אוטומטית',
     roomShutdown: 'מכשירים לכיבוי דרך סמל החדר',
@@ -992,6 +994,20 @@ export class Bayit9StrategyEditor extends HTMLElement {
         showDevice.firstElementChild.dataset.roomFocus = 'room-control-device-show';
         const profile = profiles.find(item => item.entity === id);
         const device = { ...available.get(id), kind: profile?.kind };
+        const homeOptions = [];
+        if (id.startsWith('climate.') || id.startsWith('water_heater.') || profile?.kind === 'heater' || profile?.kind === 'boiler') {
+          const showActivity = checkbox(words.roomHomeActivity, !configuredIds(override.room_activity_badge_excluded_entities).includes(id), checked => {
+            const next = { ...this.#roomOverride(room.id) };
+            const excluded = new Set(configuredIds(next.room_activity_badge_excluded_entities));
+            if (checked) excluded.delete(id);
+            else excluded.add(id);
+            if (excluded.size) next.room_activity_badge_excluded_entities = [...excluded];
+            else delete next.room_activity_badge_excluded_entities;
+            this.#setRoomOverride(room.id, next, 'room-control-home-activity');
+          });
+          showActivity.firstElementChild.dataset.roomFocus = 'room-control-home-activity';
+          homeOptions.push(showActivity);
+        }
         const deviceIcon = this.#roomControlIcon(room, device, words);
         const popupName = node('input', {
           value: normalizeRoomControlName(override.device_popup_names?.[id]) || '',
@@ -1019,7 +1035,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         });
         const popupNameField = field(words.roomDevicePopupName, popupName);
         if (!shown) {
-          fields.replaceChildren(showDevice, popupNameField, deviceIcon, node('small', { textContent: words.roomPanelHint }));
+          fields.replaceChildren(showDevice, ...homeOptions, popupNameField, deviceIcon, node('small', { textContent: words.roomPanelHint }));
           return;
         }
         const name = normalizeRoomControlName(override.entity_names?.[id]);
@@ -1048,7 +1064,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
           event.preventDefault();
           saveText();
         });
-        fields.replaceChildren(showDevice, show, field(words.roomControlName, input), popupNameField, deviceIcon,
+        fields.replaceChildren(showDevice, ...homeOptions, show, field(words.roomControlName, input), popupNameField, deviceIcon,
           disclosure(words.roomPanelIconOptions, this.#open.roomPanelIcon, open => { this.#open.roomPanelIcon = open; },
             () => [this.#roomControlIcon(room, device, words, true)]));
         if (id.startsWith('sensor.') && supportsRoomTemperatureSource(id, this.#hass.states?.[id]?.attributes)) {
@@ -1484,6 +1500,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         delete next.room_temperature_fallback_entity;
       }
       for (const key of ['keep_in_automatic_room_entities', 'read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
+        'room_activity_badge_excluded_entities',
         'inline_light_entities', 'dual_light_detail_entities', 'compact_light_reading_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details', 'shortcut_power_entities',
         'vacuum_panel_hold_entities', 'climate_power_entities', 'media_compact_entities', 'appliance_tile_entities',
         'boiler_quick_power_entities', 'compact_device_entities', 'compact_climate_controls_entities']) {

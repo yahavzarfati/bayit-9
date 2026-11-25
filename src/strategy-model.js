@@ -437,6 +437,7 @@ function dashboardAreas(config, hass) {
       nativeCoverHeaders: new Set(idList(override.native_cover_header_entities)),
       nativeLightHolds: new Set(idList(override.native_light_hold_entities)),
       lightingCount: idList(override.lighting_count_entities),
+      activityBadgeExcluded: new Set(idList(override.room_activity_badge_excluded_entities)),
       temperatureEntity: typeof override.room_temperature_entity === 'string' ? override.room_temperature_entity : undefined,
       temperatureFallback: typeof override.room_temperature_fallback_entity === 'string' ? override.room_temperature_fallback_entity : undefined,
       temperatureGraphColors: override.room_temperature_graph_colors,
@@ -714,6 +715,10 @@ export function discoverRooms(config, hass, locale) {
       const lights = new Set(entities.filter(item => domainOf(item.entity) === 'light').map(item => item.entity));
       const scope = area.lightingCount.filter(entity => lights.has(entity));
       if (scope.length) room.lighting_count_entities = scope;
+    }
+    if (area.activityBadgeExcluded?.size) {
+      const scope = entities.filter(device => area.activityBadgeExcluded.has(device.entity)).map(device => device.entity);
+      if (scope.length) room.room_activity_badge_excluded_entities = scope;
     }
     if (area.shutdown?.length) {
       const members = new Set(entities.map(device => device.entity));

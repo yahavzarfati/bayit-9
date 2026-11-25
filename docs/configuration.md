@@ -64,6 +64,8 @@ In **Rooms**, open **Device display** and select a device. Clear **Name in this 
 
 Set **Device popup title** to name the device’s Bayit 9 popup in the selected room. Clear the field to use the regular device name. In YAML, use the `device_popup_names` mapping under that room’s override.
 
+Use **Show device activity on the room card** in **Device display** to choose which room shows the heating, climate, or timer badge for a shared controller. In YAML, list the device under `room_activity_badge_excluded_entities` in the room override where its activity badge should be hidden.
+
 Choose **Icon in this room** in **Device display** to customize the glyph in the room and on its Home shortcut. Clear it with **Use default icon**. The icon can be any MDI icon and other rooms retain their own icons for the same entity. The YAML `entity_icons` maps room member IDs to icons.
 
 In **Device display → Separate room panel icon**, choose an MDI icon for the selected device's tile inside that room. The Home shortcut and the device's standalone details keep their shared icon. In YAML, map room member IDs to MDI icons under `panel_entity_icons` on the room override.

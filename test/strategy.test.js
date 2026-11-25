@@ -642,6 +642,29 @@ test('maps effect categories to visible controllable lights and preserves native
     [true, undefined, undefined]);
 });
 
+test('projects a Home activity badge exclusion only for members of the authored room', () => {
+  const climate = 'climate.demo_air';
+  const secondary = 'bayit_room_shared_fixture';
+  const hass = home();
+  hass.entities[climate] = { area_id:'studio' };
+  const rooms = discoverRooms({
+    show_unassigned:false,
+    area_ids:['studio', secondary],
+    room_overrides:{
+      studio:{ entities:[climate] },
+      [secondary]:{ name:'Shared room', entities:[climate],
+        room_activity_badge_excluded_entities:[climate, climate, 'fan.demo_fan'] },
+    },
+    room_shortcuts:{ studio:[climate], [secondary]:[climate] },
+  }, hass, 'en');
+  for (const room of rooms) {
+    assert.equal(room.entities[0].entity, climate);
+    assert.deepEqual(room.shortcuts, [climate]);
+  }
+  assert.equal(rooms[0].room_activity_badge_excluded_entities, undefined);
+  assert.deepEqual(rooms[1].room_activity_badge_excluded_entities, [climate]);
+});
+
 test('automatic shortcuts can keep authored lists for real and unassigned rooms', () => {
   const hass = home();
   const unassigned = 'bayit9_unassigned';

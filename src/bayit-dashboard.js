@@ -359,6 +359,10 @@ export function normalizeDashboardConfig(config = {}) {
       const panelHidden = new Set(room.panel_hidden_entities.filter(entity => unique.has(entity)));
       if (panelHidden.size) parsed.panelHidden = panelHidden;
     }
+    if (Array.isArray(room.room_activity_badge_excluded_entities)) {
+      const excluded = new Set(room.room_activity_badge_excluded_entities.filter(entity => unique.has(entity)));
+      if (excluded.size) parsed.activityBadgeExcluded = excluded;
+    }
     if (typeof room.room_temperature_entity === 'string' &&
         /^(sensor|climate)\./.test(room.room_temperature_entity) && unique.has(room.room_temperature_entity)) {
       parsed.temperatureEntity = room.room_temperature_entity;
@@ -1454,11 +1458,13 @@ export class BayitDashboard extends HTMLElement {
         }
         const trackBoiler = view.boilerActivity?.boiler_entity === model.entity;
         const elapsed = trackBoiler && applianceActivity(view.boilerActivity, this._hass?.states, now);
+        const timerActive = !elapsed && model.available && model.timer?.state === 'active';
+        const showActivity = !view.room.activityBadgeExcluded?.has(config.entity);
+        countdown ||= timerActive;
         if (elapsed) {
           activities.push({ ...this.applianceBadge('boiler', elapsed, model.name), glyph: activityDeviceIcon(model) });
           if (countMinutes) applianceNext = Math.min(applianceNext, elapsed.nextAt);
-        } else if (model.available && model.timer?.state === 'active') {
-          countdown = true;
+        } else if (timerActive && showActivity) {
           const deviceGlyph = activityDeviceIcon(model);
           activities.push({
             text: this.timerLabel(model.timer, true),
@@ -1467,7 +1473,7 @@ export class BayitDashboard extends HTMLElement {
             concurrentGlyph: deviceGlyph,
             tone: isHeatDevice(model) ? 'heat' : 'warm',
           });
-        } else if (model.available) {
+        } else if (model.available && showActivity) {
           const activity = this.roomClimateBadge(model, tone);
           if (activity) activities.push(activity);
         }

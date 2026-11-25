@@ -5443,6 +5443,106 @@ async function assertRoomVacuumGestures(browser) {
   }
 }
 
+async function assertRoomActivityBadgeScope(browser) {
+  const labels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', room:'Room to customize',
+      display:'Device display', device:'Device to customize', badge:'Show device activity on the room card', save:'Save dashboard' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים', room:'חדר להתאמה אישית',
+      display:'תצוגת מכשירים', device:'מכשיר להתאמה אישית', badge:'הצגת פעילות המכשיר בכרטיס החדר במסך הבית', save:'שמירת הדשבורד' },
+  ];
+  const air = 'climate.demo_air';
+  const timer = 'timer.demo_heater';
+  const secondary = 'bayit_room_kitchen_fixture';
+  const temperature = 'sensor.demo_temperature';
+  const fixture = {
+    type:'custom:bayit-9', area_ids:[secondary, 'studio'], show_unassigned:false,
+    room_overrides:{
+      studio:{ entities:[air], climate_power_entities:[air] },
+      [secondary]:{
+        name:'Kitchen fixture', entities:[air, temperature], climate_power_entities:[air], room_temperature_entity:temperature,
+        activities:[{ kind:'dishwasher', operation_entity:'sensor.demo_progress' }],
+      },
+    },
+    room_shortcuts:{ studio:[air], [secondary]:[air] },
+    profiles:[{ entity:air, kind:'climate', timed:{ timer_entity:timer } }],
+  };
+  for (const words of labels) {
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      await page.addInitScript(strategy => {
+        const key = 'bayit9-browser-fixture';
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy }));
+      }, fixture);
+      const url = base + '/fixture-home/home?configuration&room-status&device-panel&toolbar-panels&locale=' + words.locale;
+      await page.goto(url);
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      const studio = page.locator('.room[data-room=studio]');
+      const kitchen = page.locator('.room[data-room=' + secondary + ']');
+      const badge = (card, kind) => card.locator('[data-badge=' + kind + ']:not([hidden])');
+      const shortcut = card => card.locator('.quick-button[data-entity="' + air + '"]');
+      const showActivity = setup.getByRole('checkbox', { name:words.badge, exact:true });
+      const heat = () => page.evaluate(id => window.bayitTest.setRoomState(id, 'heat'), air);
+      const open = async room => {
+        await page.getByRole('button', { name:words.appearance, exact:true }).tap();
+        await page.getByRole('button', { name:words.setup, exact:true }).tap();
+        await setup.getByText(words.rooms, { exact:true }).tap();
+        await setup.getByLabel(words.room, { exact:true }).selectOption(room);
+        await setup.getByText(words.display, { exact:true }).tap();
+        await setup.getByLabel(words.device, { exact:true }).selectOption(air);
+      };
+      const save = async () => {
+        await Promise.all([page.waitForEvent('load'), setup.getByRole('button', { name:words.save, exact:true }).tap()]);
+        await kitchen.waitFor({ state:'attached' });
+        return page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      };
+      await heat();
+      await badge(studio, 'activity').waitFor();
+      await badge(kitchen, 'activity').waitFor();
+      await open(secondary);
+      assert.equal(await showActivity.isChecked(), true);
+      await showActivity.uncheck();
+      const saved = await save();
+      assert.deepEqual(saved.room_overrides[secondary].room_activity_badge_excluded_entities, [air]);
+      assert.equal(saved.room_overrides.studio.room_activity_badge_excluded_entities, undefined);
+      assert.deepEqual(saved.room_shortcuts, fixture.room_shortcuts);
+      await heat();
+      await badge(studio, 'activity').waitFor();
+      assert.equal(await badge(kitchen, 'activity').count(), 0);
+      await badge(kitchen, 'temperature').waitFor();
+      await badge(kitchen, 'dishwasher').waitFor();
+      await shortcut(studio).waitFor();
+      await shortcut(kitchen).waitFor();
+      await page.getByRole('button', { name:'Kitchen fixture', exact:true }).tap();
+      const panel = page.getByRole('dialog', { name:'Kitchen fixture', exact:true });
+      await panel.locator('.device[data-entity="' + air + '"]').waitFor();
+      await page.keyboard.press('Escape');
+      await panel.waitFor({ state:'hidden' });
+
+      await page.evaluate(id => {
+        window.bayitTest.setFixtureAttributes(id, { finishes_at:new Date(Date.now() + 900000).toISOString() });
+        window.bayitTest.setRoomState(id, 'active');
+      }, timer);
+      await badge(studio, 'activity').locator('[icon="mdi:timer-outline"]').waitFor();
+      assert.equal(await badge(kitchen, 'activity').count(), 0);
+      assert.equal(await page.locator('bayit-dashboard').evaluate((card, id) => card.activeDevices.get(id)?.room.id, air), secondary);
+      await page.evaluate(id => window.bayitTest.setRoomState(id, 'unavailable'), air);
+      await badge(kitchen, 'availability').waitFor();
+      await badge(kitchen, 'temperature').waitFor();
+      await badge(kitchen, 'dishwasher').waitFor();
+
+      await open(secondary);
+      assert.equal(await showActivity.isChecked(), false);
+      await showActivity.check();
+      assert.equal((await save()).room_overrides[secondary].room_activity_badge_excluded_entities, undefined);
+      await heat();
+      await badge(kitchen, 'activity').waitFor();
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertSelectedRoomTemperature(browser) {
   const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
   page.setDefaultTimeout(8000);
@@ -10159,6 +10259,7 @@ try {
       await utilityPage.close();
       console.log(engine + ': Energy, Weather and room graph details leave the Bayit popup open underneath');
       await assertSelectedRoomTemperature(browser);
+      await assertRoomActivityBadgeScope(browser);
       await assertRoomTemperatureCharts(browser);
       console.log(engine + ': room temperature source, fallback, units and editor');
       await assertEnergyReadingCards(browser);
