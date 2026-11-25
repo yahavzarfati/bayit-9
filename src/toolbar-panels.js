@@ -281,7 +281,10 @@ export function createToolbarPanel(kind, configuration, context) {
         if (!config) return [];
         const { entity } = config;
         const power = role === 'power';
+        const playPause = actions[0] === 'media_play_pause';
         const control = button('control-button media-remote-key', t(actions[0]), glyph, true);
+        const symbol = playPause && control.querySelector('ha-icon');
+        const playbackState = ({ state }) => playPause && (state === 'playing' || state === 'paused') ? state : undefined;
         const enabledAction = (hass, model) => {
           if (!isVisibleEntity(entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities)) return;
           return actions.find(action => {
@@ -290,9 +293,11 @@ export function createToolbarPanel(kind, configuration, context) {
           });
         };
         let displayedAction;
+        let displayedPlayback;
         control.onclick = () => {
-          if (displayedAction && !pending(entity) &&
-              displayedAction === enabledAction(context.getHass(), modelFor(config))) {
+          if (!displayedAction || pending(entity)) return;
+          const model = modelFor(config);
+          if (displayedPlayback === playbackState(model) && displayedAction === enabledAction(context.getHass(), model)) {
             request(config, displayedAction, undefined, control);
           }
         };
@@ -301,6 +306,17 @@ export function createToolbarPanel(kind, configuration, context) {
           const waiting = pending(entity);
           control.hidden = !displayedAction;
           control.disabled = control.hidden || waiting;
+          if (playPause) {
+            const playback = displayedAction ? playbackState(model) : undefined;
+            if (displayedPlayback !== playback) {
+              displayedPlayback = playback;
+              const playing = playback === 'playing';
+              const paused = playback === 'paused';
+              symbol.setAttribute('icon', playing ? 'mdi:pause' : paused ? 'mdi:play' : glyph);
+              label(control, t(playing ? 'media_pause' : paused ? 'media_play' : 'media_play_pause'));
+              control.toggleAttribute('data-playback-paused', paused);
+            }
+          }
           if (power) {
             label(control, t('media_power') + ' · ' + model.name);
             control.setAttribute('aria-pressed', String(displayedAction === 'turn_off'));
@@ -930,9 +946,11 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .media-remote-group:not([hidden]) + .media-remote-group { margin-block-start: 8px; }
   .media-remote-group[hidden], .media-remote-key[hidden] { display: none; }
   .media-remote-key { min-height: 44px; justify-content: center; }
-  .media-remote-group > .media-remote-key[aria-pressed=true] {
+  .media-remote-group > .media-remote-key[aria-pressed=true],
+  .media-remote-key[data-playback-paused] {
     color: var(--moving); border-color: var(--moving); box-shadow: none;
   }
+  .media-remote-key[data-playback-paused] { background: color-mix(in srgb,var(--moving) 16%,var(--control)); }
   .toolbar-section:is([data-section=actions],[data-section=people],[data-section=electricity],[data-section=water],[data-section=readings]) .toolbar-section-items {
     grid-template-columns: repeat(2,minmax(0,1fr));
   }

@@ -204,6 +204,49 @@ try {
       ]);
       await stage.getByText('Track title', { exact: true }).waitFor();
 
+      for (const [locale, words] of [
+        ['en', { play:'Play', pause:'Pause playback', neutral:'Play or pause' }],
+        ['he', { play:'ניגון', pause:'השהיית ניגון', neutral:'ניגון או השהיה' }],
+      ]) {
+        await page.goto(home + '?locale=' + locale + hash);
+        const remote = dialog.locator('.media-remote');
+        const key = name => remote.getByRole('button', { name, exact:true });
+        const play = key(words.play);
+        const pause = key(words.pause);
+        const neutral = key(words.neutral);
+        const glyph = control => control.locator('ha-icon').getAttribute('icon');
+        const paint = control => control.evaluate(node => getComputedStyle(node).backgroundColor);
+        await play.waitFor();
+        assert.equal(await glyph(play),'mdi:play');
+        assert.equal(await play.getAttribute('data-playback-paused'),'');
+        const pausedTone = await paint(play);
+        await state(page, proxy, 'playing');
+        await pause.waitFor();
+        assert.equal(await glyph(pause),'mdi:pause');
+        assert.equal(await pause.getAttribute('data-playback-paused'),null);
+        assert.notEqual(await paint(pause),pausedTone);
+        assert.deepEqual(await page.evaluate(() => tracker.calls),[]);
+        await pause.press('Enter');
+        await page.waitForFunction(() => tracker.calls.length === 1);
+        const toggleRequest = {type:'call_service',domain:'media_player',service:'media_play_pause',service_data:{},
+          target:{entity_id:'media_player.fixture_source'}};
+        assert.deepEqual(await page.evaluate(() => tracker.calls),[toggleRequest]);
+        await state(page,proxy,'paused');
+        await play.waitFor();
+        assert.equal(await glyph(play),'mdi:play');
+        assert.equal(await paint(play),pausedTone);
+        await play.tap();
+        await page.waitForFunction(() => tracker.calls.length === 2);
+        assert.deepEqual(await page.evaluate(() => tracker.calls),[toggleRequest,toggleRequest]);
+        await state(page,proxy,'buffering');
+        await neutral.waitFor();
+        assert.equal(await glyph(neutral),'mdi:play-pause');
+        assert.equal(await neutral.getAttribute('data-playback-paused'),null);
+        await state(page,proxy,'unavailable');
+        await neutral.waitFor({state:'hidden'});
+        assert.equal(await page.evaluate(() => tracker.calls.length),2);
+      }
+
       await page.goto(home + '?legacy' + hash);
       const compact = dialog.locator('.now-playing');
       await compact.locator('img').waitFor();
@@ -226,7 +269,7 @@ try {
       await picker.selectOption('');
       assert.equal(await page.evaluate(() => tracker.draft.toolbar[0].media_stage), undefined);
       assert.deepEqual(errors, []);
-      console.log(name + ': optional artwork stage, responsive containment, private artwork, cleanup and editor');
+      console.log(name + ': artwork stage, responsive containment, private artwork, playback state, cleanup and editor');
     } finally {
       await browser.close();
     }
