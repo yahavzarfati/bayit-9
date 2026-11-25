@@ -5,6 +5,7 @@ import {
 } from './strategy-model.js';
 import { normalizeOrefMap, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
 import { sameVacuumDevice } from './vacuum-map.js';
+import { normalizeMediaRemote } from './media-device-support.mjs';
 import { normalizeCalendarAgenda, supportsDailyForecast } from './calendar-agenda.js';
 
 const WORDS = {
@@ -31,6 +32,8 @@ const WORDS = {
     graphDestination: 'Open on graph tap', noGraphLink: 'No shortcut', graphLinkUnavailable: 'Destination unavailable', graphRoom: 'Room',
     runScript: 'Run script from this button',
     scriptButton: 'Script button behavior', scriptStartOnly: 'Start script only', scriptToggle: 'Start or stop script',
+    mediaRemote: 'Media remote', mediaTransport: 'Playback device', mediaVolume: 'Volume device',
+    mediaStandby: 'Show remote controls in standby',
     orefMapTitle: 'Regional alerts',
     orefMap: 'Show the Oref alert map',
     orefMapHint: 'Requires the Oref Alert integration in Home Assistant.',
@@ -77,6 +80,8 @@ const WORDS = {
     graphDestination: 'פתיחה בלחיצה על הגרף', noGraphLink: 'ללא קיצור דרך', graphLinkUnavailable: 'היעד אינו זמין', graphRoom: 'חדר',
     runScript: 'הפעלת התסריט מהכפתור',
     scriptButton: 'פעולת כפתור התרחיש', scriptStartOnly: 'הפעלת תרחיש בלבד', scriptToggle: 'הפעלה או עצירה של תרחיש',
+    mediaRemote: 'שלט מדיה', mediaTransport: 'מכשיר לניגון', mediaVolume: 'מכשיר לעוצמת שמע',
+    mediaStandby: 'הצגת פקדי השלט במצב המתנה',
     orefMapTitle: 'התראות אזוריות',
     orefMap: 'הצגת מפת התרעות פיקוד העורף',
     orefMapHint: 'נדרשת אינטגרציית פיקוד העורף ב־Home Assistant.',
@@ -628,6 +633,29 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     return node('fieldset', { className: 'toolbar-editor-detail' }, output);
   }
 
+  function editMediaRemote(entry) {
+    const settings = normalizeMediaRemote(entry.media_remote) ?? {};
+    const players = candidates.filter(item => item.entity.startsWith('media_player.'))
+      .map(item => [item.entity, item.name || item.entity]);
+    const save = (edits, focus) => changeEntry({ media_remote: normalizeMediaRemote({ ...settings, ...edits }) }, true, focus);
+    const fields = [['transport_entity', words.mediaTransport], ['volume_entity', words.mediaVolume]].map(([key, title]) => {
+      const choices = [['', words.choose], ...players];
+      const current = settings[key];
+      if (current && !players.some(([entity]) => entity === current)) choices.push([current, current + ' · ' + words.unavailable]);
+      const input = select(choices, current || '');
+      input.dataset.toolbarFocus = 'media-remote-' + key;
+      input.addEventListener('change', () => save({ [key]: input.value }, input.dataset.toolbarFocus));
+      return field(title, input);
+    });
+    const standby = node('input', { type: 'checkbox', checked: settings.allow_standby === true, disabled: !settings.transport_entity && !settings.volume_entity });
+    standby.dataset.toolbarFocus = 'media-remote-standby';
+    standby.addEventListener('change', () => save({ allow_standby: standby.checked }, standby.dataset.toolbarFocus));
+    return node('fieldset', { className: 'toolbar-editor-detail' }, [
+      node('legend', { textContent: words.mediaRemote }), ...fields,
+      node('label', { className: 'check' }, [standby, words.mediaStandby]),
+    ]);
+  }
+
   function editCalendarAgenda(entry) {
     const settings = normalizeCalendarAgenda(entry.calendar_agenda);
     const enabled = node('input', { type:'checkbox', checked: !!settings });
@@ -679,6 +707,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     }
     if (entry.kind === 'security') fields.push(editOrefMap(entry));
     if (entry.kind === 'vacuum') fields.push(editVacuumMap(entry));
+    if (entry.kind === 'media') fields.push(editMediaRemote(entry));
     if (entry.kind === 'calendar') fields.push(editCalendarAgenda(entry));
     if (entry.kind === 'link') {
       const path = textField(words.localPath, entry.path, value => {

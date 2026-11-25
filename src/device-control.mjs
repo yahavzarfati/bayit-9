@@ -1,5 +1,5 @@
 // Portable Home Assistant device models and commands used by the dashboard UI.
-import { addSpecialDeviceActions, specialDeviceRequest } from './media-device-support.mjs';
+import { addSpecialDeviceActions, mediaServiceRegistered, specialDeviceRequest } from './media-device-support.mjs';
 import { matchesLightColor, parseLightColor, supportsLightColor } from './light-color.mjs';
 
 const ENTITY_ID = /^[a-z][a-z0-9_]*\.[a-z0-9_]+$/;
@@ -114,6 +114,10 @@ function normalizedConfig(config) {
   }
   if (config.level_read_entity !== undefined && (!config.level_steps || !isEntity(config.level_read_entity, "input_number"))) {
     throw new DeviceControlError("invalid_config", "Fan heating level feedback requires a numeric helper.");
+  }
+  if (config.media_remote_role !== undefined &&
+      (domain !== "media_player" || !["transport", "volume"].includes(config.media_remote_role))) {
+    throw new DeviceControlError("invalid_config", "A media remote target requires a media player and a valid role.");
   }
   const timed = timedProfile(config.timed, domain, kind);
   if (config.level_select_script !== undefined && (!isEntity(config.level_select_script, "script") ||
@@ -602,6 +606,7 @@ export function planDeviceAction(config, states, actionId, value, { confirmed = 
     kind: "service",
     domain: model.domain,
     service: action.service ?? SERVICES[actionId] ?? actionId,
+    ...(action.requiresMediaService && { requiresMediaService: true }),
     target: { entity_id: config.entity },
     data,
     expected,
@@ -676,6 +681,9 @@ export function createDeviceController({
       const hass = getHass();
       const plan = planDeviceAction(config, hass?.states, actionId, value, options);
       if (plan.kind === "more_info") return { status: "more_info", entity: plan.entity };
+      if (plan.requiresMediaService && !mediaServiceRegistered(hass, plan.service)) {
+        throw new DeviceControlError("service_unavailable", "Home Assistant does not publish that media service.");
+      }
       if (typeof hass?.callWS !== "function") {
         throw new DeviceControlError("service_unavailable", "The Home Assistant connection is unavailable.");
       }

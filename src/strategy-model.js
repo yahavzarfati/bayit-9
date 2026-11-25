@@ -2,6 +2,7 @@ import { normalizeRoomActivities } from './room-appliance.mjs';
 import { HEATING_DOMAINS, supportsRoomShutdown } from './device-control.mjs';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
+import { normalizeMediaRemote } from './media-device-support.mjs';
 import { wallpaperChoices } from './wallpapers.js';
 import { normalizeLightEffectGroups } from './light-effects.js';
 import { normalizePopupAliases } from './popup-routes.js';
@@ -561,6 +562,8 @@ function dashboardToolbar(config, hass, roomIds) {
     const sections = entry.kind !== 'link'
       ? toolbarSections(entry.sections, describe, entry.kind, { vacuumPanels, roomIds }) : undefined;
     const orefMap = entry.kind === 'security' ? normalizeOrefMap(entry.oref_map) : undefined;
+    const mediaRemote = entry.kind === 'media' ? normalizeMediaRemote(entry.media_remote, entity =>
+      isVisibleEntity(entity, states, registry, hidden)) : undefined;
     const vacuumMap = entry.kind === 'vacuum'
       ? normalizeVacuumMap(entry.vacuum_map, entity => isVisibleEntity(entity, states, registry, hidden), registry) : undefined;
     const agenda = entry.kind === 'calendar' ? normalizeCalendarAgenda(entry.calendar_agenda, entity =>
@@ -571,7 +574,7 @@ function dashboardToolbar(config, hass, roomIds) {
         { presence_dynamic_icon: entry.presence_dynamic_icon }),
       ...(path && { path }), ...(entry.placement === 'settings' && entry.kind !== 'settings' && { placement:'settings' }),
       ...(entities !== undefined && { entities }), ...(sections !== undefined && { sections }),
-      ...(agenda && { calendar_agenda: agenda }),
+      ...(agenda && { calendar_agenda: agenda }), ...(mediaRemote && { media_remote: mediaRemote }),
       ...(orefMap && { oref_map: orefMap }), ...(vacuumMap && { vacuum_map: vacuumMap }) };
   });
 }

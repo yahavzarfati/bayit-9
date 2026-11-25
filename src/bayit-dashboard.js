@@ -13,6 +13,7 @@ import { createLightEffectGallery, lightEffectStyles, normalizeLightEffectGroups
 import { createNativeCards, createToolbarPanel, sensorGraphConfig, toolbarPanelStyles } from './toolbar-panels.js';
 import { normalizeOrefMap } from './oref-alert-map.js';
 import { normalizeVacuumMap } from './vacuum-map.js';
+import { normalizeMediaRemote } from './media-device-support.mjs';
 import { calendarAccent, normalizeCalendarAgenda } from './calendar-agenda.js';
 import { createWallpaperController, createWallpaperGallery, personalWallpaperId, wallpaperChoices, wallpaperStyles } from './wallpapers.js';
 import { createPageChrome, homePreferencePaths } from './page-chrome.js';
@@ -310,12 +311,14 @@ export function normalizeDashboardConfig(config = {}) {
     if (!Object.hasOwn(toolbarIcons, item?.kind) || (item.kind === 'link' && !localPath.test(item.path))) return [];
     const orefMap = item.kind === 'security' ? normalizeOrefMap(item.oref_map) : undefined;
     const vacuumMap = item.kind === 'vacuum' ? normalizeVacuumMap(item.vacuum_map) : undefined;
+    const mediaRemote = item.kind === 'media' ? normalizeMediaRemote(item.media_remote) : undefined;
     const agenda = item.kind === 'calendar' ? normalizeCalendarAgenda(item.calendar_agenda) : undefined;
     return [{ kind: item.kind, id: text(item.id), label: text(item.label), path: item.path,
       ...(item.kind === 'presence' && { presence_dynamic_icon: hasDynamicPresenceIcon(item) }),
       ...(item.placement === 'settings' && item.kind !== 'settings' && {placement:'settings'}),
       ...(orefMap && { oref_map: orefMap }),
       ...(vacuumMap && { vacuum_map: vacuumMap }),
+      ...(mediaRemote && { media_remote: mediaRemote }),
       ...(agenda && { calendar_agenda: agenda }),
       icon: validIcon(item.icon, toolbarIcons[item.kind]),
       ...(Array.isArray(item.entities) && { entities: item.entities.map(normalizeEntity) }),
@@ -1380,6 +1383,7 @@ export class BayitDashboard extends HTMLElement {
       entities: toolbar?.entities ?? (toolbar?.calendar_agenda ? [] : this.config.context[type]) ?? [],
       orefMap: toolbar?.oref_map,
       vacuumMap: toolbar?.vacuum_map,
+      mediaRemote: toolbar?.media_remote,
       calendarAgenda: toolbar?.calendar_agenda,
     }, {
       host: content, dialog: this.nodes.modal, hass: this._hass, getHass: () => this._hass,

@@ -44,6 +44,25 @@ test('discovers only visible active lights from an opted-in Overview section', (
   assert.equal(normalizeOverviewDiscovery({ domain: 'script' }), undefined);
 });
 
+test('normalizes only visible media remote targets on Media destinations', () => {
+  const hass = home();
+  Object.assign(hass.states, {
+    'media_player.demo_transport': { state: 'off', attributes: {} },
+    'media_player.demo_hidden_volume': { state: 'on', attributes: {} },
+  });
+  hass.entities ??= {};
+  hass.entities['media_player.demo_hidden_volume'] = { hidden: true };
+  const card = generateDashboard({ toolbar: [
+    { kind: 'media', media_remote: { transport_entity: 'media_player.demo_transport',
+      volume_entity: 'media_player.demo_hidden_volume', allow_standby: true, command: 'ignored' } },
+    { kind: 'vacuum', media_remote: { transport_entity: 'media_player.demo_transport' } },
+    { kind: 'media', media_remote: { transport_entity: 'light.living_room', volume_entity: 'media_player.missing' } },
+  ] }, hass).views[0].cards[0];
+  assert.deepEqual(card.toolbar.map(item => item.media_remote), [
+    { transport_entity: 'media_player.demo_transport', allow_standby: true }, undefined, undefined,
+  ]);
+});
+
 test('keeps closing covers opt-in and leaves legacy active and other toolbar sections alone', () => {
   const cover = { kind: 'covers', filter: 'active', entities: [] };
   const chosen = { ...cover, include_closing: true };

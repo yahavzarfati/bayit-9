@@ -189,6 +189,11 @@ const hass = {
         card.hass = { ...hass, states: { ...states } };
       }
     }
+    if (request.domain === 'media_player' && request.service === 'volume_mute' && query.has('media-remote')) {
+      const device = states[request.target.entity_id];
+      device.attributes.is_volume_muted = request.service_data.is_volume_muted;
+      card.hass = { ...hass, states: { ...states } };
+    }
     if (request.domain === 'media_player' && request.service === 'media_pause') {
       const id = request.target.entity_id;
       states[id] = { ...states[id], state: 'paused' };
@@ -376,6 +381,18 @@ if (query.has('toolbar-panels')) {
     states['device_tracker.demo_phone'] = {state:'not_home',attributes:{friendly_name:'Phone'}};
     states['sensor.demo_home_text'] = {state:'home',attributes:{friendly_name:'Text status'}};
   }
+  if (query.has('media-remote')) {
+    const speaker = states['media_player.demo_speaker'];
+    speaker.state = 'off';
+    speaker.attributes.supported_features |= 128;
+    const tv = states['media_player.demo_tv'];
+    tv.state = 'off';
+    delete tv.attributes.is_volume_muted;
+    hass.services = { media_player: {
+      media_previous_track: {}, media_next_track: {}, volume_up: {}, volume_down: {}, volume_mute: {},
+      ...(query.has('missing-play-pause') ? {} : { media_play_pause: {} }),
+    } };
+  }
   hass.entities['sensor.demo_studio_temperature'] = { area_id: 'studio' };
   if (!query.has('no-native-charts')) window.loadCardHelpers = async () => ({createCardElement(configuration) {
     const graphAction = configuration.tap_action?.action === 'fire-dom-event' && configuration.tap_action;
@@ -515,7 +532,12 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
     {kind:'weather',sections:[{kind:'forecast',entities:['weather.demo_home']},{kind:'sun',entities:['sun.sun']}]},
     {kind:'energy',sections:[{kind:'electricity',entities:[{entity:'sensor.demo_meter',role:'graph',graph_hours:168}]}]},
     {kind:'settings'},
-    {id:'media-panel',kind:'media',placement:'settings',sections:[
+    {id:'media-panel',kind:'media',placement:'settings',
+      ...(query.has('media-remote') && { media_remote: {
+        transport_entity: 'media_player.demo_speaker', volume_entity: 'media_player.demo_tv',
+        allow_standby: !query.has('active-only'),
+      } }),
+      sections:[
       {kind:'media',title:'Speaker',entities:[{entity:'media_player.demo_speaker',role:'now_playing'}]},
       {kind:'media',title:'TV',entities:[{entity:'media_player.demo_tv',role:'device'}]},
     ]},
@@ -1197,6 +1219,61 @@ try {
       assert.deepEqual(mediaErrors, []);
       await mediaPage.close();
       console.log(engine + ': curated media and vacuum controls, Now Playing, and the original room shortcuts');
+
+      const remotePage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+      const remoteRTL = engine === 'WebKit';
+      const remoteURL = base + '?toolbar-panels&media-remote&locale=' + (remoteRTL ? 'he' : 'en');
+      const remoteChooser = remoteRTL ? 'מראה' : 'Appearance';
+      const remoteMedia = remoteRTL ? 'מדיה' : 'Media';
+      const playPause = remoteRTL ? 'ניגון או השהיה' : 'Play or pause';
+      const openRemote = async flags => {
+        await remotePage.goto(remoteURL + flags);
+        await remotePage.getByRole('button', { name: remoteChooser, exact: true }).tap();
+        await remotePage.getByRole('button', { name: remoteMedia, exact: true }).tap();
+        return remotePage.getByRole('dialog', { name: remoteMedia, exact: true }).locator('.media-remote');
+      };
+      const remote = await openRemote('');
+      const transport = remote.getByRole('group', { name: 'Speaker', exact: true });
+      const audio = remote.getByRole('group', { name: 'Television', exact: true });
+      const combined = transport.getByRole('button', { name: playPause, exact: true });
+      const volumeUp = audio.getByRole('button', { name: remoteRTL ? 'הגברת עוצמה' : 'Volume up', exact: true });
+      const mute = audio.getByRole('button', { name: remoteRTL ? 'השתקה' : 'Mute', exact: true });
+      const unmute = audio.getByRole('button', { name: remoteRTL ? 'ביטול השתקה' : 'Unmute', exact: true });
+      await combined.waitFor();
+      assert.ok((await combined.boundingBox()).height >= 44);
+      assert.equal(await mute.count(), 0);
+      assert.equal(await unmute.count(), 0);
+      assert.equal(await remotePage.getByRole('button', { name: remoteRTL ? 'הדלקה' : 'Turn on', exact: true }).count(), 2);
+      assert.deepEqual(await remotePage.evaluate(() => window.bayitTest.calls), []);
+      await combined.tap();
+      await volumeUp.tap();
+      await remotePage.evaluate(() => window.bayitTest.setFixtureAttributes('media_player.demo_tv', { is_volume_muted: false }));
+      await mute.tap();
+      await unmute.waitFor();
+      assert.deepEqual(await remotePage.evaluate(() => window.bayitTest.calls), [
+        { type: 'call_service', domain: 'media_player', service: 'media_play_pause',
+          target: { entity_id: 'media_player.demo_speaker' }, service_data: {} },
+        { type: 'call_service', domain: 'media_player', service: 'volume_up',
+          target: { entity_id: 'media_player.demo_tv' }, service_data: {} },
+        { type: 'call_service', domain: 'media_player', service: 'volume_mute',
+          target: { entity_id: 'media_player.demo_tv' }, service_data: { is_volume_muted: true } },
+      ]);
+      const activeOnly = await openRemote('&active-only');
+      assert.equal(await activeOnly.getByRole('button').count(), 0);
+      assert.equal(await remotePage.getByRole('button', { name: remoteRTL ? 'הדלקה' : 'Turn on', exact: true }).count(), 2);
+      const missingService = await openRemote('&missing-play-pause');
+      assert.equal(await missingService.getByRole('button', { name: playPause, exact: true }).count(), 0);
+      assert.equal(await missingService.getByRole('button', { name: remoteRTL ? 'הבא' : 'Next', exact: true }).count(), 1);
+      assert.deepEqual(await remotePage.evaluate(() => window.bayitTest.calls), []);
+      await remotePage.goto(base + '?toolbar-panels&media-remote&active-only&editor');
+      await remotePage.getByText('Toolbar and extra screens', { exact: true }).click();
+      await remotePage.getByRole('button', { name: 'Media', exact: true }).click();
+      await remotePage.getByLabel('Playback device', { exact: true }).selectOption('media_player.demo_tv');
+      await remotePage.getByRole('checkbox', { name: 'Show remote controls in standby', exact: true }).check();
+      assert.deepEqual(await remotePage.evaluate(() => window.latest.toolbar.find(item => item.kind === 'media').media_remote),
+        { transport_entity: 'media_player.demo_tv', volume_entity: 'media_player.demo_tv', allow_standby: true });
+      await remotePage.close();
+      console.log(engine + ': explicit media remote targets, standby, combined play/pause, and observed mute');
 
       const editorPage = await browser.newPage({ viewport: {width: 390, height: 844} });
       await editorPage.goto(base + '?editor&heater-level');

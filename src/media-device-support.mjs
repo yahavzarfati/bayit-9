@@ -2,11 +2,50 @@ const MEDIA = { pause: 1, volume: 4, mute: 8, previous: 16, next: 32, on: 128, o
   volume_step: 1024, source: 2048, stop: 4096, play: 16384 };
 const VACUUM = { pause: 4, stop: 8, dock: 16, speed: 32, locate: 512, start: 8192 };
 
+const MEDIA_ENTITY = /^media_player\.[a-z0-9_]+$/;
+
+export function normalizeMediaRemote(value, visible = () => true) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const remote = Object.fromEntries(['transport_entity', 'volume_entity'].flatMap(key => {
+    const entity = value[key];
+    return typeof entity === 'string' && MEDIA_ENTITY.test(entity) && visible(entity) ? [[key, entity]] : [];
+  }));
+  return Object.keys(remote).length ? { ...remote, allow_standby: value.allow_standby === true } : undefined;
+}
+
+export function mediaServiceRegistered(hass, service) {
+  const registered = hass?.services?.media_player;
+  return !!registered && Object.hasOwn(registered, service);
+}
+
+function addRemoteActions(role, attributes, supports, add) {
+  const remote = (id, fields) => add(id, { requiresMediaService: true, ...fields });
+  if (role === 'transport') {
+    if (supports(MEDIA.previous)) remote('media_previous_track');
+    if (supports(MEDIA.pause) && supports(MEDIA.play)) remote('media_play_pause');
+    if (supports(MEDIA.next)) remote('media_next_track');
+  } else if (role === 'volume') {
+    if (supports(MEDIA.volume_step)) {
+      remote('volume_down');
+      remote('volume_up');
+    }
+    if (supports(MEDIA.mute) && typeof attributes.is_volume_muted === 'boolean') {
+      remote(attributes.is_volume_muted ? 'unmute' : 'mute', { service: 'volume_mute',
+        fixedData: { is_volume_muted: !attributes.is_volume_muted } });
+    }
+  }
+}
+
 export function addSpecialDeviceActions(config, record, supports, add, options) {
   const attributes = record.attributes ?? {};
   const state = record.state;
   if (config.domain === 'media_player') {
-    if (state === 'off' || state === 'standby') {
+    const standby = state === 'off' || state === 'standby';
+    if (config.media_remote_role) {
+      if (!standby || config.media_remote_standby === true) addRemoteActions(config.media_remote_role, attributes, supports, add);
+      return;
+    }
+    if (standby) {
       if (supports(MEDIA.on)) add('turn_on');
       return;
     }

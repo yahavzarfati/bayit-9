@@ -1,7 +1,8 @@
 import { createOrefMap } from './oref-alert-map.js';
 import { createVacuumMap } from './vacuum-map.js';
 import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
-import { discoverOverviewLights, isActiveOverviewLight, isToolbarLightTile } from './strategy-model.js';
+import { discoverOverviewLights, isActiveOverviewLight, isToolbarLightTile, isVisibleEntity } from './strategy-model.js';
+import { mediaServiceRegistered } from './media-device-support.mjs';
 import { calendarAgendaStyles, createCalendarAgenda } from './calendar-agenda.js';
 
 const sectionKeys = {
@@ -172,6 +173,60 @@ export function createToolbarPanel(kind, configuration, context) {
       }
     });
     return tile;
+  }
+
+  function renderMediaRemote(settings) {
+    const panel = make('section', 'toolbar-section media-remote');
+    panel.append(make('h3', 'toolbar-section-title', t('media_remote')));
+    const empty = make('p', 'empty', t('media_remote_unavailable'));
+    const rows = [
+      ['transport', settings.transport_entity, [
+        ['media_previous_track', 'mdi:skip-previous'], ['media_play_pause', 'mdi:play-pause'], ['media_next_track', 'mdi:skip-next'],
+      ]],
+      ['volume', settings.volume_entity, [
+        ['volume_down', 'mdi:volume-minus'], ['mute', 'mdi:volume-mute'], ['unmute', 'mdi:volume-high'], ['volume_up', 'mdi:volume-plus'],
+      ]],
+    ].flatMap(([role, entity, keys]) => {
+      if (!entity) return [];
+      const config = { entity, media_remote_role: role, media_remote_standby: settings.allow_standby };
+      const group = make('div', 'media-remote-group');
+      group.setAttribute('role', 'group');
+      const visible = hass => isVisibleEntity(entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities);
+      const controls = keys.map(([action, glyph]) => {
+        const control = button('control-button media-remote-key', t(action), glyph, true);
+        control.onclick = () => {
+          const hass = context.getHass();
+          const planned = visible(hass) && modelFor(config).actions[action];
+          if (planned && mediaServiceRegistered(hass, planned.service ?? action) && !pending(entity)) {
+            request(config, action, undefined, control);
+          }
+        };
+        return { action, control };
+      });
+      group.append(...controls.map(({ control }) => control));
+      panel.append(group);
+      return [{ config, group, controls, visible }];
+    });
+    panel.append(empty);
+    handlers.push(() => {
+      let available = false;
+      for (const { config, group, controls, visible } of rows) {
+        const model = modelFor(config);
+        const allowed = visible(currentHass);
+        group.setAttribute('aria-label', model.name);
+        let shown = false;
+        for (const { action, control } of controls) {
+          const planned = allowed && model.actions[action];
+          control.hidden = !(planned && mediaServiceRegistered(currentHass, planned.service ?? action));
+          control.disabled = control.hidden || pending(config.entity);
+          shown ||= !control.hidden;
+        }
+        group.hidden = !shown;
+        available ||= shown;
+      }
+      empty.hidden = available;
+    });
+    return panel;
   }
 
   function renderScriptToggle(item) {
@@ -359,6 +414,7 @@ export function createToolbarPanel(kind, configuration, context) {
   }
 
   const sections = configuration.sections ?? sectionsFor(kind, configuration.entities);
+  if (kind === 'media' && configuration.mediaRemote) host.append(renderMediaRemote(configuration.mediaRemote));
   const calendarItems = kind === 'calendar' ? sections.flatMap(section => section.entities).filter(item => domain(item) === 'calendar') : [];
   let calendarAgenda;
   if (kind === 'calendar' && configuration.calendarAgenda?.enabled) {
@@ -518,6 +574,10 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
   .toolbar-panes, .toolbar-section-items { display: grid; gap: 8px; min-width: 0; }
   .toolbar-section { min-width: 0; border: 1px solid var(--soft-line); border-radius: 13px; padding: 8px; }
   .toolbar-section-title { margin: 0 0 8px; text-align: center; font-size: 14px; }
+  .media-remote-group { display: grid; grid-template-columns: repeat(auto-fit,minmax(44px,1fr)); gap: 8px; direction: ltr; }
+  .media-remote-group:not([hidden]) + .media-remote-group { margin-block-start: 8px; }
+  .media-remote-group[hidden], .media-remote-key[hidden] { display: none; }
+  .media-remote-key { min-height: 44px; justify-content: center; }
   .toolbar-section:is([data-section=actions],[data-section=people],[data-section=electricity],[data-section=water],[data-section=readings]) .toolbar-section-items {
     grid-template-columns: repeat(2,minmax(0,1fr));
   }

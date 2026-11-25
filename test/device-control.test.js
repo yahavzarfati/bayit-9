@@ -47,6 +47,46 @@ test('media and vacuum issue only available native commands and validate their s
   assert.throws(()=>planDeviceAction(reset,{[reset.entity]:entity('unavailable')},'press_button',undefined,{confirmed:true}),code('action_unavailable'));
 });
 
+test("opt-in media remote isolates transport, volume, real services and standby", async () => {
+  const speaker = config("media_player.fixture_transport", { media_remote_role: "transport", media_remote_standby: true });
+  const audio = config("media_player.fixture_volume", { media_remote_role: "volume", media_remote_standby: true });
+  const features = 1 | 8 | 16 | 32 | 128 | 1024 | 16384;
+  const states = {
+    [speaker.entity]: entity("off", { supported_features: features }),
+    [audio.entity]: entity("standby", { supported_features: features }),
+  };
+  const generic = config(speaker.entity);
+  assert.deepEqual(actionIds(getDeviceModel(generic, states)), ["more_info", "turn_on"]);
+  assert.deepEqual(actionIds(getDeviceModel({ ...speaker, media_remote_standby: false }, states)), ["more_info"]);
+  assert.deepEqual(actionIds(getDeviceModel(speaker, states)),
+    ["media_next_track", "media_play_pause", "media_previous_track", "more_info"]);
+  assert.deepEqual(actionIds(getDeviceModel(audio, states)), ["more_info", "volume_down", "volume_up"]);
+  assert.throws(() => planDeviceAction(audio, states, "media_play_pause"), code("action_unavailable"));
+  assert.throws(() => planDeviceAction(speaker, states, "volume_up"), code("action_unavailable"));
+  states[speaker.entity] = entity("off", { supported_features: features & ~1 });
+  assert.equal(getDeviceModel(speaker, states).actions.media_play_pause, undefined);
+  states[speaker.entity] = entity("off", { supported_features: features });
+  const calls = [];
+  const services = { media_player: { volume_up: {}, volume_mute: {} } };
+  const controller = createDeviceController({ getHass: () => ({ states, services, callWS: request => {
+    calls.push(request);
+    if (request.service === "volume_mute") states[audio.entity].attributes.is_volume_muted = true;
+  } }) });
+  await assert.rejects(controller.execute(speaker, "media_play_pause"), code("service_unavailable"));
+  assert.deepEqual(calls, []);
+  services.media_player.media_play_pause = {};
+  assert.equal((await controller.execute(speaker, "media_play_pause")).status, "sent");
+  assert.equal((await controller.execute(audio, "volume_up")).status, "sent");
+  states[audio.entity].attributes.is_volume_muted = false;
+  assert.equal((await controller.execute(audio, "mute")).status, "confirmed");
+  assert.deepEqual(calls, [
+    { type: "call_service", domain: "media_player", service: "media_play_pause", target: { entity_id: speaker.entity }, service_data: {} },
+    { type: "call_service", domain: "media_player", service: "volume_up", target: { entity_id: audio.entity }, service_data: {} },
+    { type: "call_service", domain: "media_player", service: "volume_mute", target: { entity_id: audio.entity },
+      service_data: { is_volume_muted: true } },
+  ]);
+});
+
 test("light brightness appears only when the light supports it", () => {
   const dim = config("light.task");
   const simple = config("light.basic");

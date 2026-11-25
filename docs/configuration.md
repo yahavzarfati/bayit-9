@@ -90,6 +90,10 @@ For a media player with playback controls and track details, edit its row in a t
 
 To open a Media panel from a room, first configure a Media button or extra screen. Then choose that panel under **Open on media press and hold** for a media player in the room editor. A regular press opens Home Assistant details, a press and hold opens the selected Media panel, and **Back to room** returns to the source row. In YAML, set `media_panel_links` under the room override with the media entity ID as its key and a Media toolbar entry ID as its value.
 
+A Media screen can also include a remote. In the toolbar editor select a playback device and a volume device under **Media remote**. They may refer to the same Home Assistant player. To keep supported playback and volume commands available while a configured player reports standby or off, turn on **Show remote controls in standby**. Home Assistant can accept the command while the equipment is asleep. The mute button needs a known mute state.
+
+In YAML add `media_remote: { transport_entity: media_player.streamer, volume_entity: media_player.television, allow_standby: true }` to a Media toolbar entry. Either device can be omitted. Existing Media device controls and power buttons operate separately.
+
 For a vacuum in a room, choose a configured Vacuum panel under **Open on vacuum tap**. A regular press opens that panel, a press and hold opens the vacuum's Home Assistant details, and **Back to room** returns to the source row. In YAML, `vacuum_panel_links` maps the vacuum entity ID to a Vacuum toolbar entry ID.
 
 The Presence toolbar button uses different icons for zero, one, or multiple home occupants. It counts the people and device trackers configured for that panel and uses their reported Home Assistant states. **Change icon with the number of people at home** controls this behavior in the toolbar editor. In YAML, use `presence_dynamic_icon: true` or `false` on the Presence entry. An explicit `icon` defaults to a fixed icon and is retained when switching modes.
