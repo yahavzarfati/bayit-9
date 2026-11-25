@@ -4211,6 +4211,107 @@ async function assertHeaterHomeFeedback(browser) {
   }
 }
 
+async function assertHeatingProfileBindingsStayExplicit(browser) {
+  const labels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', profiles:'Boiler and heater controls',
+      edit:'Edit', name:'Display name', target:'Device linked to Simple Timer', cutoff:'Automatic heater cutoff',
+      next:'Next-start level helper', saveProfile:'Save profile', saveDashboard:'Save dashboard',
+      mismatch:'Simple Timer reports', error:'Choose a Simple Timer sensor linked' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', profiles:'שליטה בדוד ובתנורים',
+      edit:'עריכה', name:'שם לתצוגה', target:'המכשיר שמקושר ל־Simple Timer', cutoff:'כיבוי אוטומטי של התנור',
+      next:'עזר לעוצמה בהפעלה הבאה', saveProfile:'שמירת בקר', saveDashboard:'שמירת הדשבורד',
+      mismatch:'Simple Timer מדווח על', error:'בחרו חיישן Simple Timer שמקושר' },
+  ];
+  const beforeAir = 'input_boolean.fixture_prior_air';
+  const beforeRelay = 'switch.fixture_prior_relay';
+  const observedRelay = 'switch.demo_step_power';
+  const runtime = 'sensor.demo_step_runtime';
+  const timing = { min_minutes:15, max_minutes:60, step_minutes:15, duration_field:'duration' };
+  const initial = [
+    { entity:'climate.demo_air', kind:'climate', name:'Imported air profile',
+      timed:{ ...timing, simple_timer_entity:'sensor.demo_air_usage', simple_timer_target:beforeAir } },
+    { entity:'fan.demo_step_heater', kind:'heater', name:'Imported heater profile', level_steps:9,
+      level_read_entity:'input_number.demo_heat_step', level_preselect_entity:'input_number.demo_next_step',
+      home_heater_cutoff_automation:'automation.demo_step_cutoff', heater_popup_quick_power:true,
+      timed:{ ...timing, simple_timer_entity:runtime, simple_timer_target:beforeRelay } },
+  ];
+  const renamed = initial.map(profile => ({ ...profile, name:profile.name + ' renamed' }));
+  for (const [index, words] of labels.entries()) {
+    const page = await browser.newPage({ viewport:{ width:index ? 391 : 320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      await page.addInitScript(profiles => {
+        const key = 'bayit9-browser-fixture';
+        const strategy = { type:'custom:bayit-9', profiles };
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy }));
+      }, initial);
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      const button = (name, root=setup) => root.getByRole('button', { name, exact:true });
+      const field = name => setup.getByLabel(name, { exact:true });
+      const target = field(words.target);
+      const commands = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.domain));
+      const readProfiles = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.profiles);
+      const canStartTimers = async () => {
+        await page.waitForFunction(() => Boolean(window.bayitTest));
+        return page.evaluate(entities => {
+          const dash = document.querySelector('bayit-dashboard');
+          const devices = dash.config.rooms.flatMap(room => room.entities);
+          return entities.map(entity => Boolean(dash.model(devices.find(device => device.entity === entity)).actions.start_timed));
+        }, initial.map(profile => profile.entity));
+      };
+      const open = async () => {
+        await button(words.appearance, page).press('Enter');
+        await button(words.setup, page).press('Enter');
+        await setup.getByText(words.profiles, { exact:true }).press('Enter');
+      };
+      const edit = profile => button(words.edit, setup.locator('.record').filter({ hasText:profile.name })).press('Enter');
+      const persist = async () => {
+        assert.deepEqual(await commands(), []);
+        await Promise.all([page.waitForEvent('load'), button(words.saveDashboard).press('Enter')]);
+        return readProfiles();
+      };
+      const report = entity => page.evaluate(([sensor, id]) =>
+        window.bayitTest.setFixtureAttributes(sensor, { switch_entity_id:id }), [runtime, entity]);
+
+      await page.goto(base + '/fixture-home/home?configuration&device-panel&heater-level&heater-popup-power&locale=' + words.locale);
+      await open();
+      for (const [position, profile] of initial.entries()) {
+        await edit(profile);
+        assert.equal(await target.inputValue(), profile.timed.simple_timer_target);
+        await setup.getByRole('status').filter({ hasText:words.mismatch }).waitFor();
+        await field(words.name).fill(renamed[position].name);
+        await button(words.saveProfile).press('Enter');
+      }
+      assert.deepEqual(await readProfiles(), initial);
+      assert.deepEqual(await persist(), renamed);
+      assert.deepEqual(await canStartTimers(), [false, false]);
+
+      await open();
+      await edit(renamed[1]);
+      assert.equal(await field(words.cutoff).inputValue(), initial[1].home_heater_cutoff_automation);
+      assert.equal(await field(words.next).inputValue(), initial[1].level_preselect_entity);
+      await target.selectOption(observedRelay);
+      assert.equal(await field(words.cutoff).inputValue(), '');
+      assert.equal(await field(words.next).inputValue(), '');
+      await report('switch.fixture_other_relay');
+      await button(words.saveProfile).press('Enter');
+      await setup.getByRole('alert').filter({ hasText:words.error }).waitFor();
+      assert.equal(await button(words.saveDashboard).isDisabled(), true);
+      assert.deepEqual(await readProfiles(), renamed);
+
+      await report(observedRelay);
+      await button(words.saveProfile).press('Enter');
+      const updated = await persist();
+      const { level_preselect_entity, home_heater_cutoff_automation, heater_popup_quick_power, ...heater } = renamed[1];
+      assert.deepEqual(updated, [renamed[0], { ...heater, timed:{ ...heater.timed, simple_timer_target:observedRelay } }]);
+      assert.deepEqual(await canStartTimers(), [false, true]);
+      assert.deepEqual(await commands(), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertHeatingProfileTargetsStayDistinct(browser) {
   const labels = [
     { locale:'en', appearance:'Appearance', setup:'Customize home', profiles:'Boiler and heater controls',
@@ -10197,6 +10298,7 @@ try {
     await run('Device appearance edits retain focus and distinguish same-named devices', () => assertDeviceDisplayPickerAndFocus(browser));
     await run('Room setup distinguishes same-named devices in sections and power settings', () => assertRoomTargetLabels(browser));
     await run('Room icon editor previews, validates, saves and clears custom icons', () => assertCustomRoomIcons(browser));
+    await run('Profile editor preserves Simple Timer targets and checks deliberate changes', () => assertHeatingProfileBindingsStayExplicit(browser));
 
     await run('Home glass and accessibility', async () => {
       await assertHomeMaterial(browser);

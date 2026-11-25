@@ -155,6 +155,7 @@ const WORDS = {
     climate: 'Air conditioner or thermostat', swingFallback: 'Display when vertical swing is unreported', timerSource: 'Timer source', serverTimer: 'Home Assistant timer or script',
     simpleTimer: 'Simple Timer', simpleTimerDevice: 'Simple Timer sensor', simpleTimerTarget: 'Device linked to Simple Timer',
     timerLinkError: 'Choose a Simple Timer sensor linked to this heating device or its supported proxy.',
+    timerTargetMismatch: 'Simple Timer reports {device}. Timer controls need a matching target.',
     idleZeroDuration: 'Allow an unselected timer duration (0 minutes)',
     dailyUsage: 'Daily usage sensor', allowDailyUsageReset: 'Allow reset of this daily usage counter', presets: 'Preset minutes', presetError: 'Use preset minutes within the selected range and step.',
     levelSteps: 'Number of heating levels', levelRead: 'Heating level feedback', levelSelect: 'Level selection script',
@@ -308,6 +309,7 @@ const WORDS = {
     climate: 'מזגן או תרמוסטט', swingFallback: 'תצוגה כשאין דיווח על נדנוד אנכי', timerSource: 'מקור הטיימר', serverTimer: 'טיימר או סקריפט של Home Assistant',
     simpleTimer: 'Simple Timer', simpleTimerDevice: 'חיישן Simple Timer', simpleTimerTarget: 'המכשיר שמקושר ל־Simple Timer',
     timerLinkError: 'בחרו חיישן Simple Timer שמקושר למכשיר החימום הזה או לפקד שמפעיל אותו.',
+    timerTargetMismatch: 'Simple Timer מדווח על {device}. כדי להשתמש בפקדי הטיימר, היעד צריך להתאים.',
     idleZeroDuration: 'אפשרות להשאיר את משך הטיימר ללא בחירה (0 דקות)',
     dailyUsage: 'חיישן שימוש יומי', allowDailyUsageReset: 'אפשרות לאפס את מונה השימוש היומי הזה', presets: 'הגדרות דקות מהירות', presetError: 'בחרו דקות בטווח ובמרווח שנקבעו.',
     levelSteps: 'מספר דרגות החימום', levelRead: 'משוב על דרגת החימום', levelSelect: 'סקריפט לבחירת עוצמה',
@@ -2285,6 +2287,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
 
     const current = this.#profileEditing;
     const timed = current.timed ?? {};
+    const savedTiming = normalizeProfile(current)?.timed;
     const occupied = new Set(profiles.map(profile => profile?.entity));
     occupied.delete(current.entity);
     const entity = select([['', words.choose], ...entityOptions(this.#hass, new Set(PROFILE_DOMAINS))], current.entity || '');
@@ -2345,7 +2348,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
       levelSelectField, levelActivityField, levelPreselectField,
     ]);
 
-    const timerSource = select([['server', words.serverTimer], ['simple', words.simpleTimer]], timed.simple_timer_entity ? 'simple' : 'server');
+    const timerSource = select([['server', words.serverTimer], ['simple', words.simpleTimer]],
+      savedTiming?.simple_timer_entity ? 'simple' : 'server');
     const start = entityInput('script', timed.start_script);
     const stop = entityInput('script', timed.stop_script);
     const timer = entityInput('timer', timed.timer_entity);
@@ -2363,9 +2367,21 @@ export class Bayit9StrategyEditor extends HTMLElement {
     });
     const target = select([['', words.none]], '');
     const targetField = field(words.simpleTimerTarget, target);
+    const targetWarning = node('small', { hidden:true,
+      id:target.getAttribute('aria-labelledby') + '-warning' });
+    targetWarning.setAttribute('role', 'status');
+    target.setAttribute('aria-describedby', targetWarning.id);
+    const savedTarget = savedTiming?.simple_timer_target ?? '';
+    const bindingFor = (device, type, sensor) => JSON.stringify([device ?? '', type ?? '', sensor ?? '']);
+    const savedBinding = bindingFor(current.entity, current.kind, savedTiming?.simple_timer_entity);
+    const targetBinding = () => bindingFor(entity.value, kind.value, simple.value);
+    const retainedBinding = () => targetBinding() === savedBinding;
+    const reportedTarget = () => attributesFor(simple.value)?.switch_entity_id;
+    let targetScope;
+    let selectedTarget = '';
     const cutoff = entityInput('automation', current.home_heater_cutoff_automation);
     const cutoffField = field(words.homeHeaterCutoff, cutoff);
-    let cutoffBinding = JSON.stringify([current.entity, timed.simple_timer_entity, timed.simple_timer_target]);
+    let cutoffBinding = JSON.stringify([savedBinding, savedTarget]);
     const cutoffHint = node('small', {
       id: cutoff.getAttribute('aria-labelledby') + '-hint', textContent: words.homeHeaterCutoffHint,
     });
@@ -2376,7 +2392,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const resetUsageInput = node('input', { type: 'checkbox', checked: timed.allow_daily_usage_reset === true });
     const resetUsage = node('label', { className: 'check' }, [resetUsageInput, words.allowDailyUsageReset]);
     const simpleFields = node('div', { className: 'stack' },
-      [field(words.simpleTimerDevice, simple), targetField, cutoffField, popupPowerField, resetUsage]);
+      [field(words.simpleTimerDevice, simple), targetField, targetWarning, cutoffField, popupPowerField, resetUsage]);
     const boilerDetailsInput = node('input', { type: 'checkbox', checked: current.boiler_timer_with_details === true });
     const boilerDetails = node('label', { className: 'check' }, [boilerDetailsInput, words.boilerTimerWithDetails]);
     const availableViewHelper = id => /^input_boolean\.[a-z0-9_]+$/.test(id) &&
@@ -2433,21 +2449,34 @@ export class Bayit9StrategyEditor extends HTMLElement {
       boilerDetails.hidden = kind.value !== 'boiler' || !(usingSimple ? simple.value : timer.value);
       viewHelperField.hidden = boilerDetails.hidden || !usingSimple || !boilerDetailsInput.checked;
       const prefix = kind.value === 'climate' && domain === 'climate' ? 'input_boolean.' : fanHeater ? 'switch.' : '';
-      const linked = attributesFor(simple.value)?.switch_entity_id ?? (simple.value === timed.simple_timer_entity ? timed.simple_timer_target : undefined);
-      const compatible = prefix && typeof linked === 'string' && linked.startsWith(prefix) && linked !== entity.value;
+      const reported = reportedTarget();
+      const reportedProxy = prefix && typeof reported === 'string' && reported.startsWith(prefix) && reported !== entity.value
+        ? reported : '';
+      const originalProxy = retainedBinding() ? savedTarget : '';
+      const scope = targetBinding();
+      if (scope !== targetScope) {
+        targetScope = scope;
+        selectedTarget = retainedBinding() ? originalProxy : reportedProxy;
+      }
+      const proxies = [...new Set([originalProxy, reportedProxy, selectedTarget].filter(Boolean))];
+      const names = distinctEntityLabels(proxies, id => attributesFor(id)?.friendly_name);
+      target.replaceChildren(option('', words.none), ...proxies.map(id => option(id, names.get(id))));
+      target.value = selectedTarget;
+      targetField.hidden = !usingSimple || !proxies.length;
+      targetWarning.hidden = !usingSimple || !reported || reported === (selectedTarget || entity.value);
+      targetWarning.textContent = targetWarning.hidden ? ''
+        : words.timerTargetMismatch.replace('{device}', () => names.get(reported) ?? reported);
+      const compatible = Boolean(selectedTarget);
       levelPreselectField.hidden = !usingSimple || !compatible;
-      const name = compatible ? this.#hass.states?.[linked]?.attributes?.friendly_name || linked : '';
-      target.replaceChildren(option('', words.none), ...(compatible ? [option(linked, name)] : []));
-      targetField.hidden = !compatible;
       cutoffField.hidden = !usingSimple || !fanHeater || !compatible;
-      const binding = JSON.stringify([entity.value, simple.value, linked]);
+      const binding = JSON.stringify([scope, selectedTarget]);
       if (cutoffBinding !== binding) {
         cutoff.value = '';
         popupPower.checked = false;
+        levelPreselect.value = '';
       }
       cutoffBinding = binding;
       popupPowerField.hidden = cutoffField.hidden || !cutoff.value;
-      if (compatible) target.value = linked;
     };
     entity.addEventListener('change', () => {
       error.hidden = true;
@@ -2455,6 +2484,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
       sync();
     });
     for (const control of [kind, level, timerSource, simple, timer, usage, boilerDetailsInput]) control.addEventListener('change', sync);
+    target.addEventListener('change', () => {
+      selectedTarget = target.value;
+      sync();
+    });
     cutoff.addEventListener('change', () => {
       popupPower.checked = false;
       sync();
@@ -2469,8 +2502,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
         return;
       }
       const usingSimple = timerSource.value === 'simple';
-      const linked = attributesFor(simple.value)?.switch_entity_id;
-      if (usingSimple && !simple.value || usingSimple && linked && linked !== (target.value || entity.value)) {
+      const linked = reportedTarget();
+      const retainedTarget = retainedBinding() && target.value === savedTarget;
+      // A mismatched existing binding stays inactive at runtime. A rebind requires a fresh exact match.
+      if (usingSimple && (!simple.value || (!retainedTarget && linked !== (target.value || entity.value)))) {
+        sync();
         error.textContent = words.timerLinkError;
         error.hidden = false;
         simple.focus();
