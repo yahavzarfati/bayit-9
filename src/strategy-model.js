@@ -492,6 +492,10 @@ export function isToolbarLightTile(kind, section, item) {
   return kind === 'devices' && section === 'devices' && item?.role === 'light_tile' && Boolean(idForDomain(item.entity, 'light'));
 }
 
+export function isCompactToolbarStatus(kind, section) {
+  return kind === 'devices' && section?.kind === 'status' && section.layout === 'compact';
+}
+
 function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
   if (!Array.isArray(value)) return undefined;
   const seenSections = new Set();
@@ -534,6 +538,7 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
         ...(accent && { accent_color: accent }) }];
     });
     return [{ id, kind: section.kind, ...(title !== undefined && { title }),
+      ...(isCompactToolbarStatus(kind, section) && { layout: 'compact' }),
       ...(section.filter === 'active' && { filter:'active' }), ...overview, entities }];
   });
 }

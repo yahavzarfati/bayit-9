@@ -897,6 +897,20 @@ test('light toggle tiles are explicit and scoped to visible lights in Devices se
   assert.deepEqual(toolbar[1].sections[0].entities, []);
 });
 
+test('only Devices status sections retain the compact layout without changing entity roles', () => {
+  const hass = home();
+  hass.states['lock.fixture'] = { state: 'locked', attributes: {} };
+  const status = { kind: 'status', layout: 'compact', entities: [{ entity: 'lock.fixture', role: 'status' }] };
+  const { toolbar } = generateDashboard({
+    toolbar: [
+      { kind: 'devices', sections: [status, { ...status, kind: 'devices' }] },
+      { kind: 'security', sections: [status] },
+    ],
+  }, hass).views[0].cards[0];
+  assert.deepEqual(toolbar.map(item => item.sections.map(section => section.layout)), [['compact', undefined], [undefined]]);
+  assert.ok(toolbar.every(item => item.sections.every(section => section.entities[0].role === 'status')));
+});
+
 test('script toggles stay scoped to explicit Automations actions and preserve confirmation settings', () => {
   const item = { entity: 'script.demo_start', role: 'action', command: 'toggle_script', confirmation: false };
   const section = (kind, entities) => ({ kind, entities });

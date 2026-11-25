@@ -1,5 +1,5 @@
 import {
-  discoverRooms, generateDashboard, hasDynamicPresenceIcon, isToolbarLightTile, LOCAL_ROUTE,
+  discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactToolbarStatus, isToolbarLightTile, LOCAL_ROUTE,
   normalizeOverviewDiscovery, overviewSectionOptions, roomPanelOptions, selectableRoomEntities,
   TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS, TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
 } from './strategy-model.js';
@@ -49,6 +49,7 @@ const WORDS = {
     calendarAgenda: 'Compact agenda', calendarAgendaHint: 'Choose the calendars to show. Tap to expand to seven days.',
     calendarWeather: 'Daily forecast beside dates', calendarNoWeather: 'No forecast',
     calendarAccent: 'Calendar accent', calendarInvalidAccent: 'Enter a six-digit color such as #80BFFF.',
+    compactStatus: 'Show status items side by side',
     activity: 'Activity', automations: 'Automations', security: 'Security', presence: 'Presence',
     weather: 'Weather', energy: 'Energy', settings: 'Settings', overview: 'Overview',
     sensors: 'Sensors', media: 'Media', vacuum: 'Vacuum', calendar: 'Calendar', link: 'Local link',
@@ -97,6 +98,7 @@ const WORDS = {
     calendarAgenda: 'יומן בתצוגה מקוצרת', calendarAgendaHint: 'בחרו אילו יומנים להציג. לחיצה מציגה שבעה ימים.',
     calendarWeather: 'תחזית יומית ליד התאריך', calendarNoWeather: 'ללא תחזית',
     calendarAccent: 'צבע היומן', calendarInvalidAccent: 'הזינו צבע בן שש ספרות, למשל ‎#80BFFF‎.',
+    compactStatus: 'הצגת פריטי הסטטוס זה לצד זה',
     activity: 'פעילות', automations: 'אוטומציות', security: 'אבטחה', presence: 'נוכחות',
     weather: 'מזג אוויר', energy: 'אנרגיה', settings: 'הגדרות', overview: 'סקירה',
     sensors: 'חיישנים', media: 'מדיה', vacuum: 'שואב רובוטי', calendar: 'יומן', link: 'קישור מקומי',
@@ -530,6 +532,11 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     const fields = [node('h3', { textContent: words.editSection }), field(words.sectionDisplay, display),
       node('label', { className: 'check' }, [heading, words.showHeading]), title.field];
     const kind = toolbar[entryIndex].kind;
+    if (kind === 'devices' && active.kind === 'status') {
+      const compact = node('input', { type: 'checkbox', checked: isCompactToolbarStatus(kind, active) });
+      compact.addEventListener('change', () => changeSection({ layout: compact.checked ? 'compact' : undefined }));
+      fields.push(node('label', { className: 'check' }, [compact, words.compactStatus]));
+    }
     const { discover } = overviewSectionOptions(kind, active);
     if (kind === 'overview' && ['status', 'covers'].includes(active.kind)) fields.push(...overviewFilters(active, discover));
     if (!discover) {

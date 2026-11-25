@@ -1,9 +1,10 @@
 import { createOrefMap } from './oref-alert-map.js';
 import { createVacuumMap } from './vacuum-map.js';
 import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
-import { discoverOverviewLights, isActiveOverviewLight, isToolbarLightTile, isVisibleEntity } from './strategy-model.js';
+import { discoverOverviewLights, isActiveOverviewLight, isCompactToolbarStatus, isToolbarLightTile, isVisibleEntity } from './strategy-model.js';
 import { mediaServiceRegistered } from './media-device-support.mjs';
 import { calendarAgendaStyles, createCalendarAgenda } from './calendar-agenda.js';
+import { bindDeviceDetails } from './popup-motion.js';
 
 const sectionKeys = {
   actions: 'automations', locks: 'toolbar_locks', covers: 'room_covers', status: 'toolbar_status',
@@ -361,11 +362,39 @@ export function createToolbarPanel(kind, configuration, context) {
     return card;
   }
 
-  function render(item, section) {
+  function renderCompactLock(item) {
+    const row = make('div', 'compact-status-lock');
+    const details = renderTile(item, 'status');
+    bindDeviceDetails(details, () => moreInfo(item));
+    const change = button('control-button compact-lock-action', t('lock'), 'mdi:lock-outline', true);
+    const changeIcon = change.querySelector('ha-icon');
+    const availableAction = model => {
+      const action = model.state === 'locked' ? 'unlock' : model.state === 'unlocked' ? 'lock' : undefined;
+      return action && model.actions[action] ? action : undefined;
+    };
+    change.onclick = () => {
+      const action = availableAction(modelFor(item));
+      if (action) request(item, action, undefined, change);
+    };
+    handlers.push(() => {
+      const model = modelFor(item);
+      const action = availableAction(model);
+      const busy = pending(item.entity);
+      change.disabled = !action || busy;
+      change.setAttribute('aria-busy', String(busy));
+      label(change, t(action || 'lock') + ' · ' + model.name);
+      changeIcon.setAttribute('icon', action === 'unlock' ? 'mdi:lock-open-variant-outline' : 'mdi:lock-outline');
+    });
+    row.append(details, change);
+    return row;
+  }
+
+  function render(item, section, compactStatus) {
     const itemKind = item.role ?? ({ people: 'person', actions: 'action', forecast: 'forecast', sun: 'sun' }[section]);
     if (itemKind === 'person' && domain(item) === 'person') return renderTile(item, 'person');
     if (item.command === 'toggle_script') return renderScriptToggle(item);
     if (itemKind === 'action' || (section === 'actions' && itemKind === 'lock')) return renderTile(item, 'action');
+    if (compactStatus && itemKind === 'lock' && domain(item) === 'lock') return renderCompactLock(item);
     if (itemKind === 'forecast' && domain(item) === 'weather') {
       const forecast = knownForecast(currentHass?.states?.[item.entity]?.attributes?.supported_features);
       return nativeCard({ type: 'weather-forecast', entity: item.entity, name: item.name, show_current: true,
@@ -380,6 +409,7 @@ export function createToolbarPanel(kind, configuration, context) {
       const config = sensorGraphConfig(item);
       const fallback = renderTile(item, 'status');
       const destination = itemKind === 'graph' && graphDestination?.(item);
+      if (compactStatus) config.tap_action = { action: 'more-info' };
       if (!destination) return nativeCard(config, fallback);
       config.tap_action = { action: 'fire-dom-event', bayit_graph_link: true };
       config.hold_action = { action: 'none' };
@@ -438,6 +468,8 @@ export function createToolbarPanel(kind, configuration, context) {
     if (calendarItems.length && section.entities.every(item => domain(item) === 'calendar')) continue;
     const panel = make('section', 'toolbar-section');
     panel.dataset.section = section.kind;
+    const compactStatus = isCompactToolbarStatus(kind, section);
+    if (compactStatus) panel.dataset.layout = 'compact';
     const caption = section.title ?? t(sectionKeys[section.kind] ?? 'room_devices');
     if (caption) panel.append(make('h3', 'toolbar-section-title', caption));
     const items = make('div', 'toolbar-section-items');
@@ -449,7 +481,7 @@ export function createToolbarPanel(kind, configuration, context) {
         entities:section.entities.map(item=>({entity:item.entity, name:item.name})), }, fallback));
     } else {
       const pairs = section.entities.filter(item=>!calendarItems.length || domain(item)!=='calendar')
-        .map(item => ({item, node:render(item, section.kind)}));
+        .map(item => ({item, node:render(item, section.kind, compactStatus)}));
       items.append(...pairs.map(pair=>pair.node));
       if (section.filter === 'active') handlers.push(() => {
         let visible = false;
@@ -581,6 +613,18 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
   .toolbar-section:is([data-section=actions],[data-section=people],[data-section=electricity],[data-section=water],[data-section=readings]) .toolbar-section-items {
     grid-template-columns: repeat(2,minmax(0,1fr));
   }
+  .toolbar-section[data-layout=compact] > .toolbar-section-items {
+    direction: ltr;
+    grid-template-columns: repeat(auto-fit,minmax(min(100%,max(110px,calc((100% - 8px) / 2))),1fr));
+  }
+  .shell[dir=rtl] .toolbar-section[data-layout=compact] > .toolbar-section-items > * { direction: rtl; }
+  .compact-status-lock {
+    display: grid; grid-template-columns: minmax(0,1fr) 44px; gap: 2px; align-items: center; min-width: 0;
+    padding-inline: 3px; border: 1px solid var(--soft-line); border-radius: 12px; background: var(--control);
+  }
+  .compact-status-lock > .tile-row { min-width: 0; padding-inline: 2px; border: 0; background: transparent; }
+  .compact-status-lock .tile-mark { width: 28px; height: 28px; }
+  .compact-lock-action { padding: 4px; }
   .tile-row { display: grid; justify-items: center; align-content: center; gap: 5px; min-height: 80px; width: 100%;
     padding: 8px 6px; border: 1px solid var(--soft-line); border-radius: 12px; background: var(--control); text-align: center; }
   .script-toggle > .tile-row[hidden] { display: none; }
@@ -606,10 +650,12 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
     min-width: 44px;
   }
   @media (min-width: 300px) {
-    .toolbar-section[data-section=devices] .toolbar-section-items:has(> [data-light-tile]) {
+    .toolbar-section[data-section=devices] > .toolbar-section-items:has(> [data-light-tile]) {
+      direction: ltr;
       grid-template-columns: repeat(2,minmax(0,1fr));
     }
-    .toolbar-section[data-section=devices] .toolbar-section-items:has(> [data-light-tile]) > :not([data-light-tile]) {
+    .shell[dir=rtl] .toolbar-section[data-section=devices] > .toolbar-section-items:has(> [data-light-tile]) > * { direction: rtl; }
+    .toolbar-section[data-section=devices] > .toolbar-section-items:has(> [data-light-tile]) > :not([data-light-tile]) {
       grid-column: 1 / -1;
     }
   }

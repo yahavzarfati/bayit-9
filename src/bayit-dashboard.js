@@ -1,7 +1,7 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
-import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isVisibleEntity, MAX_ROOM_SHORTCUTS,
-  normalizeRoomControlName, overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
+import { classicRoomTitle, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isVisibleEntity,
+  MAX_ROOM_SHORTCUTS, normalizeRoomControlName, overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { createDeviceController, getDeviceModel, roomShutdownTargets, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
@@ -335,6 +335,7 @@ export function normalizeDashboardConfig(config = {}) {
           return entity;
         });
         return [{ id: text(section.id), kind: text(section.kind), title: typeof section.title === 'string' ? section.title : undefined,
+          ...(isCompactToolbarStatus(item.kind, section) && { layout: 'compact' }),
           ...(section.filter === 'active' && {filter:'active'}), ...overview, entities: members }];
       }) }) }];
   }) : null;
