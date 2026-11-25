@@ -6,6 +6,7 @@ import { normalizeMediaStage } from './now-playing.js';
 import { normalizeMediaRemote } from './media-device-support.mjs';
 import { wallpaperChoices } from './wallpapers.js';
 import { normalizeSharedWallpapers } from './shared-wallpapers.js';
+import { normalizeAppearanceHelpers } from './appearance-helpers.js';
 import { normalizeLightEffectCategorySource, normalizeLightEffectFavoriteLights, normalizeLightEffectGroups, normalizeLightModeSource } from './light-effects.js';
 import { normalizePopupAliases, popupRouteFragment } from './popup-routes.js';
 import { canOpenBoilerSchedule } from './boiler-schedule.js';
@@ -1239,10 +1240,12 @@ export function generateDashboard(config = {}, hass = {}) {
   const toolbar = dashboardToolbar(config, hass, new Set(card.rooms.map(room => room.id)));
   if (toolbar !== undefined) card.toolbar = toolbar;
   const hidden = idList(config.hidden_entities);
-  if (hidden.length && (toolbar?.some(entry => entry.sections?.some(section => section.discover)) ||
+  const sharedWallpapers = normalizeSharedWallpapers(config.shared_wallpapers);
+  const appearanceHelpers = normalizeAppearanceHelpers(config.appearance_helpers, sharedWallpapers);
+  if (Object.keys(appearanceHelpers).length) card.appearance_helpers = appearanceHelpers;
+  if (hidden.length && (card.appearance_helpers || toolbar?.some(entry => entry.sections?.some(section => section.discover)) ||
       card.rooms.some(room => room.entities.some(device => device.effect_category_source ||
         device.boiler_detail_preference_entity)))) card.hidden_entities = hidden;
-  const sharedWallpapers = normalizeSharedWallpapers(config.shared_wallpapers);
   if (sharedWallpapers.length) card.shared_wallpapers = sharedWallpapers;
   if (Object.hasOwn(BACKGROUNDS, config.background) || sharedWallpapers.some(item => item.id === config.background)) {
     card.background = config.background;

@@ -8,6 +8,15 @@ import { catalog } from '../src/wallpaper-catalog.js';
 const bundle = await readFile(new URL('../dist/bayit-9.js', import.meta.url));
 const photograph = await readFile(new URL('../dist/' + catalog.misty_lake.photo.preview, import.meta.url));
 const states = new Map();
+const helpers = new Map();
+const helperBindings = {
+  background: { entity:'input_select.fixture_palette', options:{ aurora:'Aurora', jade:'Jade', 'shared-garden':'Garden' } },
+  shape: { entity:'input_select.fixture_shape', options:{ soft:'Rounded', circle:'Round' } },
+  layout: { entity:'input_select.fixture_layout', options:{ classic:'Classic', header:'Titles above' } },
+};
+const helperSeed = Object.fromEntries(Object.values(helperBindings).map(({entity, options}) => [entity,
+  { entity_id:entity, state:Object.values(options)[0], attributes:{ options:Object.values(options) } },
+]));
 const defaults = {
   type:'custom:bayit-9', title:'Fixture Home', appearance_sync:true,
   background:'aurora', layout:'classic', shape:'soft',
@@ -23,12 +32,29 @@ const query = new URL(location.href).searchParams;
 const fixtureId = query.get('fixture');
 const admin = !query.has('member');
 const profile = '/fixture-appearance-backend/' + fixtureId;
+const helperPath = '/fixture-appearance-helpers/' + fixtureId;
+const linked = query.has('helpers');
 const tracker = { attempts:[], saves:[], release:undefined, reject:false };
 const read = async () => (await fetch(profile, { cache:'no-store' })).json();
 const hass = {
   user:{ id:admin ? 'admin' : 'member', is_admin:admin }, locale:{ language:'en' }, themes:{}, states:{}, entities:{},
+  services:linked ? { input_select:{ select_option:{} } } : {},
   async callWS(request) {
     tracker.attempts.push(request);
+    if (request.type === 'call_service' && linked) {
+      if (tracker.holdHelper) {
+        tracker.holdHelper = false;
+        await new Promise(resolve => { tracker.releaseHelper = resolve; });
+      }
+      if (tracker.rejectHelper) {
+        tracker.rejectHelper = false;
+        throw new Error('Fixture denied helper change');
+      }
+      const response = await fetch(helperPath, { method:'POST', body:JSON.stringify(request) });
+      if (!response.ok) throw new Error('Invalid helper request');
+      await tracker.syncHelpers();
+      return {};
+    }
     if (request.type === 'lovelace/dashboards/list') return [{ url_path:'fixture-appearance', mode:'storage' }];
     if (request.type === 'lovelace/config') {
       const config = await read();
@@ -59,8 +85,21 @@ const hass = {
 };
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
 let card;
+tracker.syncHelpers = async () => {
+  hass.states = await (await fetch(helperPath, { cache:'no-store' })).json();
+  if (card) card.hass = { ...hass };
+};
+tracker.updateRegistry = (entity, metadata) => {
+  hass.entities = { ...hass.entities, [entity]:metadata };
+  card.hass = { ...hass };
+};
 tracker.refresh = async (replace = false) => {
-  const config = Strategy.generate((await read()).strategy, hass).views[0].cards[0];
+  const strategy = (await read()).strategy;
+  if (linked) {
+    strategy.locale = query.get('locale') || 'en';
+    strategy.appearance_helpers = ${JSON.stringify(helperBindings)};
+  }
+  const config = Strategy.generate(strategy, hass).views[0].cards[0];
   if (replace || !card) {
     const next = document.createElement('bayit-dashboard');
     next.setConfig(config);
@@ -72,13 +111,30 @@ tracker.refresh = async (replace = false) => {
     card.hass = hass;
   }
 };
+if (linked) await tracker.syncHelpers();
 await tracker.refresh();
 window.tracker = tracker;
 </script>`;
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, 'http://127.0.0.1');
   const profile = /^\/fixture-appearance-backend\/([a-z0-9-]+)$/.exec(url.pathname);
-  if (url.pathname === '/bayit-9.js') {
+  const helperBackend = /^\/fixture-appearance-helpers\/([a-z0-9-]+)$/.exec(url.pathname);
+  if (helperBackend) {
+    const id = helperBackend[1];
+    if (!helpers.has(id)) helpers.set(id, structuredClone(helperSeed));
+    const records = helpers.get(id);
+    if (request.method === 'POST') {
+      const chunks = [];
+      for await (const bytes of request) chunks.push(bytes);
+      const payload = JSON.parse(Buffer.concat(chunks).toString());
+      const { type, domain, service, target, service_data:data } = payload;
+      const entity = records[target?.entity_id];
+      if (type !== 'call_service' || domain !== 'input_select' || service !== 'select_option' ||
+          !entity?.attributes.options.includes(data?.option)) return response.writeHead(400).end();
+      entity.state = data.option;
+    }
+    response.writeHead(200, { 'content-type':'application/json', 'cache-control':'no-store' }).end(JSON.stringify(records));
+  } else if (url.pathname === '/bayit-9.js') {
     response.writeHead(200, { 'content-type':'text/javascript' }).end(bundle);
   } else if (profile) {
     const id = profile[1];
@@ -115,6 +171,114 @@ const pressed = (dialog, key, value) => dialog.locator('[data-preference="' + ke
 const current = (page, key) => page.locator('.shell').getAttribute('data-' + key);
 const after = (page, key, value) => page.locator('.shell[data-' + key + '="' + value + '"]').waitFor();
 const saves = page => page.evaluate(() => tracker.saves.length);
+
+async function assertLinkedAppearance(browser, prefix) {
+  for (const locale of ['en','he']) {
+    const fixtureId = prefix + '-linked-' + locale;
+    const member = await browser.newPage({ viewport:{width:320,height:844}, hasTouch:true, reducedMotion:'reduce' });
+    const admin = await browser.newPage({ viewport:{width:390,height:844}, hasTouch:true, reducedMotion:'reduce' });
+    const errors = [];
+    for (const page of [member, admin]) {
+      page.setDefaultTimeout(8000);
+      page.on('pageerror', error => errors.push(error.message));
+    }
+    const waitAttempts = (page, count) => page.waitForFunction(value => tracker.attempts.length === value, count);
+    const sync = page => page.evaluate(() => tracker.syncHelpers());
+    const calls = page => page.evaluate(() => tracker.attempts);
+    const call = (key, option) => ({ type:'call_service', domain:'input_select', service:'select_option',
+      target:{ entity_id:helperBindings[key].entity }, service_data:{ option } });
+    const open = async page => {
+      const name = locale === 'he' ? 'מראה' : 'Appearance';
+      await page.getByRole('button', { name,exact:true }).click();
+      return page.getByRole('dialog', { name,exact:true });
+    };
+    const refreshRegistry = (page, entity, metadata) =>
+      page.evaluate(([id,value]) => tracker.updateRegistry(id,value),[entity,metadata]);
+    try {
+      const url = home + fixtureId + '&helpers&locale=' + locale;
+      await Promise.all([member.goto(url + '&member'), admin.goto(url)]);
+      const memberSettings = await open(member);
+      const adminSettings = await open(admin);
+      await Promise.all([openLayout(memberSettings),openLayout(adminSettings)]);
+      const memberRound = pressed(memberSettings,'shape','circle');
+      assert.deepEqual(await calls(member),[]);
+      assert.deepEqual(await calls(admin),[]);
+
+      await member.evaluate(() => { tracker.holdHelper = true; });
+      await memberRound.click();
+      await member.waitForFunction(() => !!tracker.releaseHelper);
+      assert.equal(await current(member,'shape'),'soft');
+      assert.equal(await current(admin,'shape'),'soft');
+      assert.equal(await memberRound.getAttribute('aria-disabled'),'true');
+      await member.evaluate(() => tracker.releaseHelper());
+      await after(member,'shape','circle');
+      await sync(admin);
+      await after(admin,'shape','circle');
+      assert.equal(await memberRound.getAttribute('aria-pressed'),'true');
+      assert.deepEqual(await calls(member),[call('shape','Round')]);
+
+      // An unmapped choice is browser-local even as a member of a shared home.
+      await pressed(memberSettings,'shape','square').click();
+      await after(member,'shape','square');
+      await pressed(adminSettings,'shape','soft').click();
+      await after(admin,'shape','soft');
+      await pressed(adminSettings,'layout','header').click();
+      await after(admin,'layout','header');
+      await sync(member);
+      await after(member,'layout','header');
+      assert.equal(await current(member,'shape'),'square');
+      assert.deepEqual(await calls(admin),[call('shape','Rounded'),call('layout','Titles above')]);
+      assert.deepEqual(await calls(member),[call('shape','Round')]);
+
+      const layout = pressed(memberSettings,'layout','classic');
+      await refreshRegistry(member, helperBindings.layout.entity,{ hidden_by:'user' });
+      await member.waitForFunction(() =>
+        document.querySelector('bayit-dashboard').shadowRoot
+          .querySelector('[data-preference=layout][value=classic]').getAttribute('aria-disabled') === 'true');
+      await layout.evaluate(item => item.click());
+      assert.deepEqual(await calls(member),[call('shape','Round')]);
+      await refreshRegistry(member, helperBindings.layout.entity,{});
+      await after(member,'layout','header');
+      assert.equal(await layout.getAttribute('aria-disabled'),'false');
+
+      const memberGallery = memberSettings.locator('.wallpaper-gallery');
+      await memberGallery.locator('summary').click();
+      const selectGroup = (gallery, group) => gallery.locator('[data-wallpaper-category="' + group + '"]').click();
+      await selectGroup(memberGallery,'nature');
+      const jade = memberGallery.locator('[data-wallpaper-choice=jade]');
+      await member.evaluate(() => { tracker.rejectHelper = true; });
+      await jade.click();
+      await memberGallery.getByText(locale === 'he'
+        ? 'לא ניתן לשמור את בחירת המראה המשותפת.' : 'Could not save this shared appearance choice.',{exact:true}).waitFor();
+      assert.equal(await current(member,'background'),'aurora');
+      await jade.click();
+      await after(member,'background','jade');
+      await sync(admin);
+      await after(admin,'background','jade');
+
+      await selectGroup(memberGallery,'personal');
+      await memberGallery.locator('input[type=file]').setInputFiles({ name:'Fixture.webp', mimeType:'image/webp', buffer:photograph });
+      await after(member,'background','personal');
+      const adminGallery = adminSettings.locator('.wallpaper-gallery');
+      await adminGallery.locator('summary').click();
+      await selectGroup(adminGallery,'shared');
+      await adminGallery.locator('[data-wallpaper-choice=shared-garden]').click();
+      await after(admin,'background','shared-garden');
+      await sync(member);
+      assert.equal(await current(member,'background'),'personal');
+      const reset = locale === 'he' ? 'שימוש בברירת המחדל של הבית' : 'Use household defaults';
+      await memberSettings.getByRole('button',{name:reset,exact:true}).click();
+      await after(member,'background','shared-garden');
+      await after(member,'shape','soft');
+      await waitAttempts(member,3);
+      assert.deepEqual(await calls(member),[call('shape','Round'),call('background','Jade'),call('background','Jade')]);
+      assert.deepEqual(await calls(admin),[call('shape','Rounded'),call('layout','Titles above'),call('background','Garden')]);
+      assert.deepEqual(errors,[]);
+    } finally {
+      await Promise.all([member.close(),admin.close()]);
+    }
+  }
+}
 
 try {
   for (const [name, engine] of [['Chromium',chromium],['WebKit',webkit]]) {
@@ -286,6 +450,8 @@ try {
       assert.equal(await settings.getByRole('button',{name:'Save as household defaults',exact:true}).count(),1);
       assert.deepEqual(errors,[]);
       console.log(name + ': opt-in household appearance, selected-key writes, failures, draft guard and personal overrides');
+      await assertLinkedAppearance(browser, fixtureId);
+      console.log(name + ': linked member and admin appearance, localized controls, registry guard and local-only overrides');
     } finally {
       await browser.close();
     }

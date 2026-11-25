@@ -31,12 +31,13 @@ import { compactMediaMutePlaceholder, compactRoomMediaCommands, normalizeMediaRe
 import { calendarAccent, normalizeCalendarAgenda } from './calendar-agenda.js';
 import { createWallpaperController, createWallpaperGallery, personalWallpaperId, wallpaperChoices, wallpaperStyles } from './wallpapers.js';
 import { normalizeSharedWallpapers } from './shared-wallpapers.js';
+import { appearanceHelperChoices, normalizeAppearanceHelpers, reportedAppearanceHelper } from './appearance-helpers.js';
 import { createPageChrome, homePreferencePaths, isActiveDashboardPage } from './page-chrome.js';
 import { openBoilerHistory, boilerHistoryStyles } from './boiler-history.js';
 import { canOpenBoilerSchedule, createBoilerSchedulePanel, isBoilerScheduleProfile } from './boiler-schedule.js';
 
 export const backgrounds = Object.freeze(Object.keys(wallpaperChoices));
-const options = { background: backgrounds, shape: ['soft', 'circle', 'square'], layout: ['classic', 'header'] };
+const options = { background: backgrounds, shape: appearanceHelperChoices('shape'), layout: appearanceHelperChoices('layout') };
 const setupDrafts = new Map();
 const appearanceReturns = new WeakMap();
 const appearanceReturnMs = 12000;
@@ -485,6 +486,7 @@ export function normalizeDashboardConfig(config = {}) {
     popupAliases: new Map(Object.entries(normalizePopupAliases(config.popup_aliases))),
     title: text(config.title) || languages[locale].home,
     background, sharedWallpapers, appearanceSync: config.appearance_sync === true,
+    appearanceHelpers: normalizeAppearanceHelpers(config.appearance_helpers, sharedWallpapers),
     wideLeft: config.wide_alignment === 'left',
     layout: options.layout.includes(config.layout) ? config.layout : 'classic',
     shape: options.shape.includes(config.shape) ? config.shape : 'soft',
@@ -665,6 +667,8 @@ export class BayitDashboard extends HTMLElement {
     this.frame = requestAnimationFrame(() => {
       this.frame = 0;
       this.update();
+      const helpers = this.readAppearanceHelpers();
+      if (JSON.stringify(helpers) !== this.appearanceHelperVersion) this.applyPreferences(helpers);
       this.popupHistory?.refresh();
       this.restoreAppearanceReturn();
     });
@@ -805,8 +809,32 @@ export class BayitDashboard extends HTMLElement {
     }
   }
 
-  applyPreferences() {
-    for (const key of ['layout','shape']) this.nodes.shell.dataset[key] = this.preferences[key] || this.config[key];
+  readAppearanceHelper(key) {
+    const binding = this.config.appearanceHelpers[key];
+    if (!binding) return;
+    const { states = {}, entities, services, callWS } = this._hass ?? {};
+    const { entity } = binding;
+    if (!isVisibleEntity(entity, states, entities, this.config.hiddenEntities)) return;
+    const reported = reportedAppearanceHelper(binding, states[entity]);
+    if (!reported) return;
+    return { ...reported, canWrite: typeof callWS === 'function' && Object.hasOwn(services?.input_select ?? {}, 'select_option'),
+      busy: !this.canRequest(entity, 'select_option') };
+  }
+
+  readAppearanceHelpers() {
+    return Object.fromEntries(Object.keys(this.config.appearanceHelpers).map(key => [key, this.readAppearanceHelper(key)]));
+  }
+
+  displayedAppearance(key) {
+    const local = this.preferences[key];
+    if (local && !Object.hasOwn(this.config.appearanceHelpers[key]?.options ?? {}, local)) return local;
+    return this.appearanceHelperStates[key]?.selected ?? this.config[key];
+  }
+
+  applyPreferences(helpers = this.readAppearanceHelpers()) {
+    this.appearanceHelperStates = helpers;
+    this.appearanceHelperVersion = JSON.stringify(helpers);
+    for (const key of ['layout','shape']) this.nodes.shell.dataset[key] = this.displayedAppearance(key);
     this.applySavedWallpaper();
     const header = this.nodes.shell.dataset.layout === 'header';
     for (const {room,article,heading,name} of this.roomViews.values()) {
@@ -817,12 +845,14 @@ export class BayitDashboard extends HTMLElement {
     this.wallpaper?.refresh();
     if (this.panel?.type !== 'settings') return;
     this.wallpaperGallery?.select(this.activeWallpaper || this.config.background);
-    const synced = this.canSyncAppearance();
-    const busy = synced && Boolean(this.appearanceSave);
-    this.wallpaperGallery?.setHouseholdBusy(busy);
+    const busy = this.canSyncAppearance() && Boolean(this.appearanceSave);
+    this.wallpaperGallery?.syncChoices();
     for (const item of this.nodes.content.querySelectorAll('[data-preference]')) {
-      item.setAttribute('aria-pressed', String(item.value === this.nodes.shell.dataset[item.dataset.preference]));
-      if (synced) item.setAttribute('aria-disabled', String(busy));
+      const key = item.dataset.preference;
+      item.setAttribute('aria-pressed', String(item.value === this.nodes.shell.dataset[key]));
+      if (this.sharesAppearance(key, item.value)) {
+        item.setAttribute('aria-disabled', String(!this.canChooseAppearance(key, item.value)));
+      } else item.removeAttribute('aria-disabled');
     }
     for (const item of this.nodes.content.querySelectorAll('.setup-entry, .appearance-actions button')) {
       if (busy) item.setAttribute('aria-disabled', 'true');
@@ -849,7 +879,7 @@ export class BayitDashboard extends HTMLElement {
       this.wallpaperKey = wallpaperKey;
       this.activeWallpaper = this.pendingWallpaper = undefined;
     }
-    const saved = this.preferences.background || background;
+    const saved = this.displayedAppearance('background');
     if (this.activeWallpaper === saved || this.pendingWallpaper?.id === saved) return;
     if (!this.activeWallpaper && !backgrounds.includes(saved)) {
       const fallback = backgrounds.includes(background) ? background : 'aurora';
@@ -894,17 +924,97 @@ export class BayitDashboard extends HTMLElement {
     return this.config?.appearanceSync && this.config.page && this._hass?.user?.is_admin === true;
   }
 
+  sharesAppearance(key, value) {
+    if (value === personalWallpaperId) return false;
+    const binding = this.config.appearanceHelpers[key];
+    return binding ? Object.hasOwn(binding.options, value) : this.canSyncAppearance();
+  }
+
+  canChooseAppearance(key, value) {
+    const binding = this.config.appearanceHelpers[key];
+    if (!this.sharesAppearance(key, value)) return true;
+    if (!binding) return !this.appearanceSave;
+    const state = this.appearanceHelperStates[key];
+    return state?.canWrite === true && !state.busy && Object.hasOwn(state.options, value);
+  }
+
   chooseAppearance(key, value) {
-    if (this.canSyncAppearance() && value !== personalWallpaperId) {
-      return this.saveAppearance(this.appearanceActions, { [key]:value });
+    if (this.sharesAppearance(key, value)) {
+      return this.config.appearanceHelpers[key]
+        ? this.saveAppearanceHelper(key, value)
+        : this.saveAppearance(this.appearanceActions, { [key]:value });
     }
     if (key === 'background') return this.selectWallpaper(value);
     this.setPreference(key, value);
   }
 
+  async saveAppearanceHelper(key, value) {
+    const config = this.config;
+    const actions = this.appearanceActions;
+    const { entity } = config.appearanceHelpers[key];
+    const throughGallery = key === 'background';
+    const previous = this.preferences[key];
+    const user = this._hass?.user?.id;
+    const isCurrent = () => this.isConnected && config === this.config && user === this._hass?.user?.id &&
+      actions?.panel === this.panel && this.panel?.type === 'settings' && this.nodes.modal.open &&
+      !this.nodes.modal.hasAttribute('data-closing');
+    const result = (applied, message) => {
+      const feedback = this.t(message);
+      if (!throughGallery && isCurrent()) {
+        actions.status.textContent = feedback;
+        this.applyPreferences();
+      }
+      return { applied, feedback };
+    };
+    const state = this.readAppearanceHelper(key);
+    if (!isCurrent() || !state?.canWrite || state.busy || !Object.hasOwn(state.options, value)) {
+      return result(false, 'appearance_helper_unavailable');
+    }
+    const clearLocal = () => {
+      if (this.config === config && this.preferences[key] === previous && previous !== undefined) {
+        delete this.preferences[key];
+        this.persistPreferences();
+      }
+    };
+    if (state.selected === value) {
+      clearLocal();
+      return result(true, 'appearance_saved');
+    }
+    const action = 'select_option';
+    const token = { id: action, value: state.options[value] };
+    const target = { entity, role: 'action' };
+    this.pending.set(entity, token);
+    if (!throughGallery) actions.status.textContent = this.t('appearance_helper_saving');
+    this.applyPreferences();
+    try {
+      let prepared;
+      if (throughGallery && config.sharedWallpapers.some(item => item.id === value) && this.activeWallpaper !== value) {
+        try { prepared = await this.wallpaper?.prepareSharedPhoto(value); } catch {}
+        if (!prepared) return result(false, 'appearance_photo_unavailable');
+        prepared.dispose();
+      }
+      const current = this.readAppearanceHelper(key);
+      if (!isCurrent() || !current?.canWrite || current.options[value] !== token.value ||
+          this.pending.get(entity) !== token) return result(false, 'appearance_helper_unavailable');
+      const response = current.selected === value ? { status:'confirmed' }
+        : await this.controller.execute(target, action, token.value);
+      if (response.status === 'confirmed' && config === this.config && user === this._hass?.user?.id &&
+          this.readAppearanceHelper(key)?.selected === value) {
+        clearLocal();
+        return result(true, 'appearance_saved');
+      }
+      return result(false, 'appearance_helper_unconfirmed');
+    } catch {
+      return result(false, 'appearance_helper_failed');
+    } finally {
+      if (this.pending.get(entity) === token) this.pending.delete(entity);
+      if (this.isConnected && this.config === config) this.applyPreferences();
+    }
+  }
+
   appearanceChanges() {
     return Object.fromEntries(Object.entries(this.preferences)
-      .filter(([key, value]) => value !== this.config[key] && value !== personalWallpaperId));
+      .filter(([key, value]) => !this.config.appearanceHelpers[key] && value !== this.config[key] && value !== personalWallpaperId));
   }
 
   configurationErrorText(error) {
@@ -2494,10 +2604,12 @@ export class BayitDashboard extends HTMLElement {
     content.className = 'settings';
     content.replaceChildren();
     const deviceAppearance = make('section', 'appearance-preferences');
-    deviceAppearance.setAttribute('aria-label', this.t(this.canSyncAppearance() ? 'appearance_household' : 'appearance_browser'));
+    const household = this.canSyncAppearance() || Object.keys(this.config.appearanceHelpers).length;
+    deviceAppearance.setAttribute('aria-label', this.t(household ? 'appearance_household' : 'appearance_browser'));
     this.wallpaperGallery = createWallpaperGallery({ locale: this.config.locale, controller: this.wallpaper,
       selected: this.activeWallpaper || this.config.background, sharedWallpapers: this.config.sharedWallpapers,
-      householdSaving: this.canSyncAppearance(),
+      isHouseholdChoice: id => this.sharesAppearance('background', id),
+      canChoose: id => this.canChooseAppearance('background', id),
       onSelect: id => this.chooseAppearance('background', id),
       onUpload: file => this.selectWallpaper(personalWallpaperId, { file }) });
     deviceAppearance.append(this.wallpaperGallery.element);

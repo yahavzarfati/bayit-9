@@ -492,7 +492,8 @@ const labels = {
   },
 };
 
-export function createWallpaperGallery({ locale, controller, selected, onSelect, onUpload, sharedWallpapers = [], householdSaving = false }) {
+export function createWallpaperGallery({ locale, controller, selected, onSelect, onUpload, sharedWallpapers = [],
+  isHouseholdChoice = () => false, canChoose = () => true }) {
   const words = labels[locale] ?? labels.en;
   const element = document.createElement('details');
   element.className = 'wallpaper-gallery appearance-disclosure';
@@ -525,7 +526,6 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
   let expandedAll = false;
   let orderSelection = selected;
   let disposed = false;
-  let householdBusy = false;
   const view = element.ownerDocument.defaultView;
   const previewObserver = typeof view.IntersectionObserver === 'function'
     ? new view.IntersectionObserver(entries => {
@@ -583,9 +583,9 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
 
   async function choose(id, file) {
     const personal = file || id === personalWallpaperId;
-    if (householdBusy && !personal) return;
+    if (!canChoose(id)) return;
     const serial = ++request;
-    status.textContent = !personal && householdSaving ? words.saving : personal || sharedById.has(id) ? words.preparing : '';
+    status.textContent = isHouseholdChoice(id) ? words.saving : personal || sharedById.has(id) ? words.preparing : '';
     element.setAttribute('aria-busy', 'true');
     let result;
     try { result = await (file ? onUpload(file) : onSelect(id)); } catch { result = false; }
@@ -598,10 +598,16 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
     if (file && category === 'personal') fillPersonalPreview();
   }
 
+  function syncChoice(item) {
+    const id = item.dataset.wallpaperChoice;
+    if (isHouseholdChoice(id)) item.setAttribute('aria-disabled', String(!canChoose(id)));
+    else item.removeAttribute('aria-disabled');
+  }
+
   function wallpaperButton(id, name, wallpaper) {
     const item = button('', 'wallpaper-option');
     item.dataset.wallpaperChoice = id;
-    if (householdSaving && id !== personalWallpaperId) item.setAttribute('aria-disabled', String(householdBusy));
+    syncChoice(item);
     const sample = document.createElement('span');
     sample.className = 'wallpaper-sample';
     sample.setAttribute('aria-hidden', 'true');
@@ -723,12 +729,8 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
           .find(item => item.dataset.wallpaperChoice === choice) ?? summary;
       }
     },
-    setHouseholdBusy(busy) {
-      if (!householdSaving) return;
-      householdBusy = busy;
-      for (const choice of content.querySelectorAll('[data-wallpaper-choice]')) {
-        if (choice.dataset.wallpaperChoice !== personalWallpaperId) choice.setAttribute('aria-disabled', String(busy));
-      }
+    syncChoices() {
+      for (const item of content.querySelectorAll('[data-wallpaper-choice]')) syncChoice(item);
     },
     dispose() {
       disposed = true;
