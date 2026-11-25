@@ -7,6 +7,7 @@ import { mediaServiceRegistered } from './media-device-support.mjs';
 import { roomShutdownTargets } from './device-control.mjs';
 import { calendarAgendaStyles, createCalendarAgenda } from './calendar-agenda.js';
 import { bindDeviceDetails } from './popup-motion.js';
+import { comparisonSources, createTemperatureComparison, temperatureComparisonStyles } from './temperature-comparison-view.js';
 
 const sectionKeys = {
   actions: 'automations', locks: 'toolbar_locks', covers: 'room_covers', status: 'toolbar_status',
@@ -112,6 +113,7 @@ export function createToolbarPanel(kind, configuration, context) {
     request, pending, host, dialog, graphDestination, openGraphDestination } = context;
   const handlers = [];
   const mediaViews = [];
+  const comparisons = [];
   let live = true;
   let currentHass = context.hass;
   const native = createNativeCards(host, currentHass, make);
@@ -625,10 +627,19 @@ export function createToolbarPanel(kind, configuration, context) {
     const items = make('div', 'toolbar-section-items');
     if (section.discover) discoveredOverviewSection(panel, items, section, lightsOff);
     else if (section.kind === 'series') {
-      const fallback = make('div','toolbar-section-items');
-      for (const item of section.entities) fallback.append(renderTile(item, 'status'));
-      items.append(nativeCard({ type:'history-graph', hours_to_show:section.entities.find(item=>item.graph_hours)?.graph_hours ?? 24,
-        entities:section.entities.map(item=>({entity:item.entity, name:item.name})), }, fallback));
+      const visible = (entity, hass) => isVisibleEntity(entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities);
+      const optIn = kind === 'sensors' && dialog && section.comparison?.enabled === true;
+      const sources = optIn && comparisonSources(section.entities, currentHass, visible, section.comparison);
+      if (sources) {
+        comparisons.push(createTemperatureComparison({ host:items, dialog, context, sources, settings:section.comparison, visible }));
+      } else {
+        const fallback = make('div','toolbar-section-items');
+        const selected = optIn ? section.entities.filter(item => visible(item.entity, currentHass)) : section.entities;
+        for (const item of selected) fallback.append(renderTile(item, 'status'));
+        if (selected.length) items.append(nativeCard({ type:'history-graph',
+          hours_to_show:optIn ? section.comparison.hours : selected.find(item => item.graph_hours)?.graph_hours ?? 24,
+          entities:selected.map(item => ({ entity:item.entity, name:item.name })), }, fallback));
+      }
     } else {
       const pairs = section.entities.filter(item=>!calendarItems.length || domain(item)!=='calendar')
         .map(item => {
@@ -743,6 +754,7 @@ export function createToolbarPanel(kind, configuration, context) {
       orefMap?.update(hass);
       vacuumMap?.update(hass);
       calendarAgenda?.update(hass);
+      for (const comparison of comparisons) comparison.update(hass);
       for (const update of handlers) update();
       if (quiet) quiet.hidden = !!host.querySelector('.toolbar-section:not([hidden])');
     },
@@ -752,13 +764,14 @@ export function createToolbarPanel(kind, configuration, context) {
       vacuumMap?.dispose();
       calendarAgenda?.dispose();
       for (const player of mediaViews) player.dispose();
+      for (const comparison of comparisons) comparison.dispose();
       if (clockTimer) view.clearInterval(clockTimer);
       native.dispose();
     },
   };
 }
 
-export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
+export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temperatureComparisonStyles + `
   .toolbar-panes, .toolbar-section-items { display: grid; gap: 8px; min-width: 0; }
   .toolbar-section { min-width: 0; border: 1px solid var(--soft-line); border-radius: 13px; padding: 8px; }
   .toolbar-section-title { margin: 0 0 8px; text-align: center; font-size: 14px; }
