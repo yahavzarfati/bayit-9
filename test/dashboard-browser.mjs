@@ -3677,11 +3677,14 @@ async function assertCompactLightReadings(browser) {
       await page.getByRole('button',{name:'Studio',exact:true}).tap();
       await bright(room).waitFor();
       assert.equal(await bright(room).getAttribute('min'),'1');
+      const missingReading = he ? 'אין ערך מדווח' : 'No reported value';
       assert.equal(await reading(room).textContent(),'—');
+      assert.equal(await bright(room).getAttribute('aria-valuetext'), missingReading);
       await bright(room).focus();
       await mode(room).tap();
       await tone(room).waitFor();
       assert.equal(await reading(room).textContent(),'—');
+      assert.equal(await tone(room).getAttribute('aria-valuetext'), missingReading);
       assert.ok(await compact(room).evaluate(node=>node.scrollWidth <= node.clientWidth));
       assert.deepEqual(await calls(),[]);
 
@@ -3690,10 +3693,14 @@ async function assertCompactLightReadings(browser) {
       assert.equal(await bright(details).getAttribute('min'),'1');
       assert.equal(await reading(details).textContent(),'—');
       assert.equal(await details.locator('.compact-light-power').getAttribute('data-action'),'turn_on');
+      await attrs({brightness:0});
+      await reading(details).getByText(/0%/).waitFor();
+      assert.equal(await bright(details).getAttribute('aria-valuetext'), '0%');
       await attrs({brightness:102,color_temp_kelvin:3200});
       await reading(details).getByText(/40%/).waitFor();
       await mode(details).tap();
       await reading(details).getByText(/3200 K/).waitFor();
+      assert.equal(await tone(details).getAttribute('aria-valuetext'), '3200 K');
       assert.deepEqual(await calls(),[]);
       await mode(details).tap();
       await bright(details).press('Home');

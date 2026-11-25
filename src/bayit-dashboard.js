@@ -2520,6 +2520,7 @@ export class BayitDashboard extends HTMLElement {
     const touched = () => {
       field.dirty = true;
       if (field.output) setText(field.output, field.input.value + field.unit);
+      if (reportedLightRange) field.input.setAttribute('aria-valuetext', field.input.value + field.unit);
       if (field.valid) apply.disabled = !field.valid(field.input.value) || !this.canRequest(view.config.entity, id);
     };
     field.input.addEventListener('input', touched);
@@ -2556,8 +2557,14 @@ export class BayitDashboard extends HTMLElement {
       const observed = typeof raw === 'number' && Number.isFinite(raw) &&
         (id === 'set_brightness' ? raw >= 0 && raw <= 255 : raw >= action.min && raw <= action.max);
       field.observed = observed;
-      input.value = String(observed ? (id === 'set_brightness' ? brightnessPercent(raw) : raw) : action.min);
-    } else if (second) {
+      const reading = observed ? (id === 'set_brightness' ? brightnessPercent(raw) : raw) : null;
+      const shown = observed ? reading + field.unit : '—';
+      input.value = String(reading ?? action.min);
+      setText(field.output, shown);
+      input.setAttribute('aria-valuetext', observed ? shown : this.t('light_reading_unreported'));
+      return;
+    }
+    if (second) {
       input.value = String(attrs.target_temp_low ?? action.min ?? 18);
       second.value = String(attrs.target_temp_high ?? action.max ?? 25);
     } else if (id === 'set_hvac_mode') input.value = model.state;
@@ -2570,7 +2577,7 @@ export class BayitDashboard extends HTMLElement {
     else if (input.localName === 'select') input.value = attrs[stateKeys[id]] ?? input.options[0]?.value ?? '';
     else input.value = String(number(attrs[stateKeys[id]]) ?? action.min ?? 0);
     if (input.localName === 'select' && input.selectedIndex === -1) input.selectedIndex = 0;
-    if (field.output) setText(field.output, field.reportedLightRange && !field.observed ? '—' : input.value + field.unit);
+    if (field.output) setText(field.output, input.value + field.unit);
   }
 
   canRequest(entity, id) {
