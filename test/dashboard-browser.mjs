@@ -1093,8 +1093,8 @@ async function assertHomePreferenceAliases(browser) {
   }
 }
 
-async function assertSharedAppearance(browser, engine) {
-  const url = base + '/fixture-home/home?configuration&shared-appearance=' + engine.toLowerCase();
+async function assertSharedAppearance(browser) {
+  const url = base + '/fixture-home/home?configuration&shared-appearance=' + browser.browserType().name();
   const device = { viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: 'reduce' };
   const adminPage = await browser.newPage(device);
   const memberPage = await browser.newPage(device);
@@ -1108,6 +1108,8 @@ async function assertSharedAppearance(browser, engine) {
       [shell.dataset.background, shell.dataset.shape, shell.dataset.layout]);
     const admin = await openSettings(adminPage);
     const member = await openSettings(memberPage);
+    assert.equal(await admin.locator('.appearance-actions').isVisible(), false);
+    assert.equal(await member.locator('.appearance-actions').isVisible(), false);
     await member.locator('.appearance-layout > summary').press('Enter');
     const square = member.getByRole('button', { name: 'Square', exact: true });
     await square.press('Enter');
@@ -1116,33 +1118,55 @@ async function assertSharedAppearance(browser, engine) {
     assert.deepEqual(await appearance(memberPage), ['aurora', 'square', 'classic']);
     assert.deepEqual(await appearance(adminPage), ['aurora', 'soft', 'classic']);
 
-    await admin.locator('.wallpaper-gallery > summary').tap();
-    await admin.getByRole('button', { name: 'Misty forest', exact: true }).tap();
-    await admin.locator('.wallpaper-gallery > summary').tap();
+    const wallpaperSummary = admin.locator('.wallpaper-gallery > summary');
     const adminLayout = admin.locator('.appearance-layout > summary');
+    const share = admin.getByRole('button', { name: 'Save as household defaults', exact: true });
+    const saved = admin.getByText('Household appearance saved.', { exact: true });
+    const reset = admin.getByRole('button', { name: 'Use household defaults', exact: true });
+    await wallpaperSummary.tap();
+    await admin.getByRole('button', { name: 'Misty forest', exact: true }).tap();
+    await wallpaperSummary.tap();
+    assert.equal(await admin.locator('.appearance-layout').evaluate(layout => layout.open), false);
+    await reset.press('Enter');
+    assert.equal(await wallpaperSummary.evaluate(summary => summary.getRootNode().activeElement === summary), true);
+    await admin.locator('.appearance-actions').waitFor({ state: 'hidden' });
+    assert.deepEqual(await appearance(adminPage), ['aurora', 'soft', 'classic']);
+
+    await wallpaperSummary.tap();
+    await admin.getByRole('button', { name: 'Misty forest', exact: true }).tap();
+    await wallpaperSummary.tap();
+    assert.deepEqual(await appearance(adminPage), ['jade', 'soft', 'classic']);
+    assert.equal(await adminPage.evaluate(() => window.bayitTest.calls.length), 0);
+    await share.press('Enter');
+    await saved.waitFor();
+    assert.equal(await wallpaperSummary.evaluate(summary => summary.getRootNode().activeElement === summary), true);
+    assert.equal(await admin.locator('.appearance-layout').evaluate(layout => layout.open), false);
+    const callsAfterWallpaper = await adminPage.evaluate(() => window.bayitTest.calls.length);
+
     await adminLayout.press('Enter');
     await admin.getByRole('button', { name: 'Round', exact: true }).tap();
     await admin.locator('[data-preference="layout"][value="header"]').tap();
-    assert.equal(await adminPage.evaluate(() => window.bayitTest.calls.length), 0);
+    assert.equal(await adminPage.evaluate(() => window.bayitTest.calls.length), callsAfterWallpaper);
     assert.deepEqual(await appearance(adminPage), ['jade', 'circle', 'header']);
     assert.deepEqual(await appearance(memberPage), ['aurora', 'square', 'classic']);
 
-    await admin.getByRole('button', { name: 'Save as household defaults', exact: true }).press('Enter');
-    await admin.getByText('Household appearance saved.', { exact: true }).waitFor();
+    await share.press('Enter');
+    await saved.waitFor();
     assert.equal(await adminLayout.evaluate(summary => summary.getRootNode().activeElement === summary), true);
     const saveRequests = await adminPage.evaluate(() =>
       window.bayitTest.calls.filter(call => call.type === 'lovelace/config/save'));
-    assert.deepEqual(saveRequests, [{ type: 'lovelace/config/save', url_path: 'fixture-home',
-      config: { strategy: { type: 'custom:bayit-9', show_unassigned: false, background: 'jade', shape: 'circle', layout: 'header' },
-        fixture: true } }]);
-    await admin.getByRole('button', { name: 'Use household defaults', exact: true }).waitFor({ state: 'hidden' });
+    const strategy = { type: 'custom:bayit-9', show_unassigned: false, background: 'jade' };
+    const configSave = value => ({ type: 'lovelace/config/save', url_path: 'fixture-home',
+      config: { strategy: value, fixture: true } });
+    assert.deepEqual(saveRequests, [configSave(strategy), configSave({ ...strategy, shape: 'circle', layout: 'header' })]);
+    await reset.waitFor({ state: 'hidden' });
 
     await memberPage.reload();
     await memberPage.locator('.shell[data-background="jade"][data-layout="header"]').waitFor();
     assert.deepEqual(await appearance(memberPage), ['jade', 'square', 'header']);
     const updated = memberPage.getByRole('dialog', { name: 'Appearance', exact: true });
     const restoredLayout = updated.locator('.appearance-layout > summary');
-    await restoredLayout.press('Enter');
+    assert.equal(await updated.locator('.appearance-layout').evaluate(layout => layout.open), false);
     await updated.getByRole('button', { name: 'Use household defaults', exact: true }).press('Enter');
     assert.equal(await restoredLayout.evaluate(summary => summary.getRootNode().activeElement === summary), true);
     assert.deepEqual(await appearance(memberPage), ['jade', 'circle', 'header']);
@@ -2212,7 +2236,7 @@ try {
     const browser = await launcher.launch({ headless: true });
     try {
       await assertHomePreferenceAliases(browser);
-      await assertSharedAppearance(browser, engine);
+      await assertSharedAppearance(browser);
       await assertCompactSettings(browser);
       await assertOverviewClimateDiscovery(browser);
       console.log(engine + ': editable active climate discovery, passive rows and live scope');

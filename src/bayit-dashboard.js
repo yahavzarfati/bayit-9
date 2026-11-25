@@ -706,6 +706,8 @@ export class BayitDashboard extends HTMLElement {
         appearance.share.disabled = Boolean(this.appearanceSave);
         appearance.share.hidden = this.appearanceSave !== appearance && !Object.keys(this.appearanceChanges()).length;
       }
+      appearance.element.hidden = appearance.reset.hidden && (!appearance.share || appearance.share.hidden) &&
+        !appearance.status.textContent;
     }
   }
 
@@ -1791,28 +1793,33 @@ export class BayitDashboard extends HTMLElement {
       arrangement.append(group);
     }
     const appearanceActions = make('div', 'appearance-actions');
-    const reset = button('control-button', this.t('appearance_reset'));
-    reset.onclick = () => {
-      if (this.shadowRoot.activeElement === reset) layoutSummary.focus({ preventScroll: true });
-      this.preferences = {};
-      this.persistPreferences();
+    const focusSummary = (control, wallpaperChanged) => {
+      if (this.shadowRoot.activeElement !== control) return;
+      const wallpaperSummary = !arrange.open && wallpaperChanged && this.wallpaperGallery.element.querySelector('summary');
+      (wallpaperSummary || layoutSummary).focus({ preventScroll: true });
     };
     const status = make('p', 'setup-status');
     status.setAttribute('role', 'status');
-    const actions = { panel: this.panel, reset, status };
+    const reset = button('control-button', this.t('appearance_reset'));
+    reset.onclick = () => {
+      focusSummary(reset, Object.hasOwn(this.preferences, 'background'));
+      status.textContent = '';
+      this.preferences = {};
+      this.persistPreferences();
+    };
+    const actions = { element: appearanceActions, panel: this.panel, reset, status };
     this.appearanceActions = actions;
     appearanceActions.append(reset);
     if (this.config.page && this._hass?.user?.is_admin) {
       actions.share = button('control-button', this.t('appearance_share'), 'mdi:content-save-outline');
       actions.share.onclick = () => {
-        if (this.shadowRoot.activeElement === actions.share) layoutSummary.focus({ preventScroll: true });
+        focusSummary(actions.share, Object.hasOwn(this.appearanceChanges(), 'background'));
         void this.saveAppearance(actions);
       };
       appearanceActions.append(actions.share);
     }
     appearanceActions.append(status);
-    arrangement.append(appearanceActions);
-    deviceAppearance.append(arrange);
+    deviceAppearance.append(arrange, appearanceActions);
     content.append(deviceAppearance);
     this.applyPreferences();
 
