@@ -5407,6 +5407,9 @@ async function assertKitchenBoilerQuickPower(browser) {
       await tile.press('Shift+Enter');
       await returnToRoom();
 
+      // The pointer hold uses physical coordinates, so measure after the popup stops moving.
+      await room.evaluate(dialog => Promise.allSettled(dialog.getAnimations().map(animation => animation.finished)));
+      await tile.scrollIntoViewIfNeeded();
       const bounds = await tile.boundingBox();
       await page.mouse.move(bounds.x + bounds.width / 2,bounds.y + bounds.height / 2);
       await page.mouse.down();
