@@ -54,6 +54,8 @@ Enable **Show brightness and temperature in this room** to add a light's support
 
 Use **Open Home Assistant details from the cover header** in **Room device display** to open the selected cover's native details with a tap or hold. The room remains open underneath. The YAML field `native_cover_header_entities` lists the covers with this behavior.
 
+For a white light with brightness and color-temperature control, **Show both sliders in light details** puts both adjustments in the dedicated popup. Each slider has its own **Apply** button. In YAML, list the lights in `dual_light_detail_entities` on the room override.
+
 Use **Open Home Assistant details with a long press on this light** in **Room device display** to change where a light's room tile opens its details. A short tap still switches the light. The room remains open underneath its Home Assistant details. The YAML field `native_light_hold_entities` lists the lights with this behavior in each room.
 
 Use **Devices turned off by the room icon** to give the icon a quick room shutdown action. Pick the exact room members to turn off. The room name still opens the room. The YAML field `turn_off_entities` accepts room lights, switches, fans, climate devices, water heaters, and media players. A device receives the action while it is available and offers a standard direct turn-off command. The selection is independent from the room's lighting count.

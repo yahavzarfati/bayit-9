@@ -183,10 +183,12 @@ const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection'
     },
   }),
   ...(query.has('inline-room-lights') && {
+    ...(query.has('dual-light-details') && {background:'desert_sunset'}),
     show_unassigned: false, area_ids: ['studio', 'bayit_room_den'],
     room_overrides: {
       studio: { entities: ['light.demo_lamp', 'light.demo_room_read_only'],
         inline_light_entities: ['light.demo_lamp', 'light.demo_room_read_only', 'switch.demo_heater'],
+        ...(query.has('dual-light-details') && {dual_light_detail_entities:['light.demo_lamp']}),
         read_only_entities: ['light.demo_room_read_only'] },
       bayit_room_den: { name: 'Den', entities: ['light.demo_lamp'] },
     },
@@ -1003,7 +1005,7 @@ if (query.has('editor')) {
   editor.setConfig({ type: 'custom:bayit-9',
     ...((query.has('toolbar-panels') || query.has('automation-compact') || query.has('overview-opt-in') || query.has('lighting-count') ||
       query.has('preset-shortcut') || query.has('entrance-popup-position') || query.has('timer-usage') ||
-      query.has('swing-unreported') || query.has('temperature-source')) && selected) });
+      query.has('swing-unreported') || query.has('temperature-source') || query.has('dual-light-details')) && selected) });
   editor.hass = hass;
   editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
   document.querySelector('#editor').append(editor);
@@ -3428,6 +3430,94 @@ async function assertClippedRoomOrigin(browser) {
     }
   } finally {
     await page.close();
+  }
+}
+
+async function assertDualLightDetails(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const url = base + '/fixture-home/home?configuration&inline-room-lights&locale=' + locale;
+    const room = page.getByRole('dialog',{name:'Studio',exact:true});
+    const details = page.getByRole('dialog',{name:'Desk lamp',exact:true});
+    const dual = details.locator('.dual-light-detail-controls');
+    const brightness = dual.getByRole('slider',{name:he ? 'בהירות' : 'Brightness',exact:true});
+    const white = dual.getByRole('slider',{name:he ? 'גוון לבן' : 'White temperature',exact:true});
+    const applyBrightness = dual.locator('button[data-action=set_brightness]');
+    const applyWhite = dual.locator('button[data-action=set_color_temp_kelvin]');
+    const calls = () => page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service'));
+    const attrs = attrs => page.evaluate(attrs=>window.bayitTest.setFixtureAttributes('light.demo_lamp',attrs),attrs);
+    try {
+      await page.goto(url + '&dual-light-details');
+      await page.locator('.shell[data-background=desert_sunset]').waitFor();
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+      const inline = room.locator('[data-inline-light]');
+      await inline.locator('.compact-light-controls input:visible').waitFor();
+      assert.equal(await inline.locator('.compact-light-controls input:visible').count(),1);
+      assert.equal(await inline.locator('.dual-light-detail-controls').count(),0);
+      await inline.locator('.device-tile').press('Shift+Enter');
+      await brightness.waitFor();
+      await white.waitFor();
+      assert.deepEqual(await Promise.all([brightness.inputValue(),white.inputValue()]),['40','3000']);
+      assert.equal(await details.locator('[data-light-mode=compact-temperature]').count(),0);
+      assert.ok(await dual.evaluate(node=>node.scrollWidth <= node.clientWidth &&
+        [...node.querySelectorAll('input,button')].every(control=>control.getBoundingClientRect().height >= 44)));
+      await brightness.focus();
+      await white.focus();
+      assert.deepEqual(await calls(),[]);
+      await brightness.press('ArrowRight');
+      await white.press('ArrowRight');
+      assert.deepEqual(await calls(),[]);
+      assert.deepEqual(await Promise.all([brightness.inputValue(),white.inputValue()]),['41','3001']);
+      await applyBrightness.tap();
+      await dual.locator('button[data-action=set_color_temp_kelvin]:enabled').waitFor();
+      assert.equal(await white.inputValue(),'3001');
+      await applyWhite.tap();
+      await dual.locator('button[data-action=set_color_temp_kelvin]:enabled').waitFor();
+      assert.deepEqual((await calls()).map(call=>[call.domain,call.service,call.service_data]),[
+        ['light','turn_on',{brightness_pct:41}],['light','turn_on',{color_temp_kelvin:3001}],
+      ]);
+
+      await page.evaluate(()=>window.bayitTest.setRoomState('light.demo_lamp','off'));
+      await attrs({brightness:0,color_temp_kelvin:2000});
+      await dual.locator('output').filter({hasText:/^0%$/}).waitFor();
+      await dual.locator('output').filter({hasText:/^2000 K$/}).waitFor();
+      await attrs({brightness:undefined,color_temp_kelvin:undefined});
+      await dual.getByText('—',{exact:true}).first().waitFor();
+      assert.equal(await applyBrightness.isDisabled(),true);
+      assert.equal(await applyWhite.isDisabled(),true);
+      await white.focus();
+      assert.equal((await calls()).length,2);
+      await page.evaluate(()=>window.bayitTest.setLightModes('light.demo_lamp',['color_temp','rgb']));
+      await dual.waitFor({state:'hidden'});
+      await details.locator('input[type=color]').waitFor();
+      await page.evaluate(()=>window.bayitTest.setRoomState('light.demo_lamp','unavailable'));
+      await details.getByRole('slider').first().waitFor({state:'hidden'});
+      assert.equal((await calls()).length,2);
+
+      await page.goto(url + '#device/studio/light.demo_lamp');
+      await details.locator('.compact-light-controls input:visible').waitFor();
+      assert.equal(await details.locator('.compact-light-controls input:visible').count(),1);
+      assert.equal(await dual.count(),0);
+
+      await page.goto(url + '&dual-light-details&editor');
+      await page.getByText(he ? 'חדרים' : 'Rooms',{exact:true}).tap();
+      await page.getByLabel(he ? 'חדר להתאמה אישית' : 'Room to customize',{exact:true}).selectOption('studio');
+      await page.getByText(he ? 'תצוגת מכשירים' : 'Device display',{exact:true}).tap();
+      await page.getByLabel(he ? 'מכשיר להתאמה אישית' : 'Device to customize',{exact:true}).selectOption('light.demo_lamp');
+      const checkbox = page.getByRole('checkbox',{name:he ? 'הצגת שני המחוונים בפרטי התאורה' : 'Show both sliders in light details',exact:true});
+      assert.equal(await checkbox.isChecked(),true);
+      await checkbox.uncheck();
+      const saved = () => page.evaluate(()=>window.latest.room_overrides.studio);
+      assert.equal((await saved()).dual_light_detail_entities,undefined);
+      assert.ok((await saved()).inline_light_entities.includes('light.demo_lamp'));
+      await checkbox.check();
+      assert.deepEqual((await saved()).dual_light_detail_entities,['light.demo_lamp']);
+      assert.deepEqual(await calls(),[]);
+    } finally {
+      await page.close();
+    }
   }
 }
 
@@ -6864,6 +6954,7 @@ try {
       await panelPage.close();
       console.log(engine + ' 320: room-only panel exclusions, retained shortcuts and direct links, and editor persistence');
 
+      await assertDualLightDetails(browser);
       const inlinePage = await newRoomConfigPage();
       const inlineUrl = base + '/fixture-home/home?configuration&inline-room-lights';
       await inlinePage.goto(inlineUrl);

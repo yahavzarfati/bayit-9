@@ -264,6 +264,23 @@ test('appliance tile selection keeps read-only switches and excludes a specializ
     .map(item=>[item.entity,item.role]),[[oven,undefined],[cooktop,'status']]);
 });
 
+test('dual light details are scoped per room and independent of inline lights', () => {
+  const hass = home();
+  const light = 'light.demo_lamp';
+  const disabled = 'light.fixture_read_only';
+  hass.states[disabled] = {state:'on',attributes:{}};
+  hass.entities[disabled] = {};
+  const {rooms} = generateDashboard({area_ids:['studio','lounge'],show_unassigned:false,room_overrides:{
+    studio:{entities:[light,disabled],dual_light_detail_entities:[light,disabled],read_only_entities:[disabled]},
+    lounge:{entities:[light],inline_light_entities:[light]},
+  }},hass).views[0].cards[0];
+  assert.equal(rooms[0].entities[0].room_dual_light_detail,true);
+  assert.equal(rooms[0].entities[0].room_light_controls,undefined);
+  assert.equal(rooms[0].entities[1].room_dual_light_detail,undefined);
+  assert.equal(rooms[1].entities[0].room_dual_light_detail,undefined);
+  assert.equal(rooms[1].entities[0].room_light_controls,true);
+});
+
 test('compact room media applies only to selected visible media devices in that room', () => {
   const hass = home();
   const tv = 'media_player.fixture_tv';

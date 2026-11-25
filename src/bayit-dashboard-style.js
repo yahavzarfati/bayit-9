@@ -738,6 +738,11 @@ export const styles = `
   }
   .device[data-compact-light] .device-detail { text-align: left; }
   .compact-light-power[data-powered] { color: var(--warm); }
+  .dual-light-detail-controls { display: grid; gap: 8px; min-width: 0; }
+  .dual-light-detail-controls .field-row {
+    align-items: end;
+    grid-template-columns: minmax(0,1fr) auto;
+  }
   .compact-light-controls {
     display: grid; grid-template-columns: minmax(0,1fr) 44px; align-items: end; gap: 8px; direction: ltr;
   }

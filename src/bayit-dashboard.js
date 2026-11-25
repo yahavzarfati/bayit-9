@@ -217,6 +217,7 @@ function normalizeEntity(item) {
   const roomName = normalizeRoomControlName(item.room_name);
   if (roomName !== undefined) entry.room_name = roomName;
   if (item.room_light_controls === true && entity.startsWith('light.')) entry.room_light_controls = true;
+  if (item.room_dual_light_detail === true && entity.startsWith('light.')) entry.room_dual_light_detail = true;
   if (iconPattern.test(text(item.icon))) entry.icon = item.icon;
   if (['heater', 'boiler'].includes(item.kind)) entry.kind = item.kind;
   if (entityPattern.test(text(item.level_entity)) && item.level_entity.startsWith('number.')) {
@@ -1667,7 +1668,8 @@ export class BayitDashboard extends HTMLElement {
       .find(entry => entry.entity === vacuumSummary.status_entity && entry.readout?.state_labels)?.readout.state_labels;
     const view = { config, item, glyph, name, state, fields: [], room, inlineClimate, inlineLight, compactHeater,
       standaloneBoiler, compactCover: cover, vacuumCleaningControls: vacuumDisplay === 'cleaning-controls',
-      vacuumSummary, vacuumStatusLabels, applianceTile, compactMedia: !!room && config.room_media_compact === true };
+      vacuumSummary, vacuumStatusLabels, applianceTile, compactMedia: !!room && config.room_media_compact === true,
+      dualLightDetail: titleInDialog && config.room_dual_light_detail === true };
     const bindPanelLaunch = source => {
       const targetName = panelTarget.label || this.t(panelKind);
       const hint = panelOpensOnTap ? this.t('vacuum_room_hold') : this.t('room_panel_hold').replace('{name}', targetName);
@@ -1750,7 +1752,7 @@ export class BayitDashboard extends HTMLElement {
         const native = toolbarCoverRail || nativeRoomCover;
         view.panelLaunch = { action: this.t(native ? 'more_info' : 'device_controls'), native };
       } else {
-        if (titleInDialog && domain === 'light' && config.room_light_controls === true && config.role !== 'status') {
+        if (titleInDialog && domain === 'light' && (config.room_light_controls === true || view.dualLightDetail) && config.role !== 'status') {
           const power = button('round-action compact-light-power', this.t('turn_on'), 'mdi:power', true);
           power.hidden = true;
           power.onclick = () => this.requestAction(config, power.dataset.action, undefined, power);
@@ -2427,6 +2429,9 @@ export class BayitDashboard extends HTMLElement {
     const { actions } = model;
     const brightness = this.buildField(view, actions.set_brightness, 'set_brightness', model);
     const temperature = this.buildField(view, actions.set_color_temp_kelvin, 'set_color_temp_kelvin', model);
+    const controls = make('div', view.dualLightDetail ? 'dual-light-detail-controls' : 'compact-light-controls');
+    controls.append(brightness, temperature);
+    if (view.dualLightDetail) return controls;
     const mode = button('round-action', this.t('set_color_temp_kelvin'), 'mdi:thermometer', true);
     mode.dataset.lightMode = 'compact-temperature';
     const update = () => {
@@ -2440,8 +2445,7 @@ export class BayitDashboard extends HTMLElement {
       update();
     };
     update();
-    const controls = make('div', 'compact-light-controls');
-    controls.append(brightness, temperature, mode);
+    controls.append(mode);
     return controls;
   }
 
@@ -2459,8 +2463,10 @@ export class BayitDashboard extends HTMLElement {
     const compactInline = view.inlineLight && view.compactLight;
     const caption = make('label', '', compactInline ? undefined : title);
     const isRange = rangeActions.has(id);
-    const directRange = view.inlineLight || (view.compactLight && inlineLightActions.has(id));
-    const field = { action, id };
+    const dualLightRange = view.compactLight && view.dualLightDetail && inlineLightActions.has(id);
+    const directRange = view.inlineLight || (view.compactLight && !dualLightRange && inlineLightActions.has(id));
+    const field = { action, id, dualLightRange };
+    if (dualLightRange) field.valid = () => field.observed || field.dirty;
     if (action.options) {
       field.input = make('select');
       if (id === 'set_effect' || id === 'set_swing_horizontal_mode') {
@@ -2482,7 +2488,7 @@ export class BayitDashboard extends HTMLElement {
       field.valid = parseLightColor;
     } else field.input = this.numberInput(action, isRange ? 'range' : 'number');
     field.input.dataset.action = id;
-    if (directRange || id === 'set_color_temp_kelvin') field.input.setAttribute('aria-label', title);
+    if (directRange || dualLightRange || id === 'set_color_temp_kelvin') field.input.setAttribute('aria-label', title);
     caption.append(field.input);
     if (id === 'set_temperature_range') {
       field.input.setAttribute('aria-label', title + ' · ' +this.t('min'));
@@ -2511,6 +2517,7 @@ export class BayitDashboard extends HTMLElement {
     apply.dataset.action = id;
     if (!directRange) label(apply, id === 'start_timed' ? this.actionLabel(id) : this.t('apply') + ' · ' + title);
     const commit = () => {
+      if (dualLightRange && !field.valid()) return;
       const single = action.color || field.input.localName === 'select' ? field.input.value : field.input.valueAsNumber;
       const value = field.second ? { low: field.input.valueAsNumber, high: field.second.valueAsNumber } : single;
       this.requestAction(view.config, id, value, apply);
@@ -2532,7 +2539,13 @@ export class BayitDashboard extends HTMLElement {
     const active = this.shadowRoot.activeElement;
     if (!force && (field.dirty || active === input || (second && active === second))) return;
     const attrs = model.attributes;
-    if (second) {
+    if (field.dualLightRange) {
+      const raw = id === 'set_brightness' ? attrs.brightness : attrs.color_temp_kelvin;
+      const observed = typeof raw === 'number' && Number.isFinite(raw) &&
+        (id === 'set_brightness' ? raw >= 0 && raw <= 255 : raw >= action.min && raw <= action.max);
+      field.observed = observed;
+      input.value = String(observed ? (id === 'set_brightness' ? brightnessPercent(raw) : raw) : action.min);
+    } else if (second) {
       input.value = String(attrs.target_temp_low ?? action.min ?? 18);
       second.value = String(attrs.target_temp_high ?? action.max ?? 25);
     } else if (id === 'set_hvac_mode') input.value = model.state;
@@ -2545,7 +2558,7 @@ export class BayitDashboard extends HTMLElement {
     else if (input.localName === 'select') input.value = attrs[stateKeys[id]] ?? input.options[0]?.value ?? '';
     else input.value = String(number(attrs[stateKeys[id]]) ?? action.min ?? 0);
     if (input.localName === 'select' && input.selectedIndex === -1) input.selectedIndex = 0;
-    if (field.output) setText(field.output, input.value + field.unit);
+    if (field.output) setText(field.output, field.dualLightRange && !field.observed ? '—' : input.value + field.unit);
   }
 
   canRequest(entity, id) {

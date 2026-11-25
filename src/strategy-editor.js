@@ -35,6 +35,7 @@ const WORDS = {
     roomControlShow: 'Show name in this room', roomDeviceIcon: 'Icon in this room', roomDeviceIconDefault: 'Use default icon',
     roomInlineLight: 'Show brightness and temperature in this room',
     roomNativeCoverHeader: 'Open Home Assistant details from the cover header',
+    roomDualLightDetail: 'Show both sliders in light details',
     roomNativeLightHold: 'Open Home Assistant details with a long press on this light',
     roomApplianceTile: 'Show as an appliance tile',
     roomClimatePower: 'Show quick power for this climate device',
@@ -137,6 +138,7 @@ const WORDS = {
     roomControlShow: 'הצגת שם המכשיר בחדר הזה', roomDeviceIcon: 'סמל המכשיר בחדר הזה', roomDeviceIconDefault: 'שימוש בסמל ברירת המחדל',
     roomInlineLight: 'הצגת בהירות וגוון אור בתוך החדר',
     roomNativeCoverHeader: 'פתיחת פרטי Home Assistant מכותרת התריס',
+    roomDualLightDetail: 'הצגת שני המחוונים בפרטי התאורה',
     roomNativeLightHold: 'פתיחת פרטי Home Assistant בלחיצה ארוכה על התאורה',
     roomApplianceTile: 'הצגה כאריח מכשיר חשמלי',
     roomClimatePower: 'הצגת כפתור הפעלה וכיבוי מהיר למזגן',
@@ -924,6 +926,21 @@ export class Bayit9StrategyEditor extends HTMLElement {
           inline.firstElementChild.dataset.roomFocus = 'room-inline-light';
           fields.append(inline);
         }
+        const dualLight = configuredIds(override.dual_light_detail_entities).includes(id);
+        if (lightActions && !configuredIds(override.read_only_entities).includes(id) &&
+            (dualLight || lightActions.set_brightness && lightActions.set_color_temp_kelvin && !lightActions.set_light_color && !lightActions.set_effect)) {
+          const dual = checkbox(words.roomDualLightDetail, dualLight, checked => {
+            const next = { ...this.#roomOverride(room.id) };
+            const lights = new Set(configuredIds(next.dual_light_detail_entities));
+            if (checked) lights.add(id);
+            else lights.delete(id);
+            if (lights.size) next.dual_light_detail_entities = [...lights];
+            else delete next.dual_light_detail_entities;
+            this.#setRoomOverride(room.id, next, 'room-dual-light-detail');
+          });
+          dual.firstElementChild.dataset.roomFocus = 'room-dual-light-detail';
+          fields.append(dual);
+        }
       };
       picker.addEventListener('change', () => {
         this.#roomControlEditing.set(room.id, picker.value);
@@ -1148,7 +1165,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         delete next.room_temperature_fallback_entity;
       }
       for (const key of ['read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
-        'inline_light_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details',
+        'inline_light_entities', 'dual_light_detail_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details',
         'vacuum_panel_hold_entities', 'climate_power_entities', 'media_compact_entities', 'appliance_tile_entities']) {
         if (!Array.isArray(next[key])) continue;
         next[key] = next[key].filter(id => entities.includes(id));
