@@ -202,8 +202,8 @@ export function buildPanelControls(model, {
       const currentTimer = current.timer;
       const showSeconds = currentTimer?.showSeconds;
       const nativePrecision = showSeconds !== undefined;
-      const remaining = currentTimer ? currentTimer.remainingMs === null ? null : currentTimer.remainingMs / 1000 : 0;
-      const countdown = clock(remaining, showSeconds, nativePrecision ? Math.round : Math.ceil);
+      const remaining = currentTimer ? currentTimer.remainingMs : 0;
+      const countdown = clock(remaining === null ? null : remaining / 1000, showSeconds, nativePrecision ? Math.round : Math.ceil);
       if (time.textContent !== countdown) time.textContent = countdown;
       currentUsage = current.usageSource;
       const hasReading = Number.isFinite(currentTimer?.usedSeconds);
