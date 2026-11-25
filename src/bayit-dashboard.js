@@ -9,6 +9,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, supportsHorizonCard, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
   supportsToolbarVacuumSummary, toolbarPlacement, toolbarPopupPosition, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
+import { bundledHomeIcon } from './home-icon-paths.js';
 import { allowsCoverRailAction, canSendDeviceCommands, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, isReadOnlyRole, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
   simpleTimerStatusEntity, simpleTimerUsageResetAvailable, supportsHomeHeaterPower, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
@@ -123,9 +124,12 @@ function validIcon(value, fallback = 'mdi:information-outline') {
   return typeof value === 'string' && iconPattern.test(value) ? value : fallback;
 }
 
-function icon(value) {
+const homeIcons = new WeakSet();
+
+function icon(value, forHome = false) {
   const el = make('ha-icon');
-  el.setAttribute('icon', validIcon(value));
+  if (forHome) homeIcons.add(el);
+  setIcon(el, value);
   el.setAttribute('aria-hidden', 'true');
   return el;
 }
@@ -142,7 +146,7 @@ function roomBadge(kind, glyph) {
   element.dataset.badge = kind;
   element.setAttribute('role', 'img');
   element.hidden = true;
-  const symbol = icon(glyph);
+  const symbol = icon(glyph, true);
   const text = make('span');
   element.append(symbol, text);
   return { element, symbol, text };
@@ -193,6 +197,12 @@ function button(className, text, glyph, iconOnly = false) {
   return el;
 }
 
+function homeButton(className, text, glyph) {
+  const el = button(className, text, undefined, true);
+  el.append(icon(glyph, true));
+  return el;
+}
+
 function text(value) { return typeof value === 'string' ? value.trim() : ''; }
 
 function number(value) {
@@ -216,7 +226,10 @@ function setText(el, value) {
 
 function setIcon(el, value) {
   const name = validIcon(value);
-  if (el.getAttribute('icon') !== name) el.setAttribute('icon', name);
+  if (el.getAttribute('icon') === name) return;
+  el.setAttribute('icon', name);
+  // The original attribute identifies the configured icon. Home Assistant renders its reactive property.
+  if (homeIcons.has(el)) el.icon = bundledHomeIcon(name, el.ownerDocument.defaultView);
 }
 
 function normalizeEntity(item) {
@@ -1219,7 +1232,7 @@ export class BayitDashboard extends HTMLElement {
         return domain === 'person' || (domain === 'device_tracker' && entry.role !== 'person');
       }).map(entry => entry.entity))] : [];
       if (item.presence_dynamic_icon) panel.icon = presenceIcons[0];
-      const element = button('chrome-button', name, panel.icon, true);
+      const element = homeButton('chrome-button', name, panel.icon);
       element.dataset.role = kind;
       if (kind !== 'link') {
         element.setAttribute('aria-haspopup', 'dialog');
@@ -1345,12 +1358,12 @@ export class BayitDashboard extends HTMLElement {
       const heading = button('room-title');
       label(heading, room.name);
       heading.setAttribute('aria-haspopup', 'dialog');
-      const chevron = icon(this.config.locale === 'he' ? 'mdi:chevron-left' : 'mdi:chevron-right');
+      const chevron = icon(this.config.locale === 'he' ? 'mdi:chevron-left' : 'mdi:chevron-right', true);
       chevron.className = 'chevron';
       const count = make('span', 'room-count');
       count.setAttribute('aria-hidden', 'true');
       const name = make('span', 'room-name', room.name);
-      heading.append(icon(room.icon), name, count, chevron);
+      heading.append(icon(room.icon, true), name, count, chevron);
       heading.onclick = () => this.openPanel('room', heading, room);
       article.onclick = event => {
         if (!event.target.closest('button')) this.openPanel('room', heading, room);
@@ -1367,7 +1380,7 @@ export class BayitDashboard extends HTMLElement {
       const quick = make('div', 'quick');
       const shortcut = new Map();
       for (const config of roomShortcutDevices(room)) {
-        const el = button('quick-button', config.name || config.entity, config.icon || 'mdi:information-outline', true);
+        const el = homeButton('quick-button', config.name || config.entity, config.icon);
         el.dataset.entity = config.entity;
         const details = !room.shortcutNoDetails?.has(config.entity);
         let powerConfig;
@@ -1410,7 +1423,7 @@ export class BayitDashboard extends HTMLElement {
       article.append(status, quick, heading);
       let turnOff;
       if (room.turnOff?.length) {
-        turnOff = button('room-turn-off', this.t('turn_off_room').replace('{name}', room.name), room.icon, true);
+        turnOff = homeButton('room-turn-off', this.t('turn_off_room').replace('{name}', room.name), room.icon);
         turnOff.onclick = () => this.turnOffRoom(room);
         article.append(turnOff);
       }

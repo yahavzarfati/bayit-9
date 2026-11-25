@@ -10149,7 +10149,7 @@ async function assertRoomPanelDeviceIcon(browser) {
         show_unassigned:false, area_ids:['studio','bayit_room_den'],
         room_overrides:{
           studio:{ entities:[entity], entity_icons:{ [entity]:icon } },
-          bayit_room_den:{ name:'Den', entities:[entity] },
+          bayit_room_den:{ name:'Den', icon:'mdi:star-four-points-outline', entities:[entity] },
         },
       } }));
     }, shared);
@@ -10176,6 +10176,18 @@ async function assertRoomPanelDeviceIcon(browser) {
     };
     try {
       await page.goto(url);
+      const stock = page.locator('.room[data-room=studio] .quick-button[data-entity="light.demo_lamp"] ha-icon');
+      const stockIcon = await stock.evaluate(async node => {
+        const [prefix, name] = node.icon.split(':', 2);
+        return {
+          configured:node.getAttribute('icon'),
+          path:(await window.customIcons[prefix]?.getIcon(name))?.path,
+        };
+      });
+      assert.equal(stockIcon.configured,shared);
+      assert.match(stockIcon.path,/^M/,'A stock Home icon can render without an icon download');
+      const custom = page.locator('.room[data-room=bayit_room_den] .room-title > ha-icon').first();
+      assert.equal(await custom.evaluate(node=>node.icon),'mdi:star-four-points-outline');
       const editor = await openEditor();
       const disclosure = he ? 'סמל נפרד לחלונית החדר' : 'Separate room panel icon';
       const field = he ? 'סמל בחלונית החדר' : 'Icon in the room panel';

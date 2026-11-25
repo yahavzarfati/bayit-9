@@ -7,6 +7,7 @@ import { catalog } from '../src/wallpaper-catalog.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const metadata = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+const iconLicense = (await readFile(new URL('../licenses/material-design-icons.txt', import.meta.url), 'utf8')).trimEnd();
 const output = new URL('../dist/bayit-9.js', import.meta.url);
 for (const { photo } of Object.values(catalog)) {
   if (!photo) continue;
@@ -29,7 +30,7 @@ const result = await build({
   target: ['es2022', 'safari16.4'],
   minify: true,
   legalComments: 'inline',
-  banner: { js: '/*! Bayit 9 v' + metadata.version + ' */' },
+  banner: { js: '/*! Bayit 9 v' + metadata.version + ' */\n/*!\n' + iconLicense + '\n*/' },
   write: false,
   metafile: true,
 });

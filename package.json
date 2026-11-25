@@ -14,6 +14,7 @@
     "node": ">=22"
   },
   "devDependencies": {
+    "@mdi/js": "7.4.47",
     "esbuild": "0.25.12",
     "playwright-core": "1.58.2"
   }
