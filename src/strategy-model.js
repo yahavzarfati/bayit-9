@@ -179,6 +179,11 @@ export function roomSections(value) {
   });
 }
 
+export function roomLightTilePlacement(entity, sections = []) {
+  const placements = sections.filter(section => section.entities.includes(entity));
+  return !placements.length || placements.some(section => section.kind === 'lights');
+}
+
 export function normalizeRoomControlName(value) {
   if (typeof value !== 'string') return undefined;
   if (value === '') return '';
@@ -288,6 +293,7 @@ function dashboardAreas(config, hass) {
       shortcutDetailRoutes: override.shortcut_detail_routes,
       inlineLights: new Set(idList(override.inline_light_entities)),
       nativeCoverHeaders: new Set(idList(override.native_cover_header_entities)),
+      nativeLightHolds: new Set(idList(override.native_light_hold_entities)),
       lightingCount: idList(override.lighting_count_entities),
       shutdown: idList(override.turn_off_entities).filter(supportsRoomShutdown),
       activities: override.activities,
@@ -550,6 +556,10 @@ export function discoverRooms(config, hass, locale) {
         device.room_cover_native_details = true;
       }
       if (device.role === 'status' || domainOf(device.entity) !== 'light') continue;
+      if (!device.kind && area.nativeLightHolds?.has(device.entity) && supportsNativeShortcutDetails(device) &&
+          !room.panel_hidden_entities?.includes(device.entity) && roomLightTilePlacement(device.entity, area.sections)) {
+        device.room_light_native_hold = true;
+      }
       if (area.inlineLights?.has(device.entity)) device.room_light_controls = true;
       if (!Object.hasOwn(config.light_effect_groups ?? {}, device.entity)) continue;
       const groups = normalizeLightEffectGroups(config.light_effect_groups[device.entity]);

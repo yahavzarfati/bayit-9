@@ -245,6 +245,9 @@ function normalizeEntity(item) {
   if (domain === 'cover' && item.room_cover_native_details === true && supportsNativeShortcutDetails(entry)) {
     entry.room_cover_native_details = true;
   }
+  if (domain === 'light' && !entry.kind && item.room_light_native_hold === true && supportsNativeShortcutDetails(entry)) {
+    entry.room_light_native_hold = true;
+  }
   if (domain === 'climate' && entry.role !== 'status' && !['heater', 'boiler'].includes(entry.kind)) {
     const shortcut = normalizeClimatePresetShortcut(item.room_climate_preset);
     if (shortcut) entry.room_climate_preset = shortcut;
@@ -1412,7 +1415,12 @@ export class BayitDashboard extends HTMLElement {
       tile.append(glyph, name, state);
       tile.setAttribute('aria-haspopup', 'dialog');
       tile.onclick = () => this.quickAction(config, tile, room);
-      bindDeviceDetails(tile, () => this.openDeviceDetails(config, tile, room));
+      const nativeRoomLightHold = room && !toolbarLightTile && config.room_light_native_hold === true;
+      bindDeviceDetails(tile, () => {
+        if (!nativeRoomLightHold) this.openDeviceDetails(config, tile, room);
+        else if (isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities,
+          this.config.hiddenEntities)) this.moreInfo(config, tile);
+      });
       view.tile = tile;
       item.append(tile);
       if (inlineLight) {

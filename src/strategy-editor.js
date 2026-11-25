@@ -3,7 +3,8 @@ import {
   languageFor, MAX_ROOM_SHORTCUTS, normalizeProfile,
   normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeShortcutDetailEntities, normalizeShortcutDetailRoutes,
   normalizeUnreportedSwingMode,
-  PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomPanelOptions, roomSections, roomShortcutDevices, selectableRoomEntities, selectedRoomIds,
+  PROFILE_DOMAINS, ROOM_PANEL_KINDS, roomLightTilePlacement, roomPanelOptions, roomSections, roomShortcutDevices,
+  selectableRoomEntities, selectedRoomIds,
   shortcutPanelOptions, STRATEGY_NAME, supportsNativeShortcutDetails, supportsShortcutWithoutDetails,
   usesAutomaticRoomDevices,
 } from './strategy-model.js';
@@ -33,6 +34,7 @@ const WORDS = {
     roomControlShow: 'Show name in this room',
     roomInlineLight: 'Show brightness and temperature in this room',
     roomNativeCoverHeader: 'Open Home Assistant details from the cover header',
+    roomNativeLightHold: 'Open Home Assistant details with a long press on this light',
     climatePresetShortcut: 'Preset shortcut', climatePresetNone: 'No shortcut', climatePresetLabel: 'Shortcut label',
     climatePresetIcon: 'Shortcut icon', climatePresetHighlight: 'Highlight when this preset is reported',
     climatePresetHighlightDefault: 'When the shortcut preset is active', climatePresetUnavailable: 'Unavailable preset',
@@ -117,6 +119,7 @@ const WORDS = {
     roomControlShow: 'הצגת שם המכשיר בחדר הזה',
     roomInlineLight: 'הצגת בהירות וגוון אור בתוך החדר',
     roomNativeCoverHeader: 'פתיחת פרטי Home Assistant מכותרת התריס',
+    roomNativeLightHold: 'פתיחת פרטי Home Assistant בלחיצה ארוכה על התאורה',
     climatePresetShortcut: 'קיצור לתוכנית מזגן', climatePresetNone: 'ללא קיצור', climatePresetLabel: 'שם הקיצור',
     climatePresetIcon: 'סמל הקיצור', climatePresetHighlight: 'הדגשה כשהמזגן מדווח על תוכנית זו',
     climatePresetHighlightDefault: 'כשתוכנית הקיצור פעילה', climatePresetUnavailable: 'תוכנית לא זמינה',
@@ -739,6 +742,21 @@ export class Bayit9StrategyEditor extends HTMLElement {
           native.firstElementChild.dataset.roomFocus = 'room-native-cover-header';
           fields.append(native);
         }
+        if (id.startsWith('light.') && !profile?.kind && !configuredIds(override.read_only_entities).includes(id) &&
+            roomLightTilePlacement(id, roomSections(override.sections))) {
+          const native = checkbox(words.roomNativeLightHold,
+            configuredIds(override.native_light_hold_entities).includes(id), checked => {
+              const next = { ...this.#roomOverride(room.id) };
+              const configured = new Set(configuredIds(next.native_light_hold_entities));
+              if (checked) configured.add(id);
+              else configured.delete(id);
+              if (configured.size) next.native_light_hold_entities = [...configured];
+              else delete next.native_light_hold_entities;
+              this.#setRoomOverride(room.id, next, 'room-native-light-hold');
+            });
+          native.firstElementChild.dataset.roomFocus = 'room-native-light-hold';
+          fields.append(native);
+        }
         const inlineLight = configuredIds(override.inline_light_entities).includes(id);
         const lightActions = id.startsWith('light.') && getDeviceModel({ entity: id }, this.#hass.states).actions;
         if (lightActions && !configuredIds(override.read_only_entities).includes(id) &&
@@ -873,7 +891,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const entities = items.map(item => item.id);
       const next = { ...override, entities };
       for (const key of ['read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
-        'inline_light_entities', 'native_cover_header_entities', 'shortcut_no_details']) {
+        'inline_light_entities', 'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details']) {
         if (!Array.isArray(next[key])) continue;
         next[key] = next[key].filter(id => entities.includes(id));
         if (!next[key].length) delete next[key];

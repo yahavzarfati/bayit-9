@@ -1115,6 +1115,74 @@ async function assertNativeRoomCoverHeader(browser) {
   }
 }
 
+async function assertNativeRoomLightHold(browser) {
+  const page = await browser.newPage({ viewport: { width: 320, height: 780 }, hasTouch: true, reducedMotion: 'reduce' });
+  try {
+    await page.goto(base + '/fixture-home/home?configuration&room-control-names&native-more-info=modern');
+    await page.getByRole('button', { name: 'Appearance', exact: true }).tap();
+    await page.getByRole('button', { name: 'Customize home', exact: true }).tap();
+    const editor = page.getByRole('dialog', { name: 'Customize home', exact: true });
+    await editor.getByText('Rooms', { exact: true }).tap();
+    await editor.getByText('Device display', { exact: true }).tap();
+    await editor.getByLabel('Device to customize', { exact: true }).selectOption('light.demo_lamp');
+    const optIn = editor.getByRole('checkbox', { name: 'Open Home Assistant details with a long press on this light' });
+    assert.equal(await optIn.isChecked(), false);
+    await optIn.check();
+    await editor.getByRole('button', { name: 'Save dashboard', exact: true }).tap();
+    await page.waitForURL(url => url.hash === '');
+    await editor.waitFor({ state: 'hidden' });
+
+    await page.getByRole('button', { name: 'Studio', exact: true }).tap();
+    const studio = page.getByRole('dialog', { name: 'Studio', exact: true });
+    const tileFor = room => room.locator('[data-entity="light.demo_lamp"] .device-tile');
+    const tile = tileFor(studio);
+    const native = page.getByRole('dialog', { name: 'Native entity details', exact: true });
+    const commands = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.domain));
+    const hold = button => button.evaluate(async target => {
+      const pointer = { button: 0, pointerId: 19, pointerType: 'touch', isPrimary: true, bubbles: true, composed: true };
+      target.dispatchEvent(new PointerEvent('pointerdown', pointer));
+      await new Promise(resolve => setTimeout(resolve, 535));
+      target.dispatchEvent(new PointerEvent('pointerup', pointer));
+      target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+    });
+    for (const trigger of [() => tile.press('Shift+Enter'), () => hold(tile)]) {
+      await trigger();
+      await native.waitFor();
+      assert.equal(new URL(page.url()).hash, '#room-studio');
+      assert.equal(new URL(page.url()).searchParams.get('more-info-entity-id'), 'light.demo_lamp');
+      await native.getByRole('button', { name: 'Close native details', exact: true }).tap();
+      await native.waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => {
+        const root = document.querySelector('bayit-dashboard').shadowRoot;
+        return history.state?.dialog !== 'ha-more-info-dialog' && root.activeElement?.matches('.device-tile') &&
+          location.hash === '#room-studio' && !new URL(location.href).searchParams.has('more-info-entity-id');
+      });
+    }
+    assert.deepEqual(await commands(), []);
+    await tile.tap();
+    await studio.locator('[data-entity="light.demo_lamp"] .device-tile[aria-pressed="true"]').waitFor();
+    assert.deepEqual((await commands()).map(({ domain, service, target }) => [domain, service, target.entity_id]),
+      [['light', 'turn_on', 'light.demo_lamp']]);
+    await studio.getByRole('button', { name: 'Close', exact: true }).tap();
+    await studio.waitFor({ state: 'hidden' });
+
+    const quick = page.locator('.room[data-room="studio"] .quick-button[data-entity="light.demo_lamp"]');
+    await quick.press('Shift+Enter');
+    await page.waitForURL(url => url.hash === '#device/studio/light.demo_lamp');
+    assert.equal(await native.count(), 0);
+    await page.keyboard.press('Escape');
+    await page.waitForURL(url => url.hash === '');
+
+    await page.getByRole('button', { name: 'Den', exact: true }).tap();
+    await tileFor(page.getByRole('dialog', { name: 'Den', exact: true })).press('Shift+Enter');
+    await page.waitForURL(url => url.hash === '#device/bayit_room_den/light.demo_lamp');
+    assert.equal(await native.count(), 0);
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), Array(2).fill('light.demo_lamp'));
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertSetupFooterLayout(browser) {
   const page = await browser.newPage({ viewport: { width: 391, height: 845 }, reducedMotion: 'reduce' });
   try {
@@ -1663,6 +1731,8 @@ try {
       console.log(engine + ': independent browser appearance and admin household defaults');
       await assertNativeRoomCoverHeader(browser);
       console.log(engine + ': native room cover header, focus restoration, editor and device isolation');
+      await assertNativeRoomLightHold(browser);
+      console.log(engine + ': opt-in native room light holds, regular taps, focus and room isolation');
       await assertHeaderRoomLayout(browser);
       console.log(engine + ': top-title room layout, shortcut lanes and keyboard focus');
       await assertSetupFooterLayout(browser);

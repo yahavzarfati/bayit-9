@@ -1355,3 +1355,32 @@ test('native cover details are scoped to visible controls in the opted-in room',
   assert.deepEqual(studio.entities.filter(item => item.room_cover_native_details).map(item => item.entity), [shade]);
   assert.ok(lounge.entities.every(item => !item.room_cover_native_details));
 });
+
+test('native light holds apply only to writable tiles in the opted-in room', () => {
+  const hass = home();
+  const explicitTile = 'light.demo_lamp';
+  const automaticTile = 'light.reading_lamp';
+  const readOnly = 'light.entry_status';
+  const hidden = 'light.maintenance_lamp';
+  const nonTile = 'light.utility_lamp';
+  const foreign = 'light.other_room_lamp';
+  for (const entity of [automaticTile, readOnly, hidden, nonTile, foreign]) {
+    hass.entities[entity] = { area_id: 'studio' };
+    hass.states[entity] = { state: 'off', attributes: {} };
+  }
+  const [studio, lounge] = discoverRooms({
+    area_ids: ['studio', 'lounge'],
+    room_overrides: {
+      studio: {
+        entities: [explicitTile, automaticTile, readOnly, hidden, nonTile, 'switch.demo_heater'],
+        sections: [{ kind: 'lights', entities: [explicitTile] }, { kind: 'devices', entities: [nonTile] }],
+        read_only_entities: [readOnly], panel_hidden_entities: [hidden],
+        native_light_hold_entities: [explicitTile, explicitTile, automaticTile, readOnly, hidden, nonTile, foreign, 'switch.demo_heater'],
+      },
+      lounge: { entities: [explicitTile, foreign] },
+    },
+  }, hass, 'en');
+  const optedIn = room => room.entities.filter(item => item.room_light_native_hold).map(item => item.entity);
+  assert.deepEqual(optedIn(studio), [explicitTile, automaticTile]);
+  assert.deepEqual(optedIn(lounge), []);
+});
