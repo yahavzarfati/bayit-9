@@ -1,5 +1,4 @@
 export const MORE_INFO_DIALOG = 'ha-more-info-dialog';
-const focusTarget = Symbol.for('HA focus target');
 const entityParam = 'more-info-entity-id';
 
 function dashboardPage(location) {
@@ -18,8 +17,6 @@ export function preserveMoreInfoReturn(view, { event, source, body, active, stop
   const href = view.location.href;
   const scroll = body?.scrollTop;
   const abort = new view.AbortController();
-  const marked = !Object.hasOwn(source, focusTarget);
-  if (marked) source[focusTarget] = true;
   source.focus({ preventScroll: true });
   let nativeDialog;
   let frame;
@@ -30,7 +27,6 @@ export function preserveMoreInfoReturn(view, { event, source, body, active, stop
     abort.abort();
     view.cancelAnimationFrame(frame);
     view.clearTimeout(afterRender);
-    if (marked) delete source[focusTarget];
     stopped();
   }
 
@@ -52,9 +48,11 @@ export function preserveMoreInfoReturn(view, { event, source, body, active, stop
     if (!nativeDialog || closed.detail?.dialog !== MORE_INFO_DIALOG || closed.composedPath()[0] !== nativeDialog) return;
     if (!stillOnPage()) { stop(); return; }
     frame = view.requestAnimationFrame(() => {
-      // Home Assistant restores its own dialog focus and updates its history on this render.
+      // Restore the source after the native backdrop clears, unless focus has moved to a new control.
       afterRender = view.setTimeout(() => {
-        if (stillOnPage()) {
+        const root = source.getRootNode();
+        const focused = root.activeElement;
+        if (stillOnPage() && (!focused || focused === source || focused === root.body)) {
           if (source.isConnected && !source.disabled && !source.closest('[hidden]')) source.focus({ preventScroll: true });
           if (body) body.scrollTop = scroll;
         }
