@@ -623,3 +623,51 @@ test("curated actions preserve native confirmation and lock PIN, and passive rol
   assert.throws(() => planDeviceAction(lock, states, "unlock"), code("confirmation_required"));
   assert.throws(() => planDeviceAction(lock, states, "unlock", null, { confirmed: true }), code("pin_required"));
 });
+
+test("opted-in script start and stop require the matching current observation and use absolute services", () => {
+  const script = config("script.fixture_toggle", { role: "action", command: "toggle_script", confirmation: "Run this sequence?" });
+  const read = (state, last_changed, last_triggered = null) => ({
+    [script.entity]: { ...entity(state, { last_triggered }), last_changed },
+  });
+  const stopped = read("off", "2026-01-01T01:00:00Z");
+  const first = read("on", "2026-01-01T01:00:02Z", "2026-01-01T01:00:01Z");
+  const replacement = read("on", "2026-01-01T01:00:02Z", "2026-01-01T01:00:03Z");
+  const noConfirmation = { ...script, confirmation: false };
+  const initial = getDeviceModel(script, stopped).actions;
+  assert.deepEqual(Object.keys(initial), ["more_info", "start_script"]);
+  assert.equal(initial.start_script.confirmationText, "Run this sequence?");
+  const startRevision = initial.start_script.scriptRevision;
+  const stopRevision = getDeviceModel(script, first).actions.stop_script.scriptRevision;
+  assert.throws(() => planDeviceAction(script, stopped, "start_script", startRevision), code("confirmation_required"));
+  assert.throws(() => planDeviceAction(script, first, "start_script", startRevision, { confirmed: true }), code("action_unavailable"));
+  assert.throws(() => planDeviceAction(script, stopped, "stop_script", stopRevision, { confirmed: true }), code("action_unavailable"));
+  assert.throws(() => planDeviceAction(script, replacement, "stop_script", stopRevision, { confirmed: true }), code("stale_script_state"));
+  const target = { entity_id: script.entity };
+  assert.deepEqual(planDeviceAction(noConfirmation, stopped, "start_script", startRevision), {
+    kind: "service", domain: "script", service: "turn_on", target, data: {},
+    expected: { entity: script.entity, formerScriptRun: null },
+  });
+  assert.deepEqual(planDeviceAction(script, first, "stop_script", stopRevision, { confirmed: true }), {
+    kind: "service", domain: "script", service: "turn_off", target, data: {},
+    expected: { entity: script.entity, state: "off" },
+  });
+  assert.deepEqual(actionIds(getDeviceModel(script, read("unknown", "2026-01-01T01:00:04Z"))), ["more_info"]);
+  assert.deepEqual(actionIds(getDeviceModel(script, { [script.entity]: entity("off") })), ["more_info"]);
+  assert.deepEqual(actionIds(getDeviceModel({ ...script, role: "status" }, first)), ["more_info"]);
+  assert.equal(planDeviceAction({ ...noConfirmation, command: "run_script" }, first, "run_script").service, "turn_on");
+});
+
+test("script start observation distinguishes a completed quick run from unrelated state changes", async () => {
+  const script = config("script.fixture_toggle", { role: "action", command: "toggle_script", confirmation: false });
+  const former = "2026-01-01T01:00:00Z";
+  const fresh = "2026-01-01T01:00:05Z";
+  const initial = { [script.entity]: { ...entity("off", { last_triggered: former }), last_changed: former } };
+  const revision = getDeviceModel(script, initial).actions.start_script.scriptRevision;
+  const withUpdate = last_triggered => harness(initial, { onSleep: (_, hass) => {
+    hass.states = { [script.entity]: { ...entity("off", { last_triggered }), last_changed: fresh } };
+  } });
+  const unchanged = await withUpdate(former).controller.execute(script, "start_script", revision);
+  assert.equal(unchanged.reason, "state_timeout");
+  const completed = await withUpdate(fresh).controller.execute(script, "start_script", revision);
+  assert.equal(completed.status, "confirmed");
+});

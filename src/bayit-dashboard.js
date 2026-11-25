@@ -1,6 +1,6 @@
 import { styles } from './bayit-dashboard-style.js';
 import { languages } from './bayit-dashboard-i18n.js';
-import { MAX_ROOM_SHORTCUTS, normalizeRoomControlName, overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
+import { isAutomationScriptToggle, MAX_ROOM_SHORTCUTS, normalizeRoomControlName, overviewSectionOptions, ROOM_PANEL_KINDS, STRATEGY_NAME } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { createDeviceController, getDeviceModel } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
@@ -64,6 +64,7 @@ const domainFor = config => config.entity.split('.')[0];
 const isTemperatureSensor = (domain, attributes) => domain === 'sensor' &&
   (attributes?.device_class === 'temperature' || /^(?:°C|°F)$/i.test(attributes?.unit_of_measurement ?? ''));
 const movement = new Set(['open','close','set_position']);
+const scriptOperations = new Set(['start_script', 'stop_script']);
 const coverMovingStates = new Set(['opening', 'closing']);
 const rangeActions = new Set(['set_position', 'set_brightness', 'set_color_temp_kelvin', 'set_percentage', 'volume_set']);
 const stateKeys = {
@@ -284,6 +285,7 @@ export function normalizeDashboardConfig(config = {}) {
         if (!selected) return [];
         const members = selected.map(raw => {
           const entity = normalizeEntity(raw);
+          if (isAutomationScriptToggle(item.kind, section.kind, raw)) entity.command = 'toggle_script';
           if (item.kind === 'sensors' && section.kind !== 'series' && entity.role === 'graph' &&
               domainFor(entity) === 'sensor' && known.has(raw.graph_room_id)) entity.graph_room_id = raw.graph_room_id;
           return entity;
@@ -1676,11 +1678,12 @@ export class BayitDashboard extends HTMLElement {
     if (!this.canRequest(config.entity, id)) return;
     const model = this.model(config);
     const action = model.actions[id];
-    if (!action) return;
+    if (this.staleScriptAction(id, action, value) || !action) return;
     if (!action.requiresConfirmation && !confirmShortcut) return action.requiresCode ? this.moreInfo(config) : this.send(config, id, value);
     this.confirming = { config, id, value, source, native: action.requiresCode };
     const n = this.nodes;
-    setText(n.confirmText, action.confirmationText || this.t('confirm_action').replace('{name}', model.name).replace('{action}', this.actionLabel(id)));
+    const prompt = this.t('confirm_action').replace('{name}', model.name).replace('{action}', this.actionLabel(id));
+    setText(n.confirmText, (id !== 'stop_script' && action.confirmationText) || prompt);
     if (!n.confirm.open) n.confirm.showModal();
     n.abort.focus({ preventScroll: true });
   }
@@ -1696,7 +1699,7 @@ export class BayitDashboard extends HTMLElement {
   async send(config, id, value, confirmed = false) {
     if (!this.canRequest(config.entity, id)) return;
     const model = this.model(config);
-    if (!model.actions[id]) return;
+    if (this.staleScriptAction(id, model.actions[id], value) || !model.actions[id]) return;
     const token = { id, value };
     if (model.domain === 'cover' && movement.has(id)) {
       if (id === 'open') token.coverDirection = 'opening';
@@ -1723,14 +1726,23 @@ export class BayitDashboard extends HTMLElement {
           for (const field of view.fields) if (field.id === id) field.dirty = false;
         }
       }
-    } catch {
-      if (this.pending.get(config.entity) === token) this.announce(this.t('send_error'));
+    } catch (error) {
+      if (this.pending.get(config.entity) === token) {
+        const changed = scriptOperations.has(id) && ['stale_script_state', 'action_unavailable'].includes(error?.code);
+        this.announce(this.t(changed ? 'script_state_changed' : 'send_error'));
+      }
     } finally {
       if (this.pending.get(config.entity) === token) {
         this.pending.delete(config.entity);
         if (this.isConnected) this.update();
       }
     }
+  }
+
+  staleScriptAction(id, action, revision) {
+    if (!scriptOperations.has(id) || (action && revision === action.scriptRevision)) return false;
+    this.announce(this.t('script_state_changed'));
+    return true;
   }
 
   announce(message) {

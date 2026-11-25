@@ -66,6 +66,8 @@ In a grouped gallery, **Effects**, **Fixed color**, and **White** switch between
 
 Toolbar sections accept ordered entities and can render action tiles, locks, covers, person tiles, solar readings, forecasts, and history graphs. Choose those presentations in **Toolbar and extra screens**. A status or graph tile is read-only, and confirmations can be set for explicit actions. Overview sections can show active devices only. Media, vacuum, calendar and other configured screens can live inside Settings.
 
+In an **Automations** actions section, set a script's **Script button behavior** to **Start or stop script** to make the button follow the run reported by Home Assistant. In YAML, give the script entry `role: action` and `command: toggle_script`. The button checks that the observed run is still current before sending a command. Stopping skips the remaining steps in that run. Existing `run_script` entries continue to start a script on each tap.
+
 In an **Overview** status section, choose **Discover active lights** to list currently on lights from across the dashboard's Home Assistant connection. Hidden and disabled entities stay excluded. Use **Exclude these lights** for exact entity IDs and **Exclude by text in entity ID** for literal ID fragments. An active status or covers section can also keep covers visible while they are closing.
 
 In YAML, use `discover: {domain: light, exclude_entities: [light.example], exclude_id_contains: [helper]}` on an Overview status section. Discovery always lists on lights. For a section with selected covers, set `filter: active` and `include_closing: true` to keep closing covers visible until they close.

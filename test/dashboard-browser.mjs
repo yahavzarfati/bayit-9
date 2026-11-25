@@ -28,6 +28,15 @@ document.addEventListener('hass-more-info', event => {
 const coverRequests = [];
 let finishLevel;
 let finishPreselect;
+let scriptSerial = 0;
+function observeScript(state) {
+  const id = 'script.demo_toggle';
+  const previous = states[id];
+  const stamp = new Date(Date.UTC(2026, 0, 1, 0, 0, ++scriptSerial)).toISOString();
+  states[id] = { ...previous, state, last_changed: state === previous.state ? previous.last_changed : stamp,
+    attributes: { ...previous.attributes, last_triggered: state === 'on' ? stamp : previous.attributes.last_triggered } };
+  card.hass = { ...hass, states: { ...states } };
+}
 const query = new URL(location.href).searchParams;
 const storedKey = 'bayit9-browser-fixture';
 const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection') && { show_unassigned: false }),
@@ -96,6 +105,9 @@ const hass = {
       return new Promise((resolve, reject) => {
         coverRequests.push(failed => failed ? reject(new Error('Fixture rejection')) : resolve({}));
       });
+    }
+    if (request.domain === 'script' && request.target?.entity_id === 'script.demo_toggle') {
+      observeScript(request.service === 'turn_on' ? 'on' : 'off');
     }
     if (request.domain === 'script' && request.service === 'demo_select_heat_step') {
       states['script.demo_select_heat_step'] = { state: 'on', attributes: {} };
@@ -271,6 +283,8 @@ if (query.has('heater-level')) {
 if (query.has('toolbar-panels')) {
   Object.assign(states, {
     'script.demo_scene': {state:'off', attributes:{friendly_name:'Evening scene'}},
+    'script.demo_toggle': {state:'off', last_changed:'2026-01-01T00:00:00.000Z',
+      attributes:{friendly_name:'Arrival scene',last_triggered:null}},
     'lock.demo_entry': {state:'locked', attributes:{friendly_name:'Front door',code_format:'^[0-9]+$'}},
     'weather.demo_home': {state:'sunny', attributes:{friendly_name:'Home forecast',supported_features:1,temperature:23}},
     'sun.sun': {state:'above_horizon', attributes:{friendly_name:'Sun', next_rising:'2026-11-25T04:00:00Z',elevation:15,azimuth:270}},
@@ -399,7 +413,8 @@ const selected = query.has('configuration') ? stored().strategy : query.has('pop
   } } }),
   toolbar:[
     {kind:'automations',sections:[{kind:'actions',entities:[{entity:'script.demo_scene',role:'action',command:'run_script',confirmation:'Run the evening scene?'},
-      {entity:'lock.demo_entry',role:'lock',confirmation:'Open the front door?'}]}]},
+      {entity:'lock.demo_entry',role:'lock',confirmation:'Open the front door?'},
+      ...(query.has('automation-toggle') ? [{entity:'script.demo_toggle',role:'action',command:'toggle_script',confirmation:'Run the arrival scene?'}] : [])]}]},
     {kind:'presence',sections:[{kind:'people',entities:['person.demo_friend']}]},
     {kind:'weather',sections:[{kind:'forecast',entities:['weather.demo_home']},{kind:'sun',entities:['sun.sun']}]},
     {kind:'energy',sections:[{kind:'electricity',entities:[{entity:'sensor.demo_meter',role:'graph',graph_hours:168}]}]},
@@ -443,6 +458,7 @@ if (query.has('editor')) {
 window.bayitTest = {
   registrations: window.customStrategies, calls, moreInfoCalls, moreInfoHashes, config,
   loadPopupHass() { card.hass = hass; },
+  observeScript,
   finishCover: (index, failed = false) => coverRequests[index](failed),
   setRoomState(entity, state) {
     states[entity] = { ...states[entity], state };
@@ -1880,6 +1896,77 @@ try {
       assert.equal((await editedGraph()).vacuum_panel_id, undefined);
       await chartEditor.close();
       console.log(engine + ': Sensors graph room and Vacuum navigation, stale targets, native fallback and editor');
+
+      const scriptPage = await browser.newPage({ viewport: { width: 320, height:844 }, hasTouch:true });
+      scriptPage.setDefaultTimeout(8000);
+      await scriptPage.goto(base + '?toolbar-panels&automation-toggle');
+      await scriptPage.getByRole('button', { name: 'Automations', exact: true }).tap();
+      const scriptPanel = scriptPage.getByRole('dialog', { name: 'Automations', exact: true });
+      const startScript = scriptPanel.getByRole('button', { name: 'Arrival scene · Start script', exact: true });
+      const stopScript = scriptPanel.getByRole('button', { name: 'Arrival scene · Stop script', exact: true });
+      const scriptPrompt = scriptPage.getByRole('dialog', { name: 'Confirm action', exact: true });
+      const acceptScript = scriptPrompt.getByRole('button', { name: 'Confirm', exact: true });
+      const staleScript = scriptPanel.getByText('The script state changed. Review it and try again.', { exact: true });
+      const scriptCalls = () => scriptPage.evaluate(() => window.bayitTest.calls.filter(call => call.domain === 'script'));
+
+      await startScript.tap();
+      await scriptPrompt.getByText('Run the arrival scene?', { exact: true }).waitFor();
+      await scriptPage.evaluate(() => window.bayitTest.observeScript('on'));
+      await acceptScript.tap();
+      await stopScript.waitFor();
+      await staleScript.waitFor();
+      assert.deepEqual(await scriptCalls(), []);
+
+      await stopScript.tap();
+      await scriptPrompt.getByText('Continue with Stop script on Arrival scene?', { exact: true }).waitFor();
+      await scriptPage.evaluate(() => window.bayitTest.observeScript('off'));
+      await acceptScript.tap();
+      await startScript.waitFor();
+      assert.deepEqual(await scriptCalls(), []);
+
+      await scriptPage.evaluate(() => window.bayitTest.observeScript('on'));
+      await stopScript.tap();
+      await scriptPage.evaluate(() => window.bayitTest.observeScript('on'));
+      await acceptScript.tap();
+      await stopScript.waitFor();
+      assert.deepEqual(await scriptCalls(), []);
+
+      await stopScript.dispatchEvent('pointerdown', { pointerType:'touch', isPrimary:true });
+      await scriptPage.evaluate(() => window.bayitTest.observeScript('on'));
+      await scriptPage.evaluate(() => new Promise(requestAnimationFrame));
+      await stopScript.dispatchEvent('click');
+      await staleScript.waitFor();
+      assert.equal(await scriptPrompt.count(), 0);
+      assert.deepEqual(await scriptCalls(), []);
+
+      await stopScript.tap();
+      await acceptScript.tap();
+      await startScript.waitFor();
+      await startScript.tap();
+      await acceptScript.tap();
+      await stopScript.waitFor();
+      assert.deepEqual(await scriptCalls(), ['turn_off', 'turn_on'].map(service => ({
+        type:'call_service', domain:'script', service, service_data:{}, target:{entity_id:'script.demo_toggle'},
+      })));
+      await scriptPage.close();
+
+      const scriptEditor = await browser.newPage({ viewport: { width:320, height:844 }, hasTouch:true });
+      scriptEditor.setDefaultTimeout(8000);
+      await scriptEditor.goto(base + '?toolbar-panels&automation-toggle&editor');
+      await scriptEditor.getByText('Toolbar and extra screens', { exact: true }).tap();
+      await scriptEditor.getByRole('button', { name: 'Automations', exact: true }).tap();
+      await scriptEditor.getByRole('button', { name: 'Actions', exact: true }).tap();
+      await scriptEditor.getByRole('button', { name: 'Arrival scene', exact: true }).tap();
+      const behavior = scriptEditor.getByLabel('Script button behavior', { exact: true });
+      assert.equal(await behavior.inputValue(), 'toggle_script');
+      await behavior.selectOption('run_script');
+      const edited = () => scriptEditor.evaluate(() => window.latest.toolbar[0].sections[0].entities[2]);
+      assert.equal((await edited()).command, 'run_script');
+      await behavior.selectOption('toggle_script');
+      assert.equal((await edited()).command, 'toggle_script');
+      assert.equal((await edited()).confirmation, 'Run the arrival scene?');
+      await scriptEditor.close();
+      console.log(engine + ' 320: script Start/Stop, changed-state and replacement-run guards, and editor');
 
       const overviewPage = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
       overviewPage.setDefaultTimeout(8000);

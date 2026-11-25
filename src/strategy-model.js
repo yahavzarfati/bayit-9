@@ -459,6 +459,11 @@ function dashboardContext(config, hass, locale) {
   return context;
 }
 
+export function isAutomationScriptToggle(kind, section, item) {
+  return kind === 'automations' && section === 'actions' && item?.role === 'action' &&
+    item.command === 'toggle_script' && idForDomain(item.entity, 'script');
+}
+
 function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
   if (!Array.isArray(value)) return undefined;
   const seenSections = new Set();
@@ -482,7 +487,8 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds }) {
       const name = typeof item?.name === 'string' ? item.name.trim().slice(0, 80) : '';
       const icon = typeof item?.icon === 'string' ? item.icon.trim() : '';
       const role = TOOLBAR_ROLES.has(item?.role) ? item.role : undefined;
-      const command = role === 'action' && domain === 'script' && item.command === 'run_script' ? item.command : undefined;
+      const runScript = role === 'action' && domain === 'script' && item.command === 'run_script';
+      const command = runScript || isAutomationScriptToggle(kind, section.kind, item) ? item.command : undefined;
       const confirmation = typeof item?.confirmation === 'string'
         ? item.confirmation.trim().slice(0, 200) || undefined
         : item?.confirmation === true || (item?.confirmation === false && command) ? item.confirmation : undefined;

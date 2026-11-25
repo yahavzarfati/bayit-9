@@ -28,6 +28,7 @@ const WORDS = {
     confirmation: 'Confirmation', confirmationText: 'Confirmation message', graphHours: 'History hours',
     graphDestination: 'Open on graph tap', noGraphLink: 'No shortcut', graphLinkUnavailable: 'Destination unavailable', graphRoom: 'Room',
     runScript: 'Run script from this button',
+    scriptButton: 'Script button behavior', scriptStartOnly: 'Start script only', scriptToggle: 'Start or stop script',
     orefMapTitle: 'Regional alerts',
     orefMap: 'Show the Oref alert map',
     orefMapHint: 'Requires the Oref Alert integration in Home Assistant.',
@@ -72,6 +73,7 @@ const WORDS = {
     confirmation: 'אישור פעולה', confirmationText: 'הודעת אישור', graphHours: 'שעות היסטוריה',
     graphDestination: 'פתיחה בלחיצה על הגרף', noGraphLink: 'ללא קיצור דרך', graphLinkUnavailable: 'היעד אינו זמין', graphRoom: 'חדר',
     runScript: 'הפעלת התסריט מהכפתור',
+    scriptButton: 'פעולת כפתור התרחיש', scriptStartOnly: 'הפעלת תרחיש בלבד', scriptToggle: 'הפעלה או עצירה של תרחיש',
     orefMapTitle: 'התראות אזוריות',
     orefMap: 'הצגת מפת התרעות פיקוד העורף',
     orefMapHint: 'נדרשת אינטגרציית פיקוד העורף ב־Home Assistant.',
@@ -386,23 +388,34 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         { dir:'ltr', maxLength:7, placeholder:'#80BFFF', pattern:/^#[0-9a-f]{6}$/i,
           error:words.calendarInvalidAccent }).field);
     }
+    const allowToggle = toolbar[entryIndex].kind === 'automations' && section.kind === 'actions';
     if (record.role === 'action' && domain === 'script') {
-      const run = node('input', { type: 'checkbox', checked: record.command === 'run_script' });
-      run.dataset.toolbarFocus = 'run-script';
-      run.addEventListener('change', () => save({
-        command: run.checked ? 'run_script' : undefined,
-        ...(!run.checked && toolbar[entryIndex].sections[sectionIndex].entities[index]?.confirmation === false
+      const setCommand = (command, focus) => save({
+        command,
+        ...(!command && toolbar[entryIndex].sections[sectionIndex].entities[index]?.confirmation === false
           && { confirmation: undefined }),
-      }, true, 'run-script'));
-      fields.push(node('label', { className: 'check' }, [run, words.runScript]));
+      }, true, focus);
+      if (allowToggle) {
+        const input = select([['', words.automatic], ['run_script', words.scriptStartOnly], ['toggle_script', words.scriptToggle]],
+          record.command || '');
+        input.dataset.toolbarFocus = 'script-command';
+        input.addEventListener('change', () => setCommand(input.value || undefined, 'script-command'));
+        fields.push(field(words.scriptButton, input));
+      } else {
+        const run = node('input', { type: 'checkbox', checked: record.command === 'run_script' });
+        run.dataset.toolbarFocus = 'run-script';
+        run.addEventListener('change', () => setCommand(run.checked ? 'run_script' : undefined, 'run-script'));
+        fields.push(node('label', { className: 'check' }, [run, words.runScript]));
+      }
     }
     const effectiveRole = record.role ?? (section.kind === 'actions' ? 'action' : undefined);
     if (['action', 'lock', 'cover', 'device', 'now_playing'].includes(effectiveRole)
         || ['locks', 'covers', 'devices'].includes(section.kind) && !['status', 'graph'].includes(effectiveRole)) {
       const current = record.confirmation === true ? 'ask' : record.confirmation === false ? 'skip'
         : typeof record.confirmation === 'string' ? 'custom' : '';
+      const canSkip = record.command === 'run_script' || (allowToggle && record.command === 'toggle_script');
       const confirmation = select([['', words.automatic], ['ask', words.ask],
-        ...(record.command === 'run_script' ? [['skip', words.skip]] : []), ['custom', words.askCustom]], current);
+        ...(canSkip ? [['skip', words.skip]] : []), ['custom', words.askCustom]], current);
       const message = textField(words.confirmationText,
         typeof record.confirmation === 'string' ? record.confirmation : '',
         value => save({ confirmation: value || true }), { maxLength: 200 });

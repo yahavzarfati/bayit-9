@@ -174,6 +174,54 @@ export function createToolbarPanel(kind, configuration, context) {
     return tile;
   }
 
+  function renderScriptToggle(item) {
+    const host = make('div', 'script-toggle');
+    const controls = ['start_script', 'stop_script'].map(id => {
+      const tile = button('tile-row');
+      const mark = make('span', 'tile-mark');
+      const glyph = icon(id === 'stop_script' ? 'mdi:stop' : item.icon || 'mdi:play');
+      const name = make('span', 'tile-label');
+      const caption = make('span', 'tile-state');
+      mark.append(glyph);
+      tile.append(mark, name, caption);
+      host.append(tile);
+
+      let revision;
+      let gestureRevision;
+      const capture = () => { gestureRevision = revision; };
+      const clear = () => { gestureRevision = undefined; };
+      tile.addEventListener('pointerdown', capture);
+      tile.addEventListener('pointercancel', clear);
+      tile.addEventListener('blur', clear);
+      tile.addEventListener('keydown', event => {
+        if (!event.repeat && ['Enter', ' '].includes(event.key)) capture();
+      });
+      tile.onclick = () => {
+        const observed = gestureRevision ?? revision;
+        clear();
+        if (observed) request(item, id, observed, tile);
+      };
+
+      return (model, state, busy) => {
+        const stopping = id === 'stop_script';
+        revision = model.actions[id]?.scriptRevision;
+        tile.hidden = stopping !== (model.state === 'on');
+        tile.disabled = !revision || busy;
+        tile.dataset.tone = stopping ? 'active' : '';
+        tile.setAttribute('aria-busy', String(busy));
+        name.textContent = model.name;
+        caption.textContent = revision ? t(id) : state;
+        label(tile, model.name + ' · ' + caption.textContent);
+      };
+    });
+    handlers.push(() => {
+      const { model, state } = amount(item);
+      const busy = pending(item.entity);
+      for (const update of controls) update(model, state, busy);
+    });
+    return host;
+  }
+
   function discoveredLightSection(panel, items, source) {
     const tiles = new Map();
     const allowed = entity => isActiveOverviewLight(entity, source, context.getHass(), context.hiddenEntities);
@@ -237,6 +285,7 @@ export function createToolbarPanel(kind, configuration, context) {
   function render(item, section) {
     const itemKind = item.role ?? ({ people: 'person', actions: 'action', forecast: 'forecast', sun: 'sun' }[section]);
     if (itemKind === 'person' && domain(item) === 'person') return renderTile(item, 'person');
+    if (item.command === 'toggle_script') return renderScriptToggle(item);
     if (itemKind === 'action' || (section === 'actions' && itemKind === 'lock')) return renderTile(item, 'action');
     if (itemKind === 'forecast' && domain(item) === 'weather') {
       const forecast = knownForecast(currentHass?.states?.[item.entity]?.attributes?.supported_features);
@@ -421,6 +470,7 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + `
   }
   .tile-row { display: grid; justify-items: center; align-content: center; gap: 5px; min-height: 80px; width: 100%;
     padding: 8px 6px; border: 1px solid var(--soft-line); border-radius: 12px; background: var(--control); text-align: center; }
+  .script-toggle > .tile-row[hidden] { display: none; }
   .tile-mark { display: grid; place-items: center; position: relative; border-radius: 50%; width: 34px; height: 34px; background: var(--glass); }
   .tile-portrait { position: absolute; inset: 0; object-fit: cover; width: 100%; height: 100%; border-radius: inherit; }
   .tile-row:is([data-tone=home],[data-tone=active]) .tile-mark { color: var(--warm); }

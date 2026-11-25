@@ -856,6 +856,25 @@ test('only an individual Sensors history graph can link to an existing Vacuum pa
   assert.equal(makeToolbar()[0].sections[0].entities[0].vacuum_panel_id, undefined);
 });
 
+test('script toggles stay scoped to explicit Automations actions and preserve confirmation settings', () => {
+  const item = { entity: 'script.demo_start', role: 'action', command: 'toggle_script', confirmation: false };
+  const section = (kind, entities) => ({ kind, entities });
+  const [automations, security] = generateDashboard({ toolbar: [
+    { kind: 'automations', sections: [
+      section('actions', [item, { ...item, entity: 'switch.demo_boiler' }]),
+      section('actions', [{ ...item, role: 'status' }]),
+      section('status', [item]),
+    ] },
+    { kind: 'security', sections: [section('actions', [item])] },
+  ] }, home()).views[0].cards[0].toolbar;
+  assert.deepEqual(automations.sections[0].entities[0], item);
+  for (const entry of [automations.sections[0].entities[1], automations.sections[1].entities[0],
+    automations.sections[2].entities[0], security.sections[0].entities[0]]) {
+    assert.equal(entry.command, undefined);
+    assert.equal(entry.confirmation, undefined);
+  }
+});
+
 test('only an individual Sensors history graph can link to a room projected by this dashboard', () => {
   const hass = home();
   const sensor = 'sensor.fixture';

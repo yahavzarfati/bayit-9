@@ -23,6 +23,8 @@ const SERVICES = {
   set_effect: "turn_on",
   set_temperature_range: "set_temperature",
   run_script: "turn_on",
+  start_script: "turn_on",
+  stop_script: "turn_off",
 };
 
 const PARAMETER = {
@@ -57,6 +59,11 @@ function isEntity(value, domain) {
 function isAvailable(record) {
   return typeof record?.state === "string" && record.state !== "" &&
     !["unavailable", "unknown"].includes(record.state);
+}
+
+function scriptRevision(record) {
+  if (typeof record?.last_changed !== "string" || !record.last_changed) return null;
+  return JSON.stringify([record.last_changed, record.attributes?.last_triggered ?? null]);
 }
 
 function timedProfile(profile, domain, kind) {
@@ -212,8 +219,15 @@ function supportedActions(config, states, record, timer, nowMs) {
       power();
       break;
     case "script": {
-      const explicitlyUnconfirmed = config.role === "action" && config.command === "run_script" && config.confirmation === false;
-      add("run_script", { requiresConfirmation: !explicitlyUnconfirmed });
+      const curated = config.role === "action";
+      if (curated && config.command === "toggle_script") {
+        const revision = scriptRevision(record);
+        const operation = record.state === "on" ? "stop_script" : record.state === "off" ? "start_script" : null;
+        if (operation && revision) add(operation, { scriptRevision: revision, requiresConfirmation: config.confirmation !== false });
+      } else {
+        const explicitlyUnconfirmed = curated && config.command === "run_script" && config.confirmation === false;
+        add("run_script", { requiresConfirmation: !explicitlyUnconfirmed });
+      }
       break;
     }
     case "light": {
@@ -392,7 +406,10 @@ function expectedState(config, action, value, states) {
     case "turn_on":
       return ["light", "switch", "fan", "automation"].includes(config.domain) ? state("on") : null;
     case "turn_off":
+    case "stop_script":
       return state("off");
+    case "start_script":
+      return { entity: config.entity, formerScriptRun: states[config.entity].attributes?.last_triggered ?? null };
     case "open":
       return state("open");
     case "close":
@@ -450,6 +467,9 @@ export function planDeviceAction(config, states, actionId, value, { confirmed = 
   const model = deviceModel(config, states, Date.now());
   const action = typeof actionId === "string" && Object.hasOwn(model.actions, actionId) && model.actions[actionId];
   if (!action) throw new DeviceControlError("action_unavailable", "This entity does not currently support that action.");
+  if (action.scriptRevision && value !== action.scriptRevision) {
+    throw new DeviceControlError("stale_script_state", "The observed script run changed before the command was sent.");
+  }
   if (action.requiresConfirmation && confirmed !== true) {
     throw new DeviceControlError("confirmation_required", "This action requires explicit confirmation.");
   }
@@ -574,6 +594,10 @@ function observed(expected, states) {
   if (!isAvailable(record)) return false;
   if (expected.state !== undefined && expected.state !== record.state) return false;
   if (expected.anyState && !expected.anyState.includes(record.state)) return false;
+  if (expected.formerScriptRun !== undefined && record.state !== "on") {
+    const started = record.attributes?.last_triggered;
+    if (typeof started !== "string" || !started || started === expected.formerScriptRun) return false;
+  }
   if (expected.lightColor && !matchesLightColor(record.attributes, expected.lightColor)) return false;
   if (expected.numericState !== undefined &&
       (!record.state.trim() || !(Math.abs(Number(record.state) - expected.numericState) <= 1e-7))) return false;
