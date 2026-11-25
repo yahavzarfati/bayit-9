@@ -1716,13 +1716,19 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const membership = records.length ? orderedList(records, change, words, words.remove, false, 'devices', manual)
       : node('p', { textContent: manual ? words.noDevices : words.noExtraRoomDevices });
 
-    const selected = new Set([...chosen, ...memberIds]);
-    const devices = [...available.values()].filter(device => !selected.has(device.entity)).map(device => ({
-      id: device.entity, name: device.name || device.entity, area: entityArea(this.#hass, device.entity),
-    }));
-    devices.sort((a, b) => Number(b.area === room.id) - Number(a.area === room.id) || a.name.localeCompare(b.name, language));
-    const nameCounts = new Map();
-    for (const device of devices) nameCounts.set(device.name, (nameCounts.get(device.name) ?? 0) + 1);
+    const choiceRows = (inventory, existing) => {
+      const selected = new Set([...existing, ...memberIds]);
+      const devices = [...inventory].filter(device => !selected.has(device.entity)).map(device => ({
+        id: device.entity, name: device.name || device.entity, area: entityArea(this.#hass, device.entity),
+      }));
+      return devices.sort((a, b) => Number(b.area === room.id) - Number(a.area === room.id) ||
+        a.name.localeCompare(b.name, language));
+    };
+    const currentChoices = () => {
+      const existing = manual ? chosen : dashboardRoomMemberships(this.#config, this.#hass, language)
+        .find(item => item.id === room.id)?.entities ?? [];
+      return choiceRows(selectableRoomEntities(this.#config, this.#hass), existing);
+    };
 
     const addition = (id, preserveAutomatic) => {
       if (!manual) return { ...override, additional_entities: [...memberIds, id] };
@@ -1736,8 +1742,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
     };
     const keepAutomatic = checkbox(words.keepInAutomaticRoom, false, () => updatePlacement());
     const keep = keepAutomatic.firstElementChild;
-    const picker = addPicker(words.deviceToAdd, [], manual ? words.addDevice : words.addExtraRoomDevice, words.choose,
-      id => this.#setRoomOverride(room.id, addition(id, !keepAutomatic.hidden && keep.checked), 'room-device-search'));
+    const picker = addPicker(words.deviceToAdd, [], manual ? words.addDevice : words.addExtraRoomDevice, words.choose, id => {
+      const choices = currentChoices();
+      if (!choices.some(device => device.id === id)) { refresh(true, choices); return; }
+      this.#setRoomOverride(room.id, addition(id, !keepAutomatic.hidden && keep.checked), 'room-device-search');
+    });
     const placement = node('p', { className: 'room-add-hint', id: picker.input.getAttribute('aria-labelledby') + '-placement' });
     placement.setAttribute('role', 'status');
     if (manual) picker.action.setAttribute('aria-describedby', placement.id);
@@ -1773,7 +1782,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
     });
     const filter = node('input', { type: 'search', value: this.#roomDeviceQuery });
     filter.dataset.roomFocus = 'room-device-search';
-    const refresh = () => {
+    const refresh = (keepSelection = false, devices = currentChoices()) => {
+      const selected = keepSelection ? picker.input.value : '';
+      const nameCounts = new Map();
+      for (const device of devices) nameCounts.set(device.name, (nameCounts.get(device.name) ?? 0) + 1);
       const query = filter.value.trim().toLocaleLowerCase(language);
       const results = devices.filter(device => {
         const area = areaNames.get(device.area) ?? '';
@@ -1786,12 +1798,16 @@ export class Bayit9StrategyEditor extends HTMLElement {
         return option(device.id, suffix ? name + ' · ' + suffix : name);
       }));
       picker.input.disabled = !results.length;
-      picker.action.disabled = true;
-      keep.checked = false;
+      picker.input.value = results.some(device => device.id === selected) ? selected : '';
+      picker.action.disabled = !picker.input.value;
+      if (!picker.input.value) keep.checked = false;
       updatePlacement();
     };
     filter.addEventListener('input', () => { this.#roomDeviceQuery = filter.value; refresh(); });
-    refresh();
+    // A registry entry can arrive before its first state. Resolve the current inventory when using the picker.
+    filter.addEventListener('focus', () => refresh(true));
+    picker.input.addEventListener('focus', () => refresh(true));
+    refresh(false, choiceRows(available.values(), chosen));
     const controls = manual ? node('div', {}, [picker.wrapper, keepAutomatic, placement]) : picker.wrapper;
     return [field(words.roomDeviceSearch, filter), controls, membership];
   }

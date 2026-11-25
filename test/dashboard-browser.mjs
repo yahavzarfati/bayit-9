@@ -940,6 +940,11 @@ if (query.has('device-display-picker')) {
   states['fan.demo_display'] = { state:'off', attributes:{ friendly_name:'Fixture fan' } };
   hass.entities['fan.demo_display'] = { area_id:'studio' };
 }
+if (query.has('late-room-device') &&
+    stored().strategy.room_overrides?.bayit_room_alternate?.entities?.includes('light.fixture_new_paired')) {
+  states['light.fixture_new_paired'] = { state:'off', attributes:{ friendly_name:'Late paired lamp' } };
+  hass.entities['light.fixture_new_paired'] = { area_id:'lounge' };
+}
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
 // Simulate Home Assistant's renderer input. The configuration WebSocket still returns the raw storage object.
 function rendererStrategy(strategy) {
@@ -3021,6 +3026,86 @@ async function assertCustomRoomIcons(browser) {
       assert.deepEqual(cleared.room_overrides[customId], { name:words.fixtureRoom, entities:[lamp] });
       assert.equal(await homeIcon('studio').getAttribute('icon'), desk);
       assert.equal(await homeIcon(customId).getAttribute('icon'), home);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+async function assertRoomPickerRefreshesLateDevices(browser) {
+  const labels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', room:'Room to customize',
+      title:'Dashboard title', search:'Find a device to add', devices:'Available devices', add:'Add device', save:'Save dashboard' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים', room:'חדר להתאמה אישית',
+      title:'שם הדשבורד', search:'חיפוש מכשיר להוספה', devices:'מכשירים זמינים', add:'הוספת מכשיר', save:'שמירת הדשבורד' },
+  ];
+  const id = 'bayit_room_alternate';
+  const lamp = 'light.fixture_new_paired';
+  const strategy = { type:'custom:bayit-9', area_ids:['studio', 'lounge', id],
+    room_overrides:{ [id]:{ name:'Alternate nook', entities:[] } } };
+  for (const [index, words] of labels.entries()) {
+    const page = await browser.newPage({ viewport:{ width:index ? 391 : 320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      await page.addInitScript(value => {
+        const key = 'bayit9-browser-fixture';
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy:value }));
+      }, strategy);
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      const field = name => setup.getByLabel(name, { exact:true });
+      const search = field(words.search);
+      const picker = field(words.devices);
+      const candidate = picker.locator('option[value="' + lamp + '"]');
+      const add = setup.getByRole('button', { name:words.add, exact:true });
+      const title = field(words.title);
+      const updateRegistry = hidden => page.evaluate(([entity, hidden]) => {
+        const dash = document.querySelector('bayit-dashboard');
+        const { entities } = dash._hass;
+        dash.hass = { ...dash._hass, entities:{ ...entities, [entity]:{ area_id:'lounge', hidden } } };
+      }, [lamp, hidden]);
+
+      await page.goto(base + '/fixture-home/home?configuration&room-selection&late-room-device&locale=' + words.locale);
+      await page.getByRole('button', { name:words.appearance, exact:true }).press('Enter');
+      await page.getByRole('button', { name:words.setup, exact:true }).press('Enter');
+      await setup.getByText(words.rooms, { exact:true }).press('Enter');
+      await field(words.room).selectOption(id);
+      await title.fill('Portable layout');
+      await setup.locator('.modal-header [data-role=close]').focus();
+      await updateRegistry(false);
+      assert.equal(await candidate.count(), 0);
+      await page.evaluate(entity => {
+        const dash = document.querySelector('bayit-dashboard');
+        const { states } = dash._hass;
+        dash.hass = { ...dash._hass, states:{ ...states, [entity]:{
+          state:'off', attributes:{ friendly_name:'Late paired lamp', supported_color_modes:['onoff'] },
+        } } };
+      }, lamp);
+
+      await search.fill(lamp);
+      assert.equal(await candidate.textContent(), 'Late paired lamp · Lounge');
+      await picker.selectOption(lamp);
+      await picker.focus();
+      assert.equal(await picker.inputValue(), lamp);
+      await updateRegistry(true);
+      await add.press('Enter');
+      assert.equal(await candidate.count(), 0);
+      assert.equal(await add.isDisabled(), true);
+      assert.equal(await title.inputValue(), 'Portable layout');
+      await updateRegistry(false);
+      await search.focus();
+      assert.equal(await search.inputValue(), lamp);
+      await picker.selectOption(lamp);
+      await add.press('Enter');
+
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call =>
+        call.domain || call.type === 'lovelace/config/save')), []);
+      const save = setup.getByRole('button', { name:words.save, exact:true });
+      await Promise.all([page.waitForEvent('load'), save.press('Enter')]);
+      const saved = await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      assert.deepEqual(saved, { ...strategy, title:'Portable layout',
+        room_overrides:{ [id]:{ name:'Alternate nook', entities:[lamp] } } });
+      await page.locator('.room[data-room="' + id + '"] .quick-button[data-entity="' + lamp + '"]').waitFor();
       assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
     } finally {
       await page.close();
@@ -10360,6 +10445,7 @@ try {
     await run('Device appearance edits retain focus and distinguish same-named devices', () => assertDeviceDisplayPickerAndFocus(browser));
     await run('Room setup distinguishes same-named devices in sections and power settings', () => assertRoomTargetLabels(browser));
     await run('Room icon editor previews, validates, saves and clears custom icons', () => assertCustomRoomIcons(browser));
+    await run('Room device picker admits paired devices after their state arrives', () => assertRoomPickerRefreshesLateDevices(browser));
     await run('Profile editor preserves Simple Timer targets and checks deliberate changes', () => assertHeatingProfileBindingsStayExplicit(browser));
 
     await run('Home glass and accessibility', async () => {
