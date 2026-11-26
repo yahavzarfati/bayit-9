@@ -9239,8 +9239,17 @@ async function assertStandaloneTimedClimate(browser) {
       await closeNative('sensor.demo_air_timer_status');
       await today.tap();
       await closeNative('sensor.demo_air_usage');
+      await page.evaluate(() => window.bayitTest.setFixtureAttributes('climate.demo_air', {
+        preset_modes: ['none', 'eco', 'boost', 'away', 'sleep', 'Family weekend'], preset_mode: 'none',
+      }));
       await summary.press('Enter');
       await swing.waitFor();
+      const picker = panel.locator('select[data-action=set_preset_mode]');
+      assert.equal(await picker.inputValue(), 'none');
+      assert.deepEqual(await picker.locator('option').evaluateAll(options => options.map(option => [option.value, option.textContent])),
+        [['none', he ? 'ברירת מחדל' : 'Default'], ['eco', he ? 'חיסכון' : 'Eco'],
+          ['boost', he ? 'עוצמה מוגברת' : 'Boost'], ['away', he ? 'מחוץ לבית' : 'Away'],
+          ['sleep', he ? 'שינה' : 'Sleep'], ['Family weekend', 'Family weekend']]);
       await swing.selectOption('left_center');
       assert.deepEqual(await calls(), []);
       await summary.press('Enter');

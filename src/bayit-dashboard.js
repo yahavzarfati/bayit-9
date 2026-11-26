@@ -2587,8 +2587,7 @@ export class BayitDashboard extends HTMLElement {
   }
 
   presetName(preset) {
-    return preset === 'none' ? this.t('climate_preset_none')
-      : preset === 'eco' ? this.t('climate_preset_eco') : preset;
+    return climateOptionLabel('set_preset_mode', preset, [], key => this.t(key));
   }
 
   canUseRoomPreset(config, model) {

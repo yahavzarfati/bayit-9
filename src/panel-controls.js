@@ -30,10 +30,12 @@ const selectors = {
 };
 
 const namedFanModes = new Set(['sleep', 'quiet', 'health', 'natural', 'strong', 'medium low', 'medium high']);
+const namedClimatePresets = new Set(['none', 'eco', 'away', 'boost', 'sleep']);
 const swingPosition = /^(fixed|swing)_(upper(?:_middle)?|middle|lower(?:_middle)?)$/;
 const horizontalSwingModes = new Set(['default', 'left', 'left_center', 'center', 'right_center', 'right']);
 
 export function climateOptionLabel(action, value, options, t) {
+  if (action === 'set_preset_mode') return namedClimatePresets.has(value) ? t('climate_preset_' + value) : value;
   if (action === 'set_fan_mode' && namedFanModes.has(value)) return t('climate_fan_' + value.replace(' ', '_'));
   if (action === 'set_swing_mode') {
     if (value === 'full_swing') return t('climate_swing_full');
