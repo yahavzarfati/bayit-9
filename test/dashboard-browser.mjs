@@ -4532,21 +4532,42 @@ async function assertHeaterLevelTimeoutFeedback(browser) {
       for (const [id,state] of entries) window.bayitTest.setRoomState(id,state);
     },updates);
     const calls = () => page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service'));
-    const begin = async value => {
+    const start = async value => {
       await level(value).tap();
       await changing.getByText(String(value),{exact:true}).waitFor();
       await report([[selector,'on'],[activity,'on']]);
+    };
+    const begin = async value => {
+      await start(value);
       await page.clock.fastForward(10500);
       await readyStop.waitFor();
     };
+    const close = async () => {
+      await heading.getByRole('button',{name:he ? 'סגירה' : 'Close',exact:true}).tap();
+      await heading.waitFor({state:'hidden'});
+    };
+    const running = () => page.evaluate(()=>{
+      window.bayitTest.setHeaterPower('on');
+      window.bayitTest.setFixtureAttributes('sensor.demo_step_runtime',{
+        timer_state:'active',timer_finishes_at:new Date(Date.now()+600000).toISOString(),
+      });
+    });
+    const reconfigure = changed => page.evaluate(([heater,changed])=>{
+      const card = document.querySelector('bayit-dashboard');
+      const next = structuredClone(window.bayitTest.config.views[0].cards[0]);
+      next.title = 'Updated fixture title';
+      if (changed) {
+        const profile = next.rooms.flatMap(room=>room.entities).find(item=>item.entity===heater);
+        profile.level_select_script = 'script.fixture_new_selector';
+        profile.level_activity_script = 'script.fixture_new_activity';
+        window.bayitTest.setRoomState(profile.level_select_script,'off');
+        window.bayitTest.setRoomState(profile.level_activity_script,'on');
+      }
+      card.setConfig(next);
+    },[heater,changed]);
     try {
       await page.goto(base + '?heater-level&heater-level-feedback&preselect&shared-heater-level&heater-level-timeout&locale=' + locale);
-      await page.evaluate(()=>{
-        window.bayitTest.setHeaterPower('on');
-        window.bayitTest.setFixtureAttributes('sensor.demo_step_runtime',{
-          timer_state:'active',timer_finishes_at:new Date(Date.now()+600000).toISOString(),
-        });
-      });
+      await running();
       await shortcut.tap();
       await heading.waitFor();
       await page.clock.install();
@@ -4554,8 +4575,11 @@ async function assertHeaterLevelTimeoutFeedback(browser) {
       assert.equal(await changing.textContent(),'8');
       assert.equal(await stop.isEnabled(),true);
       assert.equal((await calls()).length,1);
-      await heading.getByRole('button',{name:he ? 'סגירה' : 'Close',exact:true}).tap();
-      await heading.waitFor({state:'hidden'});
+      await close();
+      await shortcut.tap();
+      await changing.getByText('8',{exact:true}).waitFor();
+      await close();
+      await reconfigure(false);
       await shortcut.tap();
       await changing.getByText('8',{exact:true}).waitFor();
       await report([[selector,'off'],[activity,'off']]);
@@ -4597,6 +4621,28 @@ async function assertHeaterLevelTimeoutFeedback(browser) {
         {type:'call_service',domain:'simple_timer',service:'cancel_timer',
           service_data:{entity_id:'sensor.demo_step_runtime',turn_off_entity:true}},
       ]);
+
+      await running();
+      await report([[selector,'off'],[activity,'off']]);
+      await begin(2);
+      await close();
+      await reconfigure(true);
+      await shortcut.tap();
+      await selected.getByText('8',{exact:true}).waitFor();
+      assert.equal(await changing.count(),0);
+
+      await close();
+      await reconfigure(false);
+      await report([[selector,'off'],[activity,'off']]);
+      await shortcut.tap();
+      await start(3);
+      await close();
+      await reconfigure(true);
+      await page.clock.fastForward(10500);
+      await shortcut.tap();
+      await selected.getByText('8',{exact:true}).waitFor();
+      assert.equal(await changing.count(),0);
+      assert.deepEqual((await calls()).slice(6).map(call=>call.service_data.target_step),[2,3]);
     } finally { await page.close(); }
   }
 }
