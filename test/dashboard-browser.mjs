@@ -1847,6 +1847,46 @@ async function assertAppearanceHelperEditor(browser) {
   }
 }
 
+async function assertHomeButtonShapes(browser) {
+  for (const width of [320, 391]) {
+    for (const locale of ['en', 'he']) {
+      const appearance = locale === 'he' ? 'מראה' : 'Appearance';
+      const page = await browser.newPage({ viewport: { width, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+      try {
+        await page.goto(base + '/fixture-home/home?configuration&member&locale=' + locale);
+        const radii = () => page.locator('.shell').evaluate(shell => {
+          const allRadii = selector => [...new Set([...shell.querySelectorAll(selector)]
+            .map(button => getComputedStyle(button).borderTopLeftRadius))];
+          return {
+            toolbar: allRadii('.toolbar .chrome-button:not([hidden])'),
+            shortcuts: allRadii('.room .quick-button'),
+          };
+        });
+        const check = async radius => assert.deepEqual(await radii(), {
+          toolbar: [radius], shortcuts: [radius],
+        });
+        const panel = page.getByRole('dialog', { name: appearance, exact: true });
+        const settings = page.getByRole('button', { name: appearance, exact: true });
+        await settings.waitFor();
+        await check('10px');
+        await settings.tap();
+        await panel.locator('.appearance-layout > summary').tap();
+        for (const [shape, radius] of [['circle', '999px'], ['square', '3px'], ['soft', '10px']]) {
+          await panel.locator(`[data-preference="shape"][value="${shape}"]`).tap();
+          assert.equal(await page.locator('.shell').getAttribute('data-shape'), shape);
+          await check(radius);
+        }
+        await panel.locator('[data-preference="layout"][value="header"]').tap();
+        assert.equal(await page.locator('.shell').getAttribute('data-layout'), 'header');
+        await check('10px');
+        assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+      } finally {
+        await page.close();
+      }
+    }
+  }
+}
+
 async function assertSharedAppearance(browser) {
   const url = base + '/fixture-home/home?configuration&shared-appearance=' + browser.browserType().name();
   const device = { viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: 'reduce' };
@@ -11365,6 +11405,7 @@ try {
     await run('Home appearance settings and synchronization', async () => {
       await assertHomePreferenceAliases(browser);
       await assertSharedAppearance(browser);
+      await assertHomeButtonShapes(browser);
       await assertAppearanceHelperEditor(browser);
     });
 

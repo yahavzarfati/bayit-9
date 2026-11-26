@@ -30,6 +30,7 @@ export const styles = `
     --moving: #9edcff;
     --critical: #ffc7c5;
     --control-radius: 16px;
+    --home-button-radius: 10px;
     --edge: clamp(11px,3.65vw,24px);
     --room-gap: 8px;
     --toolbar-min: 48px;
@@ -86,8 +87,8 @@ export const styles = `
       radial-gradient(ellipse at 20% 96%, #293c46 0, transparent 60%),
       linear-gradient(150deg,#1c2227,#16191d 78%);
   }
-  .shell[data-shape=circle] { --control-radius: 999px; }
-  .shell[data-shape=square] { --control-radius: 9px; --chrome-radius: var(--control-radius); }
+  .shell[data-shape=circle] { --control-radius: 999px; --home-button-radius: 999px; }
+  .shell[data-shape=square] { --control-radius: 9px; --home-button-radius: 3px; }
   .toolbar {
     position: sticky;
     z-index: 2;
@@ -138,13 +139,13 @@ export const styles = `
     border-radius: var(--control-radius);
     transition: background-color .15s, border-color .15s, color .15s, transform .15s;
   }
+  .chrome-button, .quick-button { border-radius: var(--home-button-radius); }
   .chrome-button {
     flex: 0 0 44px;
     width: var(--chrome-size,44px);
     height: var(--chrome-size,44px);
     background: transparent;
     border-color: var(--line);
-    border-radius: var(--chrome-radius,999px);
   }
   .chrome-button ha-icon {
     width: var(--chrome-icon-size,22px);
