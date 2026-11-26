@@ -6233,10 +6233,11 @@ async function assertCoverEndpointConfirmation(browser) {
       }, {entity,state,current_position});
       const he = locale === 'he';
       const confirmed = he ? 'המצב של Window shade עודכן.' : 'Window shade updated.';
-      for (const [step, action, moving, terminal, target, position] of [
-        [0,'open','opening','open',100,67], [1,'close','closing','closed',0,41],
+      for (const [step, action, moving, terminal, target, position, from, initialPosition] of [
+        [0,'open','opening','open',100,67,'open',24], [1,'close','closing','closed',0,41,'open',100],
+        [2,'open','opening','open',100,67,'closed',undefined], [3,'close','closing','closed',0,41,'open',undefined],
       ]) {
-        await update('open', step === 0 ? 24 : 100);
+        await update(from, initialPosition);
         await tile.locator('button[data-action="' + action + '"]').tap();
         const requested = action === 'open'
           ? (he ? 'נשלחה בקשת פתיחה' : 'Opening requested')
@@ -6248,6 +6249,11 @@ async function assertCoverEndpointConfirmation(browser) {
         await page.clock.runFor(200);
         assert.equal(await tile.getAttribute('aria-busy'), 'true', 'Intermediate position cannot confirm completion');
         assert.equal(await current.textContent(), requested);
+        if (initialPosition === undefined) {
+          await update(terminal, undefined);
+          await page.clock.runFor(200);
+          assert.equal(await tile.getAttribute('aria-busy'), 'true', 'Known position remains required when one report omits it');
+        }
         await update(moving, position);
         await current.filter({hasText:new RegExp(position + '%')}).waitFor();
         assert.notEqual(await tile.getAttribute('data-cover-motion'), null);
@@ -6263,7 +6269,7 @@ async function assertCoverEndpointConfirmation(browser) {
         assert.equal(await tile.locator('button[data-action="' + (action === 'open' ? 'close' : 'open') + '"]').isEnabled(), true);
       }
       assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain === 'cover')
-        .map(call => call.service)), ['open_cover','close_cover']);
+        .map(call => call.service)), ['open_cover','close_cover','open_cover','close_cover']);
     } finally {
       await page.close();
     }

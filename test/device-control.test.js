@@ -1063,6 +1063,31 @@ test("cover completion requires both the reported endpoint and terminal state wh
   }
 });
 
+test("cover completion learns and keeps the endpoint requirement from delayed position reports", async () => {
+  const c = config("cover.shade");
+  for (const [action, from, moving, terminal, middle, endpoint] of [
+    ["open", "closed", "opening", "open", 42, 100],
+    ["close", "open", "closing", "closed", 17, 0],
+  ]) {
+    const reported = (state, position, assumed_state) => entity(state,
+      { supported_features:15, current_position:position, assumed_state });
+    for (const first of [reported(terminal, middle), reported(moving, middle)]) {
+      const states = { [c.entity]:reported(from) };
+      const steps = [
+        reported(terminal), reported(terminal, endpoint, true), reported(moving, endpoint), reported(terminal, endpoint),
+      ];
+      let polls = 0;
+      const h = harness(states, {
+        callWS() { states[c.entity] = first; },
+        onSleep(_, hass) { hass.states[c.entity] = steps[polls++]; },
+      });
+      assert.equal((await h.controller.execute(c, action)).status, "confirmed");
+      assert.equal(polls, steps.length);
+      assert.deepEqual(h.calls.map(call => call.service), [action + "_cover"]);
+    }
+  }
+});
+
 test("cover without trustworthy position keeps state-only confirmation", async () => {
   const c = config("cover.shade");
   for (const attrs of [{}, { current_position: null }, { current_position: 180 },

@@ -665,11 +665,13 @@ function expectedState(config, action, value, states) {
       const opening = action === "open";
       const terminal = opening ? "open" : "closed";
       const reported = states?.[config.entity]?.attributes;
-      // A partially open cover can report "open" before and during the command.
-      if (reported?.assumed_state !== true && validCoverPosition(reported?.current_position)) {
-        return { ...attribute("current_position", opening ? 100 : 0), state: terminal };
-      }
-      return state(terminal);
+      return {
+        ...state(terminal),
+        coverEndpoint: {
+          position: opening ? 100 : 0,
+          sawPosition: reported?.assumed_state !== true && validCoverPosition(reported?.current_position),
+        },
+      };
     }
     case "stop":
       return ["opening", "closing"].includes(states?.[config.entity]?.state)
@@ -874,6 +876,16 @@ function observed(expected, states) {
   if (expected.all) return expected.all.every(condition => observed(condition, states));
   const record = states?.[expected.entity];
   if (!isAvailable(record)) return false;
+  const endpoint = expected.coverEndpoint;
+  if (endpoint) {
+    const attrs = record.attributes;
+    const position = attrs?.current_position;
+    const trustworthy = attrs?.assumed_state !== true && validCoverPosition(position);
+    // A cover can begin reporting a measured position after the command arrives.
+    // Keep an endpoint requirement once a measured position has been observed.
+    if (trustworthy) endpoint.sawPosition = true;
+    if (endpoint.sawPosition && (!trustworthy || position !== endpoint.position)) return false;
+  }
   if (expected.state !== undefined && expected.state !== record.state) return false;
   if (expected.anyState && !expected.anyState.includes(record.state)) return false;
   if (expected.formerScriptRun !== undefined && record.state !== "on") {
