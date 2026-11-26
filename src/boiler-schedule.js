@@ -337,6 +337,8 @@ const styles = [
   '.schedule-compact { gap:6px; margin-block-start:8px; padding:6px; border:1px solid var(--soft-line); border-radius:12px; }',
   '.schedule-compact .schedule-list { gap:5px; }',
   '.schedule-compact:has(> .schedule-form:not([hidden])) > :is(.schedule-toolbar,.schedule-list) { display:none; }',
+  '.boiler-panel:has(> .boiler-schedule-host:not([hidden]) > .schedule-compact > .schedule-form:not([hidden])) > .boiler-pane:first-child { display:none; }',
+  '.schedule-compact:has(> .schedule-form:not([hidden])) { margin:0; padding:0; border:0; }',
   '.schedule-compact .schedule-toolbar > .schedule-add { flex:1; }',
   '.schedule-compact .schedule-row { display:flex; align-items:stretch; gap:0; padding:0; border:1px solid var(--soft-line); border-radius:8px; background:var(--room-tile-fill); }',
   '.schedule-compact .schedule-summary { flex:1; min-width:0; display:flex; flex-wrap:wrap; align-content:center; align-items:center; gap:2px 5px; min-height:44px; padding:4px 7px; font-size:12px; text-align:start; }',

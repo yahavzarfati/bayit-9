@@ -1210,7 +1210,12 @@ try {
       const dialogViewport = stackedDialog.locator('.modal-body');
       const rootScroll = () => stackedDialog.evaluate(node => [window.scrollY, node.getRootNode().querySelector('.room-scroll').scrollTop]);
       const focused = node => node.getRootNode().activeElement === node;
-      const startingPageScroll = await rootScroll();
+      let startingPageScroll = await rootScroll();
+      const resizeDialogViewport = async (width, height) => {
+        await stackedPage.setViewportSize({width,height});
+        await stackedPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        startingPageScroll = await rootScroll();
+      };
       const add = stackedDialog.getByRole('button', { name: english ? 'Add schedule' : 'הוספת תזמון', exact: true });
       const heading = form.getByRole('heading');
       const durationControl = form.getByRole('slider', { name:english ? 'Duration' : '\u05de\u05e9\u05da \u05d7\u05d9\u05de\u05d5\u05dd', exact:true });
@@ -1229,6 +1234,8 @@ try {
           return heading.top >= body.top && heading.bottom <= body.bottom;
         }), true, 'The form heading is inside the visible dialog immediately after tapping');
         assert.equal(await scheduleRows.isVisible(), false, 'The disabled listing is hidden during editing');
+        assert.equal(await stackedRange.isVisible(), false, 'Editing hides only the separate boiler timer controls');
+        assert.equal(await stackedHistory.isVisible(), true, 'History remains available to leave the draft');
         assert.equal(await stackedDialog.locator('.schedule-compact > .schedule-toolbar').isVisible(), false);
         assert.deepEqual(await rootScroll(), startingPageScroll);
         return start;
@@ -1248,12 +1255,41 @@ try {
           return control.top >= body.top - 1 && control.bottom <= body.bottom + 1;
         }), true, 'The originating control is revealed again');
         await scheduleRows.waitFor();
+        await stackedRange.waitFor();
         if (originalOffset !== undefined) {
           assert.ok(Math.abs(await dialogViewport.evaluate(node => node.scrollTop) - originalOffset) < 1,
             'Cancel restores the original schedule list offset');
         }
         assert.deepEqual(await rootScroll(), startingPageScroll);
       }
+      for (const width of [320,391]) {
+        await resizeDialogViewport(width,845);
+        const priorOffset = await openScheduleForm(add);
+        const fitted = await form.evaluate(node => {
+          const bounds = node.getBoundingClientRect();
+          const viewport = node.closest('.modal-body');
+          const enclosing = viewport.getBoundingClientRect();
+          return { form:[bounds.top,bounds.bottom], viewport:[enclosing.top,enclosing.bottom],
+            overflow:viewport.scrollHeight - viewport.clientHeight };
+        });
+        assert.ok(fitted.overflow <= 1 && fitted.form[0] >= fitted.viewport[0]-1 &&
+          fitted.form[1] <= fitted.viewport[1]+1, JSON.stringify({width,fitted}));
+        await save.tap();
+        await stackedDialog.locator('.schedule-description:visible').waitFor();
+        assert.equal(await form.isVisible(),true, 'Invalid changes stay in the visible draft');
+        assert.equal(await stackedRange.isVisible(),false);
+        assert.deepEqual(await stackedPage.evaluate(() => window.fixture.scheduleCalls), []);
+        await stackedPage.evaluate(() => window.fixture.setupState('on','active', {usedSeconds:120}));
+        const stop = stackedDialog.locator('[data-action="stop_timed"]');
+        await stop.waitFor({state:'attached'});
+        assert.equal(await stop.isVisible(),false);
+        await cancel.tap();
+        await expectFormReturn(add,priorOffset);
+        await stop.waitFor();
+        await stackedPage.evaluate(() => window.fixture.setupState('off','idle'));
+        await stackedStart.waitFor();
+      }
+      await resizeDialogViewport(320,680);
       const initialListOffset = await openScheduleForm(add);
       const durationState = () => durationControl.evaluate(node => ({
         min:node.min, max:node.max, step:node.step, value:node.value,
