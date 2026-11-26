@@ -5,6 +5,8 @@ const TIMER_SERVICE = 'simple_timer.start_timer';
 const ENTITY = /^[a-z_]+\.[a-z0-9_]+$/;
 const SCHEDULE_ID = /^[a-zA-Z0-9_-]{1,64}$/;
 const TIME = /^(?:[01]\d|2[0-3]):[0-5][05]$/;
+const scheduleHours = Array.from({ length: 24 }, (_, index) => String(index).padStart(2, '0'));
+const scheduleMinutes = Array.from({ length: 12 }, (_, index) => String(index * 5).padStart(2, '0'));
 const withoutClockReadouts = ['schedule_id', 'entity_id', 'name', 'enabled', 'weekdays', 'repeat_type',
   'start_date', 'end_date', 'timeslots', 'tags', 'timestamps', 'next_entries'];
 const slotKeys = ['start', 'stop', 'conditions', 'condition_type', 'track_conditions', 'actions'];
@@ -303,6 +305,7 @@ const text = {
     loading: 'Loading schedules…', unavailable: 'No compatible Scheduler and Simple Timer setup was found for this boiler.',
     empty: 'No boiler schedules yet.', add: 'Add schedule', refresh: 'Refresh', edit: 'Edit', enable: 'Enable', disable: 'Disable',
     enabled: 'Enabled', disabled: 'Disabled', scheduleSwitch: 'Schedule status', custom: 'Managed in Scheduler', name: 'Name', time: 'Start time',
+    hour: 'Hour', minute: 'Minutes', namePlaceholder: 'e.g. Morning heat',
     duration: 'Duration', days: 'Days', daily: 'Every day', work: 'Weekdays', weekend: 'Weekend', clear: 'Clear',
     save: 'Save schedule', cancel: 'Cancel', remove: 'Delete schedule', confirm: 'Delete this schedule?',
     yes: 'Delete', invalid: 'Check the time, duration and days. Select at least one day.',
@@ -314,6 +317,7 @@ const text = {
     loading: 'טוען תזמונים…', unavailable: 'לא נמצאה הגדרה מתאימה של Scheduler ו־Simple Timer לדוד הזה.',
     empty: 'עדיין אין תזמונים לדוד.', add: 'הוספת תזמון', refresh: 'רענון', edit: 'עריכה', enable: 'הפעלה', disable: 'השבתה',
     enabled: 'פעיל', disabled: 'מושבת', scheduleSwitch: 'מצב התזמון', custom: 'מנוהל במתזמן', name: 'שם', time: 'שעת התחלה',
+    hour: 'שעה', minute: 'דקות', namePlaceholder: 'למשל, חימום בוקר',
     duration: 'משך חימום', days: 'ימי הפעלה', daily: 'כל יום', work: 'ימי חול', weekend: 'סוף שבוע', clear: 'נקה',
     save: 'שמירת תזמון', cancel: 'ביטול', remove: 'מחיקת תזמון', confirm: 'למחוק את התזמון הזה?',
     yes: 'מחיקה', invalid: 'בדקו את השעה והמשך ובחרו לפחות יום אחד.',
@@ -352,10 +356,31 @@ const styles = [
   '.bayit-boiler-schedules .schedule-form label { display:grid; gap:5px; flex:1; min-width:0; }',
   '.bayit-boiler-schedules .schedule-form input,.bayit-boiler-schedules .schedule-form select { width:100%; box-sizing:border-box; min-height:44px; font:inherit; color:inherit; border:1px solid var(--edge,rgba(255,255,255,.28)); border-radius:10px; background:transparent; padding:6px 9px; }',
   '.bayit-boiler-schedules .schedule-form select option { color:CanvasText; background:Canvas; }',
-  '.schedule-compact .schedule-duration { gap:2px; }',
+  '.schedule-compact .schedule-form { gap:8px; padding:8px; border:1px solid var(--soft-line); }',
+  '.schedule-compact .schedule-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }',
+  '.schedule-compact .schedule-fields > label:first-child { grid-column:1 / -1; }',
+  '.schedule-compact .schedule-form .schedule-field { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:6px; min-height:48px; padding:2px 6px; border:1px solid var(--soft-line); border-radius:8px; background:var(--room-tile-fill,transparent); }',
+  '.schedule-compact .schedule-field > ha-icon { color:var(--warm); --mdc-icon-size:18px; width:18px; height:18px; margin-inline:3px; pointer-events:none; }',
+  '.schedule-field-copy { display:grid; align-content:center; min-width:0; }',
+  '.schedule-field-caption,.schedule-duration-heading > span { color:var(--secondary); font-size:11px; line-height:1.2; }',
+  '.schedule-compact .schedule-field-copy :is(input,select) { display:block; border:0; border-radius:4px; min-height:30px; padding:1px 2px; line-height:1.2; font-weight:650; }',
+  '.schedule-compact .schedule-field-copy select { direction:ltr; text-align:end; }',
+  '.schedule-compact .schedule-field:focus-within { border-color:var(--line); }',
+  '.schedule-compact .schedule-day-group { gap:5px; }',
+  '.schedule-compact .schedule-day-group legend { margin-block-end:3px; }',
+  '.schedule-compact .schedule-day-presets { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:4px; }',
+  '.schedule-compact .schedule-days { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,40px),1fr)); gap:3px; }',
+  '.schedule-compact :is(.schedule-day-presets,.schedule-days,.schedule-form-actions) .control-button { min-width:0; min-height:44px; padding:3px; border-radius:8px; overflow-wrap:anywhere; }',
+  '.schedule-compact .schedule-day-presets .control-button { font-size:11px; }',
+  '.schedule-compact .schedule-days .control-button[aria-pressed=true] { color:var(--warm); border-color:var(--warm); }',
+  '.schedule-compact .schedule-duration { display:grid; gap:2px; padding:4px 7px; border:1px solid var(--soft-line); border-radius:8px; background:var(--room-tile-fill,transparent); }',
   '.schedule-compact .schedule-duration-heading { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:4px 8px; }',
-  '.schedule-compact .schedule-duration-value { color:var(--secondary,currentColor); font-size:.88em; }',
-  '.schedule-compact .schedule-form input.schedule-duration-range { direction:ltr; margin:0; padding:0; border:0; accent-color:var(--boiler-heat,auto); }',
+  '.schedule-compact .schedule-duration-value { color:var(--ink,currentColor); font-size:.88em; }',
+  '.schedule-compact .schedule-form input.schedule-duration-range { direction:ltr; margin:0; padding:0; border:0; accent-color:var(--warm,auto); }',
+  '@container (min-width:375px) { .schedule-compact .schedule-duration { grid-template-columns:minmax(0,1fr) minmax(160px,1.65fr); align-items:center; gap:6px; } .schedule-compact .schedule-duration-heading { display:grid; gap:2px; } }',
+  '.schedule-compact .schedule-form-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }',
+  '.schedule-compact .schedule-form-actions:has(> .schedule-form-remove) { grid-template-columns:repeat(3,minmax(0,1fr)); }',
+  '.schedule-compact .schedule-form-actions [type=submit]:not(:disabled) { color:var(--warm); border-color:var(--warm); }',
   '.bayit-boiler-schedules .schedule-form-title { margin:0; font-size:1em; }',
   '.bayit-boiler-schedules .schedule-day-group { margin:0; min-width:0; border:0; padding:0; display:grid; gap:7px; }',
   '.bayit-boiler-schedules .schedule-description { margin:0; }',
@@ -570,20 +595,52 @@ export function createBoilerSchedulePanel(config, {
     title.type = 'text';
     title.maxLength = 40;
     title.value = row?.name ?? '';
-    const field = (label, node) => {
-      const wrapper = make('label');
-      wrapper.append(make('span', '', label), node);
+    const field = (label, control, glyph) => {
+      const wrapper = make('label', compact ? 'schedule-field' : '');
+      const caption = make('span', compact ? 'schedule-field-caption' : '', label);
+      if (compact) {
+        const icon = make('ha-icon');
+        icon.setAttribute('icon', glyph);
+        icon.setAttribute('aria-hidden', 'true');
+        const copy = make('span', 'schedule-field-copy');
+        copy.append(caption, control);
+        wrapper.append(icon, copy);
+      } else wrapper.append(caption, control);
       return wrapper;
     };
-    const time = make('input');
-    time.type = 'time';
-    time.step = '300';
-    time.required = true;
-    time.value = row?.time ?? '14:30';
+    const initialTime = row?.time ?? '14:30';
+    let readTime;
+    fields.append(field(t.name, title, 'mdi:form-textbox'));
+    if (compact) {
+      title.placeholder = t.namePlaceholder;
+      const clockPart = (values, current) => {
+        const select = make('select');
+        for (const value of values) {
+          const option = make('option', '', value);
+          option.value = value;
+          select.append(option);
+        }
+        select.required = true;
+        select.value = current;
+        return select;
+      };
+      const [currentHour, currentMinute] = initialTime.split(':');
+      const hours = clockPart(scheduleHours, currentHour);
+      const minutes = clockPart(scheduleMinutes, currentMinute);
+      fields.append(field(t.hour, hours, 'mdi:clock-outline'), field(t.minute, minutes, 'mdi:timer-outline'));
+      readTime = () => hours.value + ':' + minutes.value;
+    } else {
+      const time = make('input');
+      time.type = 'time';
+      time.step = '300';
+      time.required = true;
+      time.value = initialTime;
+      fields.append(field(t.time, time));
+      readTime = () => time.value;
+    }
     const { min, max, step } = schedule.limits;
     const duration = make(compact ? 'input' : 'select');
     const initialDuration = row?.duration ?? schedule.defaultDuration;
-    fields.append(field(t.name, title), field(t.time, time));
     let durationField;
     if (compact) {
       duration.type = 'range';
@@ -632,7 +689,7 @@ export function createBoilerSchedulePanel(config, {
     function markDays() {
       for (const [index, day] of SCHEDULE_DAYS.entries()) dayButtons[index].setAttribute('aria-pressed', String(selected.has(day)));
     }
-    const quick = make('div', 'schedule-toolbar');
+    const quick = make('div', compact ? 'schedule-toolbar schedule-day-presets' : 'schedule-toolbar');
     const workdays = locale === 'he' ? SCHEDULE_DAYS.slice(0, 5) : SCHEDULE_DAYS.slice(1, 6);
     const weekend = SCHEDULE_DAYS.filter(day => !workdays.includes(day));
     for (const [name, days] of [[t.daily, SCHEDULE_DAYS], [t.work, workdays], [t.weekend, weekend], [t.clear, []]]) {
@@ -643,8 +700,8 @@ export function createBoilerSchedulePanel(config, {
       }));
     }
     markDays();
-    group.append(weekdays, quick);
-    const commands = make('div', 'schedule-toolbar');
+    group.append(...(compact ? [quick, weekdays] : [weekdays, quick]));
+    const commands = make('div', compact ? 'schedule-toolbar schedule-form-actions' : 'schedule-toolbar');
     const submit = button(t.save);
     submit.type = 'submit';
     submit.setAttribute('data-schedule-commit', '');
@@ -661,6 +718,7 @@ export function createBoilerSchedulePanel(config, {
         confirmation.hidden = false;
         cancelDelete.focus({ preventScroll: true });
       });
+      if (compact) deletion.classList.add('schedule-form-remove');
       const acceptDelete = button(t.yes, () => {
         if (confirmedRemove && draft?.id === row.id) {
           void operate(stillCurrent => schedule.remove(draft, stillCurrent), t.removed);
@@ -679,7 +737,7 @@ export function createBoilerSchedulePanel(config, {
     }
     form.onsubmit = event => {
       event.preventDefault();
-      const payload = { name: title.value, time: time.value, duration: Number(duration.value), weekdays: [...selected] };
+      const payload = { name: title.value, time: readTime(), duration: Number(duration.value), weekdays: [...selected] };
       void operate(stillCurrent => row ? schedule.update(draft, payload, stillCurrent)
         : schedule.create(payload, stillCurrent), t.saved);
     };

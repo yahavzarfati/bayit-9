@@ -1190,7 +1190,13 @@ try {
       const form = stackedDialog.locator('.schedule-form');
       await form.waitFor();
       assert.equal(await form.locator('input[type="text"]').inputValue(), 'Morning');
-      assert.equal(await form.locator('input[type="time"]').inputValue(), '07:30');
+      const hour = form.getByRole('combobox', { name:locale === 'he' ? 'שעה' : 'Hour', exact:true });
+      const minute = form.getByRole('combobox', { name:locale === 'he' ? 'דקות' : 'Minutes', exact:true });
+      assert.deepEqual([await hour.inputValue(), await minute.inputValue()], ['07','30']);
+      assert.deepEqual(await hour.locator('option').allTextContents(),
+        Array.from({length:24}, (_, index) => String(index).padStart(2,'0')));
+      assert.deepEqual(await minute.locator('option').allTextContents(),
+        Array.from({length:12}, (_, index) => String(index * 5).padStart(2,'0')));
       await form.getByRole('button', { name: locale === 'he' ? 'ביטול' : 'Cancel', exact: true }).tap();
       await form.waitFor({ state: 'hidden' });
       assert.deepEqual(await stackedPage.evaluate(() => window.fixture.scheduleCalls), []);
@@ -1274,6 +1280,18 @@ try {
         });
         assert.ok(fitted.overflow <= 1 && fitted.form[0] >= fitted.viewport[0]-1 &&
           fitted.form[1] <= fitted.viewport[1]+1, JSON.stringify({width,fitted}));
+        assert.deepEqual([await hour.inputValue(), await minute.inputValue()], ['14','30']);
+        const calendar = await form.locator('.schedule-day-group').evaluate(group => {
+          const quick = group.querySelector('.schedule-day-presets').getBoundingClientRect();
+          const days = [...group.querySelectorAll('.schedule-days button')].map(button => {
+            const {top,height} = button.getBoundingClientRect();
+            return {top,height};
+          });
+          return {quickAbove:quick.bottom <= days[0].top, count:days.length,
+            fullTargets: days.every(day => day.height >= 44), rows:new Set(days.map(day => day.top)).size};
+        });
+        assert.ok(calendar.quickAbove && calendar.fullTargets && calendar.count === 7);
+        if (width === 391) assert.equal(calendar.rows,1);
         await save.tap();
         await stackedDialog.locator('.schedule-description:visible').waitFor();
         assert.equal(await form.isVisible(),true, 'Invalid changes stay in the visible draft');
@@ -1325,6 +1343,8 @@ try {
       assert.equal(await stackedPage.evaluate(() => window.fixture.scheduleCalls[0].service_data.duration), 45);
       await openScheduleForm(add);
       await form.locator('input[type=text]').fill('New fixture');
+      await hour.selectOption('23');
+      await minute.selectOption('55');
       await durationControl.press('Home');
       assert.equal(await durationControl.inputValue(), '15');
       await form.getByRole('button', { name: english ? 'Every day' : 'כל יום', exact: true }).tap();
@@ -1332,8 +1352,9 @@ try {
       await expectFormReturn(add);
       await scheduleRows.getByText('New fixture', { exact: true }).waitFor();
       assert.deepEqual(await stackedPage.evaluate(() => window.fixture.scheduleCalls.map(({ domain, service, service_data }) =>
-        [domain, service, service_data.schedule_entity, service_data.duration])), [
-        ['script', 'fixture_schedule_save', 'switch.schedule_fixture0', 45], ['script', 'fixture_schedule_save', '', 15],
+        [domain, service, service_data.schedule_entity, service_data.schedule_time, service_data.duration])), [
+        ['script', 'fixture_schedule_save', 'switch.schedule_fixture0', '07:30', 45],
+        ['script', 'fixture_schedule_save', '', '23:55', 15],
       ]);
       assert.equal(await stackedRange.getAttribute('step'), '1');
 
