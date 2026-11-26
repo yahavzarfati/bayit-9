@@ -38,6 +38,7 @@ const WORDS = {
     shownRoomOrder: 'Displayed rooms and order',
     roomToAdd: 'Available rooms', addRoom: 'Show room', createRoom: 'New dashboard-only room',
     newRoomName: 'New room name', newRoomHint: 'This room exists only on this dashboard.',
+    finishNewRoom: 'Create this room or cancel it before saving the dashboard.',
     roomName: 'Room display name', roomToEdit: 'Room to customize', roomIcon: 'Room icon', defaultRoomIcon: 'Default icon',
     customRoomIcon: 'Custom icon', customRoomIconName: 'Custom icon name',
     invalidRoomIcon: 'Enter an icon name such as mdi:compass-outline.',
@@ -195,6 +196,7 @@ const WORDS = {
     shownRoomOrder: 'חדרים מוצגים וסדר',
     roomToAdd: 'חדרים זמינים', addRoom: 'הצגת חדר', createRoom: 'חדר חדש לדשבורד',
     newRoomName: 'שם החדר החדש', newRoomHint: 'החדר יופיע בדשבורד הזה בלבד.',
+    finishNewRoom: 'צרו את החדר או בטלו את היצירה לפני שמירת הדשבורד.',
     roomName: 'שם החדר לתצוגה', roomToEdit: 'חדר להתאמה אישית', roomIcon: 'סמל החדר', defaultRoomIcon: 'סמל ברירת המחדל',
     customRoomIcon: 'סמל מותאם אישית', customRoomIconName: 'שם הסמל המותאם',
     invalidRoomIcon: 'הזינו שם סמל, למשל mdi:compass-outline.',
@@ -670,6 +672,24 @@ export class Bayit9StrategyEditor extends HTMLElement {
   openRooms() {
     this.#open.rooms = true;
     this.render();
+  }
+
+  focusPendingRoom() {
+    if (!this.#newRoomName.trim()) return false;
+    const selector = 'details[data-new-room-editor]';
+    let pane = this.shadowRoot.querySelector(selector);
+    this.#open.newRoom = true;
+    if (!pane) {
+      this.#open.rooms = true;
+      this.#renderRoomChange();
+      pane = this.shadowRoot.querySelector(selector);
+    }
+    if (pane) {
+      pane.open = true;
+      pane.querySelector('[data-room-save-hint]').hidden = false;
+      pane.querySelector('[data-room-focus="new-room-name"]').focus();
+    }
+    return true;
   }
 
   focusPendingProfile() {
@@ -1850,6 +1870,17 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #customRoomForm(rooms, selection, words) {
     const name = node('input', { maxLength: 80, value: this.#newRoomName });
     name.dataset.roomFocus = 'new-room-name';
+    const notice = node('p', { textContent: words.finishNewRoom });
+    notice.setAttribute('role', 'status');
+    const cancel = button(words.clear, () => {
+      this.#newRoomName = '';
+      this.#open.newRoom = false;
+      this.#renderRoomChange('new-room-trigger');
+    });
+    const saveHint = node('div', { className: 'stack', hidden: true }, [
+      notice, node('div', { className: 'actions' }, [cancel]),
+    ]);
+    saveHint.dataset.roomSaveHint = '';
     const add = button(words.newRoom, () => {
       const text = name.value.trim();
       if (!text) return;
@@ -1871,6 +1902,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     name.addEventListener('input', () => {
       this.#newRoomName = name.value;
       add.disabled = !name.value.trim();
+      if (add.disabled) saveHint.hidden = true;
     });
     name.addEventListener('keydown', event => {
       if (event.key === 'Enter' && !event.isComposing) {
@@ -1878,11 +1910,15 @@ export class Bayit9StrategyEditor extends HTMLElement {
         if (!add.disabled) add.click();
       }
     });
-    return disclosure(words.createRoom, this.#open.newRoom, open => { this.#open.newRoom = open; },
+    const pane = disclosure(words.createRoom, this.#open.newRoom, open => { this.#open.newRoom = open; },
       [node('div', { className: 'stack' }, [
         node('p', { textContent: words.newRoomHint }),
         node('div', { className: 'room-add' }, [field(words.newRoomName, name), add]),
+        saveHint,
       ])]);
+    pane.dataset.newRoomEditor = '';
+    pane.firstElementChild.dataset.roomFocus = 'new-room-trigger';
+    return pane;
   }
 
   #roomAppliancePanel(room, override, words, language) {

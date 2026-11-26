@@ -2586,6 +2586,73 @@ async function assertSetupDrafts(browser) {
 }
 
 
+async function assertNewRoomDraftBlocksDashboardSave(browser) {
+  const labels = [
+    { locale:'en', setup:'Customize home', rooms:'Rooms', newRoom:'New dashboard-only room', name:'New room name',
+      title:'Dashboard title', save:'Save dashboard', create:'Create room', cancel:'Cancel',
+      pending:'Create this room or cancel it before saving the dashboard.', workshop:'Backyard workshop' },
+    { locale:'he', setup:'התאמת הבית', rooms:'חדרים', newRoom:'חדר חדש לדשבורד', name:'שם החדר החדש',
+      title:'שם הדשבורד', save:'שמירת הדשבורד', create:'יצירת חדר', cancel:'ביטול',
+      pending:'צרו את החדר או בטלו את היצירה לפני שמירת הדשבורד.', workshop:'סדנה בחצר' },
+  ];
+  for (const words of labels) {
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+    const title = setup.getByLabel(words.title, { exact:true });
+    const rooms = setup.getByText(words.rooms, { exact:true });
+    const newRoom = setup.getByText(words.newRoom, { exact:true });
+    const name = setup.getByLabel(words.name, { exact:true });
+    const save = setup.getByRole('button', { name:words.save, exact:true });
+    const open = async () => {
+      await page.locator('.chrome-button[data-role=settings]').tap();
+      await page.getByRole('button', { name:words.setup, exact:true }).tap();
+      await title.waitFor();
+    };
+    const draft = async ({ heading, room, collapse }) => {
+      await open();
+      await title.fill(heading);
+      await rooms.tap();
+      await newRoom.tap();
+      await name.fill(room);
+      if (collapse) {
+        await newRoom.tap();
+        await rooms.tap();
+        await name.waitFor({ state:'hidden' });
+      }
+      await save.tap();
+      await setup.getByRole('status').filter({ hasText:words.pending }).waitFor();
+      assert.equal(await name.inputValue(), room);
+      assert.equal(await name.evaluate(input => input.getRootNode().activeElement === input), true);
+      assert.equal(await page.evaluate(() => window.bayitTest.calls.filter(call =>
+        call.type === 'lovelace/config/save').length), 0, 'A pending room must never be lost to a successful outer save');
+    };
+    const stored = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+    const heading = words.locale === 'en' ? 'Family dashboard' : 'דשבורד משפחתי';
+    const renamed = heading + ' 2';
+    try {
+      await page.goto(base + '/fixture-home/home?configuration&locale=' + words.locale);
+      await draft({ heading, room:words.workshop, collapse:true });
+      await setup.getByRole('button', { name:words.create, exact:true }).tap();
+      await save.tap();
+      await page.getByRole('heading', { name:heading, exact:true }).waitFor();
+      await page.getByRole('button', { name:words.workshop, exact:true }).waitFor();
+      assert.equal(Object.values((await stored()).room_overrides).some(room => room.name === words.workshop), true);
+
+      const discarded = words.workshop + ' 2';
+      await draft({ heading:renamed, room:discarded, collapse:false });
+      await setup.getByRole('button', { name:words.cancel, exact:true }).tap();
+      await name.waitFor({ state:'hidden' });
+      await save.tap();
+      await page.getByRole('heading', { name:renamed, exact:true }).waitFor();
+      assert.equal(Object.values((await stored()).room_overrides).some(room => room.name === discarded), false);
+      await page.getByRole('button', { name:words.workshop, exact:true }).waitFor();
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertSetupRegistryRefreshKeepsField(browser) {
   const labels = [
     { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', choose:'Room to customize',
@@ -11304,6 +11371,8 @@ try {
       await assertWideClassicRoomControls(browser);
       console.log(engine + ': room titles, responsive shortcut lanes and keyboard focus');
     });
+
+    await run('Dashboard save keeps a pending new room available', () => assertNewRoomDraftBlocksDashboardSave(browser));
 
     await run('Setup editor layout and drafts', async () => {
       await assertSetupFooterLayout(browser);
