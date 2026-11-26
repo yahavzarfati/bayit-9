@@ -611,6 +611,7 @@ if (query.has('room-grid')) {
     hass.entities[light] = { area_id:'studio', di:'fixture-lamp' };
     hass.entities[helper] = { device_id:'fixture-lamp' };
     hass.entities['select.fixture_other'] = { device_id:'other' };
+    if (query.has('light-effect-selector')) hass.services = { ...hass.services, select:{select_option:{}} };
   }
   if (query.has('many-effect-categories')) {
     states['light.demo_pendant'].attributes.effect_list.push('Sunburst', 'Midnight',
@@ -1010,7 +1011,8 @@ const selected = query.has('configuration') ? rendererStrategy(stored().strategy
     light_effect_favorites:['light.demo_pendant'],
   }),
   ...(query.has('light-mode-source') && {light_mode_sources:{
-    'light.demo_pendant':{entity:'select.fixture_light_mode',fixed_color_option:'Fixed view'},
+    'light.demo_pendant':{entity:'select.fixture_light_mode',fixed_color_option:'Fixed view',
+      ...(query.has('light-effect-selector') && {apply_effects:true})},
   }}),
   ...(query.has('grouped-effects') && { light_effect_groups: {
     'light.demo_pendant': [
@@ -9879,6 +9881,86 @@ async function assertLightWhitePresets(browser) {
   }
 }
 
+async function assertPairedLightEffectSelector(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:391,height:845},reducedMotion:'reduce',hasTouch:true});
+    page.setDefaultTimeout(9000);
+    const he = locale === 'he';
+    const light = 'light.demo_pendant';
+    const helper = 'select.fixture_light_mode';
+    const url = base + '?room-grid&grouped-effects&light-mode-source&compact-color-light&locale=' + locale;
+    const room = page.getByRole('dialog',{name:'Studio',exact:true});
+    const detail = page.getByRole('dialog',{name:'Pendant lamp',exact:true});
+    const gallery = detail.locator('.light-effect-gallery');
+    const apply = gallery.locator('.light-effect-footer button[data-action=set_effect]');
+    const choice = gallery.getByRole('button',{ name:/Gentle glow/ });
+    const calls = () => page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service'));
+    const patchOptions = options => page.evaluate(([id,values]) =>
+      window.bayitTest.setFixtureAttributes(id,{options:values}),[helper,options]);
+    const visible = flag => page.evaluate(([id,value])=>window.bayitTest.setFixtureEntityVisibility(id,!value),[helper,flag]);
+    const choose = async opt => {
+      await page.goto(url + opt);
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+      await room.locator('[data-entity="light.demo_pendant"] .device-tile').press('Shift+Enter');
+      await detail.locator('button[data-light-mode=set_effect]').tap();
+      await choice.tap();
+    };
+    try {
+      await choose('');
+      await apply.tap();
+      assert.deepEqual(await calls(),[{ type:'call_service',domain:'light',service:'turn_on',
+        target:{entity_id:light},service_data:{effect:'Slow pulse'} }]);
+
+      await choose('&light-effect-selector');
+      assert.deepEqual(await calls(),[]);
+      await patchOptions(['Fixed view']);
+      await gallery.getByText(he ? 'האפקט אינו זמין בבורר. אפשר לבחור את הקטגוריה שלו.'
+        : 'The selector does not offer this effect. Try its category.',{exact:true}).waitFor();
+      assert.equal(await apply.isDisabled(),true);
+      await apply.dispatchEvent('click');
+      assert.deepEqual(await calls(),[]);
+      await patchOptions(['Fixed view','Slow pulse']);
+      await gallery.locator('.light-effect-footer button:enabled').waitFor();
+      await visible(false);
+      await gallery.getByText(he ? 'בורר האפקטים של המנורה אינו זמין.' : 'The light’s effect selector is unavailable.',
+        {exact:true}).waitFor();
+      assert.equal(await apply.isDisabled(),true);
+      await apply.dispatchEvent('click');
+      assert.deepEqual(await calls(),[]);
+      await visible(true);
+      await gallery.locator('.light-effect-footer button:enabled').waitFor();
+      await apply.tap();
+      assert.deepEqual(await calls(),[{ type:'call_service',domain:'select',service:'select_option',
+        target:{entity_id:helper},service_data:{option:'Slow pulse'} }]);
+      await detail.locator('[data-entity="light.demo_pendant"][aria-busy=true]').waitFor();
+      assert.equal(await apply.isDisabled(),true);
+      assert.equal(await choice.getAttribute('aria-current'),'false');
+      await page.evaluate(([mode,target])=>{
+        const fixture=window.bayitTest;
+        fixture.setRoomState(mode,'Slow pulse');
+        fixture.setFixtureAttributes(target,{effect:'Slow pulse'});
+        fixture.setRoomState(target,'on');
+      },[helper,light]);
+      await gallery.locator('.light-effect-choices button[aria-current=true]').waitFor();
+      await detail.locator('[data-entity="light.demo_pendant"][aria-busy=false]').waitFor();
+      assert.equal((await calls()).length,1);
+
+      await page.goto(url + '&editor');
+      await page.getByText(he ? 'קטגוריות אפקטים לתאורה' : 'Light effect categories',{exact:true}).tap();
+      await page.getByLabel(he ? 'תאורה' : 'Light',{exact:true}).selectOption(light);
+      const toggle = page.getByRole('checkbox',{name:he ? 'הפעלת אפקטים דרך הבורר של המנורה'
+        : 'Apply effects through this light’s selector',exact:true});
+      assert.equal(await toggle.isChecked(),false);
+      await toggle.check();
+      const read = () => page.evaluate(id=>window.latest.light_mode_sources[id],light);
+      assert.deepEqual(await read(),{entity:helper,fixed_color_option:'Fixed view',apply_effects:true});
+      await toggle.uncheck();
+      assert.deepEqual(await read(),{entity:helper,fixed_color_option:'Fixed view'});
+      assert.deepEqual(await calls(),[]);
+    } finally { await page.close(); }
+  }
+}
+
 async function assertLightOpeningMode(browser) {
   for (const locale of ['en','he']) {
     const page = await browser.newPage({ viewport:{width:320,height:760}, hasTouch:true, reducedMotion:'reduce' });
@@ -11920,6 +12002,8 @@ try {
       await assertCompactColorPalette(browser);
       console.log(engine + ': opt-in color palette fits and only sends committed changes');
       await assertLightOpeningMode(browser);
+      await assertPairedLightEffectSelector(browser);
+      console.log(engine + ': opted-in effects apply through their current paired Home Assistant selector');
       await assertLightStatusRefresh(browser);
       await assertKitchenBoilerQuickPower(browser);
       await assertRoomVacuumGestures(browser);

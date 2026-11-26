@@ -25,6 +25,7 @@ const WORDS = {
     lightEffects: 'Light effect categories', effectLight: 'Light', effectGroup: 'Category',
     effectFavorites: 'Allow personal favorites on this device', lightStatusRefresh: 'Light status refresh button',
     lightModeSource: 'Light opening mode source', lightFixedColorOption: 'Fixed-color option',
+    lightApplyThroughSelector: 'Apply effects through this light’s selector',
     lightCategorySource: 'Shared category helper', lightCategoryAll: 'Helper option for All effects',
     lightCategoryMatching: 'Category names must match the helper’s option names.',
     newEffectGroup: 'New category', effectGroupName: 'Category name', addEffectGroup: 'Add category',
@@ -183,6 +184,7 @@ const WORDS = {
     lightEffects: 'קטגוריות אפקטים לתאורה', effectLight: 'תאורה', effectGroup: 'קטגוריה',
     effectFavorites: 'אפשר סימון מועדפים אישיים במכשיר', lightStatusRefresh: 'כפתור לרענון מצב המנורה',
     lightModeSource: 'מקור למצב הפתיחה של התאורה', lightFixedColorOption: 'אפשרות לצבע קבוע',
+    lightApplyThroughSelector: 'הפעלת אפקטים דרך הבורר של המנורה',
     lightCategorySource: 'בורר לקטגוריה משותפת', lightCategoryAll: 'אפשרות בורר לכל האפקטים',
     lightCategoryMatching: 'שמות הקטגוריות צריכים להתאים לשמות האפשרויות בבורר.',
     newEffectGroup: 'קטגוריה חדשה', effectGroupName: 'שם קטגוריה', addEffectGroup: 'הוספת קטגוריה',
@@ -2838,6 +2840,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
         const sourcePicker = mark(select(sources, modeSource?.entity ?? ''), 'mode-source');
         const fixedPicker = mark(select([], ''), 'fixed-color-option');
         const fixedField = field(words.lightFixedColorOption, fixedPicker);
+        const applyThrough = mark(node('input', { type:'checkbox' }), 'apply-through-selector');
+        const applyField = node('label', { className:'check' }, [applyThrough, words.lightApplyThroughSelector]);
         const available = () => {
           const id = sourcePicker.value;
           const options = this.#hass.states?.[id]?.attributes?.options;
@@ -2853,6 +2857,9 @@ export class Bayit9StrategyEditor extends HTMLElement {
           fixedPicker.value = saved;
           fixedField.hidden = !sourcePicker.value;
           fixedPicker.disabled = !options.length;
+          applyField.hidden = !saved;
+          applyThrough.checked = !!saved && current.apply_effects === true;
+          applyThrough.disabled = !applyThrough.checked && !options.includes(saved);
         };
         sourcePicker.addEventListener('change', () => {
           showFixedOptions();
@@ -2863,11 +2870,23 @@ export class Bayit9StrategyEditor extends HTMLElement {
         });
         fixedPicker.addEventListener('change', () => {
           if (!available().includes(fixedPicker.value)) return;
-          const selected = { entity:sourcePicker.value, fixed_color_option:fixedPicker.value };
+          const current = configuredModes()[entity];
+          const selected = { entity:sourcePicker.value, fixed_color_option:fixedPicker.value,
+            ...(current?.entity === sourcePicker.value && current.apply_effects === true && { apply_effects:true }) };
+          this.#commit({ light_mode_sources: { ...configuredModes(), [entity]:selected } });
+        });
+        applyThrough.addEventListener('change', () => {
+          const current = normalizeLightModeSource(configuredModes()[entity]);
+          if (!current || current.entity !== sourcePicker.value ||
+              applyThrough.checked && !available().includes(current.fixed_color_option)) {
+            showFixedOptions();
+            return;
+          }
+          const selected = normalizeLightModeSource({ ...current, apply_effects:applyThrough.checked });
           this.#commit({ light_mode_sources: { ...configuredModes(), [entity]:selected } });
         });
         showFixedOptions();
-        fields.push(field(words.lightModeSource, sourcePicker), fixedField);
+        fields.push(field(words.lightModeSource, sourcePicker), fixedField, applyField);
       }
 
       if (categoryHelpers.length || categorySource) {

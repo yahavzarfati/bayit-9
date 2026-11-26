@@ -70,7 +70,8 @@ function favoritesFor(view, key) {
   } catch { return new Set(); }
 }
 
-export function createLightEffectGallery(groups, advertised, { make, button, icon, t, request, personalFavorites, categorySource }) {
+export function createLightEffectGallery(groups, advertised, { make, button, icon, t, request, unavailableReason,
+  personalFavorites, categorySource }) {
   if (!groups?.length) return null;
   const available = new Set(advertised);
   const assigned = new Set();
@@ -257,10 +258,12 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
     }
     previous.setAttribute('aria-disabled', String(!canRequest || pageIndex === 0));
     next.setAttribute('aria-disabled', String(!canRequest || pageIndex >= pageCount() - 1));
-    apply.disabled = !canRequest || !draft || draft === current;
+    const blocked = canRequest && draft && unavailableReason?.(draft);
+    apply.disabled = !canRequest || !draft || draft === current || Boolean(blocked);
     const statusText = draft ? t('selected_effect') + ' · ' + displayName(draft)
       : current ? t('current_effect') + ' · ' + displayName(current) : t('no_current_effect');
-    if (status.textContent !== statusText) status.textContent = statusText;
+    const detail = blocked ? t(blocked) : statusText;
+    if (status.textContent !== detail) status.textContent = detail;
     if (favoriteActions) {
       favoriteActions.hidden = !favoriteKey;
       const saved = favorites.has(favoriteTarget);
@@ -400,11 +403,11 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
 }
 
 export function normalizeLightModeSource(value) {
-  const { entity, fixed_color_option } = value ?? {};
+  const { entity, fixed_color_option, apply_effects } = value ?? {};
   if (typeof entity !== 'string' || !/^select\.[a-z0-9_]+$/.test(entity) ||
       typeof fixed_color_option !== 'string' || !fixed_color_option.trim() || fixed_color_option.length > 160 ||
       ['unknown', 'unavailable'].includes(fixed_color_option)) return;
-  return { entity, fixed_color_option };
+  return { entity, fixed_color_option, ...(apply_effects === true && { apply_effects }) };
 }
 
 function reportedLightMode({ actions, attributes, state }) {

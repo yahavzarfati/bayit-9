@@ -80,6 +80,15 @@ export function isPairedLightStatusRefresh(light, button, registry) {
   return isPairedLightCompanion(light, button, "button", registry);
 }
 
+export function pairedLightEffectOptions(hass, config) {
+  const binding = config.light_mode_source;
+  const record = hass?.states?.[binding?.entity];
+  if (binding?.apply_effects !== true || !isAvailable(record) || !Array.isArray(record.attributes?.options) ||
+      !isPairedLightCompanion(config.entity, binding.entity, "select", hass.entities) ||
+      !Object.hasOwn(hass.services?.select ?? {}, "select_option")) return;
+  return record.attributes.options.filter(option => option !== binding.fixed_color_option);
+}
+
 function scriptRevision(record) {
   if (typeof record?.last_changed !== "string" || !record.last_changed) return null;
   return JSON.stringify([record.last_changed, record.attributes?.last_triggered ?? null]);
@@ -914,7 +923,14 @@ export function createDeviceController({
       if (config.home_heater_shortcut === true && homeHeaterPowerAction(hass, config) !== actionId) {
         throw new DeviceControlError("action_unavailable", "The heater or its cutoff changed before the command was sent.");
       }
-      const plan = planDeviceAction(config, hass?.states, actionId, value, options);
+      let plan = planDeviceAction(config, hass?.states, actionId, value, options);
+      if (actionId === "set_effect" && config.light_mode_source?.apply_effects) {
+        if (!pairedLightEffectOptions(hass, config)?.includes(value)) {
+          throw new DeviceControlError("action_unavailable", "The paired light does not currently offer that effect.");
+        }
+        const target = { entity: config.light_mode_source.entity, role: "action" };
+        plan = { ...planDeviceAction(target, hass.states, "select_option", value), expected: plan.expected };
+      }
       if (plan.kind === "more_info") return { status: "more_info", entity: plan.entity };
       if (actionId === "reset_daily_usage" && !simpleTimerUsageResetAvailable(hass, plan.expected.entity)) {
         throw new DeviceControlError("service_unavailable", "The daily usage reset service or sensor is unavailable.");

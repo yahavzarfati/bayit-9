@@ -10,7 +10,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   supportsOverviewCompactHistory, supportsToolbarPanelIcon, supportsToolbarVacuumSummary, toolbarPlacement, toolbarPopupPosition, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { bundledHomeIcon } from './home-icon-paths.js';
-import { allowsCoverRailAction, canSendDeviceCommands, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, isReadOnlyRole, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
+import { allowsCoverRailAction, canSendDeviceCommands, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, isReadOnlyRole, pairedLightEffectOptions, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
   simpleTimerStatusEntity, simpleTimerUsageResetAvailable, supportsHomeHeaterPower, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupScrollMemory } from './popup-scroll.js';
@@ -1286,7 +1286,9 @@ export class BayitDashboard extends HTMLElement {
   }
 
   deviceActionVisible(config, id) {
-    return id === 'more_info' || (canSendDeviceCommands(this._hass) && this.entityVisible(config.entity));
+    const effectSource = id === 'set_effect' && config.light_mode_source?.apply_effects && config.light_mode_source.entity;
+    return id === 'more_info' || (canSendDeviceCommands(this._hass) && this.entityVisible(config.entity) &&
+      (!effectSource || this.entityVisible(effectSource)));
   }
 
   quickAction(config, source, room, { details = true, shortcutCurrent } = {}) {
@@ -2464,6 +2466,14 @@ export class BayitDashboard extends HTMLElement {
       [config.entity, entity].every(id => isVisibleEntity(id, states, entities, this.config.hiddenEntities));
   }
 
+  lightEffectUnavailableReason(config, option) {
+    const source = config.light_mode_source;
+    if (!source?.apply_effects) return;
+    const options = this.entityVisible(source.entity) && pairedLightEffectOptions(this._hass, config);
+    if (!options) return 'light_effect_selector_unavailable';
+    if (!options.includes(option)) return 'light_effect_not_in_selector';
+  }
+
   lightEffectCategoryState(config) {
     const source = config.effect_category_source;
     if (!source) return;
@@ -3107,6 +3117,7 @@ export class BayitDashboard extends HTMLElement {
       if (id === 'set_effect' && this.panel?.type === 'device') {
         view.effectGallery = createLightEffectGallery(view.config.effect_groups, action.options, { make, button, icon,
           t: key => this.t(key), request: (value, control) => this.requestAction(view.config, id, value, control),
+          unavailableReason: value => this.lightEffectUnavailableReason(view.config, value),
           ...(view.config.effect_category_source && { categorySource: {
             allOption: view.config.effect_category_source.all_option,
             read: () => this.lightEffectCategoryState(view.config),
@@ -3253,7 +3264,7 @@ export class BayitDashboard extends HTMLElement {
     if (action.options) {
       field.input = make('select');
       if (id === 'set_effect' || id === 'set_swing_horizontal_mode') {
-        field.valid = Boolean;
+        field.valid = id === 'set_effect' ? value => Boolean(value) && !this.lightEffectUnavailableReason(view.config, value) : Boolean;
         const placeholder = make('option', '', this.t('available_option'));
         placeholder.value = '';
         placeholder.disabled = true;
@@ -3402,6 +3413,9 @@ export class BayitDashboard extends HTMLElement {
     roomPowerTile = false, shortcutCurrent, preserveLightBrightness = false } = {}) {
     if (!this.deviceActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
         !this.canRequest(config.entity, id, config)) return;
+    if (id === 'set_effect' && config.light_mode_source?.apply_effects &&
+        (!this.nodes.modal.open || this.nodes.modal.hasAttribute('data-closing') || !this.nodes.modal.contains(source) ||
+          source.closest('[hidden]') || this.lightEffectUnavailableReason(config, value))) return;
     const roomBoilerQuickPower = roomPowerTile && config.room_boiler_quick_power === true;
     const model = this.model(config, { roomBoilerQuickPower });
     const action = model.actions[id];

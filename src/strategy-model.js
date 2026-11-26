@@ -854,8 +854,8 @@ export function discoverRooms(config, hass, locale) {
         device.light_status_refresh_button = refreshButton;
       }
       const modeSource = normalizeLightModeSource(config.light_mode_sources?.[device.entity]);
-      if (!isReadOnlyRole(device.role) && modeSource && visible(modeSource.entity) &&
-          isPairedLightCompanion(device.entity, modeSource.entity, 'select', hass.entities)) {
+      if (!isReadOnlyRole(device.role) && modeSource && (modeSource.apply_effects ||
+          visible(modeSource.entity) && isPairedLightCompanion(device.entity, modeSource.entity, 'select', hass.entities))) {
         device.light_mode_source = modeSource;
       }
       if (!Object.hasOwn(config.light_effect_groups ?? {}, device.entity)) continue;
