@@ -8837,6 +8837,7 @@ async function assertHomeMaterial(browser) {
         reduced: matchMedia('(prefers-reduced-transparency: reduce)').matches,
         stronger: matchMedia('(prefers-contrast: more)').matches,
         background: pixel(style.backgroundColor),
+        surface: pixel(style.getPropertyValue('--surface')),
         rim: pixel(style.borderColor)[3],
         shadow: style.boxShadow,
         strongRim: pixel(style.getPropertyValue('--soft-line'))[3],
@@ -8866,13 +8867,21 @@ async function assertHomeMaterial(browser) {
       const white = [255, 255, 255, 255];
       const labelInk = dark ? [16, 18, 23, 255] : white;
       const transparentGlass = current.glass && !fallback;
+      const quietOpaque = current.reduced && !current.stronger;
       assert.deepEqual(current.labelInk, labelInk);
       assert.deepEqual(current.statusInk, current.expectedStatusInk);
       for (const neutral of [current.chromeInk, current.roomInk, current.shutdownInk]) {
         assert.deepEqual(neutral, transparentGlass ? white : labelInk);
       }
-      assert.deepEqual(current.shortcutInk, transparentGlass ? white
-        : dark ? [32, 36, 43, 255] : [255, 255, 255, 222]);
+      if (quietOpaque) {
+        assert.equal(current.shortcutInk[3], 255);
+        for (const channel of [0, 1, 2]) {
+          near(current.shortcutInk[channel], .7 * labelInk[channel] + .3 * current.surface[channel]);
+        }
+      } else {
+        assert.deepEqual(current.shortcutInk, transparentGlass ? white
+          : dark ? [32, 36, 43, 255] : [255, 255, 255, 222]);
+      }
       assert.deepEqual(current.coverGlyphInk, current.coverInk);
       assert.equal(current.toolbarAlpha, 0);
       assert.equal(current.chromeAlpha, fallback ? 255 : 0);
@@ -8884,7 +8893,7 @@ async function assertHomeMaterial(browser) {
         else for (const value of current.background.slice(0, 3)) near(value, 62);
         assert.equal(current.background[3], 255);
       } else assert.equal(current.background[3], 0);
-      near(current.rim, current.stronger ? current.strongRim : transparentGlass ? 0 : 41);
+      near(current.rim, current.stronger ? current.strongRim : transparentGlass || quietOpaque ? 0 : 41);
       if (transparentGlass) assert.match(current.shadow, /0px 1px 0px 0px inset/);
       else assert.equal(current.shadow, 'none');
       for (const [index, { fill, rim }] of current.badges.entries()) {
@@ -8918,7 +8927,7 @@ async function assertHomeMaterial(browser) {
       await assertAppearance('dark');
     }
 
-    await setMedia('no-preference', 'no-preference');
+    await setMedia(cdp ? 'reduce' : 'no-preference', 'no-preference');
     const shortcutBox = await quietShortcut.boundingBox();
     await quietShortcut.focus();
     const focus = await quietShortcut.evaluate(control => {
@@ -8931,6 +8940,7 @@ async function assertHomeMaterial(browser) {
     assert.equal(focusMaterial.shadow, 'none');
     assert.deepEqual(await quietShortcut.boundingBox(), shortcutBox);
     await quietShortcut.evaluate(control => control.blur());
+    await setMedia('no-preference', 'no-preference');
 
     for (const [attribute, value, expectedShadow] of [
       ['aria-busy', 'true', /^none$/],

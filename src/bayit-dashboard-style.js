@@ -400,6 +400,15 @@ export const styles = `
       background-color: color-mix(in srgb,var(--ink) 10%,var(--surface));
     }
   }
+  @media (prefers-reduced-transparency: reduce) and (prefers-contrast: no-preference) and (forced-colors: none) {
+    .shell[data-page=true] .quick-button[data-tone=quiet]:not(:disabled):where(:not(
+      :hover, :active, :focus-visible, [data-unavailable], [data-popup-origin], [aria-busy=true],
+      [data-transition]:not([data-transition=""])
+    )) {
+      border-color: transparent;
+      color: color-mix(in srgb,var(--ink) 70%,var(--surface));
+    }
+  }
   @media (prefers-contrast: more) {
     .shell[data-page=true] {
       --line: rgba(255,255,255,.58);
