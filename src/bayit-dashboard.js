@@ -110,6 +110,8 @@ const isTemperatureSensor = (domain, attributes) => domain === 'sensor' &&
 const movement = new Set(['open','close','set_position']);
 const scriptOperations = new Set(['start_script', 'stop_script']);
 const coverMovingStates = new Set(['opening', 'closing']);
+const heaterLevelFeedbackLimitMs = 120000;
+const heaterLevelReadbackGraceMs = 1500;
 const roomCompactMediaActions = new Set(['turn_on','turn_off','media_play','media_pause','media_stop','media_next_track','mute','unmute']);
 const roomVacuumCleaningActions = new Set(['vacuum_start', 'vacuum_pause', 'vacuum_stop', 'return_to_base']);
 const inlineLightActions = new Set(['set_brightness', 'set_color_temp_kelvin']);
@@ -654,6 +656,7 @@ export class BayitDashboard extends HTMLElement {
     });
     this.deviceViews = new Set();
     this.pending = new Map();
+    this.heaterLevelFeedback = new Map();
     this.preferences = {};
     this.controller = createDeviceController({ getHass: () => this._hass });
     this.resize = () => this.fitPage();
@@ -756,6 +759,7 @@ export class BayitDashboard extends HTMLElement {
     window.visualViewport?.removeEventListener('resize', this.resize);
     cancelAnimationFrame(this.frame);
     clearInterval(this.ticker);
+    this.heaterLevelFeedback.clear();
     this.scheduleApplianceUpdate(0);
     this.applianceObserver?.disconnect();
     this.applianceRoomsInView.clear();
@@ -1630,6 +1634,8 @@ export class BayitDashboard extends HTMLElement {
       const countMinutes = !this.applianceObserver || this.applianceRoomsInView.has(view.article);
       for (const config of view.room.entities) {
         const model = this.model(config);
+        const retainedLevel = this.retainedHeaterLevel(model);
+        countdown ||= !!retainedLevel;
         const tone = this.tone(model);
         const countedLight = (model.domain === 'light' || domainFor(config) === 'light') &&
           (!view.room.lightingCount || view.room.lightingCount.has(config.entity));
@@ -1688,7 +1694,7 @@ export class BayitDashboard extends HTMLElement {
         const feedback = this.coverFeedback(model, pending);
         const levelPending = model.kind === 'heater' &&
           (pending?.id === 'set_heating_level' || pending?.id === 'preselect_heating_level');
-        const heatingLevel = model.available && (model.levelActivity || levelPending);
+        const heatingLevel = model.available && (model.levelActivity || levelPending || !!retainedLevel);
         const stop = model.domain === 'cover' && model.actions.stop && this.coverIsMoving(model) &&
           this.canRequest(config.entity, 'stop');
         setIcon(shortcut.firstElementChild, model.icon);
@@ -2602,6 +2608,8 @@ export class BayitDashboard extends HTMLElement {
     let countdown = false;
     for (const view of this.deviceViews.values()) {
       const model = this.model(view.config);
+      const retainedLevel = this.retainedHeaterLevel(model);
+      countdown ||= !!retainedLevel;
       const roomName = view.room ? view.config.room_name : undefined;
       const labelName = roomName || model.name;
       setText(view.name, labelName);
@@ -2782,7 +2790,7 @@ export class BayitDashboard extends HTMLElement {
           (id === 'locate' && !model.actions.locate) ||
           (view.compactCover && !allowsCoverRailAction(model, id));
       }
-      view.special.update(model, pending);
+      view.special.update(model, pending, retainedLevel);
       view.effectGallery?.update(model, commandsReady && this.canRequest(view.config.entity, 'set_effect'));
       view.colorPalette?.update(model, pending);
       view.whitePresets?.update(model);
@@ -3485,6 +3493,8 @@ export class BayitDashboard extends HTMLElement {
     if (effectRoute.reason || (effectRoute.category && !shortcutCurrent)) return;
     const category = effectRoute.category;
     const token = { id, value };
+    const heaterFeedback = id === 'set_heating_level' && config.level_select_script && model.state === 'on' &&
+      !model.levelChanging ? { value, deadline: performance.now() + heaterLevelFeedbackLimitMs } : undefined;
     const interruptedTimer = id === 'stop_timed' ? this.pending.get(config.entity) : undefined;
     const timer = config.timed?.simple_timer_entity;
     if (timer && (id === 'start_timed' || id === 'extend_timed')) {
@@ -3502,6 +3512,7 @@ export class BayitDashboard extends HTMLElement {
       }
     }
     const lightStatusRefresh = id === 'press_button' && Boolean(config.light_status_refresh_for);
+    this.heaterLevelFeedback.delete(config.entity);
     this.pending.set(config.entity, token);
     if (category) this.pending.set(category.entity, token);
     this.announce(this.t(lightStatusRefresh ? 'light_refresh_requesting' : 'sending').replace('{name}', model.name));
@@ -3534,6 +3545,13 @@ export class BayitDashboard extends HTMLElement {
       let status = key === 'confirmed' ? ({preselect_heating_level: 'heating_preselect_saved',
         reset_daily_usage: 'timer_usage_reset'}[id] ?? key) : key;
       if (lightStatusRefresh) status = key === 'unconfirmed' ? 'light_refresh_unconfirmed' : 'light_refresh_requested';
+      if (heaterFeedback && this.isConnected && ['request_timeout', 'state_timeout'].includes(result?.reason)) {
+        const current = this.model(config);
+        if (current.available && current.state === 'on' && current.levelChanging && current.level !== value) {
+          this.heaterLevelFeedback.set(config.entity, heaterFeedback);
+          status = 'heating_level_changing';
+        }
+      }
       this.announce(this.t(status).replace('{name}', model.name));
       confirmedByHomeAssistant = result?.status === 'confirmed';
     } catch (error) {
@@ -3558,6 +3576,21 @@ export class BayitDashboard extends HTMLElement {
         if (this.isConnected) this.update();
       }
     }
+  }
+
+  retainedHeaterLevel(model) {
+    const feedback = this.heaterLevelFeedback.get(model.entity);
+    if (!feedback) return;
+    const now = performance.now();
+    if (model.levelChanging) feedback.readbackDeadline = undefined;
+    else feedback.readbackDeadline ??= now + heaterLevelReadbackGraceMs;
+    if (model.kind !== 'heater' || !model.available || model.state !== 'on' ||
+        !this.entityVisible(model.entity) || model.level === feedback.value ||
+        now >= (feedback.readbackDeadline ?? Infinity) || now >= feedback.deadline) {
+      this.heaterLevelFeedback.delete(model.entity);
+      return;
+    }
+    return feedback;
   }
 
   staleUsageReset(config, id, action, revision) {

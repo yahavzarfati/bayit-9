@@ -357,8 +357,8 @@ export function buildPanelControls(model, {
       const changing = make('p', 'heat-level-title', t('heating_level_changing'));
       changing.hidden = true;
       changing.setAttribute('role', 'status');
-      updates.push((current, pending) => {
-        changing.hidden = pending?.id === levelId || !current.levelChanging;
+      updates.push((current, pending, retainedLevel) => {
+        changing.hidden = pending?.id === levelId || (!current.levelChanging && !retainedLevel);
       });
       const choices = make('div', 'heat-level-options');
       for (let i = 0; i < count; i++) {
@@ -368,11 +368,12 @@ export function buildPanelControls(model, {
         choice.dataset.action = levelId;
         choice.onclick = () => request(levelId, value, choice);
         buttons.push(choice);
-        updates.push((current, pending) => {
-          const selected = pending?.id === levelId ? pending.value : current.level;
+        updates.push((current, pending, retainedLevel) => {
+          const selection = pending?.id === levelId ? pending : retainedLevel;
+          const selected = selection?.value ?? current.level;
           choice.disabled = !!pending || !current.actions[levelId];
           choice.setAttribute('aria-pressed', String(selected === value));
-          choice.toggleAttribute('data-changing', pending?.id === levelId && selected === value);
+          choice.toggleAttribute('data-changing', !!selection && selected === value);
         });
         choices.append(choice);
       }
@@ -382,9 +383,9 @@ export function buildPanelControls(model, {
   }
   return {
     used, content,
-    update(current, pending) {
+    update(current, pending, retainedLevel) {
       for (const item of buttons) item.disabled = !!pending;
-      for (const sync of updates) sync(current, pending);
+      for (const sync of updates) sync(current, pending, retainedLevel);
     },
   };
 }

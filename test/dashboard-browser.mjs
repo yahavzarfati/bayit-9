@@ -488,7 +488,7 @@ const hass = {
       card.hass = { ...hass, states: { ...states } };
     }
     if (request.domain === 'simple_timer' && request.service === 'cancel_timer' &&
-        query.has('embedded-heater') && request.service_data.entity_id === heaterTimer) {
+        (query.has('embedded-heater') || query.has('heater-level-timeout')) && request.service_data.entity_id === heaterTimer) {
       const attrs = states[heaterTimer].attributes;
       states[heaterTimer] = { ...states[heaterTimer], attributes: { ...attrs, timer_state: 'idle', device_active: false } };
       states[heaterFan] = { ...states[heaterFan], state: 'off' };
@@ -4509,6 +4509,95 @@ async function assertHeaterHomeFeedback(browser) {
     } finally {
       await page.close();
     }
+  }
+}
+
+async function assertHeaterLevelTimeoutFeedback(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:390,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const heater = 'fan.demo_step_heater';
+    const selector = 'script.demo_select_heat_step';
+    const activity = 'script.demo_apply_heat_step';
+    const helper = 'input_number.demo_heat_step';
+    const heading = page.getByRole('dialog',{name:'Fixture step heater',exact:true});
+    const shortcut = page.locator('.quick-button[data-entity="' + heater + '"]');
+    const level = value => heading.locator('.heat-level-choice').getByText(String(value),{exact:true});
+    const selected = heading.locator('.heat-level-choice[aria-pressed=true]');
+    const changing = heading.locator('.heat-level-choice[aria-pressed=true][data-changing]');
+    const stop = heading.locator('.timer-command[data-action=stop_timed]');
+    const readyStop = heading.locator('.timer-command[data-action=stop_timed]:enabled');
+    const report = updates => page.evaluate(entries=>{
+      for (const [id,state] of entries) window.bayitTest.setRoomState(id,state);
+    },updates);
+    const calls = () => page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service'));
+    const begin = async value => {
+      await level(value).tap();
+      await changing.getByText(String(value),{exact:true}).waitFor();
+      await report([[selector,'on'],[activity,'on']]);
+      await page.clock.fastForward(10500);
+      await readyStop.waitFor();
+    };
+    try {
+      await page.goto(base + '?heater-level&heater-level-feedback&preselect&shared-heater-level&heater-level-timeout&locale=' + locale);
+      await page.evaluate(()=>{
+        window.bayitTest.setHeaterPower('on');
+        window.bayitTest.setFixtureAttributes('sensor.demo_step_runtime',{
+          timer_state:'active',timer_finishes_at:new Date(Date.now()+600000).toISOString(),
+        });
+      });
+      await shortcut.tap();
+      await heading.waitFor();
+      await page.clock.install();
+      await begin(8);
+      assert.equal(await changing.textContent(),'8');
+      assert.equal(await stop.isEnabled(),true);
+      assert.equal((await calls()).length,1);
+      await heading.getByRole('button',{name:he ? 'סגירה' : 'Close',exact:true}).tap();
+      await heading.waitFor({state:'hidden'});
+      await shortcut.tap();
+      await changing.getByText('8',{exact:true}).waitFor();
+      await report([[selector,'off'],[activity,'off']]);
+      assert.equal(await changing.textContent(),'8');
+      await report([[helper,'8']]);
+      await changing.waitFor({state:'detached'});
+      assert.equal(await selected.textContent(),'8');
+
+      await begin(4);
+      assert.equal(await changing.textContent(),'4');
+      await report([[heater,'unavailable']]);
+      await changing.waitFor({state:'detached'});
+      await report([[heater,'on'],[selector,'off'],[activity,'off']]);
+      await selected.getByText('8',{exact:true}).waitFor();
+
+      await level(6).tap();
+      await page.clock.fastForward(10500);
+      await readyStop.waitFor();
+      await changing.waitFor({state:'detached'});
+      assert.equal(await selected.textContent(),'8');
+
+      await begin(5);
+      assert.equal(await changing.textContent(),'5');
+      await page.clock.fastForward(110000);
+      await changing.waitFor({state:'detached'});
+      assert.equal(await selected.textContent(),'8');
+      await report([[selector,'off'],[activity,'off']]);
+
+      await begin(7);
+      assert.equal(await changing.textContent(),'7');
+      await readyStop.tap();
+      await changing.waitFor({state:'detached'});
+      assert.equal(await selected.textContent(),'8');
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.heatingState()),['off','off','idle']);
+      assert.deepEqual(await calls(),[
+        ...[8,4,6,5,7].map(target_step=>({
+          type:'call_service',domain:'script',service:'demo_select_heat_step',service_data:{target_step},
+        })),
+        {type:'call_service',domain:'simple_timer',service:'cancel_timer',
+          service_data:{entity_id:'sensor.demo_step_runtime',turn_off_entity:true}},
+      ]);
+    } finally { await page.close(); }
   }
 }
 
@@ -11613,6 +11702,7 @@ try {
       await assertCompactRoomHeater(browser);
       await assertSharedHeaterLevelInterop(browser);
       await assertHeaterHomeFeedback(browser);
+      await assertHeaterLevelTimeoutFeedback(browser);
       console.log(engine + ': compact room heater, confirmed idle and safe active controls');
       console.log(engine + ': scoped panel and native shortcut destinations, safe taps, focus return and editor persistence');
       console.log(engine + ': independent browser appearance and admin household defaults');
