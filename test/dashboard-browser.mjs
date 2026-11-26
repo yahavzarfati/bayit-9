@@ -3201,6 +3201,66 @@ async function assertRoomTargetLabels(browser) {
   }
 }
 
+async function assertDuplicateRoomMemberActions(browser) {
+  const labels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', mode:'Devices in this room',
+      name:'Room display name', room:'Upstairs workshop', up:'Move up', remove:'Remove', save:'Save dashboard' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', rooms:'חדרים', mode:'מכשירים בחדר',
+      name:'שם החדר לתצוגה', room:'סדנה בקומה העליונה', up:'העברה למעלה', remove:'הסרה', save:'שמירת הדשבורד' },
+  ];
+  const lamp = 'light.demo_lamp';
+  const relay = 'switch.demo_heater';
+  const caption = entity => 'Fixture adapter · ' + entity;
+  for (const words of labels) {
+    const page = await browser.newPage({ viewport:{width:320,height:844}, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+    const openRooms = async () => {
+      await page.getByRole('button', { name:words.appearance,exact:true }).tap();
+      await page.getByRole('button', { name:words.setup,exact:true }).tap();
+      await setup.getByText(words.rooms, { exact:true }).tap();
+    };
+    const name = setup.getByLabel(words.name, { exact:true });
+    const mode = setup.getByLabel(words.mode, { exact:true });
+    const member = id => setup.getByRole('button', { name:words.remove + ' · ' + caption(id), exact:true });
+    const order = () => setup.locator('button[data-room-focus^="devices:"][data-room-focus$=":remove"]')
+      .evaluateAll(controls => controls.map(control => control.dataset.roomFocus.split(':')[1]));
+    try {
+      await page.goto(base + '/fixture-home/home?configuration&device-display-picker&locale=' + words.locale);
+      await openRooms();
+      await name.fill(words.room);
+      await mode.selectOption('manual');
+      for (const id of [lamp, relay]) {
+        await member(id).waitFor();
+        assert.equal(await member(id).evaluate(control => control.closest('li')
+          .querySelector('.room-entry-name').textContent), caption(id));
+      }
+      assert.equal(await setup.getByRole('button', { name:words.remove + ' · Fixture fan', exact:true }).count(), 1);
+      const reordered = await order();
+      const index = reordered.indexOf(relay);
+      assert.ok(index > 0);
+      [reordered[index - 1], reordered[index]] = [reordered[index], reordered[index - 1]];
+      await setup.getByRole('button', { name:words.up + ' · ' + caption(relay), exact:true }).tap();
+      assert.deepEqual(await order(), reordered);
+      await member(lamp).waitFor();
+      await member(relay).tap();
+      const expected = reordered.filter(id => id !== relay);
+      assert.deepEqual(await order(), expected);
+      await setup.getByRole('button', { name:words.remove + ' · Fixture adapter',exact:true }).waitFor();
+      await Promise.all([page.waitForEvent('load'), setup.getByRole('button', { name:words.save,exact:true }).tap()]);
+      const stored = await page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy.room_overrides.studio);
+      assert.equal(stored.name, words.room);
+      assert.deepEqual(stored.entities, expected);
+      await openRooms();
+      assert.equal(await name.inputValue(), words.room);
+      assert.deepEqual(await order(), expected);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service')), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertCustomRoomIcons(browser) {
   const localeLabels = [
     { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', room:'Room to customize',
@@ -12016,6 +12076,7 @@ try {
     await run('Shortcut editor distinguishes same-named rooms and popups', () => assertDuplicateShortcutEditorLabels(browser));
     await run('Device appearance edits retain focus and distinguish same-named devices', () => assertDeviceDisplayPickerAndFocus(browser));
     await run('Room setup distinguishes same-named devices in sections and power settings', () => assertRoomTargetLabels(browser));
+    await run('Room membership actions distinguish same-named devices', () => assertDuplicateRoomMemberActions(browser));
     await run('Room icon editor previews, validates, saves and clears custom icons', () => assertCustomRoomIcons(browser));
     await run('Room device picker admits paired devices after their state arrives', () => assertRoomPickerRefreshesLateDevices(browser));
     await run('Profile editor preserves Simple Timer targets and checks deliberate changes', () => assertHeatingProfileBindingsStayExplicit(browser));

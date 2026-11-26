@@ -1728,11 +1728,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #roomDeviceMembership(room, { override, sections, chosen, manual, words, language, areas, available }) {
     const memberIds = manual ? chosen : configuredIds(override.additional_entities);
     const areaNames = new Map(areas.map(area => [area.id, area.name]));
-    const records = memberIds.map(id => {
-      const device = available.get(id);
-      const previousName = this.#hass.states?.[id]?.attributes?.friendly_name;
-      return { id, name: device?.name || previousName || id, secondary: device ? '' : words.missing };
-    });
+    const captions = distinctEntityLabels(memberIds, id =>
+      available.get(id)?.name || this.#hass.states?.[id]?.attributes?.friendly_name);
+    const records = memberIds.map(id => ({
+      id, name: captions.get(id), secondary: available.has(id) ? '' : words.missing,
+    }));
     const change = (items, focusKey) => {
       const entities = items.map(item => item.id);
       const removed = new Set(memberIds.filter(id => !entities.includes(id)));
