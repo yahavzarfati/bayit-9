@@ -11633,6 +11633,9 @@ try {
       }
     };
 
+    await run('Cover endpoint confirmation', () => assertCoverEndpointConfirmation(browser));
+    await run('Heater level feedback after delayed acknowledgement', () => assertHeaterLevelTimeoutFeedback(browser));
+
     await run('Room cover columns and popup icons', async () => {
       await assertRoomCoverColumns(browser);
       console.log(engine + ': authored single-cover columns keep readable names and full-sized commands');
@@ -11702,7 +11705,6 @@ try {
       await assertCompactRoomHeater(browser);
       await assertSharedHeaterLevelInterop(browser);
       await assertHeaterHomeFeedback(browser);
-      await assertHeaterLevelTimeoutFeedback(browser);
       console.log(engine + ': compact room heater, confirmed idle and safe active controls');
       console.log(engine + ': scoped panel and native shortcut destinations, safe taps, focus return and editor persistence');
       console.log(engine + ': independent browser appearance and admin household defaults');
@@ -14575,7 +14577,6 @@ try {
       await guardedRail.close();
       console.log(engine + ': Security cover rails at 320–390 px, exact native details, endpoint and latest confirmation');
       await assertReportedCoverMotion(browser);
-      await assertCoverEndpointConfirmation(browser);
       await assertCoverPopupVisibility(browser);
       await assertCompactSecurityLocks(browser);
     });
