@@ -96,6 +96,12 @@ export function routesFixedLightColor(config, actionId) {
     ["set_light_color", "set_color_temp_kelvin"].includes(actionId);
 }
 
+export function fixedLightColorScriptActive(hass, config) {
+  const binding = config.light_mode_source;
+  const script = binding?.fixed_color_script;
+  return binding?.apply_effects === true && isEntity(script, "script") && hass?.states?.[script]?.state === "on";
+}
+
 export function availableLightFixedColorScript(hass, config) {
   const binding = config.light_mode_source;
   const script = binding?.fixed_color_script;
@@ -930,6 +936,7 @@ export function createDeviceController({
         const state = hass?.states?.[entity];
         const effectOptions = pairedLightEffectOptions(hass, config);
         if (!bound || !current?.() || !canSendDeviceCommands(hass) || !effectOptions ||
+            fixedLightColorScriptActive(hass, config) ||
             !isAvailable(state) || !Array.isArray(state.attributes?.options) || !state.attributes.options.includes(option) ||
             !Object.hasOwn(hass.services?.input_select ?? {}, "select_option") ||
             !getDeviceModel(config, hass.states).actions.set_effect?.options.includes(value)) return;
@@ -987,6 +994,9 @@ export function createDeviceController({
         plan = { ...plan, domain: "script", service, target: null };
       }
       if (actionId === "set_effect" && config.light_mode_source?.apply_effects) {
+        if (fixedLightColorScriptActive(hass, config)) {
+          throw new DeviceControlError("action_unavailable", "A fixed-color change is already in progress.");
+        }
         if (!pairedLightEffectOptions(hass, config)?.includes(value)) {
           throw new DeviceControlError("action_unavailable", "The paired light does not currently offer that effect.");
         }

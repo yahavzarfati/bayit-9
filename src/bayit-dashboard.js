@@ -10,7 +10,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   supportsOverviewCompactHistory, supportsToolbarPanelIcon, supportsToolbarVacuumSummary, toolbarPlacement, toolbarPopupPosition, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { bundledHomeIcon } from './home-icon-paths.js';
-import { allowsCoverRailAction, availableLightFixedColorScript, canSendDeviceCommands, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, isReadOnlyRole, pairedLightEffectOptions, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets, routesFixedLightColor,
+import { allowsCoverRailAction, availableLightFixedColorScript, canSendDeviceCommands, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, fixedLightColorScriptActive, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, isReadOnlyRole, pairedLightEffectOptions, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets, routesFixedLightColor,
   simpleTimerStatusEntity, simpleTimerUsageResetAvailable, supportsHomeHeaterPower, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupScrollMemory } from './popup-scroll.js';
@@ -2478,6 +2478,7 @@ export class BayitDashboard extends HTMLElement {
     if (!source?.apply_effects) return {};
     const options = this.entityVisible(source.entity) && pairedLightEffectOptions(this._hass, config);
     if (!options) return { reason: 'light_effect_selector_unavailable' };
+    if (fixedLightColorScriptActive(this._hass, config)) return { reason: 'light_effect_fixed_color_busy' };
     if (options.includes(value)) return {};
     const current = this.lightEffectCategoryState(config);
     if (current?.canWrite && !current.pending && value !== source.fixed_color_option) {

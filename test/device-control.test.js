@@ -11,8 +11,9 @@ test("an opted-in effect waits for the category report and the exact paired opti
   const lamp = "light.fixture_lamp";
   const selector = "select.fixture_effects";
   const category = "input_select.fixture_categories";
+  const script = "script.fixture_fixed_color";
   const mode = config(lamp,{
-    light_mode_source:{entity:selector,fixed_color_option:"Fixed",apply_effects:true},
+    light_mode_source:{entity:selector,fixed_color_option:"Fixed",apply_effects:true,fixed_color_script:script},
     effect_category_source:{entity:category},
   });
   const route = {entity:category,selected:"Sleep",option:"Nature"};
@@ -20,7 +21,7 @@ test("an opted-in effect waits for the category report and the exact paired opti
     target:{entity_id:category},service_data:{option:"Nature"}};
   const selectRequest = {type:"call_service",domain:"select",service:"select_option",
     target:{entity_id:selector},service_data:{option:"Wave"}};
-  for (const scenario of ["observed","timeout","superseded","disconnected","rejected"]) {
+  for (const scenario of ["observed","timeout","superseded","disconnected","rejected","fixed-color-active"]) {
     let now = 0;
     const calls = [];
     const hass = {
@@ -31,6 +32,7 @@ test("an opted-in effect waits for the category report and the exact paired opti
         [lamp]:entity("off",{supported_features:4,supported_color_modes:["rgb"],effect_list:["Night","Wave"]}),
         [selector]:entity("Fixed",{options:["Fixed","Night"]}),
         [category]:entity("Sleep",{options:["Sleep","Nature","Other"]}),
+        [script]:entity("off"),
       },
       async callWS(request) {
         calls.push(request);
@@ -47,7 +49,10 @@ test("an opted-in effect waits for the category report and the exact paired opti
           else if (scenario === "disconnected") hass.connected = false;
           else hass.states[category].state = "Nature";
         }
-        if (now === 200 && scenario === "observed") hass.states[selector].attributes.options.push("Wave");
+        if (now === 200 && ["observed","fixed-color-active"].includes(scenario)) {
+          hass.states[selector].attributes.options.push("Wave");
+          if (scenario === "fixed-color-active") hass.states[script].state = "on";
+        }
       },
     });
     const attempt = controller.applyEffectAcrossCategories(mode,"Wave",{category:route,current:()=>true});
@@ -55,6 +60,13 @@ test("an opted-in effect waits for the category report and the exact paired opti
     else assert.equal((await attempt).status,scenario === "observed" ? "confirmed" : "unconfirmed");
     assert.deepEqual(calls,scenario === "observed" ? [categoryRequest,selectRequest] : [categoryRequest]);
     if (scenario === "timeout") assert.equal(now,5000);
+    if (scenario === "fixed-color-active") {
+      await assert.rejects(controller.execute(mode,"set_effect","Wave"),code("action_unavailable"));
+      assert.deepEqual(calls,[categoryRequest]);
+      hass.states[script].state = "off";
+      assert.equal((await controller.execute(mode,"set_effect","Wave")).status,"confirmed");
+      assert.deepEqual(calls,[categoryRequest,selectRequest]);
+    }
   }
 });
 
@@ -150,7 +162,7 @@ test("a bound fixed-color script dispatches only validated light data and fails 
   const initial = {
     states: {
       [light]:entity("on", { supported_color_modes:["rgb","color_temp"], min_color_temp_kelvin:2200,
-        max_color_temp_kelvin:7000, brightness:120 }),
+        max_color_temp_kelvin:7000, brightness:120, supported_features:4, effect_list:["Aurora"] }),
       [selector]:entity("Aurora", { options:["Fixed color","Aurora"] }),
       [script]:entity("off"),
     },
@@ -188,6 +200,16 @@ test("a bound fixed-color script dispatches only validated light data and fails 
   await execute("set_color_temp_kelvin", 4100, {...mode,apply_effects:false});
   assert.deepEqual(callLog.at(-1), { type:"call_service", domain:"light", service:"turn_on",
     target:{entity_id:light}, service_data:{color_temp_kelvin:4100} });
+  const directScene = {type:"call_service",domain:"select",service:"select_option",
+    target:{entity_id:selector},service_data:{option:"Aurora"}};
+  hass = withState(script,entity("on"));
+  await assert.rejects(execute("set_effect","Aurora"),code("action_unavailable"));
+  assert.equal(callLog.length,4);
+  for (const state of ["off","unknown","unavailable"]) {
+    hass = withState(script,entity(state));
+    await execute("set_effect","Aurora");
+    assert.deepEqual(callLog.at(-1),directScene);
+  }
 });
 
 test("boiler quick power revalidates the latest relay, timer and native service before dispatch", async () => {

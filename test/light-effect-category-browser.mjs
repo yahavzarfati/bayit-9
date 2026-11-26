@@ -15,6 +15,7 @@ const markup = '<!doctype html><meta charset="utf-8"><meta name="viewport" conte
     const light = 'light.fixture_lamp';
     const category = 'input_select.fixture_categories';
     const mode = 'select.fixture_light_modes';
+    const fixed = 'script.fixture_fixed_color';
     const effects = ['Wave','Night','Glow','Dawn','Unsorted'];
     const groups = categories.slice(0,4).map((title, index) => ({ title, effects:[effects[index]] }));
     if (query.has('ambiguous')) groups[2].effects.push(effects[0]);
@@ -47,6 +48,7 @@ const markup = '<!doctype html><meta charset="utf-8"><meta name="viewport" conte
     };
     if (query.has('paired')) {
       hass.states[mode] = { state:'Fixed color', attributes:{options:['Fixed color','Night']} };
+      hass.states[fixed] = { state:'off', attributes:{} };
       hass.entities[light].device_id = 'fixture-lamp';
       hass.entities[mode] = { device_id:'fixture-lamp' };
       hass.services.select = { select_option:{} };
@@ -56,7 +58,8 @@ const markup = '<!doctype html><meta charset="utf-8"><meta name="viewport" conte
       type:'custom:bayit-9', locale, light_effect_groups:{ [light]:groups },
       light_effect_favorites:[light],
       ...(!query.has('unbound') && { light_effect_category_sources:{ [light]:{ entity:category, all_option:all } } }),
-      ...(query.has('paired') && { light_mode_sources:{ [light]:{ entity:mode, fixed_color_option:'Fixed color',apply_effects:true } } }),
+      ...(query.has('paired') && { light_mode_sources:{ [light]:{ entity:mode, fixed_color_option:'Fixed color',
+        fixed_color_script:fixed,apply_effects:true } } }),
     };
     const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
     const card = document.createElement('bayit-dashboard');
@@ -78,6 +81,10 @@ const markup = '<!doctype html><meta charset="utf-8"><meta name="viewport" conte
       },
       setModes(values) {
         hass.states[mode] = { ...hass.states[mode], attributes:{ options:values } };
+        card.hass = { ...hass, states:{ ...hass.states } };
+      },
+      setFixedActive(active) {
+        hass.states[fixed] = { ...hass.states[fixed], state:active ? 'on' : 'off' };
         card.hass = { ...hass, states:{ ...hass.states } };
       },
       setLightEffect(effect) {
@@ -273,6 +280,13 @@ try {
       };
       await pickFavorite();
       assert.deepEqual(await paired.calls(),[]);
+      await paired.page.evaluate(()=>fixture.setFixedActive(true));
+      await paired.gallery.getByText(he ? 'אפשר לבחור אפקט אחרי ששינוי הצבע הקבוע יסתיים.'
+        : 'Wait for the fixed-color change to finish.',{exact:true}).waitFor();
+      assert.equal(await apply.isDisabled(),true);
+      await apply.dispatchEvent('click');
+      assert.deepEqual(await paired.calls(),[]);
+      await paired.page.evaluate(()=>fixture.setFixedActive(false));
       await apply.tap();
       await waitForWrites(4);
       const switchRequest = {type:'call_service', domain:'input_select', service:'select_option',
