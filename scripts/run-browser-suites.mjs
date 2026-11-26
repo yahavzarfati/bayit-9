@@ -3,17 +3,24 @@ import { readdir } from 'node:fs/promises';
 
 const repository = new URL('../', import.meta.url);
 const dashboard = 'dashboard-browser.mjs';
+const engines = ['chromium', 'webkit'];
+const requestedGroup = process.env.BAYIT_BROWSER_SUITE;
 
-async function defaultSuites() {
+async function browserSuites() {
+  if (requestedGroup && ![...engines, 'standalone'].includes(requestedGroup)) {
+    throw new Error('BAYIT_BROWSER_SUITE must be chromium, webkit, or standalone');
+  }
   const files = await readdir(new URL('test/', repository), { withFileTypes: true });
-  const standalone = files.filter(entry => entry.isFile() && entry.name !== dashboard && entry.name.endsWith('-browser.mjs'))
+  const sources = files.filter(entry => entry.isFile() && entry.name !== dashboard && entry.name.endsWith('-browser.mjs'))
     .map(entry => entry.name).sort();
-  return [
-    ...['chromium', 'webkit'].map(engine => ({
-      name: 'Dashboard (' + engine + ')', args: ['test/' + dashboard], env: { BAYIT_BROWSER_ENGINE: engine },
+  const suites = [
+    ...engines.map(engine => ({
+      group: engine, name: 'Dashboard (' + engine + ')',
+      args: ['test/' + dashboard], env: { BAYIT_BROWSER_ENGINE: engine },
     })),
-    ...standalone.map(file => ({ name: file, args: ['test/' + file] })),
+    ...sources.map(file => ({ group: 'standalone', name: file, args: ['test/' + file] })),
   ];
+  return suites.filter(suite => !requestedGroup || suite.group === requestedGroup);
 }
 
 function runSuite({ args, env }) {
@@ -55,4 +62,4 @@ async function runBrowserSuites(suites) {
   return failed ? 1 : 0;
 }
 
-process.exitCode = await runBrowserSuites(await defaultSuites());
+process.exitCode = await runBrowserSuites(await browserSuites());

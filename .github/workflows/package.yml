@@ -47,9 +47,15 @@ jobs:
         run: python tests/test_heating_kit.py
 
   browser:
-    name: Chromium and WebKit
+    name: Browser tests (${{ matrix.group }})
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [chromium, webkit, standalone]
+    env:
+      BAYIT_BROWSER_SUITE: ${{ matrix.group }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -60,8 +66,13 @@ jobs:
         run: npm ci
       - name: Build the dashboard bundle for browser checks
         run: npm run build
-      - name: Install Chromium and WebKit
-        run: npx playwright-core install --with-deps chromium webkit
+      - name: Install browsers
+        run: |
+          if [[ "$BAYIT_BROWSER_SUITE" == standalone ]]; then
+            npx playwright-core install --with-deps chromium webkit
+          else
+            npx playwright-core install --with-deps "$BAYIT_BROWSER_SUITE"
+          fi
       - name: Run browser checks
         run: |
           mkdir -p test-results/package
@@ -70,7 +81,7 @@ jobs:
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
-          name: package-browser-failure
+          name: package-browser-failure-${{ matrix.group }}
           path: test-results/package/browser.log
           if-no-files-found: ignore
           retention-days: 7
@@ -94,7 +105,7 @@ jobs:
             echo "| --- | --- |"
             printf '| JavaScript tests and bundle | %s |\n' "$JAVASCRIPT_RESULT"
             printf '| Heating kit | %s |\n' "$HEATING_RESULT"
-            printf '| Chromium and WebKit | %s |\n' "$BROWSER_RESULT"
+            printf '| Chromium, WebKit and standalone browser checks | %s |\n' "$BROWSER_RESULT"
           } >> "$GITHUB_STEP_SUMMARY"
           if [[ "$JAVASCRIPT_RESULT" != success || "$HEATING_RESULT" != success || "$BROWSER_RESULT" != success ]]; then
             echo "::error::Package validation requires all checks to pass."
