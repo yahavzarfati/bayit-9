@@ -441,6 +441,8 @@ export function createToolbarPanel(kind, configuration, context) {
 
   function renderScriptToggle(item, compactActions) {
     const host = make('div', 'script-toggle');
+    const scriptToggleCurrent = () => live && kind === 'automations' && dialog?.open &&
+      !dialog.hasAttribute('data-closing') && dialog.contains(host) && !host.closest('[hidden]');
     const controls = ['start_script', 'stop_script'].map(id => {
       const tile = button('tile-row');
       const mark = make('span', 'tile-mark');
@@ -464,18 +466,20 @@ export function createToolbarPanel(kind, configuration, context) {
       tile.onclick = () => {
         const observed = gestureRevision ?? revision;
         clear();
-        if (observed) request(item, id, observed, tile);
+        if (observed) request(item, id, observed, tile, { scriptToggleCurrent });
       };
 
       return (model, state, busy) => {
         const stopping = id === 'stop_script';
         revision = model.actions[id]?.scriptRevision;
+        const stopState = stopping && context.scriptStopState?.(item, revision, scriptToggleCurrent);
+        const waiting = busy && stopState !== 'ready';
         tile.hidden = stopping !== (model.state === 'on');
-        tile.disabled = !revision || busy;
+        tile.disabled = !revision || waiting;
         tile.dataset.tone = stopping ? 'active' : '';
-        tile.setAttribute('aria-busy', String(busy));
+        tile.setAttribute('aria-busy', String(waiting));
         name.textContent = model.name;
-        caption.textContent = revision ? t(id) : state;
+        caption.textContent = stopState === 'queued' ? t('script_stop_waiting') : revision ? t(id) : state;
         caption.hidden = compactActions && !stopping && !busy && Boolean(revision);
         label(tile, model.name + ' · ' + caption.textContent);
       };

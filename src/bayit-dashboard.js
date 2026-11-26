@@ -684,6 +684,7 @@ export class BayitDashboard extends HTMLElement {
 
   setConfig(raw) {
     const next = normalizeDashboardConfig(raw);
+    this.dropQueuedScriptStops();
     this.retireChangedHeaterFeedback(next);
     this.prepareAppearanceReturn(next);
     this.popupScroll.stop();
@@ -739,6 +740,7 @@ export class BayitDashboard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    this.dropInvalidScriptStops();
     if (this.setup?.editor) this.setup.editor.hass = hass;
     if (this.isConnected && this.fixedColorScripts) this.scriptRegistry.update(hass, this.fixedColorScripts);
     if (!this.isConnected || this.frame || !this.config) return;
@@ -769,6 +771,7 @@ export class BayitDashboard extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this.dropQueuedScriptStops();
     this.scriptRegistry.dispose();
     const returning = appearanceReturns.get(this.ownerDocument.defaultView);
     if (returning?.owner === this) {
@@ -1826,6 +1829,7 @@ export class BayitDashboard extends HTMLElement {
     const panel = { type, room, returnTo, roomOrigin: type === 'room' && Boolean(source),
       setupRooms: type === 'setup' && navigation.setupRooms === true,
       scrollHash: popupRouteFragment(scrollRoute), routeHash: navigation.hash ?? this.panel?.routeHash };
+    this.dropQueuedScriptStops();
     this.panel = panel;
     n.back.hidden = !this.roomReturnAvailable(returnTo);
     n.setupFooter.hidden = true;
@@ -1963,6 +1967,7 @@ export class BayitDashboard extends HTMLElement {
   closePanel() {
     const n = this.nodes;
     if (n.modal.open) return;
+    this.dropQueuedScriptStops();
     this.nativeMoreInfoReturn?.();
     const routeHash = this.panel?.routeHash;
     this.popupScroll.stop();
@@ -2320,6 +2325,7 @@ export class BayitDashboard extends HTMLElement {
       make, button, icon, label, t: key => this.t(key),
       modelFor: item => this.model(item), stateLabel: model => this.stateLabel(model, type === 'overview' ? 'overview' : undefined),
       moreInfo: (item, source) => this.moreInfo(item, source), pending: entity => this.pending.has(entity),
+      scriptStopState: (item, revision, current) => this.scriptStopState(item, revision, current),
       request: (item, action, value, source, options) => this.requestAction(item, action, value, source, options),
       turnOffEntities: (entities, name) => this.turnOffEntities(entities, name),
       buildDevice: (item, slot, presentation) => this.buildDevice(item, slot, undefined, undefined, presentation),
@@ -3459,10 +3465,73 @@ export class BayitDashboard extends HTMLElement {
       (id === 'stop_timed' && this.canInterruptTimer(config, previous));
   }
 
+  scriptStopState(config, revision, current) {
+    const start = this.pending.get(config.entity);
+    const toggle = start?.scriptToggle;
+    if (toggle?.config !== config || toggle.current !== current || toggle.connection !== this._hass?.connection ||
+        !revision || revision === start.value || !current() ||
+        !this.deviceActionVisible(config, 'stop_script')) return;
+    return start.queuedScriptStop ? 'queued' : 'ready';
+  }
+
+  queuedScriptStopIsCurrent(config, stop) {
+    return stop.current() && stop.connection === this._hass?.connection && this.deviceActionVisible(config, 'stop_script') &&
+      this.model(config).actions.stop_script?.scriptRevision === stop.revision;
+  }
+
+  dropQueuedScriptStop(start) {
+    const stop = start.queuedScriptStop;
+    if (!stop) return;
+    delete start.queuedScriptStop;
+    stop.connection?.removeEventListener?.('disconnected', stop.disconnected);
+    return stop;
+  }
+
+  dropQueuedScriptStops() {
+    for (const start of this.pending.values()) this.dropQueuedScriptStop(start);
+  }
+
+  dropInvalidScriptStops() {
+    for (const start of this.pending.values()) {
+      const stop = start.queuedScriptStop;
+      if (stop && !this.queuedScriptStopIsCurrent(start.scriptToggle.config, stop)) {
+        this.dropQueuedScriptStop(start);
+        if (stop.current()) this.announce(this.t('script_stop_expired'));
+      }
+    }
+  }
+
+  queueScriptStop(config, revision, current, confirmed) {
+    const start = this.pending.get(config.entity);
+    const stop = { revision, current, confirmed, connection:this._hass?.connection };
+    stop.disconnected = () => {
+      if (start.queuedScriptStop !== stop) return;
+      this.dropQueuedScriptStop(start);
+      if (current()) this.announce(this.t('script_stop_expired'));
+      if (this.isConnected) this.update();
+    };
+    start.queuedScriptStop = stop;
+    stop.connection?.addEventListener?.('disconnected', stop.disconnected);
+    if (start.acknowledged) this.dispatchQueuedScriptStop(start);
+    else {
+      this.announce(this.t('script_stop_waiting'));
+      this.update();
+    }
+  }
+
+  dispatchQueuedScriptStop(start) {
+    const { config } = start.scriptToggle;
+    const stop = this.dropQueuedScriptStop(start);
+    if (!stop || this.pending.get(config.entity) !== start || !this.queuedScriptStopIsCurrent(config, stop)) return;
+    this.pending.delete(config.entity);
+    this.send(config, 'stop_script', stop.revision, { confirmed:stop.confirmed, scriptToggleCurrent:stop.current });
+  }
+
   requestAction(config, id, value, source, { confirmShortcut = false, compactCover = false, compactDevice = false,
-    roomPowerTile = false, shortcutCurrent, preserveLightBrightness = false, timerStartViaSlider = false } = {}) {
+    roomPowerTile = false, shortcutCurrent, preserveLightBrightness = false, timerStartViaSlider = false, scriptToggleCurrent } = {}) {
+    const queueStop = id === 'stop_script' && this.scriptStopState(config, value, scriptToggleCurrent) === 'ready';
     if (!this.deviceActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
-        !this.canRequest(config.entity, id, config)) return;
+        (scriptToggleCurrent && !scriptToggleCurrent()) || (!queueStop && !this.canRequest(config.entity, id, config))) return;
     if (id === 'set_effect' && config.light_mode_source?.apply_effects) {
       const panel = this.panel;
       const originalScope = shortcutCurrent;
@@ -3479,10 +3548,10 @@ export class BayitDashboard extends HTMLElement {
         (compactDevice && !this.canUseRoomCompactCommand(config, model, id))) return;
     if (!action.requiresConfirmation && !confirmShortcut) {
       return action.requiresCode ? this.moreInfo(config, source)
-        : this.send(config, id, value, { roomBoilerQuickPower, shortcutCurrent, preserveLightBrightness, timerStartViaSlider });
+        : this.send(config, id, value, { roomBoilerQuickPower, shortcutCurrent, preserveLightBrightness, timerStartViaSlider, scriptToggleCurrent });
     }
     this.confirming = { config, id, value, source, compactCover, compactDevice, roomPowerTile, roomBoilerQuickPower,
-      shortcutCurrent, preserveLightBrightness, timerStartViaSlider, native: action.requiresCode };
+      shortcutCurrent, preserveLightBrightness, timerStartViaSlider, scriptToggleCurrent, native: action.requiresCode };
     const n = this.nodes;
     const prompt = id === 'reset_daily_usage' ? this.t('timer_reset_confirm').replace('{name}', model.name)
       : this.t('confirm_action').replace('{name}', model.name).replace('{action}', this.actionLabel(id));
@@ -3505,19 +3574,28 @@ export class BayitDashboard extends HTMLElement {
       confirmed: true, roomBoilerQuickPower: request.roomBoilerQuickPower, shortcutCurrent: request.shortcutCurrent,
       preserveLightBrightness: request.preserveLightBrightness,
       timerStartViaSlider: request.timerStartViaSlider,
+      scriptToggleCurrent: request.scriptToggleCurrent,
     });
   }
 
   async send(config, id, value, { confirmed = false, roomBoilerQuickPower = false, shortcutCurrent,
-    preserveLightBrightness = false, timerStartViaSlider = false } = {}) {
+    preserveLightBrightness = false, timerStartViaSlider = false, scriptToggleCurrent } = {}) {
+    const queueStop = id === 'stop_script' && this.scriptStopState(config, value, scriptToggleCurrent) === 'ready';
     if (!this.deviceActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
-        !this.canRequest(config.entity, id, config)) return;
+        (scriptToggleCurrent && !scriptToggleCurrent()) || (!queueStop && !this.canRequest(config.entity, id, config))) return;
     const model = this.model(config, { roomBoilerQuickPower });
     if (this.staleScriptAction(id, model.actions[id], value) || this.staleUsageReset(config, id, model.actions[id], value) || !model.actions[id]) return;
+    if (queueStop) {
+      if (!model.actions[id].requiresConfirmation || confirmed) this.queueScriptStop(config, value, scriptToggleCurrent, confirmed);
+      return;
+    }
     const effectRoute = id === 'set_effect' ? this.lightEffectRoute(config, value) : {};
     if (effectRoute.reason || (effectRoute.category && !shortcutCurrent)) return;
     const category = effectRoute.category;
     const token = { id, value };
+    if (id === 'start_script' && config.role === 'action' && config.command === 'toggle_script' && scriptToggleCurrent) {
+      token.scriptToggle = { config, current:scriptToggleCurrent, connection:this._hass?.connection };
+    }
     if (id === 'set_heating_level' && config.level_select_script && model.state === 'on' && !model.levelChanging) {
       token.heaterFeedback = { value, binding:heaterLevelBinding(config), deadline:performance.now() + heaterLevelFeedbackLimitMs };
     }
@@ -3546,6 +3624,7 @@ export class BayitDashboard extends HTMLElement {
     let confirmedByHomeAssistant = false;
     try {
       if (!this.deviceActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
+          (scriptToggleCurrent && !scriptToggleCurrent()) ||
           (interruptedTimer && !this.canInterruptTimer(config, interruptedTimer))) {
         this.announce(this.t('unavailable'));
         if (interruptedTimer && this.pending.get(config.entity) === token) {
@@ -3554,9 +3633,10 @@ export class BayitDashboard extends HTMLElement {
         }
         return;
       }
-      const onAcknowledged = token.timer ? () => {
+      const onAcknowledged = token.timer || token.scriptToggle ? () => {
         if (this.pending.get(config.entity) !== token) return;
         token.acknowledged = true;
+        if (token.scriptToggle) this.dispatchQueuedScriptStop(token);
         if (this.isConnected) this.update();
       } : undefined;
       const options = { confirmed, roomBoilerQuickPower, onAcknowledged, preserveLightBrightness, timerStartViaSlider };
@@ -3571,6 +3651,7 @@ export class BayitDashboard extends HTMLElement {
       let status = key === 'confirmed' ? ({preselect_heating_level: 'heating_preselect_saved',
         reset_daily_usage: 'timer_usage_reset'}[id] ?? key) : key;
       if (lightStatusRefresh) status = key === 'unconfirmed' ? 'light_refresh_unconfirmed' : 'light_refresh_requested';
+      if (token.queuedScriptStop?.current() && key === 'unconfirmed') status = 'script_stop_expired';
       const heaterFeedback = token.heaterFeedback;
       if (heaterFeedback && this.isConnected && ['request_timeout', 'state_timeout'].includes(result?.reason)) {
         const current = this.model(config);
@@ -3584,9 +3665,11 @@ export class BayitDashboard extends HTMLElement {
     } catch (error) {
       if (this.pending.get(config.entity) === token) {
         const changed = scriptOperations.has(id) && ['stale_script_state', 'action_unavailable'].includes(error?.code);
-        this.announce(this.t(changed ? 'script_state_changed' : 'send_error'));
+        const notice = token.queuedScriptStop?.current() ? 'script_stop_expired' : changed ? 'script_state_changed' : 'send_error';
+        this.announce(this.t(notice));
       }
     } finally {
+      this.dropQueuedScriptStop(token);
       if (category && this.pending.get(category.entity) === token) this.pending.delete(category.entity);
       if (this.pending.get(config.entity) === token) {
         this.pending.delete(config.entity);

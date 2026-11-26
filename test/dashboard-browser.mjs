@@ -44,6 +44,7 @@ let finishClimatePreset;
 let finishUsageReset;
 let finishRoomOff;
 let finishApplianceCommand;
+let completeScriptStart;
 let scriptSerial = 0;
 function observeScript(state) {
   const id = 'script.demo_toggle';
@@ -429,6 +430,11 @@ const hass = {
     }
     if (request.domain === 'script' && request.target?.entity_id === 'script.demo_toggle') {
       observeScript(request.service === 'turn_on' ? 'on' : 'off');
+      if (request.service === 'turn_on' && query.has('automation-stop-handoff')) {
+        return new Promise((resolve, reject) => {
+          completeScriptStart = failed => failed ? reject(new Error('Fixture rejected script start')) : resolve({});
+        });
+      }
     }
     if (request.domain === 'script' && request.service === 'demo_select_heat_step') {
       if (rejectLevel) {
@@ -1380,6 +1386,7 @@ window.bayitTest = {
     return Boolean(regenerate);
   },
   observeScript,
+  completeScriptStart: failed => completeScriptStart(failed),
   finishCover: (index, failed = false) => coverRequests[index](failed),
   rejectNextInlineLight() { rejectInlineLight = true; },
   setFixtureRegistry(entity, metadata) {
@@ -12118,6 +12125,98 @@ async function assertHomeHeaterShortcut(browser) {
   }
 }
 
+async function assertAutomationStopHandoff(browser) {
+  const labels = {
+    en: { toolbar:'Automations', start:'Start script', stop:'Stop script', confirm:'Confirm', close:'Close',
+      waiting:'Stop requested · waiting for start confirmation', expired:'Stop request expired. Check the script and try again.' },
+    he: { toolbar:'אוטומציות', start:'הפעלת תרחיש', stop:'עצירת תרחיש', confirm:'אישור', close:'סגירה',
+      waiting:'בקשת עצירה · ממתין לאישור ההפעלה', expired:'תוקף בקשת העצירה פג. בדקו את מצב התרחיש ונסו שוב.' },
+  };
+  for (const [locale, names] of Object.entries(labels)) {
+    const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true });
+    page.setDefaultTimeout(6500);
+    try {
+      await page.clock.install();
+      const open = () => page.getByRole('button', { name:names.toolbar, exact:true }).tap();
+      const panel = page.getByRole('dialog', { name:names.toolbar, exact:true });
+      const tile = action => panel.getByRole('button', { name:'Arrival scene · ' + action, exact:true });
+      const confirm = () => page.getByRole('button', { name:names.confirm, exact:true }).tap();
+      const calls = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.domain === 'script'));
+      const expected = (...services) => services.map(service => ({
+        type:'call_service', domain:'script', service, service_data:{}, target:{ entity_id:'script.demo_toggle' },
+      }));
+      const visit = async (held = true) => {
+        await page.goto(base + '?toolbar-panels&automation-toggle&locale=' + locale + (held ? '&automation-stop-handoff' : ''));
+        await open();
+      };
+      const queueStop = async () => {
+        await tile(names.start).tap();
+        await confirm();
+        assert.deepEqual(await calls(), expected('turn_on'));
+        await tile(names.stop).tap();
+        await confirm();
+        const waiting = tile(names.waiting);
+        await waiting.waitFor();
+        assert.equal(await waiting.isEnabled(), false);
+        assert.equal(await waiting.getAttribute('aria-busy'), 'true');
+        await waiting.dispatchEvent('click');
+        assert.deepEqual(await calls(), expected('turn_on'));
+      };
+      const finishStart = (failed = false) => page.evaluate(value => window.bayitTest.completeScriptStart(value), failed);
+      const retryStop = async () => {
+        await tile(names.stop).tap();
+        await confirm();
+        await tile(names.start).waitFor();
+        assert.deepEqual(await calls(), expected('turn_on', 'turn_off'));
+      };
+
+      await visit(false);
+      await tile(names.start).tap();
+      await confirm();
+      await retryStop();
+
+      await visit();
+      await queueStop();
+      await finishStart();
+      await tile(names.start).waitFor();
+      assert.deepEqual(await calls(), expected('turn_on', 'turn_off'));
+
+      for (const invalidate of ['revision', 'close', 'connection', 'reject', 'timeout']) {
+        await visit();
+        await queueStop();
+        if (invalidate === 'revision') {
+          await page.evaluate(() => window.bayitTest.observeScript('on'));
+        } else if (invalidate === 'close') {
+          await panel.getByRole('button', { name:names.close, exact:true }).tap();
+          await panel.waitFor({ state:'hidden' });
+          await open();
+          await tile(names.stop).waitFor();
+          assert.equal(await tile(names.stop).isEnabled(), false);
+        } else if (invalidate === 'connection') {
+          await page.evaluate(() => {
+            window.bayitTest.setFixtureConnection(false, false);
+            window.bayitTest.setFixtureConnection(true, true);
+          });
+        } else if (invalidate === 'timeout') {
+          await page.clock.fastForward(10500);
+          await panel.getByText(names.expired, { exact:true }).waitFor();
+        }
+        await finishStart(invalidate === 'reject');
+        if (invalidate === 'reject') await panel.getByText(names.expired, { exact:true }).waitFor();
+        await page.waitForFunction(label => {
+          const root = document.querySelector('bayit-dashboard').shadowRoot;
+          return [...root.querySelectorAll('.script-toggle button')].some(button =>
+            !button.hidden && !button.disabled && button.getAttribute('aria-label') === label);
+        }, 'Arrival scene · ' + names.stop);
+        assert.deepEqual(await calls(), expected('turn_on'), locale + ' ' + invalidate + ' must expire the queued Stop');
+        await retryStop();
+      }
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 const failures = [];
 const recordFailure = (engine, scenario, error) => {
   failures.push({ engine, scenario, error });
@@ -14754,6 +14853,7 @@ try {
       console.log(engine + ': Sensors graph room and Vacuum navigation, stale targets, native fallback and editor');
     });
 
+    await run('Queued Automation stop', () => assertAutomationStopHandoff(browser));
     await run('Automation script controls', async () => {
       const scriptPage = await browser.newPage({ viewport: { width: 320, height:844 }, hasTouch:true });
       scriptPage.setDefaultTimeout(8000);
