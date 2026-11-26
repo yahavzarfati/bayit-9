@@ -3144,7 +3144,7 @@ export class BayitDashboard extends HTMLElement {
         if (!advancedClimate) return control;
         advancedClimate.append(control);
       } : undefined,
-      request: (id, value, control) => this.requestAction(view.config, id, value, control) });
+      request: (id, value, control, options) => this.requestAction(view.config, id, value, control, options) });
     for (const id of compactCommands || actionsInOrder) {
       if (view.onlyPresetShortcut && id === 'set_preset_mode') continue;
       if (view.climatePower && (id === 'turn_on' || id === 'turn_off')) continue;
@@ -3461,7 +3461,7 @@ export class BayitDashboard extends HTMLElement {
   }
 
   requestAction(config, id, value, source, { confirmShortcut = false, compactCover = false, compactDevice = false,
-    roomPowerTile = false, shortcutCurrent, preserveLightBrightness = false } = {}) {
+    roomPowerTile = false, shortcutCurrent, preserveLightBrightness = false, timerStartViaSlider = false } = {}) {
     if (!this.deviceActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
         !this.canRequest(config.entity, id, config)) return;
     if (id === 'set_effect' && config.light_mode_source?.apply_effects) {
@@ -3480,10 +3480,10 @@ export class BayitDashboard extends HTMLElement {
         (compactDevice && !this.canUseRoomCompactCommand(config, model, id))) return;
     if (!action.requiresConfirmation && !confirmShortcut) {
       return action.requiresCode ? this.moreInfo(config, source)
-        : this.send(config, id, value, { roomBoilerQuickPower, shortcutCurrent, preserveLightBrightness });
+        : this.send(config, id, value, { roomBoilerQuickPower, shortcutCurrent, preserveLightBrightness, timerStartViaSlider });
     }
     this.confirming = { config, id, value, source, compactCover, compactDevice, roomPowerTile, roomBoilerQuickPower,
-      shortcutCurrent, preserveLightBrightness, native: action.requiresCode };
+      shortcutCurrent, preserveLightBrightness, timerStartViaSlider, native: action.requiresCode };
     const n = this.nodes;
     const prompt = id === 'reset_daily_usage' ? this.t('timer_reset_confirm').replace('{name}', model.name)
       : this.t('confirm_action').replace('{name}', model.name).replace('{action}', this.actionLabel(id));
@@ -3505,11 +3505,12 @@ export class BayitDashboard extends HTMLElement {
     return this.send(request.config, request.id, request.value, {
       confirmed: true, roomBoilerQuickPower: request.roomBoilerQuickPower, shortcutCurrent: request.shortcutCurrent,
       preserveLightBrightness: request.preserveLightBrightness,
+      timerStartViaSlider: request.timerStartViaSlider,
     });
   }
 
   async send(config, id, value, { confirmed = false, roomBoilerQuickPower = false, shortcutCurrent,
-    preserveLightBrightness = false } = {}) {
+    preserveLightBrightness = false, timerStartViaSlider = false } = {}) {
     if (!this.deviceActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
         !this.canRequest(config.entity, id, config)) return;
     const model = this.model(config, { roomBoilerQuickPower });
@@ -3559,7 +3560,7 @@ export class BayitDashboard extends HTMLElement {
         token.acknowledged = true;
         if (this.isConnected) this.update();
       } : undefined;
-      const options = { confirmed, roomBoilerQuickPower, onAcknowledged, preserveLightBrightness };
+      const options = { confirmed, roomBoilerQuickPower, onAcknowledged, preserveLightBrightness, timerStartViaSlider };
       const result = category
         ? await this.controller.applyEffectAcrossCategories(config, value, { ...options, category,
           current: () => shortcutCurrent() && this.deviceActionVisible(config, id) && this.entityVisible(category.entity) &&

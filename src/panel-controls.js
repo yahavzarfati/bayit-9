@@ -318,7 +318,7 @@ export function buildPanelControls(model, {
       };
       showDuration();
       go.onclick = () => {
-        if (!noDuration()) request(id, input.valueAsNumber, go);
+        if (!noDuration()) request(id, input.valueAsNumber, go, { timerStartViaSlider: id === 'start_timed' });
       };
       go.dataset.action = id;
       buttons.push(go);
@@ -338,12 +338,18 @@ export function buildPanelControls(model, {
     if (tools.childElementCount) card.append(tools);
     if (duration) {
       const list = make('div', 'timer-presets');
-      const prefix = climate && duration.id === 'extend_timed' ? '+' : '';
+      const prefix = duration.id === 'extend_timed' ? '+' : '';
       for (const minutes of timerPresets(duration)) {
         const choice = button('control-button timer-preset', prefix + visibleDuration(minutes));
         label(choice, t(duration.id) + ' · ' + spokenDuration(minutes));
         choice.dataset.action = duration.id;
         choice.onclick = () => request(duration.id, minutes, choice);
+        if (running) updates.push(current => {
+          const matches = Math.abs(current.timer?.presetDuration - minutes) < .001;
+          choice.toggleAttribute('data-current-duration', matches);
+          if (matches) choice.setAttribute('aria-description', t('timer_reported_duration'));
+          else choice.removeAttribute('aria-description');
+        });
         buttons.push(choice);
         list.append(choice);
       }
@@ -538,6 +544,9 @@ export const panelControlStyles = `
   .timer-presets, .heat-level-options { display: grid; gap: 4px; direction: ltr; }
   .timer-presets { grid-template-columns: repeat(auto-fit,minmax(48px,1fr)); }
   .timer-preset { padding-inline: 3px; }
+  .timer-preset[data-current-duration] {
+    box-shadow: inset 0 0 0 1px var(--timer-thumb, var(--moving));
+  }
   .device-timer[data-compact]:has(.timer-clock-history) .timer-preset { line-height: 1.2; }
   .device-timer[data-compact] {
     --timer-rail: color-mix(in srgb,var(--ink) 10%,transparent);

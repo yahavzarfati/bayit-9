@@ -246,11 +246,14 @@ function readSimpleTimer(entity, device, states, nowMs) {
   const deadlineMs = Number.isFinite(deadline) ? deadline : null;
   const seconds = record.state.trim() ? Number(record.state) : NaN;
   const watchdogMessage = typeof attrs.watchdog_message === "string" ? attrs.watchdog_message.trim().slice(0, 512) : "";
+  const presetDuration = attrs.timer_state === "active" && attrs.timer_start_method === "button" &&
+    Number.isFinite(attrs.timer_duration) && attrs.timer_duration > 0 ? attrs.timer_duration : undefined;
   return {
     entity, state: attrs.timer_state, deadlineMs,
     remainingMs: attrs.timer_state === "idle" ? 0 : deadlineMs === null ? null : Math.max(0, deadlineMs - nowMs),
     usedSeconds: Number.isFinite(seconds) && seconds >= 0 ? seconds : null,
     ...(watchdogMessage && { watchdogMessage }),
+    ...(presetDuration !== undefined && { presetDuration }),
     ...(typeof attrs.show_seconds === "boolean" && { showSeconds: attrs.show_seconds }),
     reverse: attrs.reverse_mode === true && attrs.timer_state === "active",
   };
@@ -728,7 +731,7 @@ function expectedState(config, action, value, states) {
 }
 
 export function planDeviceAction(config, states, actionId, value,
-  { confirmed = false, code, roomBoilerQuickPower = false, preserveLightBrightness = false } = {}) {
+  { confirmed = false, code, roomBoilerQuickPower = false, preserveLightBrightness = false, timerStartViaSlider = false } = {}) {
   config = normalizedConfig(config);
   const model = deviceModel(config, states, Date.now(), roomBoilerQuickPower);
   const action = typeof actionId === "string" && Object.hasOwn(model.actions, actionId) && model.actions[actionId];
@@ -817,6 +820,8 @@ export function planDeviceAction(config, states, actionId, value,
   if (config.timed?.simple_timer_entity && ["start_timed", "extend_timed", "stop_timed"].includes(actionId)) {
     const entity = config.timed.simple_timer_entity;
     const cancel = actionId === "stop_timed";
+    const start = actionId === "start_timed";
+    const supportsOrigin = Object.hasOwn(states?.[entity]?.attributes ?? {}, "timer_start_method");
     const linkedEntity = config.timed.simple_timer_target ?? config.entity;
     const timerState = { entity, attributes: { switch_entity_id: linkedEntity, timer_state: cancel ? "idle" : "active" } };
     let expected = timerState;
@@ -827,7 +832,7 @@ export function planDeviceAction(config, states, actionId, value,
       timerState.deadlineAttribute = "timer_finishes_at";
       timerState.requireNewDeadline = true;
       timerState.formerDeadline = timerDeadline(states?.[entity]?.attributes?.timer_finishes_at);
-      if (actionId === "start_timed") {
+      if (start) {
         timerState.attributes.device_active = true;
         const powerCondition = config.domain === "climate" ? {
           entity: config.entity, anyState: HVAC_MODES.filter(mode => mode !== "off"),
@@ -840,7 +845,8 @@ export function planDeviceAction(config, states, actionId, value,
       service: cancel ? "cancel_timer" : actionId === "extend_timed" ? "add_timer" : "start_timer",
       target: null,
       data: cancel ? { entity_id: entity, turn_off_entity: true }
-        : { entity_id: entity, duration: value, unit: "min", ...(actionId === "start_timed" && { reverse_mode: false }) },
+        : { entity_id: entity, duration: value, unit: "min", ...(start && { reverse_mode: false }),
+          ...(start && supportsOrigin && timerStartViaSlider === true && { start_method: "slider" }) },
       expected,
     };
   }

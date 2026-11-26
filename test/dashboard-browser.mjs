@@ -9458,6 +9458,77 @@ async function assertClimateTargetNativeDetails(browser) {
   }
 }
 
+async function assertTimerPresetOrigin(browser) {
+  const runtime = 'sensor.demo_air_usage';
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const url = base + '/fixture-home/home?device-panel&preset-shortcut&timer-history&timer-usage&usage-view-only' +
+      '&room-climate-power&climate-power-test&compact-climate-controls&locale=' + locale;
+    const timer = page.locator('dialog[open] .device-timer');
+    const slider = timer.locator('input.timer-range');
+    const starter = timer.locator('.timer-command[data-action=start_timed]');
+    const marked = timer.locator('[data-current-duration]');
+    const runtimeAttrs = patch => page.evaluate(([id,attrs])=>window.bayitTest.setFixtureAttributes(id,attrs),[runtime,patch]);
+    const calls = () => page.evaluate(()=>window.bayitTest.calls.filter(call=>call.domain==='simple_timer'));
+    const expected = (service, minutes, extra) => ({
+      type:'call_service',domain:'simple_timer',service,
+      service_data:{entity_id:runtime,duration:minutes,unit:'min',...extra},
+    });
+    try {
+      await page.goto(url + '&timer-origin=modern#device/studio/climate.demo_air');
+      await slider.waitFor();
+      await runtimeAttrs({timer_start_method:null,timer_duration:0});
+      await slider.fill('30');
+      await starter.tap();
+      await timer.locator('button[data-action=extend_timed]').first().waitFor();
+      assert.deepEqual(await calls(),[expected('start_timer',30,{reverse_mode:false,start_method:'slider'})]);
+      await runtimeAttrs({timer_start_method:'slider',timer_duration:30});
+      assert.equal(await marked.count(),0);
+      await runtimeAttrs({timer_start_method:'button'});
+      await marked.waitFor();
+      assert.equal(await marked.count(),1);
+      assert.equal(await marked.getAttribute('aria-description'),locale==='he'?'משך הטיימר הנוכחי':'Current timer duration');
+      assert.match(await marked.textContent(),/30/);
+      await runtimeAttrs({timer_duration:60});
+      await marked.filter({hasText:'60'}).waitFor();
+      await runtimeAttrs({timer_start_method:'schedule'});
+      await marked.waitFor({state:'detached'});
+      await timer.locator('button.timer-command[data-action=extend_timed]').tap();
+      assert.deepEqual(await calls(),[
+        expected('start_timer',30,{reverse_mode:false,start_method:'slider'}),expected('add_timer',30),
+      ]);
+
+      await page.goto(url + '&timer-origin=legacy#room-studio');
+      await slider.fill('30');
+      await starter.tap();
+      assert.deepEqual(await calls(),[expected('start_timer',30,{reverse_mode:false})]);
+
+      await page.goto(url + '&timer-origin=preset#room-studio');
+      await timer.locator('.timer-preset[data-action=start_timed]').filter({hasText:'60'}).tap();
+      assert.deepEqual(await calls(),[expected('start_timer',60,{reverse_mode:false})]);
+
+      await page.goto(base + '/fixture-home/home?heater-level&preselect&shared-heater-level&locale=' + locale +
+        '#device/studio/fan.demo_step_heater');
+      const idle = timer.locator('.timer-preset[data-action=start_timed]');
+      await idle.first().waitFor();
+      assert.ok((await idle.allTextContents()).every(text=>!text.startsWith('+')));
+      await page.evaluate(()=>{
+        window.bayitTest.setHeaterPower('on');
+        window.bayitTest.setFixtureAttributes('sensor.demo_step_runtime',{
+          timer_state:'active',timer_finishes_at:new Date(Date.now()+600000).toISOString(),
+        });
+      });
+      const extending = timer.locator('.timer-preset[data-action=extend_timed]');
+      await extending.first().waitFor();
+      assert.ok((await extending.allTextContents()).every(text=>text.startsWith('+')));
+      const extendLabels = await extending.evaluateAll(items=>items.map(item=>item.getAttribute('aria-label')));
+      assert.ok(extendLabels.every(label=>label.startsWith(locale==='he'?'הארכת טיימר':'Extend timer')));
+      assert.deepEqual(await calls(),[]);
+    } finally {await page.close();}
+  }
+}
+
 async function assertTimerWatchdog(browser) {
   const runtime = 'sensor.demo_air_usage';
   for (const locale of ['en','he']) {
@@ -14045,6 +14116,7 @@ try {
       await assertCompactClimateRail(browser);
       await assertCompactRoomClimateTimer(browser);
       await assertTimerWatchdog(browser);
+      await assertTimerPresetOrigin(browser);
       await assertStandaloneTimedClimate(browser);
       await assertClimateTargetNativeDetails(browser);
       const presetURL = base + '?device-panel&preset-shortcut';
