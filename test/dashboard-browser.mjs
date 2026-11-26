@@ -2548,6 +2548,45 @@ async function assertEmptyRoomSetup(browser) {
   }
 }
 
+async function assertMobileSetupFields(browser) {
+  for (const locale of ['en', 'he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    try {
+      const setupName = he ? 'התאמת הבית' : 'Customize home';
+      await page.goto(base + '/fixture-home/home?configuration&locale=' + locale);
+      await page.locator('.toolbar-actions button[data-role=settings]').tap();
+      await page.getByRole('button',{name:setupName,exact:true}).tap();
+      const setup = page.getByRole('dialog',{name:setupName,exact:true});
+      await setup.getByText(he ? 'חדרים' : 'Rooms',{exact:true}).tap();
+      await setup.getByText(he ? 'חדר חדש לדשבורד' : 'New dashboard-only room',{exact:true}).tap();
+      const name = setup.getByLabel(he ? 'שם החדר החדש' : 'New room name',{exact:true});
+      const verify = async fields => {
+        for (const width of [320, 391]) {
+          await page.setViewportSize({width,height:844});
+          for (const field of fields) {
+            const font = await field.evaluate(input=>parseFloat(getComputedStyle(input).fontSize));
+            assert.ok(font >= 16, JSON.stringify({width,locale,font}));
+          }
+          const body = setup.locator('.modal-body');
+          assert.equal(await body.evaluate(el => el.scrollWidth <= el.clientWidth),true);
+        }
+      };
+      await verify([name]);
+      await name.fill(he ? 'חדר בדיקה' : 'Preview room');
+      await setup.getByRole('button',{name:he ? 'יצירת חדר' : 'Create room',exact:true}).tap();
+      const room = setup.getByLabel(he ? 'שם החדר לתצוגה' : 'Room display name',{exact:true});
+      const search = setup.getByRole('searchbox',{name:he ? 'חיפוש מכשיר להוספה' : 'Find a device to add',exact:true});
+      const device = setup.getByLabel(he ? 'מכשירים זמינים' : 'Available devices',{exact:true});
+      await verify([room,search,device]);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call =>
+        call.domain || call.type === 'lovelace/config/save')),[]);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertSetupDrafts(browser) {
   const page = await browser.newPage({
     viewport: { width: 320, height: 844 }, hasTouch: true, reducedMotion: 'reduce',
@@ -11919,6 +11958,7 @@ try {
       await assertSetupFooterLayout(browser);
       console.log(engine + ': setup footer stays clear of the scrollable editor');
       await assertSetupDrafts(browser);
+      await assertMobileSetupFields(browser);
       await assertSetupRegistryRefreshKeepsField(browser);
       await assertRoomRenameKeepsNextGesture(browser);
       await assertDuplicateRoomEditorLabels(browser);

@@ -438,6 +438,11 @@ const GLASS_EDITOR_CSS = `
 :host(.setup-editor) :focus-visible { outline-color: var(--setup-focus); outline-offset: 2px; }
 :host(.setup-editor) .room-danger { border-color: currentColor; }
 :host(.setup-editor) button:not(:disabled):hover { background-color: rgb(255 255 255 / 12%); }
+@media (max-width: 600px), (any-pointer: coarse) {
+  :host(.setup-editor) :is(input:not([type=checkbox]), select, textarea) {
+    font-size: max(16px, 1em);
+  }
+}
 @media (prefers-contrast: more) {
   :host(.setup-editor) :is(input:not([type=checkbox]), select, textarea, button) {
     border-color: currentColor;
