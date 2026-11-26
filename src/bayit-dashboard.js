@@ -3228,16 +3228,19 @@ export class BayitDashboard extends HTMLElement {
     const title = id === 'start_timed' ? this.t('duration') : this.actionLabel(id);
     const compactInline = view.inlineLight && view.compactLight;
     const compactBrightness = view.compactColorLight && id === 'set_brightness';
+    const compactWhiteTemperature = view.compactColorLight && id === 'set_color_temp_kelvin';
     row.classList.toggle('compact-brightness', compactBrightness);
+    row.classList.toggle('compact-white-temperature', compactWhiteTemperature);
     const caption = make('label', '', compactInline || compactBrightness ? undefined : title);
     const isRange = rangeActions.has(id);
     const compactRange = view.compactLight && inlineLightActions.has(id);
     const dualLightRange = compactRange && view.dualLightDetail;
-    const compactLightReading = compactBrightness || (compactRange && !dualLightRange && view.compactLightReading);
+    const compactLightReading = compactBrightness || compactWhiteTemperature ||
+      (compactRange && !dualLightRange && view.compactLightReading);
     const reportedLightRange = dualLightRange || compactLightReading || (compactRange && view.compactInlineLight);
     const minimumBrightness = compactLightReading && id === 'set_brightness';
     const range = minimumBrightness ? { ...action, min: 1 } : action;
-    const directRange = view.inlineLight || compactBrightness || (compactRange && !dualLightRange);
+    const directRange = view.inlineLight || compactBrightness || compactWhiteTemperature || (compactRange && !dualLightRange);
     const field = { action: range, id, reportedLightRange, compactLightReading };
     if (dualLightRange) field.valid = () => field.observed || field.dirty;
     if (action.options) {
@@ -3267,6 +3270,8 @@ export class BayitDashboard extends HTMLElement {
           : 100 * (value - range.min) / (range.max - range.min);
         field.input.style.setProperty('--white-rail-progress', percent + '%');
       };
+    }
+    if (field.paintProgress || compactWhiteTemperature) {
       const cancel = () => {
         if (!field.dirty || this.pending.get(view.config.entity)?.id === id) return;
         field.dirty = false;
@@ -3475,7 +3480,8 @@ export class BayitDashboard extends HTMLElement {
       if (this.pending.get(config.entity) === token) {
         this.pending.delete(config.entity);
         for (const view of this.deviceViews) {
-          const syncImmediately = view.inlineLight || (view.compactLight && inlineLightActions.has(id)) || id === 'set_swing_horizontal_mode';
+          const syncImmediately = view.inlineLight || (view.compactLight && inlineLightActions.has(id)) ||
+            (view.compactColorLight && id === 'set_color_temp_kelvin') || id === 'set_swing_horizontal_mode';
           if (view.config.entity !== config.entity || (!confirmedByHomeAssistant && !syncImmediately)) continue;
           for (const field of view.fields) {
             if (field.id !== id) continue;

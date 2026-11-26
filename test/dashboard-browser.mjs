@@ -9405,6 +9405,9 @@ async function assertCompactColorLightDetail(browser) {
     const power = dialog.locator('.compact-light-power');
     const bright = dialog.locator('.compact-brightness input');
     const value = dialog.locator('.compact-brightness output');
+    const white = dialog.locator('input[data-action=set_color_temp_kelvin]');
+    const whiteRow = dialog.locator('.field-row:has(input[data-action=set_color_temp_kelvin])');
+    const whiteValue = whiteRow.locator('output');
     const modes = dialog.locator('.light-mode-bar [data-light-mode]');
     const refresh = dialog.locator('.light-status-refresh');
     const calls = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service'));
@@ -9421,6 +9424,7 @@ async function assertCompactColorLightDetail(browser) {
       assert.equal(await bright.count(),0);
       assert.equal(await dialog.locator('.basic-actions button').count(),2);
       assert.equal(await dialog.locator('.field-row:has(input[data-action=set_brightness]) > button').count(),1);
+      assert.equal(await whiteRow.locator(':scope > button').count(),1);
 
       await open('&compact-color-light');
       await bright.waitFor();
@@ -9471,22 +9475,55 @@ async function assertCompactColorLightDetail(browser) {
       await dialog.locator('.light-mode-bar [data-light-mode=set_light_color]').tap();
       await dialog.locator('.light-color-palette').waitFor();
       await dialog.locator('.light-mode-bar [data-light-mode=set_color_temp_kelvin]').tap();
-      await dialog.locator('input[data-action=set_color_temp_kelvin]').waitFor();
-      assert.equal(await dialog.locator('.field-row:has(input[data-action=set_color_temp_kelvin]) > button').count(),1);
+      await white.waitFor();
+      assert.equal(await whiteRow.locator(':scope > button').count(),0);
+      assert.equal(await whiteValue.textContent(),'3200 K');
+      const beforeWhite = await calls();
+      const draftWhite = kelvin => white.evaluate((input, next) => {
+        input.value = String(next);
+        input.dispatchEvent(new Event('input',{bubbles:true}));
+      },kelvin);
+      await white.dispatchEvent('change');
+      await draftWhite(4100);
+      await draftWhite(4300);
+      assert.equal(await white.getAttribute('aria-valuetext'),'4300 K');
+      assert.deepEqual(await calls(),beforeWhite);
+      await white.dispatchEvent('pointercancel');
+      assert.equal(await whiteValue.textContent(),'3200 K');
+      await draftWhite(4500);
+      await white.dispatchEvent('change');
+      await white.dispatchEvent('change');
+      const whiteCommand = kelvin => ({
+        type:'call_service',domain:'light',service:'turn_on',service_data:{color_temp_kelvin:kelvin},target:{entity_id:light},
+      });
+      assert.deepEqual((await calls()).slice(beforeWhite.length),[whiteCommand(4500)]);
+      await white.press('ArrowUp');
+      assert.equal(await whiteValue.textContent(),'4501 K');
+      assert.deepEqual((await calls()).slice(beforeWhite.length),[whiteCommand(4500),whiteCommand(4501)]);
+
+      await page.evaluate(()=>window.bayitTest.rejectNextInlineLight());
+      await draftWhite(4700);
+      await white.dispatchEvent('change');
+      await page.waitForFunction(()=>document.querySelector('bayit-dashboard').shadowRoot
+        .querySelector('.compact-white-temperature output')?.textContent === '4501 K');
+      assert.deepEqual((await calls()).slice(beforeWhite.length),[
+        whiteCommand(4500),whiteCommand(4501),whiteCommand(4700),
+      ]);
       await dialog.locator('.light-mode-bar [data-light-mode=set_effect]').tap();
       await dialog.getByRole('region',{name:he ? 'אפקט תאורה' : 'Light effect'}).waitFor();
       assert.ok(await dialog.locator('[data-effect-favorite-control]').count() > 0);
 
       await refresh.tap();
       await dialog.locator('.light-status-refresh[aria-busy=true]').waitFor();
-      assert.deepEqual((await calls()).slice(1).map(call=>[call.domain,call.service,call.target.entity_id]),
-        [['light','turn_off',light],['button','press','button.fixture_refresh_lamp']]);
+      assert.deepEqual((await calls()).at(-1),{
+        type:'call_service',domain:'button',service:'press',service_data:{},target:{entity_id:'button.fixture_refresh_lamp'},
+      });
       await page.evaluate(()=>window.bayitTest.finishLightStatusRefresh());
       await page.evaluate(id=>window.bayitTest.setRoomState(id,'unavailable'),light);
       await bright.waitFor({state:'detached'});
       assert.equal(await power.isHidden(),true);
       assert.equal(await refresh.isEnabled(),true);
-      assert.equal((await calls()).length,3);
+      assert.equal((await calls()).length,beforeWhite.length+4);
 
       await page.goto(url + '&editor');
       await page.getByText(he ? 'חדרים' : 'Rooms',{exact:true}).tap();
@@ -11543,7 +11580,7 @@ try {
       await assertCompactColorPalette(browser);
       console.log(engine + ': opt-in color palette fits and only sends committed changes');
       await assertCompactColorLightDetail(browser);
-      console.log(engine + ': opted-in color light keeps compact direct brightness, modes and guarded refresh');
+      console.log(engine + ': opted-in color light commits brightness and white temperature once and keeps guarded refresh');
       await assertLightOpeningMode(browser);
       await assertLightStatusRefresh(browser);
       await assertKitchenBoilerQuickPower(browser);

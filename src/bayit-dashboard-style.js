@@ -1060,6 +1060,7 @@ export const styles = `
     background: rgba(255,255,255,.12);
   }
   .field-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(60px,auto); gap: 7px; align-items: end; }
+  .field-row.compact-white-temperature { grid-template-columns: minmax(0,1fr); }
   .field-row label { display: grid; gap: 4px; color: var(--secondary); font-size: 12px; font-weight: 700; }
   .field-row input, .field-row select {
     min-width: 0;
