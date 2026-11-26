@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import { chromium, webkit } from 'playwright-core';
+import { runBrowserEngines } from './browser-engines.mjs';
 
 const moduleSource = await readFile(new URL('../src/page-chrome.js', import.meta.url));
 const stylesSource = await readFile(new URL('../src/bayit-dashboard-style.js', import.meta.url));
@@ -310,7 +311,7 @@ async function assertLaunchHandoff(browser, base) {
 }
 
 try {
-  for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
+  await runBrowserEngines([[chromium, 'Chromium'], [webkit, 'WebKit']], async (launcher, engine) => {
     const browser = await launcher.launch({ headless: true });
     try {
       await assertWallpaperPaintsTopSafeArea(browser, 'http://127.0.0.1:' + server.address().port);
@@ -438,7 +439,7 @@ try {
     } finally {
       await browser.close();
     }
-  }
+  });
 } finally {
   await new Promise(resolve => server.close(resolve));
 }

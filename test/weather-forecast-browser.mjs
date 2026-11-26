@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { chromium, webkit } from 'playwright-core';
+import { runBrowserEngines } from './browser-engines.mjs';
 
 const bundle = await readFile(new URL('../dist/bayit-9.js', import.meta.url));
 const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
@@ -400,7 +401,7 @@ async function assertSolarForecast(browser) {
 }
 
 try {
-  for (const [engine, locale] of [[chromium, 'en'], [webkit, 'he']]) {
+  await runBrowserEngines([[chromium, 'en'], [webkit, 'he']], async (engine, locale) => {
     const rtl = locale === 'he';
     const browser = await engine.launch();
     try {
@@ -649,7 +650,7 @@ try {
     } finally {
       await browser.close();
     }
-  }
+  });
 } finally {
   server.close();
 }

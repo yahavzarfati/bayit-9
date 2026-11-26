@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import { chromium, webkit } from 'playwright-core';
+import { runBrowserEngines } from './browser-engines.mjs';
 
 const bundle = await readFile(new URL('../dist/bayit-9.js', import.meta.url));
 const fixture = `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -106,7 +107,7 @@ async function expectVisible(visible, icon, label, reading) {
 
 try {
   const base = 'http://127.0.0.1:' + server.address().port;
-  for (const [engine, launcher] of [['Chromium', chromium], ['WebKit', webkit]]) {
+  await runBrowserEngines([[chromium, 'Chromium'], [webkit, 'WebKit']], async (launcher, engine) => {
     const browser = await launcher.launch();
     try {
       for (const [locale, layout] of [['he', 'classic'], ['en', 'header']]) {
@@ -184,7 +185,7 @@ try {
     } finally {
       await browser.close();
     }
-  }
+  });
 } finally {
   await new Promise(resolve => server.close(resolve));
 }

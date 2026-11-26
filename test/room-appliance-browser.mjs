@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import { chromium, webkit } from 'playwright-core';
+import { runBrowserEngines } from './browser-engines.mjs';
 
 const bundle = await readFile(new URL('../dist/bayit-9.js', import.meta.url));
 const script = function () {
@@ -102,7 +103,7 @@ server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 const base = 'http://127.0.0.1:' + server.address().port;
 try {
-  for (const launcher of [chromium, webkit]) {
+  await runBrowserEngines([[chromium], [webkit]], async (launcher) => {
     const browser = await launcher.launch();
     try {
       for (const layout of ['classic','header']) {
@@ -217,5 +218,5 @@ try {
       }
       console.log(launcher.name() + ' 320px: appliance and robot activity, editor persistence, no service calls');
     } finally { await browser.close(); }
-  }
+  });
 } finally { server.close(); }

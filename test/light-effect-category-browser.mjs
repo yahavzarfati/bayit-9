@@ -3,6 +3,7 @@ import { EventEmitter, once } from 'node:events';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { chromium, webkit } from 'playwright-core';
+import { runBrowserEngines } from './browser-engines.mjs';
 
 const bundle = await readFile(new URL('../dist/bayit-9.js', import.meta.url));
 const markup = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
@@ -86,7 +87,7 @@ const hash = '#device/studio/light.fixture_lamp';
 const exact = (name) => ({name,exact:true});
 
 try {
-  for (const [engine, locale] of [[chromium,'en'],[webkit,'he']]) {
+  await runBrowserEngines([[chromium, 'en'], [webkit, 'he']], async (engine, locale) => {
     const browser = await engine.launch();
     const he = locale === 'he';
     const [nature,sleep,holidays,local,all] = he ? ['טבע','שינה','חגים','נוסף','הכל'] : ['Nature','Sleep','Holidays','Local','All'];
@@ -244,5 +245,5 @@ try {
       assert.deepEqual(errors,[]);
       console.log(engine.name() + ' (' + locale + '): shared light categories across accounts, write guards, All, local fallback and editor');
     } finally { await browser.close(); }
-  }
+  });
 } finally { server.close(); }

@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import { chromium, webkit } from 'playwright-core';
+import { runBrowserEngines } from './browser-engines.mjs';
 import { catalog, wallpaperGroups } from '../src/wallpaper-catalog.js';
 
 const dist = new URL('../dist/', import.meta.url);
@@ -201,10 +202,10 @@ async function assertSharedRevision(browser, fixtureName, byModifiedDate) {
 }
 
 try {
-  for (const [engine, launcher, prefix, fixtureName] of [
-    ['Chromium', chromium, '/hacsfiles', 'hacs'],
-    ['WebKit', webkit, '/marketplace/frontend', 'marketplace'],
-  ]) {
+  await runBrowserEngines([
+    [chromium, 'Chromium', '/hacsfiles', 'hacs'],
+    [webkit, 'WebKit', '/marketplace/frontend', 'marketplace'],
+  ], async (launcher, engine, prefix, fixtureName) => {
     const browser = await launcher.launch();
     try {
       const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
@@ -419,7 +420,7 @@ try {
     } finally {
       await browser.close();
     }
-  }
+  });
 } finally {
   await new Promise(resolve => server.close(resolve));
 }

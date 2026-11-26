@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import { chromium, webkit } from 'playwright-core';
+import { runBrowserEngines } from './browser-engines.mjs';
 import { catalog } from '../src/wallpaper-catalog.js';
 
 const bundle = await readFile(new URL('../dist/bayit-9.js', import.meta.url));
@@ -363,7 +364,7 @@ async function assertLinkedAppearance(browser, prefix) {
 }
 
 try {
-  for (const [name, engine] of [['Chromium',chromium],['WebKit',webkit]]) {
+  await runBrowserEngines([[chromium, 'Chromium'], [webkit, 'WebKit']], async (engine, name) => {
     const browser = await engine.launch();
     try {
       const admin = await browser.newPage({ viewport:{ width:390, height:844 }, hasTouch:true, reducedMotion:'reduce' });
@@ -539,7 +540,7 @@ try {
     } finally {
       await browser.close();
     }
-  }
+  });
 } finally {
   await new Promise(resolve => server.close(resolve));
 }

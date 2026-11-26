@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { chromium, webkit } from 'playwright-core';
+import { runBrowserEngines } from './browser-engines.mjs';
 
 const bundle = await readFile(new URL('../dist/bayit-9.js', import.meta.url));
 const html = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
@@ -85,7 +86,7 @@ const key = (user, light) => 'bayit-9.light-effect-favorites.v1:' + JSON.stringi
 const prefix = '#device/studio/light.fixture_';
 
 try {
-  for (const [engine, locale] of [[chromium, 'en'], [webkit, 'he']]) {
+  await runBrowserEngines([[chromium, 'en'], [webkit, 'he']], async (engine, locale) => {
     const browser = await engine.launch();
     const rtl = locale === 'he';
     try {
@@ -202,5 +203,5 @@ try {
       assert.deepEqual(errors, []);
       console.log(engine.name() + ' (' + locale + '): per-light/account favorites, advertised options, explicit Apply, and editor');
     } finally { await browser.close(); }
-  }
+  });
 } finally { server.close(); }

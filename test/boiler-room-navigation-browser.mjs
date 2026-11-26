@@ -3,6 +3,7 @@ import { EventEmitter, once } from 'node:events';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { chromium, webkit } from 'playwright-core';
+import { runBrowserEngines } from './browser-engines.mjs';
 
 const bundle = await readFile(new URL('../dist/bayit-9.js', import.meta.url));
 
@@ -896,7 +897,7 @@ async function assertClosedBoilerSchedulePreflight(browser, locale) {
 }
 
 try {
-  for (const [launcher, locale] of [[chromium, 'en'], [webkit, 'he']]) {
+  await runBrowserEngines([[chromium, 'en'], [webkit, 'he']], async (launcher, locale) => {
     const browser = await launcher.launch();
     try {
       for (const language of ['en', 'he']) {
@@ -1369,5 +1370,5 @@ try {
       assert.deepEqual(errors, []);
       console.log(launcher.name() + ' at 320–375 px: compact idle boiler, guarded states, combined timer with schedule/history, saved editor option and zero power calls');
     } finally { await browser.close(); }
-  }
+  });
 } finally { server.close(); }

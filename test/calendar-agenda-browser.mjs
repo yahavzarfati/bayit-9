@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import { chromium, webkit } from 'playwright-core';
+import { runBrowserEngines } from './browser-engines.mjs';
 
 const bundle = await readFile(new URL('../dist/bayit-9.js', import.meta.url));
 const fixture = function () {
@@ -280,7 +281,7 @@ async function assertCalendarRestPoll(browser, locale, name) {
 }
 
 try {
-  for (const [label, launcher, locale, width] of [['Chromium',chromium,'en',390],['WebKit',webkit,'he',320]]) {
+  await runBrowserEngines([[chromium, 'Chromium', 'en', 390], [webkit, 'WebKit', 'he', 320]], async (launcher, label, locale, width) => {
     const browser = await launcher.launch({headless:true});
     try {
       const page = await browser.newPage({ viewport:{width,height:844}, hasTouch:true, reducedMotion:'reduce',
@@ -658,5 +659,5 @@ try {
 
       console.log(label + ': compact/expanded agenda, localized event details, availability, retry, cleanup, and Home Assistant time zone');
     } finally { await browser.close(); }
-  }
+  });
 } finally { await new Promise(resolve => server.close(resolve)); }

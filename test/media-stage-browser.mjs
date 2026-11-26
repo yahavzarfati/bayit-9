@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import { chromium, webkit } from 'playwright-core';
+import { runBrowserEngines } from './browser-engines.mjs';
 
 const bundle = await readFile(new URL('../dist/bayit-9.js', import.meta.url));
 const proxy = '/api/media_player_proxy/media_player.fixture_source';
@@ -90,7 +91,7 @@ const hash = '#panel/sample-media';
 const state = (page, picture, value) => page.evaluate(([src, current]) => tracker.update(src, current), [picture, value]);
 
 try {
-  for (const [name, engine] of [['Chromium', chromium], ['WebKit', webkit]]) {
+  await runBrowserEngines([[chromium, 'Chromium'], [webkit, 'WebKit']], async (engine, name) => {
     const browser = await engine.launch();
     try {
       const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
@@ -318,7 +319,7 @@ try {
     } finally {
       await browser.close();
     }
-  }
+  });
 } finally {
   await new Promise(resolve => server.close(resolve));
 }
