@@ -3229,6 +3229,7 @@ async function assertDuplicateRoomMemberActions(browser) {
       await page.goto(base + '/fixture-home/home?configuration&device-display-picker&locale=' + words.locale);
       await openRooms();
       await name.fill(words.room);
+      await name.blur();
       await mode.selectOption('manual');
       for (const id of [lamp, relay]) {
         await member(id).waitFor();
