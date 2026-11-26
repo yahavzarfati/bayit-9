@@ -20,6 +20,7 @@ const markup = '<!doctype html><meta charset="utf-8"><meta name="viewport" conte
     const groups = categories.slice(0,4).map((title, index) => ({ title, effects:[effects[index]] }));
     if (query.has('ambiguous')) groups[2].effects.push(effects[0]);
     const calls = [];
+    const registryReads = [];
     const options = [nature,sleep,holidays,all];
     const categoryState = await window.fixtureCategoryRead();
     const hass = {
@@ -38,6 +39,10 @@ const markup = '<!doctype html><meta charset="utf-8"><meta name="viewport" conte
       entities:{ [light]:{ area_id:'studio' }, [category]:{}, 'input_select.fixture_hidden':{ hidden_by:'user' } },
       services:{ input_select:{ select_option:{} }, light:{ turn_on:{} } },
       async callWS(request) {
+        if (request.type === 'config/entity_registry/get_entries' && query.has('paired')) {
+          registryReads.push(request);
+          return { [fixed]:{ entity_id:fixed, platform:'script', unique_id:'fixture_fixed_color' } };
+        }
         calls.push(request);
         if (request.type !== 'call_service' || request.service !== 'select_option' ||
             request.domain !== 'input_select' && !(request.domain === 'select' && query.has('paired'))) {
@@ -52,6 +57,7 @@ const markup = '<!doctype html><meta charset="utf-8"><meta name="viewport" conte
       hass.entities[light].device_id = 'fixture-lamp';
       hass.entities[mode] = { device_id:'fixture-lamp' };
       hass.services.select = { select_option:{} };
+      hass.services.script = { fixture_fixed_color:{} };
       localStorage.setItem('bayit-9.light-effect-favorites.v1:' + JSON.stringify([hass.user.id, light]), '["Wave"]');
     }
     const config = {
@@ -66,7 +72,7 @@ const markup = '<!doctype html><meta charset="utf-8"><meta name="viewport" conte
     card.setConfig(Strategy.generate(config, hass).views[0].cards[0]);
     card.hass = hass;
     const fixture = window.fixture = {
-      calls,
+      calls, registryReads,
       setCategory(state, reported = options) {
         hass.states[category] = { state, attributes:{ options:reported } };
         card.hass = { ...hass, states:{ ...hass.states } };
@@ -279,6 +285,10 @@ try {
         await paired.button('Wave').tap();
       };
       await pickFavorite();
+      await paired.page.waitForFunction(() => fixture.registryReads.length > 0);
+      assert.deepEqual(await paired.page.evaluate(() => fixture.registryReads),[
+        {type:'config/entity_registry/get_entries',entity_ids:['script.fixture_fixed_color']},
+      ]);
       assert.deepEqual(await paired.calls(),[]);
       await paired.page.evaluate(()=>fixture.setFixedActive(true));
       await paired.gallery.getByText(he ? 'אפשר לבחור אפקט אחרי ששינוי הצבע הקבוע יסתיים.'
