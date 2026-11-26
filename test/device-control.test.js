@@ -7,6 +7,57 @@ const config = (id, fields) => ({ entity: id, ...fields });
 const code = value => error => error instanceof DeviceControlError && error.code === value;
 const actionIds = model => Object.keys(model.actions).sort();
 
+test("an opted-in effect waits for the category report and the exact paired option within one window", async () => {
+  const lamp = "light.fixture_lamp";
+  const selector = "select.fixture_effects";
+  const category = "input_select.fixture_categories";
+  const mode = config(lamp,{
+    light_mode_source:{entity:selector,fixed_color_option:"Fixed",apply_effects:true},
+    effect_category_source:{entity:category},
+  });
+  const route = {entity:category,selected:"Sleep",option:"Nature"};
+  const categoryRequest = {type:"call_service",domain:"input_select",service:"select_option",
+    target:{entity_id:category},service_data:{option:"Nature"}};
+  const selectRequest = {type:"call_service",domain:"select",service:"select_option",
+    target:{entity_id:selector},service_data:{option:"Wave"}};
+  for (const scenario of ["observed","timeout","superseded","disconnected","rejected"]) {
+    let now = 0;
+    const calls = [];
+    const hass = {
+      connected:true,
+      entities:{ [lamp]:{device_id:"fixture"}, [selector]:{device_id:"fixture"} },
+      services:{ input_select:{select_option:{}},select:{select_option:{}} },
+      states:{
+        [lamp]:entity("off",{supported_features:4,supported_color_modes:["rgb"],effect_list:["Night","Wave"]}),
+        [selector]:entity("Fixed",{options:["Fixed","Night"]}),
+        [category]:entity("Sleep",{options:["Sleep","Nature","Other"]}),
+      },
+      async callWS(request) {
+        calls.push(request);
+        if (scenario === "rejected") throw new Error("Fixture declined");
+        if (request.domain === "select") hass.states[lamp] = entity("on",{...hass.states[lamp].attributes,effect:"Wave"});
+        return {};
+      },
+    };
+    const controller = createDeviceController({getHass:()=>hass,now:()=>now,pollIntervalMs:100,
+      async sleep(ms) {
+        now += ms;
+        if (now === 100) {
+          if (scenario === "superseded") hass.states[category].state = "Other";
+          else if (scenario === "disconnected") hass.connected = false;
+          else hass.states[category].state = "Nature";
+        }
+        if (now === 200 && scenario === "observed") hass.states[selector].attributes.options.push("Wave");
+      },
+    });
+    const attempt = controller.applyEffectAcrossCategories(mode,"Wave",{category:route,current:()=>true});
+    if (scenario === "rejected") await assert.rejects(attempt,code("service_failed"));
+    else assert.equal((await attempt).status,scenario === "observed" ? "confirmed" : "unconfirmed");
+    assert.deepEqual(calls,scenario === "observed" ? [categoryRequest,selectRequest] : [categoryRequest]);
+    if (scenario === "timeout") assert.equal(now,5000);
+  }
+});
+
 test("reads the status sensor pointer only between matching Simple Timer entries", () => {
   const runtime = "sensor.fixture_runtime";
   const status = "sensor.fixture_status";

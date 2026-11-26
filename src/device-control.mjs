@@ -49,6 +49,7 @@ export function isReadOnlyRole(role) {
   return READ_ONLY_ROLES.has(role);
 }
 const REQUEST_TIMED_OUT = Symbol("request-timed-out");
+const EFFECT_CATEGORY_READY_MS = 5000;
 
 export class DeviceControlError extends Error {
   constructor(code, message, options) {
@@ -900,6 +901,42 @@ export function createDeviceController({
         target: { entity_id: entities } };
       const reply = await boundRequest(Promise.resolve(hass.callWS(request)), requestTimeoutMs);
       return reply === REQUEST_TIMED_OUT ? "unconfirmed" : "sent";
+    },
+    async applyEffectAcrossCategories(config, value, { category, current, ...options }) {
+      const { entity, selected, option } = category;
+      const bound = config.effect_category_source?.entity === entity && isEntity(entity, "input_select");
+      const snapshot = () => {
+        const hass = getHass();
+        const state = hass?.states?.[entity];
+        const effectOptions = pairedLightEffectOptions(hass, config);
+        if (!bound || !current?.() || !canSendDeviceCommands(hass) || !effectOptions ||
+            !isAvailable(state) || !Array.isArray(state.attributes?.options) || !state.attributes.options.includes(option) ||
+            !Object.hasOwn(hass.services?.input_select ?? {}, "select_option") ||
+            !getDeviceModel(config, hass.states).actions.set_effect?.options.includes(value)) return;
+        return { category:state.state, offersEffect:effectOptions.includes(value) };
+      };
+      const result = reason => ({ status:"unconfirmed", entity:config.entity, action:"set_effect", reason });
+      const initial = snapshot();
+      if (!initial || initial.category !== selected || selected === option) return result("category_changed");
+      if (initial.offersEffect) return this.execute(config, "set_effect", value, options);
+
+      const switched = await this.execute({ entity, role:"action", confirmation_ms:0 }, "select_option", option);
+      if (switched.status !== "sent") return result(switched.reason);
+      const deadline = now() + EFFECT_CATEGORY_READY_MS;
+      let reachedCategory = false;
+      for (;;) {
+        const state = snapshot();
+        if (!state || state.category !== option && (reachedCategory || state.category !== selected)) {
+          return result("category_changed");
+        }
+        const remaining = deadline - now();
+        if (remaining <= 0) return result("category_timeout");
+        if (state.category === option) {
+          reachedCategory = true;
+          if (state.offersEffect) return this.execute(config, "set_effect", value, options);
+        }
+        await sleep(Math.min(pollIntervalMs, remaining));
+      }
     },
     async execute(config, actionId, value, options) {
       const hass = getHass();

@@ -53,6 +53,12 @@ export function lightEffectCategoryTitles(groups) {
   return new Set([...unique].filter(title => !repeated.has(title)));
 }
 
+export function owningLightEffectCategory(groups, effect, advertised) {
+  const owners = groups.filter(group => group.effects.some(item => item.effect === effect));
+  const title = owners[0]?.title;
+  if (owners.length === 1 && advertised.includes(title) && lightEffectCategoryTitles(groups).has(title)) return title;
+}
+
 export function normalizeLightEffectCategorySource(value, groups) {
   const { entity, all_option } = value ?? {};
   if (typeof entity !== 'string' || !/^input_select\.[a-z0-9_]+$/.test(entity) ||

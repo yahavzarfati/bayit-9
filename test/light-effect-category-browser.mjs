@@ -14,8 +14,10 @@ const markup = '<!doctype html><meta charset="utf-8"><meta name="viewport" conte
     const [nature, sleep, holidays, local, all] = categories;
     const light = 'light.fixture_lamp';
     const category = 'input_select.fixture_categories';
+    const mode = 'select.fixture_light_modes';
     const effects = ['Wave','Night','Glow','Dawn','Unsorted'];
     const groups = categories.slice(0,4).map((title, index) => ({ title, effects:[effects[index]] }));
+    if (query.has('ambiguous')) groups[2].effects.push(effects[0]);
     const calls = [];
     const options = [nature,sleep,holidays,all];
     const categoryState = await window.fixtureCategoryRead();
@@ -36,16 +38,25 @@ const markup = '<!doctype html><meta charset="utf-8"><meta name="viewport" conte
       services:{ input_select:{ select_option:{} }, light:{ turn_on:{} } },
       async callWS(request) {
         calls.push(request);
-        if (request.type !== 'call_service' || request.domain !== 'input_select' || request.service !== 'select_option') {
+        if (request.type !== 'call_service' || request.service !== 'select_option' ||
+            request.domain !== 'input_select' && !(request.domain === 'select' && query.has('paired'))) {
           throw new Error('Unexpected Home Assistant request');
         }
         return await window.fixtureCategoryWrite(request);
       },
     };
+    if (query.has('paired')) {
+      hass.states[mode] = { state:'Fixed color', attributes:{options:['Fixed color','Night']} };
+      hass.entities[light].device_id = 'fixture-lamp';
+      hass.entities[mode] = { device_id:'fixture-lamp' };
+      hass.services.select = { select_option:{} };
+      localStorage.setItem('bayit-9.light-effect-favorites.v1:' + JSON.stringify([hass.user.id, light]), '["Wave"]');
+    }
     const config = {
       type:'custom:bayit-9', locale, light_effect_groups:{ [light]:groups },
       light_effect_favorites:[light],
       ...(!query.has('unbound') && { light_effect_category_sources:{ [light]:{ entity:category, all_option:all } } }),
+      ...(query.has('paired') && { light_mode_sources:{ [light]:{ entity:mode, fixed_color_option:'Fixed color',apply_effects:true } } }),
     };
     const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
     const card = document.createElement('bayit-dashboard');
@@ -64,6 +75,14 @@ const markup = '<!doctype html><meta charset="utf-8"><meta name="viewport" conte
       setService(enabled) {
         hass.services.input_select = enabled ? { select_option:{} } : {};
         card.hass = { ...hass, services:{ ...hass.services } };
+      },
+      setModes(values) {
+        hass.states[mode] = { ...hass.states[mode], attributes:{ options:values } };
+        card.hass = { ...hass, states:{ ...hass.states } };
+      },
+      setLightEffect(effect) {
+        hass.states[light] = { state:'on', attributes:{ ...hass.states[light].attributes, effect } };
+        card.hass = { ...hass, states:{ ...hass.states } };
       },
     };
     if (query.has('editor')) {
@@ -242,6 +261,52 @@ try {
       await helper.selectOption('');
       assert.deepEqual(await first.page.evaluate(() => fixture.setup.light_effect_category_sources),{});
       assert.deepEqual(await first.calls(),[]);
+
+      const paired = await pageFor('paired-account');
+      const apply = paired.gallery.locator('.light-effect-footer button');
+      const pickFavorite = async (flags = '') => {
+        stored = sleep;
+        await paired.open('&paired' + flags);
+        await paired.page.getByRole('dialog',exact('Fixture lamp')).locator('button[data-light-mode=set_effect]').tap();
+        await paired.gallery.getByRole('button',exact(he ? 'הצגת מועדפים בלבד' : 'Show favorites only')).tap();
+        await paired.button('Wave').tap();
+      };
+      await pickFavorite();
+      assert.deepEqual(await paired.calls(),[]);
+      await apply.tap();
+      await waitForWrites(4);
+      const switchRequest = {type:'call_service', domain:'input_select', service:'select_option',
+        target:{entity_id:'input_select.fixture_categories'}, service_data:{option:nature}};
+      assert.deepEqual(requests.at(-1),switchRequest);
+      writers.shift().resolve({});
+      await paired.page.evaluate(()=>fixture.setModes(['Fixed color','Wave']));
+      await paired.page.waitForTimeout(225);
+      assert.equal(await apply.isDisabled(),true);
+      assert.equal(requests.length,4);
+      await paired.reflect(nature);
+      await waitForWrites(5);
+      assert.deepEqual(requests.at(-1),{type:'call_service',domain:'select',service:'select_option',
+        target:{entity_id:'select.fixture_light_modes'},service_data:{option:'Wave'}});
+      writers.shift().resolve({});
+      await paired.page.evaluate(()=>fixture.setLightEffect('Wave'));
+      await paired.gallery.locator('[aria-current=true]').waitFor();
+      assert.equal(requests.length,5);
+
+      await pickFavorite('&ambiguous');
+      assert.equal(await apply.isDisabled(),true);
+      await apply.dispatchEvent('click');
+      assert.deepEqual(await paired.calls(),[]);
+
+      await pickFavorite();
+      await apply.tap();
+      await waitForWrites(6);
+      await paired.page.getByRole('dialog',exact('Fixture lamp')).getByRole('button',exact(he ? 'סגירה' : 'Close')).tap();
+      await paired.gallery.waitFor({state:'hidden'});
+      await paired.reflect(nature);
+      await paired.page.evaluate(()=>fixture.setModes(['Fixed color','Wave']));
+      writers.shift().resolve({});
+      await paired.page.waitForFunction(() => !document.querySelector('bayit-dashboard').pending.size);
+      assert.deepEqual(await paired.calls(),[switchRequest]);
       assert.deepEqual(errors,[]);
       console.log(engine.name() + ' (' + locale + '): shared light categories across accounts, write guards, All, local fallback and editor');
     } finally { await browser.close(); }

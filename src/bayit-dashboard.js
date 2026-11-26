@@ -20,7 +20,7 @@ import { preserveMoreInfoReturn } from './native-more-info.js';
 import { buildPanelControls, climateOptionLabel, panelControlStyles } from './panel-controls.js';
 import { lightColorHex, lightWhiteRailColor, parseLightColor } from './light-color.mjs';
 import { activityKinds, applianceActivity, normalizeRoomActivities } from './room-appliance.mjs';
-import { createLightEffectGallery, createLightWhitePresets, lightEffectCategoryOptions, lightEffectCategoryTitles, lightEffectStyles,
+import { createLightEffectGallery, createLightWhitePresets, lightEffectCategoryOptions, lightEffectCategoryTitles, lightEffectStyles, owningLightEffectCategory,
   normalizeLightEffectCategorySource, normalizeLightEffectGroups, normalizeLightModeSource, organizeLightModes } from './light-effects.js';
 import { createLightColorPalette, lightColorPaletteStyles } from './light-color-palette.js';
 import { createRoomGraphs, createToolbarPanel, toolbarPanelStyles } from './toolbar-panels.js';
@@ -2467,11 +2467,23 @@ export class BayitDashboard extends HTMLElement {
   }
 
   lightEffectUnavailableReason(config, option) {
+    return this.lightEffectRoute(config, option).reason;
+  }
+
+  lightEffectRoute(config, value) {
     const source = config.light_mode_source;
-    if (!source?.apply_effects) return;
+    if (!source?.apply_effects) return {};
     const options = this.entityVisible(source.entity) && pairedLightEffectOptions(this._hass, config);
-    if (!options) return 'light_effect_selector_unavailable';
-    if (!options.includes(option)) return 'light_effect_not_in_selector';
+    if (!options) return { reason: 'light_effect_selector_unavailable' };
+    if (options.includes(value)) return {};
+    const current = this.lightEffectCategoryState(config);
+    if (current?.canWrite && !current.pending && value !== source.fixed_color_option) {
+      const option = owningLightEffectCategory(config.effect_groups ?? [], value, current.options);
+      if (option && option !== current.selected) {
+        return { category: { entity:config.effect_category_source.entity, selected:current.selected, option } };
+      }
+    }
+    return { reason: 'light_effect_not_in_selector' };
   }
 
   lightEffectCategoryState(config) {
@@ -3413,9 +3425,14 @@ export class BayitDashboard extends HTMLElement {
     roomPowerTile = false, shortcutCurrent, preserveLightBrightness = false } = {}) {
     if (!this.deviceActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
         !this.canRequest(config.entity, id, config)) return;
-    if (id === 'set_effect' && config.light_mode_source?.apply_effects &&
-        (!this.nodes.modal.open || this.nodes.modal.hasAttribute('data-closing') || !this.nodes.modal.contains(source) ||
-          source.closest('[hidden]') || this.lightEffectUnavailableReason(config, value))) return;
+    if (id === 'set_effect' && config.light_mode_source?.apply_effects) {
+      const panel = this.panel;
+      const originalScope = shortcutCurrent;
+      shortcutCurrent = () => this.isConnected && this.panel === panel && panel?.type === 'device' &&
+        this.nodes.modal.open && !this.nodes.modal.hasAttribute('data-closing') &&
+        this.nodes.modal.contains(source) && !source.closest('[hidden]') && (!originalScope || originalScope());
+      if (!shortcutCurrent() || this.lightEffectUnavailableReason(config, value)) return;
+    }
     const roomBoilerQuickPower = roomPowerTile && config.room_boiler_quick_power === true;
     const model = this.model(config, { roomBoilerQuickPower });
     const action = model.actions[id];
@@ -3458,6 +3475,9 @@ export class BayitDashboard extends HTMLElement {
         !this.canRequest(config.entity, id, config)) return;
     const model = this.model(config, { roomBoilerQuickPower });
     if (this.staleScriptAction(id, model.actions[id], value) || this.staleUsageReset(config, id, model.actions[id], value) || !model.actions[id]) return;
+    const effectRoute = id === 'set_effect' ? this.lightEffectRoute(config, value) : {};
+    if (effectRoute.reason || (effectRoute.category && !shortcutCurrent)) return;
+    const category = effectRoute.category;
     const token = { id, value };
     const interruptedTimer = id === 'stop_timed' ? this.pending.get(config.entity) : undefined;
     const timer = config.timed?.simple_timer_entity;
@@ -3477,6 +3497,7 @@ export class BayitDashboard extends HTMLElement {
     }
     const lightStatusRefresh = id === 'press_button' && Boolean(config.light_status_refresh_for);
     this.pending.set(config.entity, token);
+    if (category) this.pending.set(category.entity, token);
     this.announce(this.t(lightStatusRefresh ? 'light_refresh_requesting' : 'sending').replace('{name}', model.name));
     this.update();
     let confirmedByHomeAssistant = false;
@@ -3495,9 +3516,13 @@ export class BayitDashboard extends HTMLElement {
         token.acknowledged = true;
         if (this.isConnected) this.update();
       } : undefined;
-      const result = await this.controller.execute(config, id, value, {
-        confirmed, roomBoilerQuickPower, onAcknowledged, preserveLightBrightness,
-      });
+      const options = { confirmed, roomBoilerQuickPower, onAcknowledged, preserveLightBrightness };
+      const result = category
+        ? await this.controller.applyEffectAcrossCategories(config, value, { ...options, category,
+          current: () => shortcutCurrent() && this.deviceActionVisible(config, id) && this.entityVisible(category.entity) &&
+            this.pending.get(config.entity) === token && this.pending.get(category.entity) === token,
+        })
+        : await this.controller.execute(config, id, value, options);
       if (this.pending.get(config.entity) !== token) return;
       const key = ['confirmed','sent','unconfirmed'].includes(result?.status) ? result.status : 'sent';
       let status = key === 'confirmed' ? ({preselect_heating_level: 'heating_preselect_saved',
@@ -3511,6 +3536,7 @@ export class BayitDashboard extends HTMLElement {
         this.announce(this.t(changed ? 'script_state_changed' : 'send_error'));
       }
     } finally {
+      if (category && this.pending.get(category.entity) === token) this.pending.delete(category.entity);
       if (this.pending.get(config.entity) === token) {
         this.pending.delete(config.entity);
         for (const view of this.deviceViews) {
