@@ -677,6 +677,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     if (serialized !== this.#lastConfig) {
       this.#appearanceHelperDrafts.clear();
       this.#manualSectionDrafts.clear();
+      this.#toolbarView.panelContentsDrafts?.clear();
       this.#lastConfig = serialized;
       this.render();
     }

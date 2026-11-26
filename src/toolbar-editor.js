@@ -251,6 +251,7 @@ function automaticEntries(config, hass) {
 
 export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange, viewState = {} }) {
   const words = WORDS[locale] ?? WORDS.en;
+  const panelContentsDrafts = viewState.panelContentsDrafts ??= new Map();
   const existingIds = new Map((dashboardToolbarEntries(config) ?? []).map(({ entry, id }) => [entry, id]));
   const taken = new Set(existingIds.values());
   let toolbar = Array.isArray(config.toolbar) ? config.toolbar
@@ -1093,15 +1094,23 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       mode.dataset.toolbarFocus = 'panel-mode';
       mode.addEventListener('change', () => {
         const current = toolbar[entryIndex];
-        const entities = Array.isArray(current.sections)
-          ? [...new Set(current.sections.flatMap(section => section.entities.map(entityId)))]
-          : current.entities ?? [];
+        const draft = panelContentsDrafts.get(current.id) ?? {};
+        if (Array.isArray(current.sections)) draft.sections = current.sections;
+        if (Array.isArray(current.entities)) draft.entities = current.entities;
+        panelContentsDrafts.set(current.id, draft);
+
+        const contents = { sections: undefined, entities: undefined };
+        if (mode.value === 'sections') {
+          contents.sections = draft.sections ?? [{
+            id: 'section-1', kind: sectionDefaults[entry.kind] || 'devices', entities: draft.entities ?? [],
+          }];
+        } else if (mode.value === 'entities') {
+          contents.entities = draft.entities ??
+            [...new Set((draft.sections ?? []).flatMap(section => section.entities.map(entityId)))];
+        }
         sectionIndex = 0;
         editedEntity = undefined;
-        changeEntry({
-          sections: mode.value === 'sections' ? [{ id: 'section-1', kind: sectionDefaults[entry.kind] || 'devices', entities }] : undefined,
-          entities: mode.value === 'entities' ? entities : undefined,
-        }, true, 'panel-mode');
+        changeEntry(contents, true, 'panel-mode');
       });
       fields.push(field(words.panelContents, mode));
       if (grouped) fields.push(...sectionsEditor());
@@ -1119,6 +1128,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       toolbar === undefined ? 'automatic' : 'custom');
     mode.dataset.toolbarFocus = 'toolbar-mode';
     mode.addEventListener('change', () => {
+      panelContentsDrafts.clear();
       toolbar = mode.value === 'custom' ? automaticEntries(config, hass) : undefined;
       entryIndex = sectionIndex = 0;
       editedEntity = undefined;
@@ -1142,6 +1152,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       }, index => {
         const current = toolbar[entryIndex];
         const removingCurrent = current === toolbar[index];
+        panelContentsDrafts.delete(toolbar[index].id);
         toolbar = toolbar.filter((_, position) => index !== position);
         entryIndex = Math.max(0, toolbar.indexOf(current));
         if (removingCurrent) {

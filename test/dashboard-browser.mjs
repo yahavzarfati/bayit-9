@@ -7035,6 +7035,89 @@ async function assertToolbarLinksKeepTheirScreenIdentity(browser) {
   }
 }
 
+async function assertToolbarPanelContentsDrafts(browser) {
+  const labels = [
+    { locale:'en', appearance:'Appearance', setup:'Customize home', toolbar:'Toolbar and extra screens',
+      contents:'Panel contents', language:'Language', label:'Button label', save:'Save dashboard', sections:'Panel sections' },
+    { locale:'he', appearance:'מראה', setup:'התאמת הבית', toolbar:'סרגל ומסכים נוספים',
+      contents:'תוכן החלונית', language:'שפה', label:'תווית הכפתור', save:'שמירת הדשבורד', sections:'קבוצות בחלונית' },
+  ];
+  const grouped = { id:'fixture-controls', kind:'devices', placement:'settings', label:'Household controls', sections:[
+    { id:'lighting', kind:'devices', title:'Desk lighting', entities:[{ entity:'light.demo_lamp', role:'light_tile' }] },
+    { id:'readings', kind:'status', title:'Heater readings', entities:[{ entity:'switch.demo_heater', role:'status' }] },
+  ] };
+  const selected = { id:'fixture-selected', kind:'devices', placement:'settings', label:'Selected devices',
+    entities:['switch.demo_heater', 'light.demo_lamp'] };
+  const strategy = { type:'custom:bayit-9', toolbar:[{ id:'settings', kind:'settings' }, grouped, selected] };
+  for (const words of labels) {
+    const page = await browser.newPage({ viewport:{ width:320, height:800 }, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    try {
+      await page.addInitScript(strategy => {
+        const key = 'bayit9-browser-fixture';
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy }));
+      }, strategy);
+      const setup = page.getByRole('dialog', { name:words.setup, exact:true });
+      const field = name => setup.getByLabel(name, { exact:true });
+      const button = (name, root = setup) => root.getByRole('button', { name, exact:true });
+      const open = async () => {
+        await button(words.appearance, page).tap();
+        await button(words.setup, page).tap();
+        await setup.getByText(words.toolbar, { exact:true }).tap();
+      };
+      const stored = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+      const writes = () => page.evaluate(() => window.bayitTest.calls.filter(call =>
+        call.type === 'lovelace/config/save' || call.type === 'call_service' || call.domain));
+      const save = async () => {
+        await Promise.all([page.waitForEvent('load'), button(words.save).tap()]);
+        await button(words.appearance, page).waitFor();
+      };
+      const mode = field(words.contents);
+      const groupTitles = () => setup.getByRole('list', { name:words.sections, exact:true })
+        .locator('[data-toolbar-focus^="section-edit-"]').allTextContents();
+
+      await page.goto(base + '/fixture-home/home?configuration&locale=' + words.locale);
+      await open();
+      await button(grouped.label).tap();
+      assert.deepEqual(await groupTitles(), ['Desk lighting', 'Heater readings']);
+      await mode.selectOption('automatic');
+      await button(selected.label).tap();
+      await mode.selectOption('automatic');
+      await field(words.language).selectOption(words.locale);
+      await button(grouped.label).tap();
+      await mode.selectOption('sections');
+      assert.deepEqual(await groupTitles(), ['Desk lighting', 'Heater readings'],
+        'Returning from automatic restores the original named groups after the editor rerenders');
+      await mode.selectOption('entities');
+      await mode.selectOption('sections');
+      assert.deepEqual(await groupTitles(), ['Desk lighting', 'Heater readings']);
+      await button(selected.label).tap();
+      await mode.selectOption('entities');
+
+      const renamed = 'Chosen appliances';
+      const name = field(words.label);
+      await name.fill(renamed);
+      await name.press('Tab');
+      assert.deepEqual(await writes(), []);
+      assert.deepEqual(await stored(), strategy, 'Trying a contents mode stays inside the editor until Save');
+      await save();
+      assert.deepEqual((await stored()).toolbar, [strategy.toolbar[0], grouped, { ...selected, label:renamed }]);
+
+      await open();
+      await button(grouped.label).tap();
+      assert.deepEqual(await groupTitles(), ['Desk lighting', 'Heater readings']);
+      await mode.selectOption('automatic');
+      await save();
+      assert.deepEqual((await stored()).toolbar, [
+        strategy.toolbar[0], { id:grouped.id, kind:grouped.kind, placement:grouped.placement, label:grouped.label },
+        { ...selected, label:renamed },
+      ], 'Saving automatic still removes the authored contents from the active dashboard configuration');
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 const adoptionLocales = [
   { locale:'en', appearance:'Appearance', setup:'Customize home', rooms:'Rooms', roomName:'Room display name',
     title:'Dashboard title', save:'Save dashboard', toolbar:'Toolbar and extra screens', layout:'Toolbar layout',
@@ -15999,6 +16082,7 @@ try {
 
     await run('Legacy strategy options survive visual setup and Home Assistant reload', () => assertLegacyOptionsRoundTrip(browser));
     await run('Automatic toolbar links survive visual customization', () => assertAutomaticToolbarRoutesSurviveCustomization(browser));
+    await run('Extra screen contents survive reversible mode changes', () => assertToolbarPanelContentsDrafts(browser));
 
     await run('Room placement, links and clean installation', async () => {
       await assertRoomMirrorPlacement(browser);

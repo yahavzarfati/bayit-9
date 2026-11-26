@@ -190,6 +190,8 @@ In a **Presence** or **Overview** people section, enable **Show compact presence
 
 Toolbar sections accept ordered entities and can render action tiles, locks, covers, person tiles, solar readings, forecasts, and history graphs. Choose those presentations in **Toolbar and extra screens**. A status or graph tile is read-only, and confirmations can be set for explicit actions. Overview sections can show active devices only. Media, vacuum, calendar and other configured screens can live inside Settings.
 
+While **Customize home** is open, you can switch a toolbar screen’s **Panel contents** between **Automatic**, **Selected devices**, and **Sections** and return to your authored list or groups. **Save dashboard** applies the mode currently selected for that screen.
+
 On a **Devices** or **Overview** screen, choose **Show status items side by side** for a compact status section. In YAML, use `layout: compact` on that section. Tap a graph in this layout to open the sensor's Home Assistant details. To add a separate lock command, set the lock's display role to `lock`. Unlocking asks for confirmation, and locks that require a PIN use Home Assistant's native details dialog. In a compact **Devices** or **Overview** status section with a lock, **Place lock buttons below their status** gives each command the full card width. In YAML, set `stacked_lock_actions: true` on that status section.
 
 Choose **Compact history chart** on a sensor graph in a compact **Devices** or **Overview** status section to show its current value, unit, and a small history line. The card opens Home Assistant sensor details and uses the same **History hours** setting. In YAML, set `compact_history_graph: true` on the graph entity.
