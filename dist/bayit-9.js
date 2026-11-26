@@ -2701,6 +2701,10 @@ var H9=`
     unicode-bidi: plaintext;
   }
   .toolbar-section[data-layout=activity-list] .overview-active-heading { margin-block-end: 0; }
+  .toolbar-section[data-layout=activity-list] > .toolbar-section-items > .tile-row {
+    /* Two readable lines fit the 44px target. Longer names can grow. */
+    padding-block: 2px;
+  }
   .toolbar-section[data-layout=activity-list] .tile-label { text-align: left; }
   .toolbar-section[data-layout=activity-list] .tile-state { text-align: right; }
   .toolbar-section[data-layout=activity-list] :is(.tile-label,.tile-state) { unicode-bidi: plaintext; }
