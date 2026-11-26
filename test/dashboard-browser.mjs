@@ -2067,6 +2067,70 @@ async function assertTimerHistory(browser) {
   }
 }
 
+async function assertQuietRoomLightIcon(browser) {
+  const page = await browser.newPage({
+    viewport:{width:391,height:845}, isMobile:true, hasTouch:true, reducedMotion:'reduce',
+  });
+  const room = page.getByRole('dialog', {name:'Studio',exact:true});
+  const tile = room.locator('[data-entity="light.demo_lamp"] .device-tile');
+  const material = () => tile.evaluate(button => {
+    const glyph = button.querySelector('ha-icon');
+    const style = getComputedStyle(glyph);
+    return { line:style.borderTopColor, fill:style.backgroundColor, glyph:[glyph.offsetWidth,glyph.offsetHeight],
+      focusRing:getComputedStyle(button).outlineStyle };
+  });
+  const state = value => page.evaluate(next=>window.bayitTest.setRoomState('light.demo_lamp',next),value);
+  const clear = 'rgba(0, 0, 0, 0)';
+  try {
+    for (const [width,locale] of [[320,'en'],[391,'he']]) {
+      await page.setViewportSize({width,height:845});
+      await page.goto(base + '/fixture-home/home?room-grid&locale=' + locale);
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+      const normalGlass = await page.evaluate(() => !matchMedia('(prefers-reduced-transparency: reduce), ' +
+        '(prefers-contrast: more), (forced-colors: active)').matches);
+      assert.equal(await tile.getAttribute('aria-pressed'),'false');
+      const quiet = await material();
+      if (normalGlass) {
+        assert.equal(quiet.line,clear);
+        assert.equal(quiet.fill,clear);
+      }
+      assert.deepEqual(quiet.glyph,[36,36]);
+      assert.ok((await tile.boundingBox()).height >= 108);
+
+      await tile.press('Shift+Tab');
+      await page.keyboard.press('Tab');
+      const keyboard = await material();
+      assert.equal(await tile.evaluate(button=>button.getRootNode().activeElement === button),true);
+      assert.equal(keyboard.focusRing,'solid');
+      if (normalGlass) assert.notEqual(keyboard.line,clear);
+      await tile.evaluate(button=>button.blur());
+
+      await tile.evaluate(button=>button.setAttribute('aria-busy','true'));
+      if (normalGlass) assert.notEqual((await material()).line,clear);
+      await state('on');
+      await tile.and(room.locator('[aria-pressed=true]')).waitFor();
+      const active = await material();
+      assert.notEqual(active.line,clear);
+      assert.notEqual(active.fill,clear);
+      await state('unavailable');
+      await tile.and(room.locator('button:not([aria-pressed])')).waitFor();
+      if (normalGlass) assert.notEqual((await material()).line,clear);
+      await state('off');
+      await tile.and(room.locator('[aria-pressed=false]')).waitFor();
+      if (normalGlass) assert.equal((await material()).line,clear);
+      assert.deepEqual(await page.evaluate(()=>window.bayitTest.calls),[]);
+
+      await page.emulateMedia({contrast:'more'});
+      if (await page.evaluate(()=>matchMedia('(prefers-contrast: more)').matches)) {
+        assert.notEqual((await material()).fill,clear);
+      }
+      await page.emulateMedia({contrast:'no-preference'});
+    }
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertNativeRoomLightHold(browser) {
   const page = await browser.newPage({ viewport: { width: 320, height: 780 }, hasTouch: true, reducedMotion: 'reduce' });
   try {
@@ -11150,6 +11214,7 @@ try {
     await run('Native room gestures and device icons', async () => {
       await assertNativeRoomCoverHeader(browser);
       console.log(engine + ': native room cover header, focus restoration, editor and device isolation');
+      await assertQuietRoomLightIcon(browser);
       await assertNativeRoomLightHold(browser);
       console.log(engine + ': opt-in native room light holds, regular taps, focus and room isolation');
       await assertRoomDeviceIcons(browser);

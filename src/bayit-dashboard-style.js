@@ -914,6 +914,13 @@ export const styles = `
     background: var(--room-icon-fill);
     color: var(--ink);
   }
+  .devices[data-room=true] .device[data-treatment=light]:not([data-inline-light])
+    .device-tile[aria-pressed=false]:where(:not(:disabled, :hover, :active, :focus-visible, [aria-busy=true], [data-tone=warm])) > ha-icon {
+    border-color: var(--quiet-room-light-icon-line, transparent);
+  }
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
+    .devices[data-room=true] { --quiet-room-light-icon-line: var(--room-icon-line); }
+  }
   .device-tile:hover > ha-icon {
     border-color: var(--line);
   }
