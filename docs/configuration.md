@@ -32,6 +32,8 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 | `toolbar` | Optional ordered entries with `kind`, `label`, `icon`, `entities` or `sections`. Set `placement: settings` to put a screen inside Settings. Link entries use a local Home Assistant `path`. Security entries can opt in to an Oref alert map. |
 | `profiles` | Climate, boiler and heater controls mapped to local entities. See [heating and timer profiles](heating.md). |
 
+In the Home Assistant iPhone app with edge-to-edge display, Bayit 9 extends the wallpaper under the system status bar and keeps the toolbar within the safe area. Home Assistant Core 2026.8 and later use edge-to-edge by default in compatible app versions. If the wallpaper ends below a separate strip, check **Always draw web view below status bar** under **Companion app → Debugging**. [Companion app edge-to-edge behavior](https://github.com/home-assistant/iOS/pull/5142)
+
 The Settings appearance controls preview changes in the current browser. On a storage dashboard, an administrator can save a built-in or shared wallpaper, button shape, and room layout as household defaults. Select **Use household defaults** on a device to reset its local override. Photos added through **My photo** stay in the browser that uploaded them.
 
 On a storage dashboard, enable **Save admin appearance choices for the household immediately** in **Customize home → Appearance** to save an administrator's wallpaper, button shape and room-title choices when selected. Home Assistant updates open dashboards for devices using household defaults. Personal photo uploads and other users' local choices keep their existing behavior. In YAML set `appearance_sync: true` on the strategy.
