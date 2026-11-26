@@ -11264,10 +11264,11 @@ try {
       await assertRoomSectionsAndPopupLabels(browser);
     });
 
+    await run('Quiet room light icons', () => assertQuietRoomLightIcon(browser));
+
     await run('Native room gestures and device icons', async () => {
       await assertNativeRoomCoverHeader(browser);
       console.log(engine + ': native room cover header, focus restoration, editor and device isolation');
-      await assertQuietRoomLightIcon(browser);
       await assertNativeRoomLightHold(browser);
       console.log(engine + ': opt-in native room light holds, regular taps, focus and room isolation');
       await assertRoomDeviceIcons(browser);
