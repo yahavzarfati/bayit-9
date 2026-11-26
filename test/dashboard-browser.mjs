@@ -5344,6 +5344,20 @@ async function assertCompactRoomHeater(browser) {
       const off = heater.locator('.basic-actions button[data-action="turn_off"]');
       await heater.getByRole('heading', { name: 'Fixture step heater', exact: true, level: 4 }).waitFor();
       await range.waitFor();
+      const css = property => range.evaluate((input, property) =>
+        getComputedStyle(input).getPropertyValue(property).trim(), property);
+      assert.equal(await css('--timer-thumb'), '#ff9b69');
+      assert.equal(await css('accent-color'), 'rgb(255, 155, 105)');
+      await page.emulateMedia({ contrast:'more' });
+      if (await page.evaluate(() => matchMedia('(prefers-contrast: more)').matches)) {
+        assert.match(await css('--timer-rail'), /42%/);
+      }
+      await page.emulateMedia({ contrast:'no-preference', forcedColors:'active' });
+      if (await page.evaluate(() => matchMedia('(forced-colors: active)').matches)) {
+        assert.equal(await css('--timer-thumb'), 'Highlight');
+        assert.equal(await css('--timer-rail'), 'CanvasText');
+      }
+      await page.emulateMedia({ forcedColors:'none' });
       assert.equal(await off.count(), 0);
       const layout = await heater.evaluate(card => {
         const targets = [...card.querySelectorAll('.heat-level-choice')];
@@ -9423,6 +9437,11 @@ async function assertCompactRoomClimateTimer(browser) {
         await page.setViewportSize({ width, height:844 });
         await page.goto(url + (optIn ? '&compact-climate-controls' : '') + route);
         await timer.locator('.timer-usage:visible').waitFor();
+        const range = timer.locator('.timer-range');
+        const css = property => range.evaluate((input, property) =>
+          getComputedStyle(input).getPropertyValue(property).trim(), property);
+        assert.equal(await css('--timer-thumb'), route === room ? '#a4c8ff' : '#7aa7ff');
+        assert.equal(await css('accent-color'), route === room ? 'rgb(164, 200, 255)' : 'rgb(122, 167, 255)');
         const geometry = await timer.evaluate(element => {
           const countdown = element.querySelector('.timer-clock-history');
           const usage = element.querySelector('.timer-usage');
