@@ -9290,6 +9290,52 @@ async function assertClimateTargetNativeDetails(browser) {
   }
 }
 
+async function assertTimerWatchdog(browser) {
+  const runtime = 'sensor.demo_air_usage';
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const url = base + '/fixture-home/home?device-panel&preset-shortcut&timer-history&timer-usage' +
+      '&usage-view-only&room-climate-power&climate-power-test&compact-climate-controls&locale=' + locale;
+    const timer = page.locator('dialog[open] .device-timer');
+    const warning = timer.locator('.timer-watchdog');
+    const state = (attrs) => page.evaluate(([id,patch])=>window.bayitTest.setFixtureAttributes(id,patch),[runtime,attrs]);
+    const commandState = () => timer.locator('.timer-command,.timer-preset').evaluateAll(items =>
+      items.map(item=>[item.dataset.action,item.disabled]));
+    try {
+      for (const [width, route] of [[320,'#room-studio'],[391,'#device/studio/climate.demo_air']]) {
+        await page.setViewportSize({width,height:844});
+        await page.goto(url + '&watchdog-width=' + width + route);
+        await timer.locator('.timer-range').waitFor();
+        await warning.waitFor({state:'hidden'});
+        const initial = await commandState();
+        const first = 'Timer usage was recovered after a restart and may be out of sync.';
+        await state({watchdog_message:first});
+        await timer.getByRole('status').filter({hasText:first}).waitFor();
+        assert.equal(await timer.locator('.timer-watchdog:visible').count(),1);
+        const next = 'Recovered usage detail ' + 'x'.repeat(90) + ' <img src=x>';
+        await state({watchdog_message:next});
+        await warning.filter({hasText:next}).waitFor();
+        assert.equal(await warning.textContent(),next);
+        assert.equal(await warning.locator('img').count(),0);
+        assert.equal(await warning.evaluate(element=>{
+          const box = element.getBoundingClientRect();
+          const card = element.closest('.device-timer').getBoundingClientRect();
+          return box.left >= card.left && box.right <= card.right && element.scrollWidth <= element.clientWidth;
+        }),true);
+        assert.deepEqual(await commandState(),initial);
+        await state({watchdog_message:null});
+        await warning.waitFor({state:'hidden'});
+        await state({watchdog_message:first});
+        await warning.waitFor({state:'visible'});
+        await state({switch_entity_id:'input_boolean.unrelated_timer_target'});
+        await warning.waitFor({state:'hidden'});
+        assert.deepEqual(await page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service')),[]);
+      }
+    } finally {await page.close();}
+  }
+}
+
 async function assertCompactRoomClimateTimer(browser) {
   for (const locale of ['en', 'he']) {
     const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
@@ -13824,6 +13870,7 @@ try {
       await assertRoomClimatePower(browser);
       await assertCompactClimateRail(browser);
       await assertCompactRoomClimateTimer(browser);
+      await assertTimerWatchdog(browser);
       await assertStandaloneTimedClimate(browser);
       await assertClimateTargetNativeDetails(browser);
       const presetURL = base + '?device-panel&preset-shortcut';

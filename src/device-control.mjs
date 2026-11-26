@@ -245,10 +245,12 @@ function readSimpleTimer(entity, device, states, nowMs) {
   const deadline = attrs.timer_state === "active" ? timerDeadline(attrs.timer_finishes_at) : NaN;
   const deadlineMs = Number.isFinite(deadline) ? deadline : null;
   const seconds = record.state.trim() ? Number(record.state) : NaN;
+  const watchdogMessage = typeof attrs.watchdog_message === "string" ? attrs.watchdog_message.trim().slice(0, 512) : "";
   return {
     entity, state: attrs.timer_state, deadlineMs,
     remainingMs: attrs.timer_state === "idle" ? 0 : deadlineMs === null ? null : Math.max(0, deadlineMs - nowMs),
     usedSeconds: Number.isFinite(seconds) && seconds >= 0 ? seconds : null,
+    ...(watchdogMessage && { watchdogMessage }),
     ...(typeof attrs.show_seconds === "boolean" && { showSeconds: attrs.show_seconds }),
     reverse: attrs.reverse_mode === true && attrs.timer_state === "active",
   };

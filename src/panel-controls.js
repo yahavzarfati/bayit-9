@@ -214,6 +214,9 @@ export function buildPanelControls(model, {
       time.append(timeValue, timeHistory);
     }
     const readings = make('div', 'timer-clock-readings');
+    const watchdog = make('p', 'timer-watchdog');
+    watchdog.setAttribute('role', 'status');
+    watchdog.hidden = true;
     const today = make('p', 'timer-today');
     const usage = button('timer-today timer-usage');
     usage.setAttribute('aria-haspopup', 'dialog');
@@ -233,6 +236,9 @@ export function buildPanelControls(model, {
     }
     updates.push((current, pending) => {
       const currentTimer = current.timer;
+      const warning = currentTimer?.watchdogMessage ?? '';
+      watchdog.hidden = !warning;
+      if (watchdog.textContent !== warning) watchdog.textContent = warning;
       const showSeconds = currentTimer?.showSeconds;
       const nativePrecision = showSeconds !== undefined;
       const remaining = currentTimer ? currentTimer.remainingMs : 0;
@@ -275,7 +281,7 @@ export function buildPanelControls(model, {
     });
     readings.append(time, today, usage);
     clockRow.append(readings, history);
-    card.append(clockRow);
+    card.append(clockRow, watchdog);
     const tools = make('div', 'timer-tools');
     let input;
     if (duration) {
@@ -497,6 +503,11 @@ export const panelControlStyles = `
   .climate-extra-controls > summary { min-height: 44px; padding: 11px 4px; cursor: pointer; }
   .climate-extra-controls > .field-row + .field-row { margin-block-start: 5px; }
   .device-timer, .heat-level { min-width: 0; text-align: center; border-top: 1px solid var(--soft-line); padding-top: 6px; }
+  .timer-watchdog {
+    margin: 5px 0; padding: 5px 8px; border: 1px solid var(--soft-line); border-radius: 8px;
+    border-inline-start-color: var(--boiler-heat); color: var(--ink);
+    text-align: start; font-size: .78rem; line-height: 1.35; overflow-wrap: anywhere;
+  }
   .timer-clock { margin: 1px 0 0; font-size: 18px; font-weight: 780; font-variant-numeric: tabular-nums; }
   .timer-clock-history {
     display: block; min-inline-size: 44px; min-block-size: 24px; margin-inline: auto; padding: 0 4px;
