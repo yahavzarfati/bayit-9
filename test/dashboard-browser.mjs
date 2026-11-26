@@ -11572,6 +11572,8 @@ try {
       console.log(engine + ': curated media and vacuum controls, Now Playing, and the original room shortcuts');
     });
 
+    await run('Compact color light details', () => assertCompactColorLightDetail(browser));
+
     await run('Compact room controls for media, kitchen, lights and vacuum', async () => {
       await assertCompactRoomMedia(browser);
       await assertCompactRoomDevicePair(browser);
@@ -11579,8 +11581,6 @@ try {
       await assertKitchenApplianceTiles(browser);
       await assertCompactColorPalette(browser);
       console.log(engine + ': opt-in color palette fits and only sends committed changes');
-      await assertCompactColorLightDetail(browser);
-      console.log(engine + ': opted-in color light commits brightness and white temperature once and keeps guarded refresh');
       await assertLightOpeningMode(browser);
       await assertLightStatusRefresh(browser);
       await assertKitchenBoilerQuickPower(browser);
@@ -13359,6 +13359,9 @@ try {
 
     await run('Unlinked Sensors graph details', () => assertUnlinkedSensorGraphDetails(browser));
 
+    await run('Compact room temperature charts', () => assertRoomTemperatureCharts(browser));
+    await run('Compact Overview history chart', () => assertOverviewCompactHistoryChart(browser));
+
     await run('Energy, Weather, Sensors and native details', async () => {
       const utilityPage = await browser.newPage({ viewport: { width: 391, height: 845 }, hasTouch: true, reducedMotion: 'reduce' });
       utilityPage.setDefaultTimeout(8000);
@@ -13397,8 +13400,6 @@ try {
       console.log(engine + ': Energy, Weather and room graph details leave the Bayit popup open underneath');
       await assertSelectedRoomTemperature(browser);
       await assertRoomActivityBadgeScope(browser);
-      await assertRoomTemperatureCharts(browser);
-      await assertOverviewCompactHistoryChart(browser);
       console.log(engine + ': room temperature source, fallback, units and editor');
       await assertEnergyReadingCards(browser);
       await assertUtilityAndSensorGrid(browser);
@@ -13872,10 +13873,11 @@ try {
       await assertCompactSecurityLocks(browser);
     });
 
+    await run('Overview activity list', () => assertOverviewActivityList(browser));
+    await run('Overview authored layout', () => assertAuthoredOverviewLayout(browser));
+    await run('Overview device identities', () => assertOverviewDeviceIdentities(browser));
+
     await run('Overview lights, covers and climate', async () => {
-      await assertOverviewActivityList(browser);
-      await assertAuthoredOverviewLayout(browser);
-      await assertOverviewDeviceIdentities(browser);
       const groupOffPage = await browser.newPage({ viewport:{width:320,height:845}, hasTouch:true, reducedMotion:'reduce' });
       groupOffPage.setDefaultTimeout(8000);
       const offOverviewName = rightToLeft ? 'מבט על הבית' : 'Home overview';

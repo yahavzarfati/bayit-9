@@ -31,10 +31,17 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npx playwright-core install --with-deps chromium
+      - name: Install Node dependencies
+        id: node_dependencies
+        run: npm ci
+      - name: Run JavaScript tests
+        run: npm test
+      - name: Install Chromium
+        if: ${{ !cancelled() && steps.node_dependencies.outcome == 'success' }}
+        id: chromium
+        run: npx playwright-core install --with-deps chromium
       - name: Install the published release through the native Marketplace
+        if: ${{ !cancelled() && steps.chromium.outcome == 'success' }}
         env:
           BAYIT_QA_MARKETPLACE_TOKEN: ${{ github.token }}
           BAYIT_QA_RELEASE_TAG: ${{ inputs.release_tag }}
