@@ -7097,6 +7097,28 @@ async function assertOverviewActivityList(browser) {
         }
         assert.equal(await section('Overview AC status').getAttribute('data-layout'),null);
       }
+      await page.setViewportSize({width:320,height:845});
+      const wrapping = await lights.locator('.tile-row').evaluate(row => {
+        const label = row.querySelector('.tile-label');
+        const naturalMax = label.style.maxInlineSize;
+        const lineHeight = parseFloat(getComputedStyle(label).lineHeight);
+        try {
+          return [92,84,76,68,56,44,32].map(width => {
+            label.style.maxInlineSize = width + 'px';
+            return {
+              lines: Math.round(label.getBoundingClientRect().height / lineHeight),
+              height: row.getBoundingClientRect().height,
+              full: label.scrollHeight <= label.clientHeight+1 && row.scrollHeight <= row.clientHeight+1,
+            };
+          });
+        } finally {
+          label.style.maxInlineSize = naturalMax;
+        }
+      });
+      const twoLine = wrapping.find(sample=>sample.lines === 2);
+      assert.ok(twoLine?.full && twoLine.height <= 44.1, JSON.stringify({locale,wrapping}));
+      assert.ok(wrapping.some(sample=>sample.lines >= 3 && sample.full && sample.height > 44.1), JSON.stringify({locale,wrapping}));
+      await page.setViewportSize({width:391,height:845});
       assert.match(await lights.locator('.tile-state').innerText(),/50%/);
       assert.equal(await lights.locator('.overview-lights-off:visible').count(),0);
       await page.evaluate(()=>window.bayitTest.setDiscoveredLight('light.demo_list_active','New active light',{}));
