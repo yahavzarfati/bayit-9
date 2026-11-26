@@ -141,6 +141,55 @@ test("a shared boiler detail action sends only a supported change to its visible
   })));
 });
 
+test("a bound fixed-color script dispatches only validated light data and fails closed", async () => {
+  const light = "light.fixture_color_lamp";
+  const selector = "select.fixture_lamp_scenes";
+  const script = "script.fixture_fixed_color";
+  const mode = { entity:selector, fixed_color_option:"Fixed color", apply_effects:true, fixed_color_script:script };
+  const callLog = [];
+  const initial = {
+    states: {
+      [light]:entity("on", { supported_color_modes:["rgb","color_temp"], min_color_temp_kelvin:2200,
+        max_color_temp_kelvin:7000, brightness:120 }),
+      [selector]:entity("Aurora", { options:["Fixed color","Aurora"] }),
+      [script]:entity("off"),
+    },
+    entities: { [light]:{ device_id:"lamp" }, [selector]:{ device_id:"lamp" }, [script]:{} },
+    services: { select:{ select_option:{} }, script:{ fixture_fixed_color:{}, turn_off:{} } },
+    callWS(request) { callLog.push(request); },
+  };
+  let hass = initial;
+  const controller = createDeviceController({ getHass:() => hass, confirmationTimeoutMs:0 });
+  const execute = (action, value, binding = mode, options) =>
+    controller.execute(config(light, { light_mode_source:binding }), action, value, options);
+  await execute("set_light_color", "#e08020");
+  await execute("set_color_temp_kelvin", 4000, mode, { preserveLightBrightness:true });
+  await execute("set_color_temp_kelvin", 4500);
+  assert.deepEqual(callLog, [{rgb_color:[224,128,32]}, {color_temp_kelvin:4000,brightness:120}, {color_temp_kelvin:4500}]
+    .map(service_data => ({ type:"call_service", domain:"script", service:"fixture_fixed_color", service_data })));
+
+  const withState = (id, state) => ({ ...initial, states:{ ...initial.states, [id]:state } });
+  await assert.rejects(execute("set_color_temp_kelvin", 7100),code("invalid_value"));
+  for (const unavailable of [
+    withState(script, entity("unavailable")),
+    withState(selector, entity("Aurora", {options:["Aurora"]})),
+    { ...initial, entities:{...initial.entities, [script]:{hidden_by:"user"}} },
+    { ...initial, entities:{...initial.entities, [script]:{disabled_by:"user"}} },
+    { ...initial, entities:{...initial.entities, [selector]:{device_id:"another-light"}} },
+    { ...initial, services:{...initial.services, script:{}} },
+  ]) {
+    hass = unavailable;
+    await assert.rejects(execute("set_color_temp_kelvin", 4000),code("action_unavailable"));
+  }
+  hass = withState("script.turn_off", entity("off"));
+  await assert.rejects(execute("set_light_color", "#e08020", {...mode,fixed_color_script:"script.turn_off"}),code("action_unavailable"));
+  assert.equal(callLog.length,3);
+  hass = initial;
+  await execute("set_color_temp_kelvin", 4100, {...mode,apply_effects:false});
+  assert.deepEqual(callLog.at(-1), { type:"call_service", domain:"light", service:"turn_on",
+    target:{entity_id:light}, service_data:{color_temp_kelvin:4100} });
+});
+
 test("boiler quick power revalidates the latest relay, timer and native service before dispatch", async () => {
   const relay = "switch.fixture_boiler";
   const sensor = "sensor.fixture_runtime";

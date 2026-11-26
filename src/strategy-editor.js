@@ -14,7 +14,7 @@ import { languages } from './bayit-dashboard-i18n.js';
 import { climateOptionLabel } from './panel-controls.js';
 import { buildToolbarEditor } from './toolbar-editor.js';
 import { activityKinds, activitySources, normalizeRoomActivities } from './room-appliance.mjs';
-import { getDeviceModel, isPairedLightCompanion, isPairedLightStatusRefresh, supportsRoomShutdown } from './device-control.mjs';
+import { availableLightFixedColorScript, getDeviceModel, isPairedLightCompanion, isPairedLightStatusRefresh, supportsRoomShutdown } from './device-control.mjs';
 import { lightEffectCategoryOptions, lightEffectCategoryTitles, normalizeLightEffectCategorySource,
   normalizeLightEffectFavoriteLights, normalizeLightEffectGroups, normalizeLightModeSource } from './light-effects.js';
 import { createPopupRouteId, isPopupAliasCloseRoute, isPopupFragment, normalizePopupAliasCloseRoutes, normalizePopupAliases,
@@ -26,6 +26,8 @@ const WORDS = {
     effectFavorites: 'Allow personal favorites on this device', lightStatusRefresh: 'Light status refresh button',
     lightModeSource: 'Light opening mode source', lightFixedColorOption: 'Fixed-color option',
     lightApplyThroughSelector: 'Apply effects through this light’s selector',
+    lightFixedColorScript: 'Fixed-color action script',
+    lightFixedColorScriptHint: 'Choose a script that sets a color on this light and updates its paired selector.',
     lightCategorySource: 'Shared category helper', lightCategoryAll: 'Helper option for All effects',
     lightCategoryMatching: 'Category names must match the helper’s option names.',
     newEffectGroup: 'New category', effectGroupName: 'Category name', addEffectGroup: 'Add category',
@@ -185,6 +187,8 @@ const WORDS = {
     effectFavorites: 'אפשר סימון מועדפים אישיים במכשיר', lightStatusRefresh: 'כפתור לרענון מצב המנורה',
     lightModeSource: 'מקור למצב הפתיחה של התאורה', lightFixedColorOption: 'אפשרות לצבע קבוע',
     lightApplyThroughSelector: 'הפעלת אפקטים דרך הבורר של המנורה',
+    lightFixedColorScript: 'סקריפט למעבר לצבע קבוע',
+    lightFixedColorScriptHint: 'בחרו סקריפט שמגדיר צבע במנורה הזו ומעדכן את הבורר שלה.',
     lightCategorySource: 'בורר לקטגוריה משותפת', lightCategoryAll: 'אפשרות בורר לכל האפקטים',
     lightCategoryMatching: 'שמות הקטגוריות צריכים להתאים לשמות האפשרויות בבורר.',
     newEffectGroup: 'קטגוריה חדשה', effectGroupName: 'שם קטגוריה', addEffectGroup: 'הוספת קטגוריה',
@@ -2784,10 +2788,15 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const categoryHelpers = categoryTitles.size
         ? entityOptions(this.#hass, new Set(['input_select'])).filter(([id]) => matchesCategory(id)) : [];
       const categorySource = normalizeLightEffectCategorySource(configuredCategories()[entity], groups);
+      const modeSource = normalizeLightModeSource(configuredModes()[entity]);
+      const validFixedScript = (id, mode = modeSource) => !hidden(id) && !hidden(mode?.entity) &&
+        availableLightFixedColorScript(this.#hass, { entity, light_mode_source:{ ...mode, fixed_color_script:id } });
+      const fixedScripts = source && modeSource?.apply_effects
+        ? entityOptions(this.#hass, new Set(['script'])).filter(([id]) => validFixedScript(id)) : [];
       const nextSignature = JSON.stringify([eligible.map(({ device, options }) => [device.entity, !!options.length]),
         source?.options, source?.refreshButtons, source?.modeSources,
         this.#hass.states?.[configuredModes()[entity]?.entity]?.attributes?.options,
-        categoryHelpers, categorySource && helperOptions(categorySource.entity)]);
+        categoryHelpers, categorySource && helperOptions(categorySource.entity), fixedScripts]);
       if (!force && (signature === nextSignature || panel.contains(this.shadowRoot.activeElement) &&
           this.shadowRoot.activeElement?.matches('input[type=text]'))) return;
       signature = nextSignature;
@@ -2831,7 +2840,6 @@ export class Bayit9StrategyEditor extends HTMLElement {
         fields.push(field(words.lightStatusRefresh, picker));
       }
 
-      const modeSource = normalizeLightModeSource(configuredModes()[entity]);
       if (modeSource || (groups.length && source.modeSources.length)) {
         const sources = [['', words.none], ...source.modeSources];
         if (modeSource && !source.modeSources.some(([id]) => id === modeSource.entity)) {
@@ -2842,6 +2850,14 @@ export class Bayit9StrategyEditor extends HTMLElement {
         const fixedField = field(words.lightFixedColorOption, fixedPicker);
         const applyThrough = mark(node('input', { type:'checkbox' }), 'apply-through-selector');
         const applyField = node('label', { className:'check' }, [applyThrough, words.lightApplyThroughSelector]);
+        const scriptId = modeSource?.fixed_color_script;
+        const scriptChoices = [['', words.none], ...fixedScripts];
+        if (scriptId && !fixedScripts.some(([id]) => id === scriptId)) {
+          scriptChoices.push([scriptId, scriptId + ' · ' + words.unavailableEffect]);
+        }
+        const scriptPicker = mark(select(scriptChoices, scriptId ?? ''), 'fixed-color-script');
+        const scriptField = node('div', { className:'stack' },
+          [field(words.lightFixedColorScript, scriptPicker), node('p', { textContent: words.lightFixedColorScriptHint })]);
         const available = () => {
           const id = sourcePicker.value;
           const options = this.#hass.states?.[id]?.attributes?.options;
@@ -2860,6 +2876,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
           applyField.hidden = !saved;
           applyThrough.checked = !!saved && current.apply_effects === true;
           applyThrough.disabled = !applyThrough.checked && !options.includes(saved);
+          scriptField.hidden = !applyThrough.checked;
         };
         sourcePicker.addEventListener('change', () => {
           showFixedOptions();
@@ -2874,6 +2891,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
           const selected = { entity:sourcePicker.value, fixed_color_option:fixedPicker.value,
             ...(current?.entity === sourcePicker.value && current.apply_effects === true && { apply_effects:true }) };
           this.#commit({ light_mode_sources: { ...configuredModes(), [entity]:selected } });
+          refresh(true, 'fixed-color-option');
         });
         applyThrough.addEventListener('change', () => {
           const current = normalizeLightModeSource(configuredModes()[entity]);
@@ -2884,9 +2902,19 @@ export class Bayit9StrategyEditor extends HTMLElement {
           }
           const selected = normalizeLightModeSource({ ...current, apply_effects:applyThrough.checked });
           this.#commit({ light_mode_sources: { ...configuredModes(), [entity]:selected } });
+          refresh(true, 'apply-through-selector');
+        });
+        scriptPicker.addEventListener('change', () => {
+          const current = normalizeLightModeSource(configuredModes()[entity]);
+          if (!current?.apply_effects || (scriptPicker.value && !validFixedScript(scriptPicker.value, current))) {
+            refresh(true, 'fixed-color-script');
+            return;
+          }
+          const selected = normalizeLightModeSource({ ...current, fixed_color_script:scriptPicker.value });
+          this.#commit({ light_mode_sources: { ...configuredModes(), [entity]:selected } });
         });
         showFixedOptions();
-        fields.push(field(words.lightModeSource, sourcePicker), fixedField, applyField);
+        fields.push(field(words.lightModeSource, sourcePicker), fixedField, applyField, scriptField);
       }
 
       if (categoryHelpers.length || categorySource) {

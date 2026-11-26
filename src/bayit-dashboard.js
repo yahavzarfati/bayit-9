@@ -10,7 +10,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   supportsOverviewCompactHistory, supportsToolbarPanelIcon, supportsToolbarVacuumSummary, toolbarPlacement, toolbarPopupPosition, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { bundledHomeIcon } from './home-icon-paths.js';
-import { allowsCoverRailAction, canSendDeviceCommands, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, isReadOnlyRole, pairedLightEffectOptions, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets,
+import { allowsCoverRailAction, availableLightFixedColorScript, canSendDeviceCommands, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, isReadOnlyRole, pairedLightEffectOptions, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets, routesFixedLightColor,
   simpleTimerStatusEntity, simpleTimerUsageResetAvailable, supportsHomeHeaterPower, supportsRoomShutdown } from './device-control.mjs';
 import { bindDeviceDetails, createPopupMotion } from './popup-motion.js';
 import { createPopupScrollMemory } from './popup-scroll.js';
@@ -1287,6 +1287,9 @@ export class BayitDashboard extends HTMLElement {
 
   deviceActionVisible(config, id) {
     const effectSource = id === 'set_effect' && config.light_mode_source?.apply_effects && config.light_mode_source.entity;
+    if (routesFixedLightColor(config, id) &&
+        (!this.entityVisible(config.light_mode_source.entity) || !this.entityVisible(config.light_mode_source.fixed_color_script) ||
+          !availableLightFixedColorScript(this._hass, config))) return false;
     return id === 'more_info' || (canSendDeviceCommands(this._hass) && this.entityVisible(config.entity) &&
       (!effectSource || this.entityVisible(effectSource)));
   }
@@ -2774,6 +2777,7 @@ export class BayitDashboard extends HTMLElement {
         const requiresConnection = id && id !== 'more_info';
         control.disabled = (requiresConnection && !commandsReady) || !coverVisible ||
           !this.canRequest(view.config.entity, id, view.config) ||
+          (routesFixedLightColor(view.config, id) && !this.deviceActionVisible(view.config, id)) ||
           (id === 'locate' && !model.actions.locate) ||
           (view.compactCover && !allowsCoverRailAction(model, id));
       }
@@ -3333,7 +3337,8 @@ export class BayitDashboard extends HTMLElement {
       if (field.output) setText(field.output, field.input.value + field.unit);
       field.paintProgress?.(field.input.valueAsNumber);
       if (reportedLightRange) field.input.setAttribute('aria-valuetext', field.input.value + field.unit);
-      if (field.valid) apply.disabled = !field.valid(field.input.value) || !this.canRequest(view.config.entity, id);
+      if (field.valid) apply.disabled = !field.valid(field.input.value) || !this.canRequest(view.config.entity, id) ||
+        (routesFixedLightColor(view.config, id) && !this.deviceActionVisible(view.config, id));
     };
     field.input.addEventListener('input', touched);
     if (action.color) field.input.addEventListener('change', touched);

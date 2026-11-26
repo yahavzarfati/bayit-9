@@ -409,11 +409,12 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
 }
 
 export function normalizeLightModeSource(value) {
-  const { entity, fixed_color_option, apply_effects } = value ?? {};
+  const { entity, fixed_color_option, apply_effects, fixed_color_script } = value ?? {};
   if (typeof entity !== 'string' || !/^select\.[a-z0-9_]+$/.test(entity) ||
       typeof fixed_color_option !== 'string' || !fixed_color_option.trim() || fixed_color_option.length > 160 ||
       ['unknown', 'unavailable'].includes(fixed_color_option)) return;
-  return { entity, fixed_color_option, ...(apply_effects === true && { apply_effects }) };
+  return { entity, fixed_color_option, ...(apply_effects === true && { apply_effects }),
+    ...(typeof fixed_color_script === 'string' && /^script\.[a-z0-9_]+$/.test(fixed_color_script) && { fixed_color_script }) };
 }
 
 function reportedLightMode({ actions, attributes, state }) {

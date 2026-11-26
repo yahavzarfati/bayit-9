@@ -608,6 +608,10 @@ test('projects a light mode source only for a writable light with a visible pair
   } }, light_mode_sources:{ [light]:source, [passive]:source } };
   const projected = options => discoverRooms({ ...config, ...options },{states,entities},'en')[0].entities;
   assert.deepEqual(projected().map(device=>device.light_mode_source),[source,undefined]);
+  const fixed = { ...source, apply_effects:true, fixed_color_script:'script.fixture_fixed_color' };
+  assert.deepEqual(projected({light_mode_sources:{[light]:fixed},hidden_entities:[select]})[0].light_mode_source,fixed);
+  assert.deepEqual(projected({light_mode_sources:{[light]:{...fixed,fixed_color_script:'switch.fixture'}}})[0].light_mode_source,
+    {...source,apply_effects:true});
   assert.equal(projected({hidden_entities:[select]})[0].light_mode_source,undefined);
   for (const invalid of [{...source,entity:'button.fixture'}, {...source,fixed_color_option:'unavailable'},
     {...source,fixed_color_option:''}]) {

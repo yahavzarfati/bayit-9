@@ -9,6 +9,7 @@ const HVAC_MODES = ["off", "heat", "cool", "heat_cool", "auto", "dry", "fan_only
 const ROOM_SHUTDOWN_DOMAINS = new Set(["light", "switch", "fan", "climate", "water_heater", "media_player"]);
 
 const LIGHT_EFFECT = 4;
+const SCRIPT_MANAGEMENT_SERVICES = new Set(["turn_on", "turn_off", "toggle", "reload"]);
 const COVER = { open: 1, close: 2, position: 4, stop: 8 };
 const FAN = { speed: 1, preset: 8, off: 16, on: 32 };
 const CLIMATE = { temperature: 1, range: 2, fan: 8, preset: 16, swing: 32, off: 128, on: 256, horizontalSwing: 512 };
@@ -88,6 +89,25 @@ export function pairedLightEffectOptions(hass, config) {
       !isPairedLightCompanion(config.entity, binding.entity, "select", hass.entities) ||
       !Object.hasOwn(hass.services?.select ?? {}, "select_option")) return;
   return record.attributes.options.filter(option => option !== binding.fixed_color_option);
+}
+
+export function routesFixedLightColor(config, actionId) {
+  return config.light_mode_source?.apply_effects === true && Boolean(config.light_mode_source.fixed_color_script) &&
+    ["set_light_color", "set_color_temp_kelvin"].includes(actionId);
+}
+
+export function availableLightFixedColorScript(hass, config) {
+  const binding = config.light_mode_source;
+  const script = binding?.fixed_color_script;
+  if (!isEntity(script, "script") || !pairedLightEffectOptions(hass, config) ||
+      !isAvailable(hass.states?.[config.entity]) ||
+      !hass.states[binding.entity].attributes.options.includes(binding.fixed_color_option)) return;
+  const service = script.slice("script.".length);
+  const info = hass.entities?.[script];
+  if (SCRIPT_MANAGEMENT_SERVICES.has(service) || info?.hidden || info?.hidden_by || info?.disabled_by ||
+      !["on", "off"].includes(hass.states[script]?.state) ||
+      !Object.hasOwn(hass.services?.script ?? {}, service)) return;
+  return service;
 }
 
 function scriptRevision(record) {
@@ -961,6 +981,11 @@ export function createDeviceController({
         throw new DeviceControlError("action_unavailable", "The heater or its cutoff changed before the command was sent.");
       }
       let plan = planDeviceAction(config, hass?.states, actionId, value, options);
+      if (routesFixedLightColor(config, actionId)) {
+        const service = availableLightFixedColorScript(hass, config);
+        if (!service) throw new DeviceControlError("action_unavailable", "The fixed-color script or paired selector is unavailable.");
+        plan = { ...plan, domain: "script", service, target: null };
+      }
       if (actionId === "set_effect" && config.light_mode_source?.apply_effects) {
         if (!pairedLightEffectOptions(hass, config)?.includes(value)) {
           throw new DeviceControlError("action_unavailable", "The paired light does not currently offer that effect.");
