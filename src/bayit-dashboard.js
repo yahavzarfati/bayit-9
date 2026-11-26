@@ -6,7 +6,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   normalizeRoomVacuumSummary, normalizeToolbarReadout, normalizeRoomTemperatureGraphColor, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
   supportsRoomSectionColumns,
   ROOM_PANEL_KINDS, normalizeShortcutPowerEntities, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomBoilerScheduleEntry, supportsRoomCompactDevice, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
-  sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, supportsHorizonCard, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
+  sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, stackedToolbarLockOptions, supportsHorizonCard, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
   supportsOverviewCompactHistory, supportsToolbarPanelIcon, supportsToolbarVacuumSummary, toolbarPlacement, toolbarPopupPosition, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { createScriptRegistry } from './script-registry.js';
@@ -518,6 +518,7 @@ export function normalizeDashboardConfig(config = {}) {
         return [{ id: text(section.id), kind: text(section.kind), title: typeof section.title === 'string' ? section.title : undefined,
           ...(isCompactAutomationActions(item.kind, section) && { layout: 'compact-actions' }),
           ...(isCompactToolbarStatus(item.kind, section) && { layout: 'compact' }),
+          ...stackedToolbarLockOptions(item.kind, { ...section, entities: members }),
           ...(isToolbarReadouts(item.kind, section) && { layout: 'readouts' }),
           ...(isWeatherReadingsList(item.kind, section) && { layout: 'readings-list' }),
           ...(isReadingCards(item.kind, section) && { layout: 'reading-cards' }),

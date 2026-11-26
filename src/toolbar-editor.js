@@ -5,7 +5,7 @@ import {
   securityReadoutLabelStates, selectableRoomEntities, sensorComparisonMaxHours, sensorComparisonOptions,
   SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
   supportsCompactAutomationActions, supportsCompactToolbarStatus, supportsHorizonCard, supportsHourlyWeatherForecast, supportsReadingCards,
-  supportsOverviewActivityList, supportsOverviewCompactHistory, supportsOverviewLightsOff, supportsOverviewStackedLocks,
+  supportsOverviewActivityList, supportsOverviewCompactHistory, supportsOverviewLightsOff, supportsStackedToolbarLocks,
   supportsSecurityDangerAction, supportsToolbarPanelIcon, supportsToolbarReadouts, supportsToolbarVacuumSummary,
   supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
@@ -771,7 +771,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     if (supportsCompactToolbarStatus(kind, active)) {
       const compact = node('input', { type: 'checkbox', checked: isCompactToolbarStatus(kind, active) });
       compact.dataset.toolbarFocus = 'compact-status';
-      const refresh = kind === 'overview' && active.kind === 'status';
+      const refresh = (kind === 'overview' || kind === 'devices') && active.kind === 'status';
       compact.addEventListener('change', () =>
         changeSection({ layout: compact.checked ? 'compact' : undefined }, refresh, 'compact-status'));
       const title = active.kind === 'people' ? words.compactPeople : kind === 'security' ? words.compactSecurityLocks : words.compactStatus;
@@ -784,7 +784,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         changeSection({ layout:list.checked ? 'activity-list' : undefined }, true, 'overview-activity-list'));
       fields.push(node('label', { className:'check' }, [list, words.overviewActivityList]));
     }
-    if (supportsOverviewStackedLocks(kind, active)) {
+    if (supportsStackedToolbarLocks(kind, active)) {
       const stacked = node('input', { type:'checkbox', checked:active.stacked_lock_actions === true });
       stacked.addEventListener('change', () => changeSection({ stacked_lock_actions:stacked.checked ? true : undefined }));
       fields.push(node('label', { className:'check' }, [stacked, words.stackedLocks]));

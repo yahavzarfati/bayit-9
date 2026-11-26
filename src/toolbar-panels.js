@@ -968,7 +968,7 @@ export function createToolbarPanel(kind, configuration, context) {
     panel.toggleAttribute('data-overview-people', kind === 'overview' && section.kind === 'people');
     const compactStatus = isCompactToolbarStatus(kind, section);
     panel.toggleAttribute('data-stacked-lock-actions', compactStatus &&
-      (kind === 'security' && section.kind === 'locks' || kind === 'overview' && section.stacked_lock_actions === true));
+      (kind === 'security' && section.kind === 'locks' || section.stacked_lock_actions === true));
     const readouts = isToolbarReadouts(kind, section);
     const weatherReadings = isWeatherReadingsList(kind, section);
     const readingCards = isReadingCards(kind, section);

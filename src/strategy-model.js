@@ -573,19 +573,12 @@ export function supportsOverviewActivityList(kind, section) {
   return section.filter === 'active' || Boolean(discovery && (section.kind === 'status' || discovery.domain === 'cover'));
 }
 
-export function supportsOverviewStackedLocks(kind, section) {
-  return kind === 'overview' && section?.kind === 'status' && isCompactToolbarStatus(kind, section) &&
-    !normalizeOverviewDiscovery(section.discover) && Array.isArray(section.entities) &&
-    section.entities.some(item => item?.role === 'lock' && idForDomain(item.entity, 'lock'));
-}
-
 export function overviewSectionOptions(kind, section) {
   if (kind !== 'overview') return {};
   const discover = normalizeOverviewDiscovery(section.discover);
   const options = {
     ...(section.layout === 'activity-list' && supportsOverviewActivityList(kind, section) && { layout: 'activity-list' }),
     ...(section.turn_off_active_lights === true && supportsOverviewLightsOff(kind, section) && { turn_off_active_lights: true }),
-    ...(section.stacked_lock_actions === true && supportsOverviewStackedLocks(kind, section) && { stacked_lock_actions: true }),
   };
   if (discover && (section.kind === 'status' || section.kind === 'covers' && discover.domain === 'cover')) {
     return { ...options, discover, filter: 'active', ...(discover.domain === 'cover' && section.include_closing === true &&
@@ -971,6 +964,17 @@ export function isCompactToolbarStatus(kind, section) {
   return supportsCompactToolbarStatus(kind, section) && section.layout === 'compact';
 }
 
+export function supportsStackedToolbarLocks(kind, section) {
+  return (kind === 'devices' || kind === 'overview') && section?.kind === 'status' && isCompactToolbarStatus(kind, section) &&
+    !(kind === 'overview' && normalizeOverviewDiscovery(section.discover)) && Array.isArray(section.entities) &&
+    section.entities.some(item => item?.role === 'lock' && idForDomain(item.entity, 'lock'));
+}
+
+export function stackedToolbarLockOptions(kind, section) {
+  return section?.stacked_lock_actions === true && supportsStackedToolbarLocks(kind, section)
+    ? { stacked_lock_actions: true } : {};
+}
+
 export function supportsToolbarReadouts(kind, section) {
   return (kind === 'security' && section?.kind === 'status') ||
     (kind === 'vacuum' && section?.kind === 'readings');
@@ -1151,6 +1155,7 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds, visible
     return [{ id, kind: section.kind, ...(title !== undefined && { title }),
       ...(isCompactAutomationActions(kind, section) && { layout: 'compact-actions' }),
       ...(isCompactToolbarStatus(kind, section) && { layout: 'compact' }),
+      ...stackedToolbarLockOptions(kind, { ...section, entities }),
       ...(isToolbarReadouts(kind, section) && { layout: 'readouts' }),
       ...(isWeatherReadingsList(kind, section) && { layout: 'readings-list' }),
       ...(isReadingCards(kind, section) && { layout: 'reading-cards' }),

@@ -1272,7 +1272,8 @@ const selected = query.has('configuration') ? rendererStrategy(stored().strategy
           entities:['person.demo_friend','person.demo_guest'],
         }] : []),
         {kind:'status',title:compactOverview ? 'Home status' : 'Entry status',layout:'compact',
-          ...(compactOverview && query.has('overview-authored-layout') && {stacked_lock_actions:true}),entities:[
+          ...((compactOverview ? query.has('overview-authored-layout') : query.has('entrance-stacked-lock')) &&
+            {stacked_lock_actions:true}),entities:[
         {entity:'lock.demo_compact_entry',role:'lock'},
         {entity:'sensor.demo_studio_temperature',role:'graph',graph_hours:query.has('overview-compact-chart') ? 36 : 24,
           ...(query.has('overview-compact-chart') && {compact_history_graph:true})},
@@ -7551,6 +7552,70 @@ async function assertOverviewPopupHeaderIcon(browser) {
     } finally {
       await page.close();
     }
+  }
+}
+
+async function assertEntranceStackedLock(browser) {
+  const url = base + '/fixture-home/home?toolbar-panels&compact-entrance-status';
+  for (const width of [320, 391]) {
+    for (const locale of ['en', 'he']) {
+      const he = locale === 'he';
+      const page = await browser.newPage({ viewport:{width,height:844}, hasTouch:true, reducedMotion:'reduce' });
+      try {
+        await page.goto(url + '&entrance-stacked-lock&locale=' + locale);
+        await page.locator('.toolbar-actions button[data-role=settings]').tap();
+        await page.getByRole('button',{name:'Front entrance',exact:true}).tap();
+        const dialog = page.getByRole('dialog',{name:'Front entrance',exact:true});
+        const section = dialog.locator('.toolbar-section[data-stacked-lock-actions]');
+        const card = section.locator('.compact-status-lock');
+        const unlock = card.getByRole('button',{name:(he ? 'פתיחת מנעול' : 'Unlock') + ' · Front lock',exact:true});
+        const confirmation = page.locator('dialog.confirm[open]');
+        const calls = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.domain === 'lock'));
+        await unlock.waitFor();
+        assert.equal(await section.count(), 1);
+        assert.ok(await card.evaluate(tile => {
+          const frame = tile.getBoundingClientRect();
+          const status = tile.querySelector('.tile-row').getBoundingClientRect();
+          const command = tile.querySelector('.compact-lock-action').getBoundingClientRect();
+          return command.width >= frame.width - 16 && command.height >= 44 && status.bottom <= command.top + 1 &&
+            frame.left >= 0 && frame.right <= innerWidth && command.left >= frame.left && command.right <= frame.right;
+        }), locale + '/' + width);
+        await unlock.tap();
+        await confirmation.getByRole('button',{name:he ? 'ביטול' : 'Cancel',exact:true}).tap();
+        assert.deepEqual(await calls(), []);
+        await unlock.tap();
+        await confirmation.getByRole('button',{name:he ? 'אישור' : 'Confirm',exact:true}).tap();
+        await card.getByRole('button',{name:(he ? 'נעילה' : 'Lock') + ' · Front lock',exact:true}).waitFor();
+        assert.deepEqual(await calls(), [{type:'call_service',domain:'lock',service:'unlock',
+          target:{entity_id:'lock.demo_compact_entry'},service_data:{}}]);
+        assert.equal(new URL(page.url()).hash, '#panel/compact-entrance');
+      } finally {
+        await page.close();
+      }
+    }
+  }
+  const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true});
+  try {
+    await page.goto(url + '&editor');
+    await page.getByText('Toolbar and extra screens',{exact:true}).tap();
+    await page.getByRole('button',{name:'Front entrance',exact:true}).tap();
+    await page.getByRole('button',{name:'Entry status',exact:true}).tap();
+    const label = 'Place lock buttons below their status';
+    const stacked = page.getByRole('checkbox',{name:label,exact:true});
+    assert.equal(await stacked.isChecked(),false);
+    await stacked.check();
+    const saved = () => page.evaluate(() => window.latest.toolbar.find(entry => entry.id === 'compact-entrance')
+      .sections[0].stacked_lock_actions);
+    assert.equal(await saved(),true);
+    await stacked.uncheck();
+    assert.equal(await saved(),undefined);
+    const compact = page.getByRole('checkbox',{name:'Show status items side by side',exact:true});
+    await compact.uncheck();
+    assert.equal(await stacked.count(),0);
+    await compact.check();
+    await stacked.waitFor();
+  } finally {
+    await page.close();
   }
 }
 
@@ -14413,6 +14478,8 @@ try {
     });
 
     await run('Overview popup header icon', () => assertOverviewPopupHeaderIcon(browser));
+
+    await run('Full-width Entrance lock action', () => assertEntranceStackedLock(browser));
 
     await run('Compact Entrance and Overview', async () => {
       for (const [width, isOverview] of [[320,false],[391,false],[320,true],[391,true]]) {

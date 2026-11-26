@@ -2060,7 +2060,7 @@ test('compact presence layout applies only to opted-in People sections and prese
   for (const index of [0,3]) assert.deepEqual(sections[index].entities.map(entry=>entry.entity),entries);
 });
 
-test('full-width Overview lock actions require an authored compact status with a lock role', () => {
+test('full-width toolbar lock actions require an authored compact status with a lock role', () => {
   const hass = home();
   hass.states['lock.fixture'] = { state:'locked', attributes:{} };
   const lock = { entity:'lock.fixture', role:'lock' };
@@ -2070,11 +2070,12 @@ test('full-width Overview lock actions require an authored compact status with a
       compact, {...compact,stacked_lock_actions:undefined}, {...compact,layout:undefined},
       {...compact,entities:[{...lock,role:'status'}]},
     ]},
-    {kind:'devices',sections:[compact]},
+    {kind:'devices',sections:[compact, {...compact,entities:[{...lock,role:'status'}]}]},
+    {kind:'security',sections:[{...compact,kind:'locks'}]},
   ]},hass).views[0].cards[0];
   const sections = dashboard.toolbar.flatMap(entry=>entry.sections);
-  assert.deepEqual(sections.map(section=>section.stacked_lock_actions),[true,undefined,undefined,undefined,undefined]);
-  assert.deepEqual(sections.map(section=>section.entities[0].role),['lock','lock','lock','status','lock']);
+  assert.deepEqual(sections.map(section=>section.stacked_lock_actions),[true,undefined,undefined,undefined,true,undefined,undefined]);
+  assert.deepEqual(sections.map(section=>section.entities[0].role),['lock','lock','lock','status','lock','status','lock']);
 });
 
 test('the compact history chart is scoped to selected Overview graphs in a compact status section', () => {
