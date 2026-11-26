@@ -11402,10 +11402,11 @@ try {
       console.log(engine + ': custom popup icons stay scoped to the selected room device');
     });
 
+    await run('Home toolbar and shortcut shapes', () => assertHomeButtonShapes(browser));
+
     await run('Home appearance settings and synchronization', async () => {
       await assertHomePreferenceAliases(browser);
       await assertSharedAppearance(browser);
-      await assertHomeButtonShapes(browser);
       await assertAppearanceHelperEditor(browser);
     });
 
@@ -12032,6 +12033,7 @@ try {
       console.log(engine + ': curated media and vacuum controls, Now Playing, and the original room shortcuts');
     });
 
+    await run('Paired light effect selector', () => assertPairedLightEffectSelector(browser));
     await run('Compact color light details', () => assertCompactColorLightDetail(browser));
     await run('White light presets', () => assertLightWhitePresets(browser));
 
@@ -12043,7 +12045,6 @@ try {
       await assertCompactColorPalette(browser);
       console.log(engine + ': opt-in color palette fits and only sends committed changes');
       await assertLightOpeningMode(browser);
-      await assertPairedLightEffectSelector(browser);
       console.log(engine + ': opted-in effects apply through their current paired Home Assistant selector');
       await assertLightStatusRefresh(browser);
       await assertKitchenBoilerQuickPower(browser);
