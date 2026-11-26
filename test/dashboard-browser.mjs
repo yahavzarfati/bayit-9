@@ -6937,7 +6937,7 @@ async function assertOverviewCompactHistoryChart(browser) {
           fits:element.scrollWidth<=element.clientWidth+1,
           direction:getComputedStyle(element).direction,
         }));
-        assert.deepEqual(geometry,{height:136,fits:true,direction:'ltr'});
+        assert.deepEqual(geometry,{height:112,fits:true,direction:'ltr'});
       }
       await chart.press('Enter');
       assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls),[entity]);

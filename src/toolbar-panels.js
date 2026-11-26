@@ -1176,6 +1176,7 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
     grid-template-columns: repeat(auto-fit,minmax(min(100%,max(110px,calc((100% - 8px) / 2))),1fr));
   }
   .toolbar-section[data-overview-people] > .toolbar-section-items { direction: ltr; }
+  .toolbar-section[data-overview-people][data-layout=compact] { padding-block: 10px; }
   .shell[dir=rtl] .toolbar-section:is([data-layout=compact],[data-overview-people]) > .toolbar-section-items > * { direction: rtl; }
   .toolbar-section[data-security-section][data-section=actions]:has(> .toolbar-section-items > .tile-row:only-child) {
     border: 0; padding: 0;

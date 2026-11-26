@@ -207,9 +207,10 @@ export const roomTemperatureChartStyles = `
   .room-temperature-unit { color:var(--secondary); font-size:12px; }
   .room-temperature-chart svg { display:block; width:100%; height:44px; overflow:hidden; }
   .toolbar-section .room-temperature-chart.overview-history-chart {
-    grid-template-rows:26px 54px 44px; padding-inline:0;
+    grid-template-rows:24px 42px 34px; padding-inline:0;
     border:1px solid var(--soft-line); border-radius:12px; background:var(--control);
   }
+  .overview-history-chart svg { height:34px; }
   .shell[dir=rtl] .toolbar-section[data-layout=compact] > .toolbar-section-items > .overview-history-chart {
     direction:ltr;
   }
