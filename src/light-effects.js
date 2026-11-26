@@ -415,6 +415,36 @@ function reportedLightMode({ actions, attributes, state }) {
   if (supportsLightColor([colorMode])) return 'set_light_color';
 }
 
+export function createLightWhitePresets(action, { make, button, t, request }) {
+  const { min, max } = action;
+  const values = [['warm', min], ['neutral', Math.max(min, Math.min(max, 4000))], ['cool', max]];
+  const content = make('div', 'light-white-presets');
+  content.setAttribute('role', 'group');
+  content.setAttribute('aria-label', t('light_white_presets'));
+  const controls = values.map(([tone, kelvin]) => {
+    const control = button('control-button', undefined, 'mdi:lightbulb-on-outline');
+    const name = make('span', '', t('light_white_' + tone));
+    const reading = make('small', '', kelvin + ' K');
+    reading.dir = 'ltr';
+    control.append(name, reading);
+    control.dataset.action = 'set_color_temp_kelvin';
+    control.dataset.whitePreset = tone;
+    control.onclick = () => request(kelvin, control);
+    content.append(control);
+    return [kelvin, control];
+  });
+  return {
+    content,
+    update(model) {
+      const actual = model.attributes.color_temp_kelvin;
+      const reportedWhite = model.state === 'on' && reportedLightMode(model) === 'set_color_temp_kelvin';
+      for (const [kelvin, control] of controls) {
+        control.setAttribute('aria-pressed', String(reportedWhite && Number.isFinite(actual) && Math.abs(actual - kelvin) < 2));
+      }
+    },
+  };
+}
+
 export function organizeLightModes(fields, selected, changed, { make, button, t, model, fixedColorFallback }) {
   const parts = lightModes.flatMap(([id, name]) => fields.has(id)
     ? [{ id, name, field: fields.get(id) }] : []);
@@ -455,7 +485,20 @@ export const lightEffectStyles = `
     display:grid; grid-template-columns:repeat(auto-fit,minmax(min(64px,100%),1fr)); gap:4px;
   }
   .light-mode-bar .control-button { min-width:0; padding-inline:6px; overflow-wrap:anywhere; }
-  .light-mode-bar .control-button[aria-pressed=true] {
+  .light-white-presets {
+    grid-column:1/-1; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px;
+  }
+  .light-white-presets[hidden] { display:none; }
+  .light-white-presets .control-button {
+    display:grid; grid-template-columns:auto minmax(0,auto); gap:2px 5px; justify-content:center;
+    align-content:center; padding:6px 4px; min-height:48px; min-width:0; overflow-wrap:anywhere; text-align:center;
+  }
+  .light-white-presets ha-icon { --mdc-icon-size:16px; color:var(--white-preset-accent); }
+  [data-white-preset=warm] { --white-preset-accent:#ffbc79; }
+  [data-white-preset=neutral] { --white-preset-accent:#fff4df; }
+  [data-white-preset=cool] { --white-preset-accent:#bcd7ff; }
+  .light-white-presets small { grid-column:1/-1; color:var(--secondary); white-space:nowrap; }
+  :is(.light-mode-bar,.light-white-presets) .control-button[aria-pressed=true] {
     border-color:currentColor;
     box-shadow:inset 0 0 0 1px currentColor;
   }

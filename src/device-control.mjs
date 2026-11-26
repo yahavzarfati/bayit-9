@@ -673,7 +673,8 @@ function expectedState(config, action, value, states) {
   }
 }
 
-export function planDeviceAction(config, states, actionId, value, { confirmed = false, code, roomBoilerQuickPower = false } = {}) {
+export function planDeviceAction(config, states, actionId, value,
+  { confirmed = false, code, roomBoilerQuickPower = false, preserveLightBrightness = false } = {}) {
   config = normalizedConfig(config);
   const model = deviceModel(config, states, Date.now(), roomBoilerQuickPower);
   const action = typeof actionId === "string" && Object.hasOwn(model.actions, actionId) && model.actions[actionId];
@@ -806,6 +807,9 @@ export function planDeviceAction(config, states, actionId, value, { confirmed = 
   const data = special?.data ?? (actionId === "set_temperature_range" ? {
     target_temp_low: value.low, target_temp_high: value.high,
   } : PARAMETER[actionId] ? { [PARAMETER[actionId]]: value } : { ...action.fixedData });
+  const brightness = model.attributes.brightness;
+  if (actionId === "set_color_temp_kelvin" && preserveLightBrightness === true &&
+      Number.isInteger(brightness) && brightness > 0 && brightness <= 255) data.brightness = brightness;
   if (action.requiresCode) data.code = code;
   return {
     kind: "service",

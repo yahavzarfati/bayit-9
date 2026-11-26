@@ -51,6 +51,7 @@ const WORDS = {
     roomNativeCoverHeader: 'Open Home Assistant details from the cover header',
     roomDualLightDetail: 'Show both sliders in light details',
     roomCompactLightReading: 'Show reported values in compact light controls',
+    roomWhiteLightPresets: 'Show Warm, Neutral and Cool white presets',
     roomNativeLightHold: 'Open Home Assistant details with a long press on this light',
     roomApplianceTile: 'Show as an appliance tile',
     roomBoilerQuickPower: 'Boiler quick power',
@@ -207,6 +208,7 @@ const WORDS = {
     roomNativeCoverHeader: 'פתיחת פרטי Home Assistant מכותרת התריס',
     roomDualLightDetail: 'הצגת שני המחוונים בפרטי התאורה',
     roomCompactLightReading: 'הצגת ערכים מדווחים בפקדי תאורה קומפקטיים',
+    roomWhiteLightPresets: 'הצגת גווני לבן חם, ניטרלי וקר',
     roomNativeLightHold: 'פתיחת פרטי Home Assistant בלחיצה ארוכה על התאורה',
     roomApplianceTile: 'הצגה כאריח מכשיר חשמלי',
     roomBoilerQuickPower: 'הפעלה מהירה של הדוד',
@@ -1445,6 +1447,21 @@ export class Bayit9StrategyEditor extends HTMLElement {
           reported.firstElementChild.dataset.roomFocus = 'room-compact-light-reading';
           fields.append(reported);
         }
+        const whitePresets = configuredIds(override.white_light_preset_entities).includes(id);
+        if (lightActions && !configuredIds(override.read_only_entities).includes(id) &&
+            (whitePresets || lightActions.set_color_temp_kelvin)) {
+          const presets = checkbox(words.roomWhiteLightPresets, whitePresets, checked => {
+            const next = { ...this.#roomOverride(room.id) };
+            const lights = new Set(configuredIds(next.white_light_preset_entities));
+            if (checked) lights.add(id);
+            else lights.delete(id);
+            if (lights.size) next.white_light_preset_entities = [...lights];
+            else delete next.white_light_preset_entities;
+            this.#setRoomOverride(room.id, next, 'room-white-light-presets');
+          });
+          presets.firstElementChild.dataset.roomFocus = 'room-white-light-presets';
+          fields.append(presets);
+        }
       };
       picker.addEventListener('change', () => {
         this.#roomControlEditing.set(room.id, picker.value);
@@ -1707,6 +1724,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       for (const key of ['keep_in_automatic_room_entities', 'read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
         'room_activity_badge_excluded_entities',
         'inline_light_entities', 'compact_inline_light_entities', 'dual_light_detail_entities', 'compact_light_reading_entities',
+        'white_light_preset_entities',
         'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details', 'shortcut_power_entities',
         'vacuum_panel_hold_entities', 'climate_power_entities', 'media_compact_entities', 'appliance_tile_entities',
         'boiler_quick_power_entities', 'boiler_schedule_entry_entities', 'compact_device_entities', 'compact_climate_controls_entities']) {

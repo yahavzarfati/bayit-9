@@ -20,7 +20,7 @@ import { preserveMoreInfoReturn } from './native-more-info.js';
 import { buildPanelControls, climateOptionLabel, panelControlStyles } from './panel-controls.js';
 import { lightColorHex, lightWhiteRailColor, parseLightColor } from './light-color.mjs';
 import { activityKinds, applianceActivity, normalizeRoomActivities } from './room-appliance.mjs';
-import { createLightEffectGallery, lightEffectCategoryOptions, lightEffectCategoryTitles, lightEffectStyles,
+import { createLightEffectGallery, createLightWhitePresets, lightEffectCategoryOptions, lightEffectCategoryTitles, lightEffectStyles,
   normalizeLightEffectCategorySource, normalizeLightEffectGroups, normalizeLightModeSource, organizeLightModes } from './light-effects.js';
 import { createLightColorPalette, lightColorPaletteStyles } from './light-color-palette.js';
 import { createRoomGraphs, createToolbarPanel, toolbarPanelStyles } from './toolbar-panels.js';
@@ -318,6 +318,7 @@ function normalizeEntity(item) {
   if (domain === 'light' && supportsNativeShortcutDetails(entry) && /^button\.[a-z0-9_]+$/.test(text(item.light_status_refresh_button))) {
     entry.light_status_refresh_button = item.light_status_refresh_button;
   }
+  if (domain === 'light' && item.room_white_light_presets === true && !isReadOnlyRole(entry.role)) entry.room_white_light_presets = true;
   const modeSource = domain === 'light' && supportsNativeShortcutDetails(entry) && normalizeLightModeSource(item.light_mode_source);
   if (modeSource) entry.light_mode_source = modeSource;
   if (domain === 'cover' && item.room_cover_native_details === true && supportsNativeShortcutDetails(entry)) {
@@ -2757,6 +2758,7 @@ export class BayitDashboard extends HTMLElement {
       view.special.update(model, pending);
       view.effectGallery?.update(model, commandsReady && this.canRequest(view.config.entity, 'set_effect'));
       view.colorPalette?.update(model, pending);
+      view.whitePresets?.update(model);
       for (const field of view.fields) {
         this.syncField(field, model);
         if (field.valid && !field.valid(field.input.value)) field.apply.disabled = true;
@@ -3024,6 +3026,7 @@ export class BayitDashboard extends HTMLElement {
     if (view.config.effect_favorites && view.effectGallery) view.effectGallerySession = view.effectGallery.capture();
     view.effectGallery = null;
     view.colorPalette = null;
+    view.whitePresets = null;
     const basic = make('div', 'basic-actions');
     const complex = new Map();
     const standaloneClimate = this.panel?.type === 'device' && model.kind === 'climate';
@@ -3180,7 +3183,8 @@ export class BayitDashboard extends HTMLElement {
     if (vacuumSummaryFocused) (advancedVacuum?.querySelector('summary') || view.more)?.focus({ preventScroll: true });
     if (focused?.action || focused?.lightMode || focused?.effectFavoriteControl) {
       const successor = [...view.group.querySelectorAll('[data-action], [data-light-mode], [data-effect-favorite-control]')].find(el =>
-        !el.disabled && !el.closest('[hidden]') && (focused.action && el.dataset.action === focused.action ||
+        !el.disabled && !el.closest('[hidden]') && (focused.action && el.dataset.action === focused.action &&
+          el.dataset.whitePreset === focused.whitePreset ||
           focused.lightMode && el.dataset.lightMode === focused.lightMode ||
           focused.effectFavoriteControl && el.dataset.effectFavoriteControl === focused.effectFavoriteControl));
       (successor || view.more || view.tile).focus({ preventScroll: true });
@@ -3193,6 +3197,8 @@ export class BayitDashboard extends HTMLElement {
     const temperature = this.buildField(view, actions.set_color_temp_kelvin, 'set_color_temp_kelvin', model);
     const controls = make('div', view.dualLightDetail ? 'dual-light-detail-controls' : 'compact-light-controls');
     controls.append(brightness, temperature);
+    const presets = view.whitePresets?.content;
+    if (presets) controls.append(presets);
     if (view.dualLightDetail) return controls;
     controls.toggleAttribute('data-filled-white-rail', view.filledWhiteLightRail);
     const mode = button('round-action', this.t('set_color_temp_kelvin'), 'mdi:thermometer', true);
@@ -3201,6 +3207,7 @@ export class BayitDashboard extends HTMLElement {
       const showTemperature = view.compactTemperature === true;
       brightness.hidden = showTemperature;
       temperature.hidden = !showTemperature;
+      if (presets) presets.hidden = !showTemperature;
       if (view.compactInlineLight) {
         setIcon(mode.firstElementChild, showTemperature ? 'mdi:brightness-4' : 'mdi:thermometer');
         label(mode, this.t(showTemperature ? 'set_brightness' : 'set_color_temp_kelvin'));
@@ -3324,6 +3331,15 @@ export class BayitDashboard extends HTMLElement {
       apply.onclick = commit;
       row.append(caption, apply);
     }
+    if (id === 'set_color_temp_kelvin' && this.panel?.type === 'device' && view.config.room_white_light_presets) {
+      view.whitePresets = createLightWhitePresets(range, { make, button, t: key => this.t(key), request: (next, control) => {
+        if (!control.disabled && this.nodes.modal.open && !this.nodes.modal.hasAttribute('data-closing') &&
+            this.nodes.modal.contains(control) && !control.closest('[hidden]')) {
+          this.requestAction(view.config, id, next, control, { preserveLightBrightness: true });
+        }
+      } });
+      if (!compactRange) row.append(view.whitePresets.content);
+    }
     view.fields.push(field);
     this.syncField(field, model);
     return row;
@@ -3383,7 +3399,7 @@ export class BayitDashboard extends HTMLElement {
   }
 
   requestAction(config, id, value, source, { confirmShortcut = false, compactCover = false, compactDevice = false,
-    roomPowerTile = false, shortcutCurrent } = {}) {
+    roomPowerTile = false, shortcutCurrent, preserveLightBrightness = false } = {}) {
     if (!this.deviceActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
         !this.canRequest(config.entity, id, config)) return;
     const roomBoilerQuickPower = roomPowerTile && config.room_boiler_quick_power === true;
@@ -3394,10 +3410,10 @@ export class BayitDashboard extends HTMLElement {
         (compactDevice && !this.canUseRoomCompactCommand(config, model, id))) return;
     if (!action.requiresConfirmation && !confirmShortcut) {
       return action.requiresCode ? this.moreInfo(config, source)
-        : this.send(config, id, value, { roomBoilerQuickPower, shortcutCurrent });
+        : this.send(config, id, value, { roomBoilerQuickPower, shortcutCurrent, preserveLightBrightness });
     }
     this.confirming = { config, id, value, source, compactCover, compactDevice, roomPowerTile, roomBoilerQuickPower,
-      shortcutCurrent, native: action.requiresCode };
+      shortcutCurrent, preserveLightBrightness, native: action.requiresCode };
     const n = this.nodes;
     const prompt = id === 'reset_daily_usage' ? this.t('timer_reset_confirm').replace('{name}', model.name)
       : this.t('confirm_action').replace('{name}', model.name).replace('{action}', this.actionLabel(id));
@@ -3418,10 +3434,12 @@ export class BayitDashboard extends HTMLElement {
     if (request.native) return this.moreInfo(request.config, request.source);
     return this.send(request.config, request.id, request.value, {
       confirmed: true, roomBoilerQuickPower: request.roomBoilerQuickPower, shortcutCurrent: request.shortcutCurrent,
+      preserveLightBrightness: request.preserveLightBrightness,
     });
   }
 
-  async send(config, id, value, { confirmed = false, roomBoilerQuickPower = false, shortcutCurrent } = {}) {
+  async send(config, id, value, { confirmed = false, roomBoilerQuickPower = false, shortcutCurrent,
+    preserveLightBrightness = false } = {}) {
     if (!this.deviceActionVisible(config, id) || (shortcutCurrent && !shortcutCurrent()) ||
         !this.canRequest(config.entity, id, config)) return;
     const model = this.model(config, { roomBoilerQuickPower });
@@ -3463,7 +3481,9 @@ export class BayitDashboard extends HTMLElement {
         token.acknowledged = true;
         if (this.isConnected) this.update();
       } : undefined;
-      const result = await this.controller.execute(config, id, value, { confirmed, roomBoilerQuickPower, onAcknowledged });
+      const result = await this.controller.execute(config, id, value, {
+        confirmed, roomBoilerQuickPower, onAcknowledged, preserveLightBrightness,
+      });
       if (this.pending.get(config.entity) !== token) return;
       const key = ['confirmed','sent','unconfirmed'].includes(result?.status) ? result.status : 'sent';
       let status = key === 'confirmed' ? ({preselect_heating_level: 'heating_preselect_saved',

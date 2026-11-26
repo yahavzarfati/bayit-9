@@ -386,7 +386,10 @@ const hass = {
       const { brightness_pct, color_temp_kelvin, effect, rgb_color } = request.service_data ?? {};
       const attributes = { ...states[id].attributes };
       if (brightness_pct !== undefined) attributes.brightness = Math.round(brightness_pct * 255 / 100);
-      if (color_temp_kelvin !== undefined) attributes.color_temp_kelvin = color_temp_kelvin;
+      if (color_temp_kelvin !== undefined) {
+        attributes.color_temp_kelvin = color_temp_kelvin;
+        if (query.has('white-light-presets')) attributes.color_mode = 'color_temp';
+      }
       if (rgb_color) Object.assign(attributes, query.has('compact-color-palette') ? { rgb_color, color_mode: 'rgb' }
         : { rgb_color: [255, 135, 75], xy_color: [0.574, 0.359], color_mode: 'xy' });
       if (effect !== undefined) attributes.effect = effect;
@@ -586,6 +589,9 @@ if (query.has('room-grid')) {
   if (query.has('compact-color-palette')) {
     states['light.demo_pendant'].state = 'off';
     delete states['light.demo_pendant'].attributes.color_mode;
+  }
+  if (query.has('white-presets-tunable-only')) {
+    Object.assign(states['light.demo_pendant'].attributes, { supported_color_modes:['color_temp'], supported_features:0 });
   }
   if (query.has('light-status-refresh')) {
     states['button.fixture_refresh_lamp'] = { state:'unknown', attributes:{ friendly_name:'Lamp status request' } };
@@ -994,6 +1000,9 @@ const selected = query.has('configuration') ? rendererStrategy(stored().strategy
     read_only_entities: ['light.demo_monitor'],
     ...(query.has('inline-color-light') && {inline_light_entities:['light.demo_pendant']}),
     ...(query.has('compact-color-light') && {compact_light_reading_entities:['light.demo_pendant']}),
+    ...(query.has('white-light-presets') && {
+      white_light_preset_entities:['light.demo_pendant','light.demo_wall','light.demo_monitor'],
+    }),
     ...(query.has('room-shutdown') && {turn_off_entities:['light.demo_lamp', 'light.demo_pendant', 'light.demo_monitor']}),
     ...(query.has('lighting-count') && {lighting_count_entities:['light.demo_wall']}) } },
   ...(query.has('light-status-refresh') && {
@@ -1303,6 +1312,7 @@ if (query.has('editor')) {
       query.has('preset-shortcut') || query.has('entrance-popup-position') || query.has('timer-usage') ||
       query.has('swing-unreported') || query.has('temperature-source') || query.has('room-temperature-chart') || query.has('dual-light-details') ||
       query.has('compact-light-reading') || query.has('light-status-refresh') || query.has('light-mode-source') ||
+      query.has('white-light-presets-editor') ||
       query.has('wide-home-profile')) && selected) });
   editor.hass = hass;
   editor.addEventListener('config-changed', event => { window.latest = event.detail.config; });
@@ -9546,6 +9556,123 @@ async function assertCompactColorLightDetail(browser) {
   }
 }
 
+async function assertLightWhitePresets(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    page.setDefaultTimeout(8000);
+    const he = locale === 'he';
+    const entity = 'light.demo_pendant';
+    const url = base + '?room-grid&grouped-effects&inline-color-light&compact-color-light&locale=' + locale;
+    const room = page.getByRole('dialog',{name:'Studio',exact:true});
+    const detail = page.getByRole('dialog',{name:'Pendant lamp',exact:true});
+    const group = detail.getByRole('group',{name:he ? 'גווני לבן' : 'White presets',exact:true});
+    const labels = he ? ['חם','ניטרלי','קר'] : ['Warm','Neutral','Cool'];
+    const buttons = group.getByRole('button');
+    const slider = detail.locator('input[data-action=set_color_temp_kelvin]');
+    const calls = () => page.evaluate(()=>window.bayitTest.calls.filter(call=>call.type==='call_service'));
+    const attributes = patch => page.evaluate(([id, values])=>window.bayitTest.setFixtureAttributes(id, values),[entity,patch]);
+    const expected = (kelvin, brightness) => ({
+      type:'call_service', domain:'light', service:'turn_on', target:{entity_id:entity},
+      service_data:{ color_temp_kelvin:kelvin, ...(brightness !== undefined && {brightness}) },
+    });
+    const open = async flags => {
+      await page.goto(url + flags);
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+      await room.waitFor();
+      assert.equal(await room.locator('.light-white-presets').count(),0);
+      await room.locator('[data-entity="light.demo_pendant"] .device-tile').press('Shift+Enter');
+      await detail.locator('button[data-light-mode=set_color_temp_kelvin]').tap();
+      await slider.waitFor();
+    };
+    try {
+      await open('');
+      assert.equal(await group.count(),0);
+      assert.deepEqual(await calls(),[]);
+
+      await open('&white-light-presets');
+      assert.equal(await buttons.count(),3);
+      const values = () => group.locator('small').allTextContents();
+      assert.deepEqual(await values(),['2200 K','4000 K','7000 K']);
+      for (const [index, label] of labels.entries()) {
+        assert.equal(await buttons.nth(index).getByText(label,{exact:true}).count(),1);
+      }
+      for (const width of [320,391]) {
+        await page.setViewportSize({width,height:844});
+        const sizes = await group.evaluate(node => [...node.children].map(child=>{
+          const {left,right,top,height,width} = child.getBoundingClientRect();
+          return {left,right,top,height,width};
+        }));
+        assert.ok(sizes.every(size => size.width >= 44 && size.height >= 44 && size.top === sizes[0].top &&
+          size.left >= 0 && size.right <= width),JSON.stringify({locale,width,sizes}));
+      }
+      assert.deepEqual(await calls(),[]);
+      await attributes({ brightness:102 });
+      await buttons.nth(1).press('Space');
+      assert.deepEqual(await calls(),[expected(4000,102)]);
+      assert.equal(await buttons.nth(1).getAttribute('aria-pressed'),'true');
+      await attributes({ brightness:89 });
+      await buttons.nth(0).tap();
+      assert.deepEqual(await calls(),[expected(4000,102),expected(2200,89)]);
+      await attributes({ brightness:0 });
+      await buttons.nth(2).tap();
+      assert.deepEqual(await calls(),[expected(4000,102),expected(2200,89),expected(7000)]);
+      assert.equal(await buttons.nth(2).getAttribute('aria-pressed'),'true');
+      await attributes({ color_mode:'rgb', brightness:155 });
+      await group.locator('[data-white-preset=cool][aria-pressed=false]').waitFor();
+      assert.equal(await group.locator('[aria-pressed=true]').count(),0);
+      await slider.evaluate(input=>{
+        input.value='5300';
+        input.dispatchEvent(new Event('input',{bubbles:true}));
+      });
+      assert.equal((await calls()).length,3);
+      await slider.dispatchEvent('change');
+      assert.deepEqual((await calls()).at(-1),expected(5300));
+      await attributes({ min_color_temp_kelvin:4500, max_color_temp_kelvin:6200 });
+      await group.getByText('6200 K',{exact:true}).waitFor();
+      assert.deepEqual(await values(),['4500 K','4500 K','6200 K']);
+      await buttons.nth(1).tap();
+      assert.deepEqual((await calls()).at(-1),expected(4500,155));
+      const disconnectedPreset = await buttons.nth(2).elementHandle();
+      await page.evaluate(id=>window.bayitTest.setRoomState(id,'unavailable'),entity);
+      await group.waitFor({state:'detached'});
+      await disconnectedPreset.evaluate(control => control.click());
+      assert.equal((await calls()).length,5);
+
+      await page.goto(url + '&white-light-presets&white-presets-tunable-only');
+      await page.getByRole('button',{name:'Studio',exact:true}).tap();
+      await room.locator('[data-entity="light.demo_pendant"] .device-tile').press('Shift+Enter');
+      const mode = detail.locator('button[data-light-mode=compact-temperature]');
+      await mode.waitFor();
+      assert.equal(await group.isVisible(),false);
+      await mode.tap();
+      await group.waitFor();
+      const [modeBounds, presetBounds] = await Promise.all([mode.boundingBox(),group.boundingBox()]);
+      assert.ok(presetBounds.y >= modeBounds.y + modeBounds.height && presetBounds.width > 3 * 44);
+      assert.deepEqual(await calls(),[]);
+
+      await page.goto(url + '&editor&white-light-presets-editor');
+      await page.getByText(he ? 'חדרים' : 'Rooms',{exact:true}).tap();
+      await page.getByLabel(he ? 'חדר להתאמה אישית' : 'Room to customize',{exact:true}).selectOption('studio');
+      await page.getByText(he ? 'תצוגת מכשירים' : 'Device display',{exact:true}).tap();
+      const device = page.getByLabel(he ? 'מכשיר להתאמה אישית' : 'Device to customize',{exact:true});
+      const setting = page.getByRole('checkbox',{name:he ? 'הצגת גווני לבן חם, ניטרלי וקר'
+        : 'Show Warm, Neutral and Cool white presets',exact:true});
+      for (const unsupported of ['light.demo_wall','light.demo_monitor']) {
+        await device.selectOption(unsupported);
+        assert.equal(await setting.count(),0);
+      }
+      await device.selectOption(entity);
+      assert.equal(await setting.isChecked(),false);
+      await setting.check();
+      const stored = () => page.evaluate(()=>window.latest.room_overrides.studio.white_light_preset_entities);
+      assert.deepEqual(await stored(),[entity]);
+      await setting.uncheck();
+      assert.equal(await stored(),undefined);
+      assert.deepEqual(await calls(),[]);
+    } finally { await page.close(); }
+  }
+}
+
 async function assertLightOpeningMode(browser) {
   for (const locale of ['en','he']) {
     const page = await browser.newPage({ viewport:{width:320,height:760}, hasTouch:true, reducedMotion:'reduce' });
@@ -11573,6 +11700,7 @@ try {
     });
 
     await run('Compact color light details', () => assertCompactColorLightDetail(browser));
+    await run('White light presets', () => assertLightWhitePresets(browser));
 
     await run('Compact room controls for media, kitchen, lights and vacuum', async () => {
       await assertCompactRoomMedia(browser);
