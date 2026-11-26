@@ -684,8 +684,10 @@ if (query.has('device-panel')) {
     hass.entities[foreign] = { pl: 'simple_timer', di: 'other', config_entry_id: 'other' };
   }
   if (query.has('preset-shortcut')) {
+    const labelFixture = query.has('preset-labels');
     Object.assign(attributes, { supported_features: attributes.supported_features | 16,
-      preset_modes: ['none', 'eco', 'boost'], preset_mode: 'eco' });
+      preset_modes: labelFixture ? ['none', 'eco', 'boost', 'away', 'sleep', 'Family weekend'] : ['none', 'eco', 'boost'],
+      preset_mode: labelFixture ? 'none' : 'eco' });
     hass.services = { climate: query.has('missing-preset-service') ? {} : { set_preset_mode: {} } };
   }
   if (query.has('climate-power-test')) {
@@ -9187,7 +9189,7 @@ async function assertStandaloneTimedClimate(browser) {
       await panel.waitFor();
     };
     try {
-      await page.goto(fixtureUrl + '&compact-climate-controls' + route);
+      await page.goto(fixtureUrl + '&compact-climate-controls&preset-labels' + route);
       await power.waitFor();
       await history.waitFor();
       await today.waitFor();
@@ -9246,9 +9248,6 @@ async function assertStandaloneTimedClimate(browser) {
       await closeNative('sensor.demo_air_timer_status');
       await today.tap();
       await closeNative('sensor.demo_air_usage');
-      await page.evaluate(() => window.bayitTest.setFixtureAttributes('climate.demo_air', {
-        preset_modes: ['none', 'eco', 'boost', 'away', 'sleep', 'Family weekend'], preset_mode: 'none',
-      }));
       await summary.press('Enter');
       await swing.waitFor();
       const picker = panel.locator('select[data-action=set_preset_mode]');
