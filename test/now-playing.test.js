@@ -26,6 +26,20 @@ test('plays the same track timeline only while the entity reports playing', () =
   assert.equal(nowPlayingDetails(player('playing', { ...attrs, media_position: undefined }), origin).timeline, undefined);
 });
 
+test('accepts numeric string playback times without treating invalid readings as zero', () => {
+  const attrs = { media_duration:'181.5', media_position:'37.25', media_title:'Fixture playback' };
+  const paused = nowPlayingDetails(player('paused', attrs), origin);
+  assert.equal(paused.timeline.duration, 181);
+  assert.equal(paused.timeline.position, 37.25);
+  assert.equal(playbackSecond(paused.timeline, time + 5000), 37);
+  const zero = nowPlayingDetails(player('playing', { ...attrs, media_position:'0' }), origin);
+  assert.equal(playbackSecond(zero.timeline), 0);
+  for (const invalid of ['', ' ', null, true, [], {}, '0x10', '11 seconds', 'Infinity', '1e309', -1]) {
+    assert.equal(nowPlayingDetails(player('playing', { ...attrs, media_position:invalid }), origin).timeline, undefined);
+    assert.equal(nowPlayingDetails(player('playing', { ...attrs, media_duration:invalid }), origin).timeline, undefined);
+  }
+});
+
 test('reads series, episode and playback source from the current state without duplicate labels', () => {
   const details = nowPlayingDetails(player('paused', {
     media_series_title: 'Fixture series', media_title: 'Episode title', media_season: '02',

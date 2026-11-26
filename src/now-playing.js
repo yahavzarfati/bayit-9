@@ -27,6 +27,12 @@ function artworkUrl(entity, value, origin) {
   }
 }
 
+function playbackNumber(value) {
+  if (typeof value === 'number') return value;
+  return typeof value === 'string' && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim())
+    ? Number(value) : NaN;
+}
+
 export function nowPlayingDetails(model, origin) {
   const attrs = model.attributes ?? {};
   const show = model.available && mediaStates.has(model.state);
@@ -39,9 +45,9 @@ export function nowPlayingDetails(model, origin) {
   const season = episodeLabel(attrs.media_season);
   const episode = episodeLabel(attrs.media_episode);
   const artist = cleanText(attrs.media_artist);
-  const duration = Math.floor(attrs.media_duration);
-  const position = attrs.media_position;
-  const hasProgress = progressStates.has(model.state) && Number.isFinite(attrs.media_duration) && duration > 0 &&
+  const duration = Math.floor(playbackNumber(attrs.media_duration));
+  const position = playbackNumber(attrs.media_position);
+  const hasProgress = progressStates.has(model.state) && Number.isFinite(duration) && duration > 0 &&
     Number.isFinite(position) && position >= 0;
   const updatedAt = model.state === 'playing' && typeof attrs.media_position_updated_at === 'string'
     ? Date.parse(attrs.media_position_updated_at) : NaN;

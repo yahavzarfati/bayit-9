@@ -16,7 +16,8 @@ const source = 'media_player.fixture_source';
 const other = 'media_player.fixture_other';
 tracker.source = source;
 const attributes = { friendly_name:'Fixture player', media_title:'Track title', media_artist:'A performer', app_name:'Media source',
-  media_position:17, media_duration:180, entity_picture:'/api/media_player_proxy/' + source + '?format=wide', supported_features: 16433 };
+  media_position:options.has('string-timeline') ? '17' : 17,
+  media_duration:options.has('string-timeline') ? '180' : 180, entity_picture:'/api/media_player_proxy/' + source + '?format=wide', supported_features: 16433 };
 const hass = {
   locale: { language: options.get('locale') || 'en' }, themes: {}, areas:{}, devices:{}, entities:{},
   states: { [source]:{ state:'paused', attributes },
@@ -115,7 +116,8 @@ try {
 
       for (const [width, locale] of [[320, 'he'], [391, 'en'], [900, 'en']]) {
         await page.setViewportSize({ width, height:844 });
-        await page.goto(home + '?full-remote&locale=' + locale + hash);
+        const timelineFixture = width < 641 ? '&string-timeline' : '';
+        await page.goto(home + '?full-remote&locale=' + locale + timelineFixture + hash);
         await image.waitFor();
         const geometry = await stage.evaluate(node => {
           const art = node.querySelector('.now-playing-art');
@@ -138,6 +140,7 @@ try {
           assert.equal(geometry.sideBySide, true);
         }
         await stage.getByText('Track title', { exact:true }).waitFor();
+        assert.deepEqual(await stage.locator('progress').evaluate(meter => [meter.value, meter.max]), [17, 180]);
         assert.equal(await stage.locator('.now-playing-remaining').innerText(), '−2:43');
         assert.equal(await art.getAttribute('aria-hidden'), 'true');
         assert.equal(await image.getAttribute('referrerpolicy'), 'no-referrer');
