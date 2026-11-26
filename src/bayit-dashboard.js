@@ -9,6 +9,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, supportsHorizonCard, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
   supportsOverviewCompactHistory, supportsToolbarPanelIcon, supportsToolbarVacuumSummary, toolbarPlacement, toolbarPopupPosition, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
+import { createScriptRegistry } from './script-registry.js';
 import { bundledHomeIcon } from './home-icon-paths.js';
 import { allowsCoverRailAction, availableLightFixedColorScript, canSendDeviceCommands, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, fixedLightColorScriptActive, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, isReadOnlyRole, pairedLightEffectOptions, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets, routesFixedLightColor,
   simpleTimerStatusEntity, simpleTimerUsageResetAvailable, supportsHomeHeaterPower, supportsRoomShutdown } from './device-control.mjs';
@@ -663,7 +664,10 @@ export class BayitDashboard extends HTMLElement {
     this.pending = new Map();
     this.heaterLevelFeedback = new Map();
     this.preferences = {};
-    this.controller = createDeviceController({ getHass: () => this._hass });
+    this.scriptRegistry = createScriptRegistry(() => {
+      if (this.isConnected && this.config) this.update();
+    });
+    this.controller = createDeviceController({ getHass: () => this._hass, getScriptRegistryEntry: this.scriptRegistry.get });
     this.resize = () => this.fitPage();
     this.storageChange = event => {
       if (!this.config || (event.key !== this.config.storageKey &&
@@ -693,6 +697,17 @@ export class BayitDashboard extends HTMLElement {
     this.roomGraphs?.dispose();
     this.boilerView?.dispose();
     this.config = next;
+    const devices = [
+      ...next.rooms.flatMap(room => room.entities),
+      ...Object.values(next.context).flat(),
+      ...(next.toolbar ?? []).flatMap(panel => [
+        ...(panel.entities ?? []), ...(panel.sections ?? []).flatMap(section => section.entities),
+      ]),
+    ];
+    this.fixedColorScripts = devices.flatMap(device =>
+      device.light_mode_source?.apply_effects && device.light_mode_source.fixed_color_script
+        ? [device.light_mode_source.fixed_color_script] : []);
+    if (this.isConnected) this.scriptRegistry.update(this._hass, this.fixedColorScripts);
     this.words = languages[next.locale];
     const n = this.nodes;
     n.shell.lang = next.locale;
@@ -724,6 +739,7 @@ export class BayitDashboard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (this.setup?.editor) this.setup.editor.hass = hass;
+    if (this.isConnected && this.fixedColorScripts) this.scriptRegistry.update(hass, this.fixedColorScripts);
     if (!this.isConnected || this.frame || !this.config) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = 0;
@@ -736,6 +752,7 @@ export class BayitDashboard extends HTMLElement {
   }
 
   connectedCallback() {
+    if (this.fixedColorScripts) this.scriptRegistry.update(this._hass, this.fixedColorScripts);
     window.addEventListener('storage', this.storageChange);
     window.addEventListener('resize', this.resize);
     window.visualViewport?.addEventListener('resize', this.resize);
@@ -751,6 +768,7 @@ export class BayitDashboard extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this.scriptRegistry.dispose();
     const returning = appearanceReturns.get(this.ownerDocument.defaultView);
     if (returning?.owner === this) {
       this.captureAppearanceReturn(returning);
@@ -1299,7 +1317,7 @@ export class BayitDashboard extends HTMLElement {
     const effectSource = id === 'set_effect' && config.light_mode_source?.apply_effects && config.light_mode_source.entity;
     if (routesFixedLightColor(config, id) &&
         (!this.entityVisible(config.light_mode_source.entity) || !this.entityVisible(config.light_mode_source.fixed_color_script) ||
-          !availableLightFixedColorScript(this._hass, config))) return false;
+          !availableLightFixedColorScript(this._hass, config, this.scriptRegistry.get(config.light_mode_source.fixed_color_script)))) return false;
     return id === 'more_info' || (canSendDeviceCommands(this._hass) && this.entityVisible(config.entity) &&
       (!effectSource || this.entityVisible(effectSource)));
   }

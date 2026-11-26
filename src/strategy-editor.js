@@ -15,6 +15,7 @@ import { climateOptionLabel } from './panel-controls.js';
 import { buildToolbarEditor } from './toolbar-editor.js';
 import { activityKinds, activitySources, normalizeRoomActivities } from './room-appliance.mjs';
 import { availableLightFixedColorScript, getDeviceModel, isPairedLightCompanion, isPairedLightStatusRefresh, supportsRoomShutdown } from './device-control.mjs';
+import { createScriptRegistry } from './script-registry.js';
 import { lightEffectCategoryOptions, lightEffectCategoryTitles, normalizeLightEffectCategorySource,
   normalizeLightEffectFavoriteLights, normalizeLightEffectGroups, normalizeLightModeSource } from './light-effects.js';
 import { createPopupRouteId, isPopupAliasCloseRoute, isPopupFragment, normalizePopupAliasCloseRoutes, normalizePopupAliases,
@@ -620,6 +621,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #lightEffectEntity = '';
   #lightEffectGroup = 0;
   #refreshLightEffects;
+  #scriptRegistry = createScriptRegistry(() => this.#refreshLightEffects?.());
   #refreshAppearanceHelpers;
   #appearanceHelperSetting = 'background';
   #appearanceHelperDrafts = new Map();
@@ -712,6 +714,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
 
   connectedCallback() {
     this.render();
+  }
+
+  disconnectedCallback() {
+    this.#scriptRegistry.dispose();
   }
 
   #commit(change) {
@@ -2790,9 +2796,14 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const categorySource = normalizeLightEffectCategorySource(configuredCategories()[entity], groups);
       const modeSource = normalizeLightModeSource(configuredModes()[entity]);
       const validFixedScript = (id, mode = modeSource) => !hidden(id) && !hidden(mode?.entity) &&
-        availableLightFixedColorScript(this.#hass, { entity, light_mode_source:{ ...mode, fixed_color_script:id } });
-      const fixedScripts = source && modeSource?.apply_effects
-        ? entityOptions(this.#hass, new Set(['script'])).filter(([id]) => validFixedScript(id)) : [];
+        availableLightFixedColorScript(this.#hass, { entity, light_mode_source:{ ...mode, fixed_color_script:id } },
+          this.#scriptRegistry.get(id));
+      const excluded = new Set(Array.isArray(this.#config.hidden_entities) ? this.#config.hidden_entities : []);
+      const scriptOptions = source && modeSource?.apply_effects
+        ? entityOptions(this.#hass, new Set(['script'])).filter(([id]) =>
+          isVisibleEntity(id, this.#hass.states, this.#hass.entities, excluded)) : [];
+      this.#scriptRegistry.update(this.#hass, scriptOptions.map(([id]) => id));
+      const fixedScripts = scriptOptions.filter(([id]) => validFixedScript(id));
       const nextSignature = JSON.stringify([eligible.map(({ device, options }) => [device.entity, !!options.length]),
         source?.options, source?.refreshButtons, source?.modeSources,
         this.#hass.states?.[configuredModes()[entity]?.entity]?.attributes?.options,
@@ -3402,6 +3413,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         else {
           lightEffects.replaceChildren();
           this.#refreshLightEffects = undefined;
+          this.#scriptRegistry.dispose();
         }
       }, [lightEffects]),
       profilePane,

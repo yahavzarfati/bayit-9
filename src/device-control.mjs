@@ -102,13 +102,16 @@ export function fixedLightColorScriptActive(hass, config) {
   return binding?.apply_effects === true && isEntity(script, "script") && hass?.states?.[script]?.state === "on";
 }
 
-export function availableLightFixedColorScript(hass, config) {
+export function availableLightFixedColorScript(hass, config, registryEntry) {
   const binding = config.light_mode_source;
   const script = binding?.fixed_color_script;
   if (!isEntity(script, "script") || !pairedLightEffectOptions(hass, config) ||
       !isAvailable(hass.states?.[config.entity]) ||
       !hass.states[binding.entity].attributes.options.includes(binding.fixed_color_option)) return;
-  const service = script.slice("script.".length);
+  if (registryEntry?.entity_id !== script || registryEntry.platform !== "script" || registryEntry.hidden_by ||
+      registryEntry.disabled_by || typeof registryEntry.unique_id !== "string" ||
+      !/^[a-z0-9_]+$/.test(registryEntry.unique_id)) return;
+  const service = registryEntry.unique_id;
   const info = hass.entities?.[script];
   if (SCRIPT_MANAGEMENT_SERVICES.has(service) || info?.hidden || info?.hidden_by || info?.disabled_by ||
       !["on", "off"].includes(hass.states[script]?.state) ||
@@ -923,6 +926,7 @@ export function canSendDeviceCommands(hass) {
 
 export function createDeviceController({
   getHass,
+  getScriptRegistryEntry,
   confirmationTimeoutMs,
   requestTimeoutMs = 10000,
   pollIntervalMs = 100,
@@ -1012,7 +1016,7 @@ export function createDeviceController({
       }
       let plan = planDeviceAction(config, hass?.states, actionId, value, options);
       if (routesFixedLightColor(config, actionId)) {
-        const service = availableLightFixedColorScript(hass, config);
+        const service = availableLightFixedColorScript(hass, config, getScriptRegistryEntry?.(config.light_mode_source.fixed_color_script));
         if (!service) throw new DeviceControlError("action_unavailable", "The fixed-color script or paired selector is unavailable.");
         plan = { ...plan, domain: "script", service, target: null };
       }

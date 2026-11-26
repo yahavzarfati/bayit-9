@@ -54,6 +54,7 @@ function observeScript(state) {
   card.hass = { ...hass, states: { ...states } };
 }
 const query = new URL(location.href).searchParams;
+const fixedColorScriptKey = query.has('fixed-color-renamed') ? 'fixture_renamed_fixed_color' : 'fixture_set_fixed_color';
 if (query.has('energy-borderless-theme')) {
   document.documentElement.style.setProperty('--ha-card-border-width', '0px');
   document.documentElement.style.setProperty('--ha-card-border-radius', '20px');
@@ -306,6 +307,7 @@ let rejectSetupSave = false;
 let rejectQuickBoiler = false;
 let holdSetupSave = false;
 let finishSetupSave;
+const finishScriptRegistryReads = [];
 const hass = {
   user: { is_admin: query.has('configuration') && !query.has('member') },
   ...(query.has('with-energy-dashboard') && {panels:{energy:{}}}),
@@ -317,6 +319,17 @@ const hass = {
   devices: {},
   callWS(request) {
     calls.push(request);
+    if (request.type === 'config/entity_registry/get_entries' && query.has('light-fixed-color-script')) {
+      if (query.has('fixed-color-registry-denied')) return Promise.reject({code:'unauthorized'});
+      const result = Object.fromEntries(request.entity_ids.map(id => [id, states[id]
+        ? { ...hass.entities[id], entity_id:id, platform:'script', unique_id:id === 'script.fixture_set_fixed_color'
+            ? fixedColorScriptKey : id === 'script.fixture_other_color_script' ? 'fixture_set_fixed_color' : id.split('.')[1] }
+        : null]));
+      if (query.has('fixed-color-registry-held')) {
+        return new Promise(resolve => finishScriptRegistryReads.push(() => resolve(result)));
+      }
+      return Promise.resolve(result);
+    }
     if (request.type === 'history/history_during_period' &&
         (query.has('room-temperature-chart') || query.has('overview-compact-chart'))) {
       const end = Date.parse(request.end_time) / 1000;
@@ -616,7 +629,11 @@ if (query.has('room-grid')) {
       states['script.fixture_set_fixed_color'] = { state:'off', attributes:{friendly_name:'Set lamp color'} };
       states['script.fixture_hidden_fixed_color'] = { state:'off', attributes:{friendly_name:'Hidden script'} };
       hass.entities['script.fixture_hidden_fixed_color'] = { hidden_by:'user' };
-      hass.services = { ...hass.services, script:{fixture_set_fixed_color:{}, fixture_hidden_fixed_color:{}} };
+      hass.services = { ...hass.services, script:{[fixedColorScriptKey]:{}, fixture_hidden_fixed_color:{}} };
+      if (query.has('fixed-color-renamed')) {
+        states['script.fixture_other_color_script'] = { state:'off', attributes:{friendly_name:'Another script'} };
+        hass.services.script.fixture_set_fixed_color = {};
+      }
     }
   }
   if (query.has('many-effect-categories')) {
@@ -1337,10 +1354,13 @@ window.bayitTest = {
     card.hass = { ...hass };
   },
   finishLightStatusRefresh() { finishLightStatusRefresh?.(); },
+  finishFixedColorRegistryReads() {
+    for (const finish of finishScriptRegistryReads.splice(0)) finish();
+  },
   setFixedColorService(registered) {
     const services = { ...hass.services.script };
-    if (registered) services.fixture_set_fixed_color = {};
-    else delete services.fixture_set_fixed_color;
+    if (registered) services[fixedColorScriptKey] = {};
+    else delete services[fixedColorScriptKey];
     hass.services = { ...hass.services, script:services };
     card.hass = { ...hass };
   },
@@ -10216,19 +10236,21 @@ async function assertFixedLightColorScript(browser) {
   const select = 'select.fixture_light_mode';
   const script = 'script.fixture_set_fixed_color';
   const pending = '[data-entity="' + light + '"][aria-busy=true]';
-  const expected = service_data => ({ type:'call_service', domain:'script', service:'fixture_set_fixed_color', service_data });
   for (const locale of ['en','he']) {
     const he = locale === 'he';
+    const key = he ? 'fixture_renamed_fixed_color' : 'fixture_set_fixed_color';
+    const expected = service_data => ({ type:'call_service', domain:'script', service:key, service_data });
     const page = await browser.newPage({ viewport:{width:320,height:844}, hasTouch:true, reducedMotion:'reduce' });
     page.setDefaultTimeout(8000);
     const url = base + '?room-grid&grouped-effects&light-mode-source&light-effect-selector&light-fixed-color-script' +
-      '&compact-color-light&white-light-presets&locale=' + locale;
+      '&compact-color-light&white-light-presets&locale=' + locale + (he ? '&fixed-color-renamed' : '');
     const room = page.getByRole('dialog', { name:'Studio',exact:true });
     const details = page.getByRole('dialog', { name:'Pendant lamp',exact:true });
     const mode = id => details.locator('button[data-light-mode="' + id + '"]');
     const white = details.locator('button[data-white-preset=neutral]');
     const rgb = details.locator('.light-color-swatch').first();
     const calls = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service'));
+    const lookups = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'config/entity_registry/get_entries'));
     const state = (id, value) => page.evaluate(([id, value]) => window.bayitTest.setRoomState(id, value), [id, value]);
     const attributes = attrs => page.evaluate(([id, attrs]) => window.bayitTest.setFixtureAttributes(id, attrs), [light, attrs]);
     const registry = (id, metadata) => page.evaluate(([id, metadata]) => window.bayitTest.setFixtureRegistry(id, metadata), [id, metadata]);
@@ -10256,6 +10278,8 @@ async function assertFixedLightColorScript(browser) {
       await rgb.tap();
       await details.locator(pending).waitFor();
       assert.deepEqual((await calls()).at(-1), expected({rgb_color:[0,170,255]}));
+      assert.deepEqual(await lookups(), [{type:'config/entity_registry/get_entries', entity_ids:[script]}],
+        'A member uses one scoped identity read for repeated color actions');
       await attributes({ rgb_color:[0,170,255], color_mode:'rgb', effect:null });
       await details.locator(pending).waitFor({ state:'hidden' });
       assert.equal(await rgb.getAttribute('aria-pressed'), 'true');
@@ -10273,11 +10297,18 @@ async function assertFixedLightColorScript(browser) {
       }
       assert.equal((await calls()).length, 2);
 
-      await page.goto(url + '&editor');
+      await page.goto(url + '&editor&fixed-color-registry-held');
       await page.getByText(he ? 'קטגוריות אפקטים לתאורה' : 'Light effect categories', {exact:true}).tap();
       await page.getByLabel(he ? 'תאורה' : 'Light', {exact:true}).selectOption(light);
       const picker = page.getByLabel(he ? 'סקריפט למעבר לצבע קבוע' : 'Fixed-color action script', {exact:true});
-      assert.deepEqual(await picker.locator('option').evaluateAll(options => options.map(item => item.value)), ['',script]);
+      assert.equal(await picker.inputValue(), script, 'Keep the already authored choice while identity is being verified');
+      assert.equal(await page.evaluate(() => window.latest), undefined);
+      await page.waitForFunction(() => window.bayitTest.calls.filter(call =>
+        call.type === 'config/entity_registry/get_entries').length >= 2);
+      await page.evaluate(() => window.bayitTest.finishFixedColorRegistryReads());
+      await picker.locator('option').filter({ hasText:'Set lamp color' }).waitFor({state:'attached'});
+      assert.deepEqual((await picker.locator('option').evaluateAll(options => options.map(item => item.value))).sort(),
+        he ? ['', 'script.fixture_other_color_script', script] : ['',script]);
       assert.equal(await picker.inputValue(), script);
       const stored = () => page.evaluate(light => window.latest.light_mode_sources[light], light);
       await picker.selectOption('');
@@ -10285,6 +10316,29 @@ async function assertFixedLightColorScript(browser) {
       await picker.selectOption(script);
       assert.deepEqual(await stored(), { entity:select, fixed_color_option:'Fixed view', apply_effects:true, fixed_color_script:script });
       assert.deepEqual(await calls(), []);
+
+      await page.goto(url + '&fixed-color-registry-denied');
+      await page.getByRole('button', {name:'Studio',exact:true}).tap();
+      await room.locator('[data-entity="' + light + '"] .device-tile').press('Shift+Enter');
+      await mode('set_light_color').tap();
+      await details.locator('.light-color-swatch:disabled').first().waitFor();
+      await rgb.evaluate(control => control.click());
+      assert.deepEqual(await lookups(), [{type:'config/entity_registry/get_entries', entity_ids:[script]}]);
+      assert.deepEqual(await calls(), [], 'Denied verification never falls back to the named suffix or a native light command');
+
+      if (!he) {
+        await page.evaluate(select => {
+          const device = id => ({entity:'light.' + id,light_mode_source:{
+            entity:select,fixed_color_option:'Fixed view',apply_effects:true,fixed_color_script:'script.' + id,
+          }});
+          document.querySelector('bayit-dashboard').setConfig({rooms:[],context:{devices:[device('context')]},
+            toolbar:[{kind:'devices',entities:[device('toolbar')],sections:[{kind:'devices',entities:[device('section')]}]}]});
+        }, select);
+        await page.waitForFunction(() => window.bayitTest.calls.some(call =>
+          call.type === 'config/entity_registry/get_entries' &&
+          call.entity_ids.join(',') === 'script.context,script.section,script.toolbar'));
+        assert.deepEqual(await calls(), []);
+      }
     } finally {
       await page.close();
     }

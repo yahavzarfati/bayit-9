@@ -171,7 +171,9 @@ test("a bound fixed-color script dispatches only validated light data and fails 
     callWS(request) { callLog.push(request); },
   };
   let hass = initial;
-  const controller = createDeviceController({ getHass:() => hass, confirmationTimeoutMs:0 });
+  let fixedEntry = { entity_id:script, platform:"script", unique_id:"fixture_fixed_color" };
+  const controller = createDeviceController({ getHass:() => hass, confirmationTimeoutMs:0,
+    getScriptRegistryEntry:() => fixedEntry });
   const execute = (action, value, binding = mode, options) =>
     controller.execute(config(light, { light_mode_source:binding }), action, value, options);
   await execute("set_light_color", "#e08020");
@@ -194,9 +196,12 @@ test("a bound fixed-color script dispatches only validated light data and fails 
     await assert.rejects(execute("set_color_temp_kelvin", 4000),code("action_unavailable"));
   }
   hass = withState("script.turn_off", entity("off"));
+  fixedEntry = { entity_id:"script.turn_off", platform:"script", unique_id:"turn_off" };
   await assert.rejects(execute("set_light_color", "#e08020", {...mode,fixed_color_script:"script.turn_off"}),code("action_unavailable"));
   assert.equal(callLog.length,3);
   hass = initial;
+  fixedEntry = undefined;
+  await assert.rejects(execute("set_light_color", "#e08020"),code("action_unavailable"));
   await execute("set_color_temp_kelvin", 4100, {...mode,apply_effects:false});
   assert.deepEqual(callLog.at(-1), { type:"call_service", domain:"light", service:"turn_on",
     target:{entity_id:light}, service_data:{color_temp_kelvin:4100} });
