@@ -6126,6 +6126,61 @@ async function assertReportedCoverMotion(browser) {
   }
 }
 
+async function assertCoverEndpointConfirmation(browser) {
+  const entity = 'cover.demo_shade';
+  for (const [width, locale] of [[320, 'he'], [391, 'en']]) {
+    const page = await browser.newPage({ viewport:{width,height:844}, hasTouch:true, reducedMotion:'reduce' });
+    try {
+      await page.clock.install();
+      await page.goto(base + '/fixture-home/home?configuration&cover-grid&cover-feedback&locale=' + locale);
+      await page.getByRole('button',{ name:'Studio', exact:true }).tap();
+      const panel = page.getByRole('dialog',{ name:'Studio', exact:true });
+      const tile = panel.locator('.device[data-entity="' + entity + '"]');
+      const current = tile.locator('.current');
+      const note = panel.locator('[data-role=modal-notice]');
+      const update = (state, current_position) => page.evaluate(({entity,state,current_position}) => {
+        window.bayitTest.setFixtureAttributes(entity,{ current_position });
+        window.bayitTest.setRoomState(entity,state);
+      }, {entity,state,current_position});
+      const he = locale === 'he';
+      const confirmed = he ? 'המצב של Window shade עודכן.' : 'Window shade updated.';
+      for (const [step, action, moving, terminal, target, position] of [
+        [0,'open','opening','open',100,67], [1,'close','closing','closed',0,41],
+      ]) {
+        await update('open', step === 0 ? 24 : 100);
+        await tile.locator('button[data-action="' + action + '"]').tap();
+        const requested = action === 'open'
+          ? (he ? 'נשלחה בקשת פתיחה' : 'Opening requested')
+          : (he ? 'נשלחה בקשת סגירה' : 'Closing requested');
+        await current.filter({hasText:requested}).waitFor();
+        assert.equal(await tile.getAttribute('data-cover-motion'), null);
+        await page.evaluate(index => window.bayitTest.finishCover(index), step);
+        await update(terminal, 24);
+        await page.clock.runFor(200);
+        assert.equal(await tile.getAttribute('aria-busy'), 'true', 'Intermediate position cannot confirm completion');
+        assert.equal(await current.textContent(), requested);
+        await update(moving, position);
+        await current.filter({hasText:new RegExp(position + '%')}).waitFor();
+        assert.notEqual(await tile.getAttribute('data-cover-motion'), null);
+        await update(moving, target);
+        await page.clock.runFor(200);
+        assert.equal(await tile.getAttribute('aria-busy'), 'true', 'Still moving at the endpoint');
+        await update(terminal, target);
+        await page.clock.runFor(200);
+        await note.filter({hasText:confirmed}).waitFor();
+        assert.equal(await tile.getAttribute('aria-busy'), 'false');
+        assert.equal(await tile.getAttribute('data-cover-motion'), null);
+        assert.match(await current.textContent(), new RegExp(target + '%'));
+        assert.equal(await tile.locator('button[data-action="' + (action === 'open' ? 'close' : 'open') + '"]').isEnabled(), true);
+      }
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain === 'cover')
+        .map(call => call.service)), ['open_cover','close_cover']);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertCoverPopupVisibility(browser) {
   for (const { query, title, entity, detail } of [
     { query:'configuration&cover-grid&cover-feedback', title:'Studio', entity:'cover.demo_shade' },
@@ -14430,6 +14485,7 @@ try {
       await guardedRail.close();
       console.log(engine + ': Security cover rails at 320–390 px, exact native details, endpoint and latest confirmation');
       await assertReportedCoverMotion(browser);
+      await assertCoverEndpointConfirmation(browser);
       await assertCoverPopupVisibility(browser);
       await assertCompactSecurityLocks(browser);
     });

@@ -1037,6 +1037,44 @@ function harness(states, setup = {}) {
   return { controller, calls, setHass: next => { hass = next; } };
 }
 
+test("cover completion requires both the reported endpoint and terminal state when position is known", async () => {
+  const c = config("cover.shade");
+  for (const [action, initialState, intermediateState, stableState, endpoint] of [
+    ["open", "open", "opening", "open", 100], ["close", "open", "closing", "closed", 0],
+  ]) {
+    const reported = (state, position) => entity(state, { supported_features: 15, current_position: position });
+    const steps = [
+      reported(stableState, 24), reported(stableState, undefined),
+      reported(intermediateState, endpoint), reported(stableState, endpoint),
+    ];
+    let polls = 0;
+    const h = harness({ [c.entity]: reported(initialState, 24) }, {
+      onSleep(_, hass) { hass.states[c.entity] = steps[polls++]; },
+    });
+    assert.equal((await h.controller.execute(c, action)).status, "confirmed");
+    assert.equal(polls, steps.length);
+    assert.deepEqual(h.calls.map(call => call.service), [action + "_cover"]);
+    for (const stale of [reported(stableState, 24), reported(stableState, undefined)]) {
+      const lost = harness({ [c.entity]: reported(initialState, 24) }, {
+        callWS() { lost.setHass({ states: { [c.entity]: stale } }); },
+      });
+      assert.equal((await lost.controller.execute(c, action)).reason, "state_timeout");
+    }
+  }
+});
+
+test("cover without trustworthy position keeps state-only confirmation", async () => {
+  const c = config("cover.shade");
+  for (const attrs of [{}, { current_position: null }, { current_position: 180 },
+    { current_position: 24, assumed_state: true }]) {
+    const reported = state => entity(state, { supported_features: 3, ...attrs });
+    const states = { [c.entity]: reported("closed") };
+    const h = harness(states, { callWS() { states[c.entity] = reported("open"); } });
+    assert.equal((await h.controller.execute(c, "open")).status, "confirmed");
+    assert.deepEqual(h.calls.map(call => call.service), ["open_cover"]);
+  }
+});
+
 test("horizontal climate swing uses only its advertised feature, mode, target and feedback", async () => {
   const c = config("climate.fixture");
   const attrs = { supported_features: 512 | 32, swing_modes: ["off", "vertical"], swing_mode: "off",

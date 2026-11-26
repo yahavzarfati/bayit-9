@@ -537,6 +537,10 @@ export function getDeviceModel(config, states, nowMs = Date.now(), { roomBoilerQ
   return deviceModel(normalizedConfig(config), states, nowMs, roomBoilerQuickPower);
 }
 
+function validCoverPosition(position) {
+  return Number.isFinite(position) && position >= 0 && position <= 100;
+}
+
 export function allowsCoverRailAction(model, action) {
   if (!model.available) return false;
   if ((action !== "open" && action !== "close") || model.attributes.assumed_state === true) return true;
@@ -544,7 +548,7 @@ export function allowsCoverRailAction(model, action) {
   const opening = action === "open";
   if (model.state === (opening ? "opening" : "closing")) return false;
   const position = model.attributes.current_position;
-  if (Number.isFinite(position) && position >= 0 && position <= 100) return position !== (opening ? 100 : 0);
+  if (validCoverPosition(position)) return position !== (opening ? 100 : 0);
   return model.state !== (opening ? "open" : "closed");
 }
 
@@ -657,9 +661,16 @@ function expectedState(config, action, value, states) {
     case "start_script":
       return { entity: config.entity, formerScriptRun: states[config.entity].attributes?.last_triggered ?? null };
     case "open":
-      return state("open");
-    case "close":
-      return state("closed");
+    case "close": {
+      const opening = action === "open";
+      const terminal = opening ? "open" : "closed";
+      const reported = states?.[config.entity]?.attributes;
+      // A partially open cover can report "open" before and during the command.
+      if (reported?.assumed_state !== true && validCoverPosition(reported?.current_position)) {
+        return { ...attribute("current_position", opening ? 100 : 0), state: terminal };
+      }
+      return state(terminal);
+    }
     case "stop":
       return ["opening", "closing"].includes(states?.[config.entity]?.state)
         ? { entity: config.entity, anyState: ["open", "closed"] } : null;
