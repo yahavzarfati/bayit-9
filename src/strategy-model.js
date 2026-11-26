@@ -1089,8 +1089,8 @@ export function sensorSeriesColor(item) {
     ? item.series_color.toUpperCase() : undefined;
 }
 
-export function supportsOverviewCompactHistory(kind, section, item) {
-  return kind === 'overview' && section?.kind === 'status' && isCompactToolbarStatus(kind, section) &&
+export function supportsToolbarCompactHistory(kind, section, item) {
+  return (kind === 'overview' || kind === 'devices') && section?.kind === 'status' && isCompactToolbarStatus(kind, section) &&
     item?.role === 'graph' && typeof item.entity === 'string' && domainOf(item.entity) === 'sensor';
 }
 
@@ -1127,7 +1127,7 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds, visible
         : item?.confirmation === true || (item?.confirmation === false && command) ? item.confirmation : undefined;
       const graphHours = item?.graph_hours;
       const hasGraphHours = role === 'graph' && Number.isInteger(graphHours) && graphHours >= 1 && graphHours <= 336;
-      const compactHistory = item?.compact_history_graph === true && supportsOverviewCompactHistory(kind, section, item);
+      const compactHistory = item?.compact_history_graph === true && supportsToolbarCompactHistory(kind, section, item);
       const linkedGraph = kind === 'sensors' && role === 'graph' && domain === 'sensor' && section.kind !== 'series';
       const graphRoom = linkedGraph && roomIds?.has(item.graph_room_id) ? item.graph_room_id : undefined;
       const vacuumPanel = linkedGraph && !graphRoom && vacuumPanels.has(item.vacuum_panel_id) ? item.vacuum_panel_id : undefined;

@@ -5,7 +5,7 @@ import {
   securityReadoutLabelStates, selectableRoomEntities, sensorComparisonMaxHours, sensorComparisonOptions,
   SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
   supportsCompactAutomationActions, supportsCompactToolbarStatus, supportsHorizonCard, supportsHourlyWeatherForecast, supportsReadingCards,
-  supportsOverviewActivityList, supportsOverviewCompactHistory, supportsOverviewLightsOff, supportsStackedToolbarLocks,
+  supportsOverviewActivityList, supportsToolbarCompactHistory, supportsOverviewLightsOff, supportsStackedToolbarLocks,
   supportsSecurityDangerAction, supportsToolbarPanelIcon, supportsToolbarReadouts, supportsToolbarVacuumSummary,
   supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
@@ -556,7 +556,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         if (hours.validity.valid) save({ graph_hours: hours.value === '' ? undefined : hours.valueAsNumber });
       });
       fields.push(field(words.graphHours, hours));
-      if (supportsOverviewCompactHistory(toolbar[entryIndex].kind, section, record)) {
+      if (supportsToolbarCompactHistory(toolbar[entryIndex].kind, section, record)) {
         const compactHistory = node('input', { type:'checkbox', checked:record.compact_history_graph === true });
         compactHistory.addEventListener('change', () => save({ compact_history_graph: compactHistory.checked || undefined }));
         fields.push(node('label', { className:'check' }, [compactHistory, words.compactHistory]));

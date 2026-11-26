@@ -2078,18 +2078,19 @@ test('full-width toolbar lock actions require an authored compact status with a 
   assert.deepEqual(sections.map(section=>section.entities[0].role),['lock','lock','lock','status','lock','status','lock']);
 });
 
-test('the compact history chart is scoped to selected Overview graphs in a compact status section', () => {
+test('the compact history chart is scoped to selected toolbar graphs in a compact status section', () => {
   const hass = home();
   hass.states['sensor.temperature_fixture'] = { state:'20', attributes:{ unit_of_measurement:'°C' } };
   const graph = { entity:'sensor.temperature_fixture', role:'graph', graph_hours:36, compact_history_graph:true };
   const section = { kind:'status', layout:'compact', entities:[graph] };
   const { toolbar } = generateDashboard({toolbar:[
     { kind:'overview', sections:[section,{...section,layout:undefined},{...section,entities:[{...graph,role:'status'}]}] },
-    { kind:'devices', sections:[section] },
+    { kind:'devices', sections:[section,{...section,layout:undefined}] },
+    { kind:'security', sections:[section] },
   ]},hass).views[0].cards[0];
   const graphs = toolbar.flatMap(entry=>entry.sections).map(section=>section.entities[0]);
-  assert.deepEqual(graphs.map(item=>item.compact_history_graph),[true,undefined,undefined,undefined]);
-  assert.deepEqual(graphs.map(item=>item.graph_hours),[36,36,undefined,36]);
+  assert.deepEqual(graphs.map(item=>item.compact_history_graph),[true,undefined,undefined,true,undefined,undefined]);
+  assert.deepEqual(graphs.map(item=>item.graph_hours),[36,36,undefined,36,36,36]);
 });
 
 test('compact lock controls are opt-in for Security lock sections and retain battery items', () => {

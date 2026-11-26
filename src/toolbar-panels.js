@@ -852,7 +852,7 @@ export function createToolbarPanel(kind, configuration, context) {
         moreInfo: source => { if (modelFor(item).actions.more_info) moreInfo(item, source); },
       });
       compactHistory.push(chart);
-      chart.root.classList.add('overview-history-chart');
+      chart.root.classList.add('toolbar-history-chart');
       return chart.root;
     }
     if (domain(item) === 'sensor' && (item.graph_hours || itemKind === 'graph')) {

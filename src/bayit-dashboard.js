@@ -7,7 +7,7 @@ import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresen
   supportsRoomSectionColumns,
   ROOM_PANEL_KINDS, normalizeShortcutPowerEntities, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomBoilerScheduleEntry, supportsRoomCompactDevice, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
   sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, stackedToolbarLockOptions, supportsHorizonCard, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
-  supportsOverviewCompactHistory, supportsToolbarPanelIcon, supportsToolbarVacuumSummary, toolbarPlacement, toolbarPopupPosition, usesRoomPopupPosition } from './strategy-model.js';
+  supportsToolbarCompactHistory, supportsToolbarPanelIcon, supportsToolbarVacuumSummary, toolbarPlacement, toolbarPopupPosition, usesRoomPopupPosition } from './strategy-model.js';
 import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
 import { createScriptRegistry } from './script-registry.js';
 import { bundledHomeIcon } from './home-icon-paths.js';
@@ -503,7 +503,7 @@ export function normalizeDashboardConfig(config = {}) {
           }
           const seriesColor = comparison && sensorSeriesColor(raw);
           if (seriesColor) entity.series_color = seriesColor;
-          if (raw?.compact_history_graph === true && supportsOverviewCompactHistory(item.kind, section, raw)) {
+          if (raw?.compact_history_graph === true && supportsToolbarCompactHistory(item.kind, section, raw)) {
             entity.compact_history_graph = true;
           }
           if (supportsHourlyWeatherForecast(item.kind, section, raw)) {
