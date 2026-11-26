@@ -364,6 +364,7 @@ const styles = [
   '.schedule-field-copy { display:grid; align-content:center; min-width:0; }',
   '.schedule-field-caption,.schedule-duration-heading > span { color:var(--secondary); font-size:11px; line-height:1.2; }',
   '.schedule-compact .schedule-field-copy :is(input,select) { display:block; border:0; border-radius:4px; min-height:30px; padding:1px 2px; line-height:1.2; font-weight:650; }',
+  '.schedule-compact .schedule-field-copy input::placeholder { color:var(--secondary); opacity:1; }',
   '.schedule-compact .schedule-field-copy select { direction:ltr; text-align:end; }',
   '.schedule-compact .schedule-field:focus-within { border-color:var(--line); }',
   '.schedule-compact .schedule-day-group { gap:5px; }',
