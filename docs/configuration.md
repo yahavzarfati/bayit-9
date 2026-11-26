@@ -262,7 +262,7 @@ In a **Weather** screen, edit the Sun entity and select **Show the Sun and Moon 
 
 In an **Energy** electricity or water section, enable **Show readings with large values** to use Home Assistant's sensor cards for devices displayed as **Status**. Tap a reading to open its details. History charts keep their configured durations. In YAML, set `layout: reading-cards` on the section. In the Energy screen settings, switch off **Show the Home Assistant Energy dashboard link** to keep just the readings and charts. The YAML equivalent is `energy_dashboard_link: false` on the toolbar entry.
 
-Use **Popup header icon** in the Energy screen settings to give the dialog its own icon. In YAML, set `panel_icon: mdi:lightning-bolt` on the Energy toolbar entry.
+Use **Popup header icon** in the Overview or Energy screen settings to give the dialog its own icon. The launcher keeps its own icon. In YAML, set `panel_icon: mdi:menu` on an Overview toolbar entry or `panel_icon: mdi:lightning-bolt` on an Energy toolbar entry.
 
 To add the regional warnings map, edit a **Security** button in **Toolbar and extra screens** and enable **Show the Oref alert map**. This uses the frontend card supplied by the installed [Oref Alert integration](https://github.com/amitfin/oref_alert). In YAML, set `oref_map: {enabled: true}` on a `kind: security` toolbar entry. The optional settings are `auto_fit`, `hebrew_basemap`, `show_pre_alert`, and `show_end`. The map starts at a regional view and keeps the home and device location markers disabled.
 

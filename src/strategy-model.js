@@ -1168,6 +1168,10 @@ export function toolbarPopupPosition(entry) {
   if (entry?.kind === 'energy' && entry.popup_position === 'center') return 'center';
 }
 
+export function supportsToolbarPanelIcon(kind) {
+  return kind === 'energy' || kind === 'overview';
+}
+
 export function toolbarPlacement(kind, value) {
   if (value === 'settings' && kind !== 'settings') return 'settings';
   if (value === 'linked' && (kind === 'media' || kind === 'vacuum')) return 'linked';
@@ -1204,7 +1208,7 @@ function dashboardToolbar(config, hass, roomIds) {
   return entries.map(({ entry, id, path }) => {
     const label = toolbarEntryLabel(entry);
     const icon = typeof entry.icon === 'string' ? entry.icon.trim() : '';
-    const panelIcon = entry.kind === 'energy' ? normalizeRoomIcon(entry.panel_icon) : undefined;
+    const panelIcon = supportsToolbarPanelIcon(entry.kind) ? normalizeRoomIcon(entry.panel_icon) : undefined;
     const placement = toolbarPlacement(entry.kind, entry.placement);
     const popupPosition = toolbarPopupPosition(entry);
     const entities = Array.isArray(entry.entities) ? idList(entry.entities).map(describe).filter(Boolean) : undefined;

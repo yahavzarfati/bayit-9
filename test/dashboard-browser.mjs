@@ -1239,6 +1239,7 @@ const selected = query.has('configuration') ? rendererStrategy(stored().strategy
       ]}]}] : []),
     ...(query.has('compact-entrance-status') ? [{id:compactOverview ? 'compact-overview' : 'compact-entrance',
       kind:compactOverview ? 'overview' : 'devices',label:compactOverview ? 'Fixture Overview' : 'Front entrance',placement:'settings',
+      ...(compactOverview && query.has('overview-panel-icon') && {panel_icon:'mdi:menu'}),
       sections:[
         ...(compactOverview && query.has('overview-authored-proof') ? [{kind:'people',title:'Fixture people',
           ...(query.has('overview-authored-layout') && {layout:'compact'}),
@@ -7134,6 +7135,58 @@ async function assertOverviewActivityList(browser) {
       assert.equal((await saved()).layout,'activity-list');
       assert.equal((await saved()).discover.domain,'light');
       assert.equal((await saved()).turn_off_active_lights,true);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+async function assertOverviewPopupHeaderIcon(browser) {
+  const launcherIcon = 'mdi:view-dashboard-outline';
+  const panelIcon = 'mdi:menu';
+  for (const locale of ['en', 'he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({ viewport:{width:391,height:844}, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const url = base + '/fixture-home/home?toolbar-panels&compact-entrance-status&compact-overview-status&locale=' + locale;
+    const settings = page.locator('.chrome-button[data-role=settings]');
+    const overview = page.locator('.settings-screens').getByRole('button', { name:'Fixture Overview', exact:true });
+    const popup = page.getByRole('dialog', { name:'Fixture Overview', exact:true });
+    const checkPopup = async expected => {
+      await settings.tap();
+      await overview.waitFor();
+      assert.equal(await overview.locator('ha-icon').getAttribute('icon'), launcherIcon);
+      await overview.tap();
+      await popup.waitFor();
+      assert.equal(await popup.locator('h2 ha-icon').getAttribute('icon'), expected);
+    };
+    try {
+      await page.goto(url + '&overview-panel-icon');
+      await checkPopup(panelIcon);
+      await page.goto(url + '&overview-panel-icon&editor');
+      await page.getByText(he ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens', { exact:true }).tap();
+      await page.getByRole('button', { name:'Fixture Overview', exact:true }).tap();
+      const field = page.getByLabel(he ? 'סמל בכותרת החלונית' : 'Popup header icon', { exact:true });
+      const draft = () => page.evaluate(() => window.latest);
+      const overviewEntry = config => config.toolbar.find(entry => entry.kind === 'overview');
+      assert.equal(await field.inputValue(), panelIcon);
+      assert.equal(await field.getAttribute('placeholder'), launcherIcon);
+      await field.fill('mdi:clipboard-list-outline');
+      await field.blur();
+      const edited = await draft();
+      assert.equal(overviewEntry(edited).panel_icon, 'mdi:clipboard-list-outline');
+      assert.equal(overviewEntry(edited).icon, undefined);
+      await field.fill('');
+      await field.blur();
+      const cleared = await draft();
+      assert.equal(overviewEntry(cleared).panel_icon, undefined);
+      assert.equal(overviewEntry(cleared).icon, undefined);
+
+      for (const [config, expected] of [[edited, 'mdi:clipboard-list-outline'], [cleared, launcherIcon]]) {
+        await page.goto(url);
+        await page.evaluate(config => window.bayitTest.reviseStrategy({}, config), config);
+        await checkPopup(expected);
+      }
     } finally {
       await page.close();
     }
@@ -13792,6 +13845,8 @@ try {
       await scriptEditor.close();
       console.log(engine + ' 320: script Start/Stop, changed-state and replacement-run guards, and editor');
     });
+
+    await run('Overview popup header icon', () => assertOverviewPopupHeaderIcon(browser));
 
     await run('Compact Entrance and Overview', async () => {
       for (const [width, isOverview] of [[320,false],[391,false],[320,true],[391,true]]) {

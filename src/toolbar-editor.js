@@ -6,7 +6,7 @@ import {
   SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
   supportsCompactAutomationActions, supportsCompactToolbarStatus, supportsHorizonCard, supportsHourlyWeatherForecast, supportsReadingCards,
   supportsOverviewActivityList, supportsOverviewCompactHistory, supportsOverviewLightsOff, supportsOverviewStackedLocks,
-  supportsSecurityDangerAction, supportsToolbarReadouts, supportsToolbarVacuumSummary,
+  supportsSecurityDangerAction, supportsToolbarPanelIcon, supportsToolbarReadouts, supportsToolbarVacuumSummary,
   supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
@@ -86,7 +86,7 @@ const WORDS = {
     energyReadingCards: 'Show readings with large values',
     energyDashboardLink: 'Show the Home Assistant Energy dashboard link',
     energyPopupPosition: 'Center the popup with reading cards',
-    energyPanelIcon: 'Popup header icon',
+    panelIcon: 'Popup header icon',
     sensorComparison: 'Compare trends in a single chart', comparisonHours: 'Time range in hours',
     comparisonInterval: 'Average interval in minutes', seriesColor: 'Line color for this sensor',
     compactReadouts: 'Show compact read-only status tiles', readoutOn: 'Label for on', readoutOff: 'Label for off',
@@ -171,7 +171,7 @@ const WORDS = {
     energyReadingCards: 'הצגת ערכי המדידה בגדול',
     energyDashboardLink: 'הצגת קישור לדשבורד האנרגיה של Home Assistant',
     energyPopupPosition: 'מרכוז החלונית כשמוצגים כרטיסי מדידה',
-    energyPanelIcon: 'סמל בכותרת החלונית',
+    panelIcon: 'סמל בכותרת החלונית',
     sensorComparison: 'השוואת מגמות בגרף אחד', comparisonHours: 'טווח תצוגה בשעות',
     comparisonInterval: 'מרווח ממוצע בדקות', seriesColor: 'צבע הקו של החיישן',
     compactReadouts: 'הצגת אריחי מצב קומפקטיים לקריאה בלבד', readoutOn: 'תווית למצב פעיל', readoutOff: 'תווית למצב כבוי',
@@ -1062,15 +1062,19 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       roomPosition.addEventListener('change', () => changeEntry({ popup_position: roomPosition.checked ? 'room' : undefined }));
       fields.push(node('label', { className: 'check' }, [roomPosition, words.roomPopupPosition]));
     }
+    if (supportsToolbarPanelIcon(entry.kind)) {
+      const fallback = entry.kind === 'energy' ? 'mdi:meter-electric-outline' : 'mdi:view-dashboard-outline';
+      fields.push(iconField(entry.panel_icon, value => changeEntry({ panel_icon: value || undefined }), {
+        label: words.panelIcon, placeholder: entry.icon || fallback,
+      }));
+    }
     if (entry.kind === 'energy') {
       const shortcut = node('input', { type:'checkbox', checked:entry.energy_dashboard_link !== false });
       shortcut.addEventListener('change', () => changeEntry({ energy_dashboard_link: shortcut.checked ? undefined : false }));
       const centered = node('input', { type:'checkbox', checked:entry.popup_position === 'center' });
       centered.addEventListener('change', () => changeEntry({ popup_position: centered.checked ? 'center' : undefined }));
-      fields.push(iconField(entry.panel_icon, value => changeEntry({ panel_icon: value || undefined }), {
-        label: words.energyPanelIcon, placeholder: entry.icon || 'mdi:meter-electric-outline',
-      }), node('label', { className:'check' }, [shortcut, words.energyDashboardLink]),
-      node('label', { className:'check' }, [centered, words.energyPopupPosition]));
+      fields.push(node('label', { className:'check' }, [shortcut, words.energyDashboardLink]),
+        node('label', { className:'check' }, [centered, words.energyPopupPosition]));
     }
     if (entry.kind === 'security') fields.push(editOrefMap(entry));
     if (entry.kind === 'vacuum') fields.push(editVacuumMap(entry));

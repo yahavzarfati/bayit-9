@@ -1971,16 +1971,20 @@ test('native reading cards are opt-in for Energy electricity and water and Weath
   assert.equal(sections[5].entities.find(item => item.role === 'graph').graph_hours, 168);
 });
 
-test('Energy popup may use an independent validated header icon', () => {
+test('Energy and Overview popups may use independent validated header icons', () => {
   const entries = [
     { kind:'energy', icon:'mdi:meter-electric-outline', panel_icon:' mdi:lightning-bolt ' },
     { kind:'energy', panel_icon:'https://fixture.invalid/image' },
     { kind:'energy' },
+    { kind:'overview', icon:'mdi:view-dashboard-outline', panel_icon:' mdi:menu ', placement:'settings' },
+    { kind:'overview', panel_icon:'https://fixture.invalid/image' },
     { kind:'weather', panel_icon:'mdi:lightning-bolt' },
   ];
   const { toolbar } = generateDashboard({ toolbar:entries }, home()).views[0].cards[0];
   assert.equal(toolbar[0].icon, 'mdi:meter-electric-outline');
-  assert.deepEqual(toolbar.map(entry => entry.panel_icon), ['mdi:lightning-bolt', undefined, undefined, undefined]);
+  assert.equal(toolbar[3].icon, 'mdi:view-dashboard-outline');
+  assert.deepEqual(toolbar.map(entry => entry.panel_icon),
+    ['mdi:lightning-bolt', undefined, undefined, 'mdi:menu', undefined, undefined]);
 });
 
 test('compact readings are opt-in for Weather readings and preserve graph configuration', () => {
