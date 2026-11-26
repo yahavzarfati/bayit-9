@@ -16,6 +16,10 @@ const outside = 'sensor.fixture_outside';
 const excluded = 'sensor.fixture_excluded';
 const unit = options.has('unitless') ? {} : { unit_of_measurement:'°C' };
 const sensor = (state, name, attributes) => ({ state, attributes:{ friendly_name:name, ...attributes } });
+const extraLegend = options.has('legend-density') ? (
+  options.get('locale') === 'he' ? ['חדר משחקים', 'חדר למעלה', 'חדר הורים', 'ממ״ד'] :
+    ['Play Room', 'Upstairs', 'Main Bedroom', 'Office']
+).map((name,index) => ['sensor.fixture_extra_' + index,name]) : [];
 const hass = {
   config:{ time_zone:'Asia/Jerusalem' }, locale:{ language:options.get('locale') || 'en' }, themes:{},
   areas:{}, devices:{}, entities:{ [excluded]:{hidden_by:'user'} },
@@ -23,6 +27,7 @@ const hass = {
     [inside]:sensor('22','Inside',unit),
     [outside]:sensor('16','Outside',options.has('mixed') ? {unit_of_measurement:'°F'} : unit),
     [excluded]:sensor('30','Hidden series',unit),
+    ...Object.fromEntries(extraLegend.map(([id,name]) => [id,sensor('24',name,unit)])),
   },
   callWS(request) {
     tracker.requests.push(request);
@@ -35,6 +40,7 @@ const hass = {
       [inside]:[row(-1450,'20'),row(-1435,'22'),row(-1430,'24'),row(-608,'unavailable'),row(-514,'18'),row(-30,'22')],
       [outside]:[row(-1450,'10'),row(-550,'14'),row(-80,'16')],
       [excluded]:[row(-390,'30')],
+      ...Object.fromEntries(extraLegend.map(([id]) => [id,[row(-1430,'22'),row(-30,'24')]])),
     };
     if (options.has('live-history')) data[inside].push(...tracker.readings);
     if (options.has('delayed') || tracker.holdNext) {
@@ -61,7 +67,8 @@ const config = { type:'custom:bayit-9', locale:hass.locale.language, toolbar:[
         bucket_minutes:options.has('dense') ? 5 : 30 } }),
       entities:[{ entity:inside, role:'graph', name:'Inside', series_color:'#397BD6', graph_hours:48 },
         { entity:outside, role:'graph', name:'Outside', series_color:'#967000' },
-        { entity:excluded, role:'graph', name:'Hidden series', series_color:'#112233' }],
+        { entity:excluded, role:'graph', name:'Hidden series', series_color:'#112233' },
+        ...extraLegend.map(([entity,name]) => ({ entity, name, role:'graph' }))],
     },
   ] },
 ] };
@@ -363,6 +370,47 @@ try {
       assert.equal(draft.entities[0].series_color, '#12AACC');
       assert.deepEqual(mediaRequests, []);
       assert.deepEqual(errors, []);
+      for (const locale of ['en','he']) {
+        for (const [width, expectedRows] of [[320,[2,2,2]],[391,[3,3]]]) {
+          await page.setViewportSize({width,height:844});
+          await open('?legend-density&locale=' + locale);
+          await range.waitFor();
+          const layout = await comparison.evaluate(chart => {
+            const legend = [...chart.querySelectorAll('.comparison-series')];
+            const groups = new Map();
+            for (const item of legend) {
+              const y = Math.round(item.getBoundingClientRect().top);
+              groups.set(y, (groups.get(y) ?? 0) + 1);
+            }
+            return {
+              rows:[...groups.values()],
+              fitted:chart.scrollWidth <= chart.clientWidth + 1,
+              touches:legend.every(item => item.offsetWidth >= 44 && item.offsetHeight >= 44),
+              labels:legend.flatMap(item => {
+                const name = item.querySelector('.comparison-reading-name');
+                const value = item.querySelector('.comparison-value');
+                const nameClipping = name.scrollWidth - name.clientWidth;
+                const valueClipping = value.scrollWidth - value.clientWidth;
+                const overlap = name.getBoundingClientRect().bottom - value.getBoundingClientRect().top;
+                return Math.max(nameClipping,valueClipping,overlap) <= 1
+                  ? [] : [{name:name.textContent,nameClipping,valueClipping,overlap}];
+              }),
+              plotHeight:chart.querySelector('svg').getBoundingClientRect().height,
+              sliderHeight:chart.querySelector('input[type=range]').getBoundingClientRect().height,
+            };
+          });
+          const details = JSON.stringify({locale,width,layout});
+          assert.deepEqual(layout.rows,expectedRows,details);
+          assert.ok(layout.fitted && layout.touches && layout.labels.length === 0,details);
+          assert.ok(layout.plotHeight >= 140 && layout.plotHeight <= 152 && layout.sliderHeight >= 44,details);
+          const insideLegend = legend('Inside',locale);
+          await insideLegend.press('Space');
+          assert.equal(await insideLegend.getAttribute('aria-pressed'),'false');
+          assert.equal(await range.isEnabled(),true);
+          await insideLegend.press('Space');
+          assert.equal(await insideLegend.getAttribute('aria-pressed'),'true');
+        }
+      }
       await assertLiveComparison(browser);
       console.log(name + ': rolling Recorder refresh, historical selection, one trailing refresh, stale response and teardown');
       console.log(name + ': responsive sensor comparison, recorder gaps, keyboard values, native fallback, disposal and editor');

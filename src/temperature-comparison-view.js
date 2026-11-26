@@ -381,7 +381,7 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
 }
 
 export const temperatureComparisonStyles = `
-  .temperature-comparison { display:grid; gap:8px; min-inline-size:0; }
+  .temperature-comparison { container: bayit-comparison / inline-size; display:grid; gap:8px; min-inline-size:0; }
   .temperature-comparison [hidden] { display:none !important; }
   .comparison-visual {
     display:grid; grid-template-columns:auto minmax(0,1fr); gap:4px 7px;
@@ -411,6 +411,20 @@ export const temperatureComparisonStyles = `
   .comparison-reading-name { color:var(--ink); overflow-wrap:anywhere; }
   .comparison-value { color:var(--secondary); font-weight:650; text-align:end;
     max-inline-size:11ch; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+  @container bayit-comparison (max-width: 379px) {
+    .comparison-visual svg { block-size:clamp(140px,48cqi,180px); }
+    .comparison-readings { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .comparison-series {
+      grid-template-columns:9px minmax(0,1fr); grid-template-areas:"label label" "color value";
+      gap:2px 5px; padding-block:3px;
+    }
+    .comparison-reading-name { grid-area:label; }
+    .comparison-swatch { grid-area:color; }
+    .comparison-value { grid-area:value; text-align:start; }
+  }
+  @container bayit-comparison (286px <= width <= 379px) {
+    .comparison-readings:has(> :nth-child(3)) { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  }
   @media (prefers-contrast:more) {
     .comparison-line { stroke-width:3; }
     .comparison-fill { opacity:.08; }
