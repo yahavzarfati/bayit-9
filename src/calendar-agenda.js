@@ -137,6 +137,81 @@ function eventDetails(event, key) {
   return { key, location, notes, recurring };
 }
 
+const noteBlocks = new Set(['address', 'article', 'blockquote', 'div', 'h1', 'h2', 'h3',
+  'h4', 'h5', 'h6', 'hr', 'li', 'ol', 'p', 'pre', 'section', 'table', 'tr', 'ul']);
+const noteMarkup = /<!--.*?-->|<\/?[a-z][\w:-]*(?:\s[^>]*|\/?)>/is;
+const noteEntity = /&(?:#x[\da-f]+|#\d+|[a-z][a-z\d]+);/i;
+
+function calendarNoteUrl(href) {
+  if (!/^https?:\/\//i.test(href?.trim() ?? '')) return;
+  try { return new URL(href).href; } catch { return; }
+}
+
+function renderCalendarNotes(document, source) {
+  const result = document.createDocumentFragment();
+  if (!source) return result;
+  const markup = noteMarkup.test(source);
+  if (!markup && !noteEntity.test(source)) {
+    result.append(source);
+    return result;
+  }
+  // The template is inert. Its nodes never enter the live dashboard.
+  const template = document.createElement('template');
+  template.innerHTML = markup ? source : source.replaceAll('<', '&lt;');
+  if (!markup) {
+    result.append(template.content.textContent);
+    return result;
+  }
+  template.content.querySelectorAll('script,style,template,noscript,iframe,object,embed,svg,math')
+    .forEach(node => node.remove());
+
+  let separator = '';
+  function append(value, href) {
+    const spacing = value.replace(/[\t\n\f\r ]+/g, ' ');
+    const label = spacing.trim();
+    if (spacing.startsWith(' ') && !separator) separator = ' ';
+    if (!label) return;
+    if (separator && result.hasChildNodes()) result.append(separator);
+    if (href) {
+      const link = document.createElement('a');
+      link.href = href;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = label;
+      result.append(link);
+    } else result.append(label);
+    separator = spacing.endsWith(' ') ? ' ' : '';
+  }
+
+  function lineBreak(lines, consecutive = false) {
+    const existing = separator.startsWith('\n') ? separator.length : 0;
+    separator = '\n'.repeat(consecutive ? Math.min(2, existing + 1) : Math.max(existing, lines));
+  }
+
+  function visit(parent) {
+    for (const node of parent.childNodes) {
+      if (node.nodeType === 3) {
+        append(node.textContent);
+      } else if (node.nodeType === 1) {
+        const tag = node.localName;
+        const href = tag === 'a' ? calendarNoteUrl(node.getAttribute('href')) : undefined;
+        if (tag === 'br') lineBreak(1, true);
+        else if (href) append(node.textContent, href);
+        else {
+          const block = noteBlocks.has(tag);
+          const lines = tag === 'p' ? 2 : 1;
+          if (block) lineBreak(lines);
+          visit(node);
+          if (block) lineBreak(lines);
+        }
+      }
+    }
+  }
+
+  visit(template.content);
+  return result;
+}
+
 export function buildCalendarAgenda(sources, now, range = agendaWindow(now), { withDetails = false } = {}) {
   const unique = new Map();
   for (const { source, events } of sources) {
@@ -218,6 +293,22 @@ function canRetryCalendar(error) {
   return !(status >= 400 && status < 500) || [408, 425, 429].includes(status);
 }
 
+function calendarHourCycle(preference, browserLanguage) {
+  const format = preference?.time_format;
+  if (format === '24') return 'h23';
+  if (format === '12') return 'h12';
+  const language = format === 'system' ? browserLanguage || preference.language
+    : format === 'language' ? preference.language : undefined;
+  if (typeof language !== 'string' || !language) return undefined;
+  try {
+    if (!Intl.DateTimeFormat.supportedLocalesOf(language).length) return undefined;
+    const { hour12 } = new Intl.DateTimeFormat(language, { hour:'numeric' }).resolvedOptions();
+    return hour12 ? 'h12' : 'h23';
+  } catch {
+    return undefined;
+  }
+}
+
 function calendarSourceConfig(items) {
   const exact = new Map();
   for (const item of items) {
@@ -260,6 +351,7 @@ export function createCalendarAgenda({ host, context, items, settings }) {
   const detailFields = detailView && make('dl');
   const back = detailView && button('control-button calendar-agenda-back', labels.back);
   let detailKey;
+  let detailSignature;
   let agendaScroll = 0;
   const scrollBody = context.dialog?.querySelector('.modal-body');
   const eventButtons = new Map();
@@ -518,10 +610,18 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     const names = [...new Set(row.sources.map(sourceName).filter(Boolean))].join(', ');
     const fields = [[labels.when, when], [labels.calendars, names], [labels.location, detail.location],
       [labels.notes, detail.notes], [labels.recurrence, detail.recurring ? labels.recurring : '']];
+    const detailsOrder = JSON.stringify([row.summary, fields]);
+    if (detailsOrder === detailSignature) return;
+    detailSignature = detailsOrder;
     detailTitle.textContent = row.summary;
     detailFields.replaceChildren(...fields.filter(([, value]) => value).flatMap(([title, value]) => {
-      const description = make('dd', '', value);
+      const description = make('dd');
       description.dir = 'auto';
+      if (title === labels.notes) {
+        const notes = renderCalendarNotes(detailFields.ownerDocument, value);
+        if (!notes.hasChildNodes()) return [];
+        description.append(notes);
+      } else description.textContent = value;
       return [make('dt', '', title), description];
     }));
   }
@@ -640,8 +740,7 @@ export function createCalendarAgenda({ host, context, items, settings }) {
     }
     const unitValue = hass?.states?.[weather]?.attributes?.temperature_unit;
     const unit = ['°C','°F','K'].includes(unitValue) ? unitValue : '°';
-    const timePreference = hass?.locale?.time_format;
-    const hourCycle = timePreference === '24' ? 'h23' : timePreference === '12' ? 'h12' : undefined;
+    const hourCycle = calendarHourCycle(hass?.locale, view.navigator?.language);
     const order = JSON.stringify([text, detail, waiting, shown, selected, [...forecastByDay], expanded, model.canExpand, unit, hourCycle, calendar.timeZone]);
     if (alarmAt !== model.nextChange) {
       view.clearTimeout(alarm);
@@ -676,6 +775,7 @@ export function createCalendarAgenda({ host, context, items, settings }) {
       detailView.hidden = !selected;
       if (selected) paintEventDetails(selected, timeFormat);
       else {
+        detailSignature = undefined;
         detailTitle.textContent = '';
         detailFields.replaceChildren();
       }
@@ -801,4 +901,5 @@ export const calendarAgendaStyles = `
   .calendar-agenda-detail dt { color: var(--secondary); font-size: 12px; }
   .calendar-agenda-detail dt:not(:first-child) { margin-block-start: 6px; }
   .calendar-agenda-detail dd { margin: 0; color: var(--ink); font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .calendar-agenda-detail dd a { color: var(--moving); text-decoration: underline; }
 `;

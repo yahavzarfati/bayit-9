@@ -55,6 +55,20 @@ export function canOpenBoilerSchedule(config, hass, hidden) {
     hass.states?.[entity] && !hidden?.has(entity) && visible(hass, entity)));
 }
 
+function hasSchedulePermission(config, hass, hidden, action) {
+  if (!canOpenBoilerSchedule(config, hass, hidden)) return false;
+  try { return createBoilerScheduler(config, () => hass).capabilities()[action]; }
+  catch { return false; }
+}
+
+export function canCreateBoilerSchedule(config, hass, hidden) {
+  return hasSchedulePermission(config, hass, hidden, 'create');
+}
+
+export function canEditBoilerSchedule(config, hass, hidden) {
+  return hasSchedulePermission(config, hass, hidden, 'edit');
+}
+
 const guardedScheduleLimits = Object.freeze({ min: 15, max: 300, step: 15 });
 
 function limitsFor(config) {
@@ -189,13 +203,27 @@ export function createBoilerScheduler(config, getHass, { locale = 'en', retry = 
     return { name, time: draft.time, duration: draft.duration, weekdays: days };
   }
 
-  async function preflight(saved, attached) {
-    if (!saved?.editable || typeof saved.id !== 'string' || !SCHEDULE_ID.test(saved.id) || !saved.revision) reject('changed');
-    const current = parse(await item(saved.id), attached);
+  async function readMutable(id, attached) {
+    if (typeof id !== 'string' || !SCHEDULE_ID.test(id)) reject('changed');
+    const current = parse(await item(id), attached);
     const state = getHass().states?.[current?.entity];
-    if (binding().entryId !== attached.entryId || !current?.mutable || current.revision !== saved.revision
+    if (binding().entryId !== attached.entryId || !current?.mutable || current.id !== id
         || !state || !['on', 'off'].includes(state.state)) reject('changed');
     return { current, lastUpdated: state.last_updated };
+  }
+
+  async function preflight(saved, attached) {
+    if (!saved?.editable || !saved.revision) reject('changed');
+    const latest = await readMutable(saved.id, attached);
+    if (latest.current.revision !== saved.revision) reject('changed');
+    return latest;
+  }
+
+  async function readEditable(id) {
+    if (!capabilities().edit) reject('unavailable');
+    const { current, lastUpdated } = await readMutable(id, binding());
+    if (!capabilities().edit || (useGuards && !lastUpdated)) reject('unavailable');
+    return { ...current, lastUpdated };
   }
 
   async function send(domain, service, service_data, target, returns = false) {
@@ -296,7 +324,7 @@ export function createBoilerScheduler(config, getHass, { locale = 'en', retry = 
     return { ...row, lastUpdated: getHass().states?.[row.entity]?.last_updated };
   }
 
-  return { list, create, update, remove, setEnabled, capabilities, limits, revisionOf,
+  return { list, readEditable, create, update, remove, setEnabled, capabilities, limits, revisionOf,
     defaultDuration: Math.max(limits.min, durationDefault) };
 }
 
@@ -304,6 +332,8 @@ const text = {
   en: {
     loading: 'Loading schedules…', unavailable: 'No compatible Scheduler and Simple Timer setup was found for this boiler.',
     empty: 'No boiler schedules yet.', add: 'Add schedule', refresh: 'Refresh', edit: 'Edit', enable: 'Enable', disable: 'Disable',
+    chooseEdit: 'Choose a schedule to edit.', noEditable: 'There are no editable boiler schedules.',
+    editUnavailable: 'This schedule is no longer available to edit.',
     enabled: 'Enabled', disabled: 'Disabled', scheduleSwitch: 'Schedule status', custom: 'Managed in Scheduler', name: 'Name', time: 'Start time',
     hour: 'Hour', minute: 'Minutes', namePlaceholder: 'e.g. Morning heat',
     duration: 'Duration', days: 'Days', daily: 'Every day', work: 'Weekdays', weekend: 'Weekend', clear: 'Clear',
@@ -316,6 +346,8 @@ const text = {
   he: {
     loading: 'טוען תזמונים…', unavailable: 'לא נמצאה הגדרה מתאימה של Scheduler ו־Simple Timer לדוד הזה.',
     empty: 'עדיין אין תזמונים לדוד.', add: 'הוספת תזמון', refresh: 'רענון', edit: 'עריכה', enable: 'הפעלה', disable: 'השבתה',
+    chooseEdit: 'בחרו תזמון לעריכה.', noEditable: 'אין תזמונים לדוד שניתן לערוך.',
+    editUnavailable: 'התזמון הזה אינו זמין לעריכה.',
     enabled: 'פעיל', disabled: 'מושבת', scheduleSwitch: 'מצב התזמון', custom: 'מנוהל במתזמן', name: 'שם', time: 'שעת התחלה',
     hour: 'שעה', minute: 'דקות', namePlaceholder: 'למשל, חימום בוקר',
     duration: 'משך חימום', days: 'ימי הפעלה', daily: 'כל יום', work: 'ימי חול', weekend: 'סוף שבוע', clear: 'נקה',
@@ -336,16 +368,18 @@ const styles = [
   '.bayit-boiler-schedules .schedule-list,.bayit-boiler-schedules .schedule-form { display:grid; gap:10px; }',
   '.bayit-boiler-schedules .schedule-row { display:grid; gap:7px; min-width:0; }',
   '.bayit-boiler-schedules .schedule-summary { display:grid; gap:4px; overflow-wrap:anywhere; }',
+  '.bayit-boiler-schedules a.control-button { text-decoration:none; }',
   '.bayit-boiler-schedules .schedule-details { display:flex; gap:6px; flex-wrap:wrap; font-size:.85em; }',
   '.bayit-boiler-schedules .schedule-is-enabled { color:var(--warm,currentColor); }',
-  '.schedule-compact { gap:6px; margin-block-start:8px; padding:6px; border:1px solid var(--soft-line); border-radius:12px; }',
+  '.schedule-compact { gap:6px; margin-block-start:6px; padding:6px; border:1px solid var(--soft-line); border-radius:12px; }',
   '.schedule-compact .schedule-list { gap:5px; }',
   '.schedule-compact:has(> .schedule-form:not([hidden])) > :is(.schedule-toolbar,.schedule-list) { display:none; }',
   '.boiler-panel:has(> .boiler-schedule-host:not([hidden]) > .schedule-compact > .schedule-form:not([hidden])) > .boiler-pane:first-child { display:none; }',
   '.schedule-compact:has(> .schedule-form:not([hidden])) { margin:0; padding:0; border:0; }',
-  '.schedule-compact .schedule-toolbar > .schedule-add { flex:1; }',
-  '.schedule-compact .schedule-row { display:flex; align-items:stretch; gap:0; padding:0; border:1px solid var(--soft-line); border-radius:8px; background:var(--room-tile-fill); }',
-  '.schedule-compact .schedule-summary { flex:1; min-width:0; display:flex; flex-wrap:wrap; align-content:center; align-items:center; gap:2px 5px; min-height:44px; padding:4px 7px; font-size:12px; text-align:start; }',
+  '.schedule-compact .schedule-toolbar > .schedule-add { flex:1; border-color:transparent; background:transparent; }',
+  '.schedule-compact .schedule-add > ha-icon { color:var(--warm); }',
+  '.schedule-compact .schedule-row { direction:ltr; display:flex; align-items:stretch; gap:0; padding:0; border:1px solid var(--soft-line); border-radius:8px; background:var(--room-tile-fill); }',
+  '.schedule-compact .schedule-summary { flex:1; min-width:0; display:flex; flex-wrap:wrap; align-content:center; align-items:center; gap:2px 5px; min-height:44px; padding:4px 7px; font-size:12px; text-align:left; }',
   '.schedule-compact .schedule-summary.control-button { justify-content:flex-start; border:0; border-radius:8px; background:transparent; }',
   '.schedule-compact .schedule-details { gap:2px 5px; font-size:inherit; align-items:center; }',
   '.schedule-compact .schedule-details > :not(:last-child)::after { content:" ·"; }',
@@ -389,7 +423,8 @@ const styles = [
 ].join('\n');
 
 export function createBoilerSchedulePanel(config, {
-  host, viewport, hass, locale = 'en', compact = false, pauseScrollMemory, isCurrent = () => true,
+  host, viewport, hass, locale = 'en', compact = false, openNew = false, editId, editHref,
+  pauseScrollMemory, presentDraft, isCurrent = () => true,
 }) {
   const t = text[locale] ?? text.en;
   const make = (tag, cls, value) => {
@@ -434,6 +469,10 @@ export function createBoilerSchedulePanel(config, {
   const refreshing = button(t.refresh, () => { void refresh(); });
   if (compact) {
     add.classList.add('schedule-add');
+    const addIcon = make('ha-icon');
+    addIcon.setAttribute('icon', 'mdi:plus');
+    addIcon.setAttribute('aria-hidden', 'true');
+    add.prepend(addIcon);
     refreshing.classList.add('round-action');
     refreshing.setAttribute('aria-label', t.refresh);
     refreshing.title = t.refresh;
@@ -461,7 +500,18 @@ export function createBoilerSchedulePanel(config, {
     for (const node of form.querySelectorAll('button, input, select')) {
       node.disabled = pending || (needsRefresh && node.hasAttribute('data-schedule-commit'));
     }
-    for (const node of list.querySelectorAll('button')) node.disabled = !ready || pending || needsRefresh || !!draft;
+    const locked = !ready || pending || needsRefresh || !!draft;
+    for (const node of list.querySelectorAll('button, a')) {
+      if (node.localName === 'a') {
+        node.setAttribute('aria-disabled', String(locked));
+        node.tabIndex = locked ? -1 : 0;
+      } else node.disabled = locked;
+    }
+  }
+
+  function listMessage() {
+    if (editHref) return editControls.size ? t.chooseEdit : t.noEditable;
+    return listRows.length ? '' : t.empty;
   }
 
   function renderList() {
@@ -472,15 +522,29 @@ export function createBoilerSchedulePanel(config, {
       const tile = make('section', 'schedule-row');
       const rowName = row.name || row.title || row.time;
       const canToggle = row.mutable && caps.toggle;
-      const canEdit = row.mutable && caps.edit;
-      const edit = canEdit ? button(t.edit, () => openForm(row)) : undefined;
+      const canEdit = row.mutable && caps.edit && (!editHref || ['on', 'off'].includes(currentHass.states?.[row.entity]?.state));
+      const href = canEdit && editHref?.(row.id);
+      const edit = href ? make('a', 'control-button', t.edit) :
+        canEdit && !editHref ? button(t.edit, () => openForm(schedule.revisionOf(row))) : undefined;
+      if (href) {
+        edit.href = href;
+        edit.onclick = event => {
+          if (edit.getAttribute('aria-disabled') === 'true') event.preventDefault();
+          if (event.defaultPrevented || event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+          // Keep the caller's alias and Close destination when a row is chosen here.
+          event.preventDefault();
+          void openLatestForm(row.id);
+        };
+      }
       if (edit) {
         edit.setAttribute('aria-label', t.edit + ' · ' + rowName);
         editControls.set(row.id, edit);
       }
       const summary = compact && edit ? edit : make('div');
       summary.classList.add('schedule-summary');
-      summary.replaceChildren(make('strong', '', (compact ? rowName : row.title || row.name) || t.name));
+      const name = make('strong', '', (compact ? rowName : row.title || row.name) || t.name);
+      name.dir = 'auto';
+      summary.replaceChildren(name);
       const details = make('span', 'schedule-details');
       if (row.time) {
         const time = make('bdi', '', row.time);
@@ -534,7 +598,7 @@ export function createBoilerSchedulePanel(config, {
       if (!quiet) needsRefresh = false;
       listRows = rows;
       renderList();
-      if (!keepMessage && (!quiet || !draft) && !needsRefresh) message(draft || listRows.length ? '' : t.empty);
+      if (!keepMessage && (!quiet || !draft) && !needsRefresh) message(draft ? '' : listMessage());
     } catch {
       if (gone || run !== epoch) return;
       ready = false;
@@ -542,7 +606,16 @@ export function createBoilerSchedulePanel(config, {
     } finally {
       if (!gone && run === epoch) {
         if (!quiet) pending = false;
+        if (openNew && ready && !pending) {
+          openNew = false;
+          openForm();
+        }
         syncButtons();
+        if (editId && ready && !pending) {
+          const id = editId;
+          editId = undefined;
+          void openLatestForm(id);
+        }
       }
     }
   }
@@ -567,7 +640,8 @@ export function createBoilerSchedulePanel(config, {
     resumeRememberingScroll();
     if (viewport) viewport.scrollTop = scrollTop;
     const control = id ? editControls.get(id) : add;
-    focusInPanel(control && !control.hidden && !control.disabled ? control : refreshing);
+    focusInPanel(control && !control.hidden && !control.disabled && control.getAttribute('aria-disabled') !== 'true'
+      ? control : refreshing);
   }
 
   function closeForm() {
@@ -577,20 +651,46 @@ export function createBoilerSchedulePanel(config, {
     confirmedRemove = false;
     form.hidden = true;
     form.replaceChildren();
+    if (origin) presentDraft?.();
     syncButtons();
     return origin;
   }
 
+  async function openLatestForm(id) {
+    if (gone || pending || !ready || needsRefresh || draft || !isCurrent()) return;
+    if (!editControls.has(id)) {
+      message(t.editUnavailable);
+      return;
+    }
+    const run = ++epoch;
+    pending = true;
+    message(t.loading);
+    syncButtons();
+    try {
+      const row = await schedule.readEditable(id);
+      if (gone || run !== epoch || !isCurrent()) return;
+      pending = false;
+      openForm(row);
+    } catch {
+      if (!gone && run === epoch && isCurrent()) message(t.editUnavailable);
+    } finally {
+      if (!gone && run === epoch) {
+        pending = false;
+        syncButtons();
+      }
+    }
+  }
+
   function openForm(row) {
-    if (pending || !ready || !schedule || row && !row.mutable) return;
+    if (gone || pending || !ready || !schedule || !isCurrent()) return;
+    const permissions = schedule.capabilities();
+    if (row ? !row.mutable || !permissions.edit : !permissions.create) return;
     const selected = new Set(row?.weekdays);
     formOrigin = { id: row?.id, scrollTop: viewport?.scrollTop ?? 0 };
     resumeScrollMemory = pauseScrollMemory?.();
-    draft = row ? schedule.revisionOf(row) : {};
+    draft = row ?? {};
     message('');
     form.replaceChildren();
-    const heading = make('h3', 'schedule-form-title', row ? t.edit + ' · ' + (row.name || row.title || row.time) : t.add);
-    heading.tabIndex = -1;
     const fields = make('div', 'schedule-fields');
     const title = make('input');
     title.type = 'text';
@@ -708,7 +808,7 @@ export function createBoilerSchedulePanel(config, {
     submit.setAttribute('data-schedule-commit', '');
     commands.append(submit, button(t.cancel, () => {
       const origin = closeForm();
-      message(listRows.length ? '' : t.empty);
+      message(listMessage());
       if (origin) restoreFormOrigin(origin);
     }));
     const confirmation = make('div', 'schedule-confirm');
@@ -742,11 +842,17 @@ export function createBoilerSchedulePanel(config, {
       void operate(stillCurrent => row ? schedule.update(draft, payload, stillCurrent)
         : schedule.create(payload, stillCurrent), t.saved);
     };
-    form.append(heading, fields, group);
+    form.append(fields, group);
     if (durationField) form.append(durationField);
     form.append(commands, confirmation);
     form.hidden = false;
     syncButtons();
+    const heading = presentDraft?.(row ? 'edit' : 'create') ?? make('h3', 'schedule-form-title',
+      row ? t.edit + ' · ' + (row.name || row.title || row.time) : t.add);
+    if (!heading.isConnected) {
+      heading.tabIndex = -1;
+      form.prepend(heading);
+    }
     focusInPanel(heading, true);
   }
 
@@ -809,6 +915,7 @@ export function createBoilerSchedulePanel(config, {
     destroy() {
       gone = true;
       if (unsubscribe) void Promise.resolve(unsubscribe()).catch(() => {});
+      if (draft) presentDraft?.();
       region.remove();
       resumeRememberingScroll();
     },

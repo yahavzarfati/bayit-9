@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import http from 'node:http';
+import { parseArgs } from 'node:util';
 import { chromium, webkit } from 'playwright-core';
 
 const engines = [
@@ -12,6 +13,12 @@ const requestedEngine = process.env.BAYIT_BROWSER_ENGINE;
 const selectedEngines = engines.filter(({ launcher }) =>
   requestedEngine === undefined || launcher.name() === requestedEngine);
 if (!selectedEngines.length) throw new Error('BAYIT_BROWSER_ENGINE must be chromium or webkit');
+const { values: { scenario: requestedScenarios = [] } } = parseArgs({
+  options: { scenario: { type: 'string', multiple: true } },
+});
+const scenarioFilters = new Map(requestedScenarios.map(name => [name.trim().toLowerCase(), name.trim()]));
+if (scenarioFilters.has('')) throw new Error('--scenario requires a name');
+const matchedFilters = new Set();
 
 const bundle = await readFile(new URL('../dist/bayit-9.js', import.meta.url));
 const fixture = `<!doctype html>
@@ -29,6 +36,8 @@ const states = {
 };
 const calls = [];
 let rejectInlineLight = false;
+let resolveLightOff;
+let resumeLightObservation;
 let finishLightStatusRefresh;
 const moreInfoCalls = [];
 const moreInfoHashes = [];
@@ -38,6 +47,7 @@ document.addEventListener('hass-more-info', event => {
 });
 const coverRequests = [];
 let finishLevel;
+let finishRailExtension;
 let rejectLevel = false;
 let finishPreselect;
 let finishClimatePreset;
@@ -147,6 +157,7 @@ const initialStrategy = { type: 'custom:bayit-9', ...(query.has('room-selection'
       ['media','מדיה'], ['vacuum','שואב']].map(([kind, label]) => ({id:kind,kind,label,placement:'settings'})),
   ] }),
   ...(query.has('legacy-room-order') && { area_ids: ['lounge', 'studio'] }),
+  ...((query.has('empty-source-room') || query.has('hide-empty-rooms')) && { show_empty_rooms: false }),
   ...(query.has('cross-area-room-device') && { room_overrides: { lounge: { entities: ['light.demo_lamp'] } } }),
   ...(query.has('popup-scroll-memory') && {
     preference_key:'shared-appearance-for-scroll-test', area_ids:['studio','bayit_room_den'],
@@ -397,6 +408,9 @@ const hass = {
         return Promise.reject(new Error('Fixture rejected inline light command'));
       }
       const id = request.target.entity_id;
+      if (query.has('hold-light-inverse') && id === 'light.demo_lamp' && request.service === 'turn_off' && !resolveLightOff) {
+        return new Promise(resolve => { resolveLightOff = resolve; });
+      }
       const { brightness_pct, color_temp_kelvin, effect, rgb_color } = request.service_data ?? {};
       const attributes = { ...states[id].attributes };
       if (brightness_pct !== undefined) attributes.brightness = Math.round(brightness_pct * 255 / 100);
@@ -423,7 +437,8 @@ const hass = {
         card.hass = { ...hass, states: { ...states } };
       }
     }
-    if (request.domain === 'lock' && (query.has('compact-entrance-status') || query.has('security-compact-locks'))) {
+    if (request.domain === 'lock' && !query.has('await-lock-state') &&
+        (query.has('compact-entrance-status') || query.has('security-compact-locks'))) {
       const id = request.target.entity_id;
       states[id] = { ...states[id], state: request.service === 'lock' ? 'locked' : 'unlocked' };
       card.hass = { ...hass, states: { ...states } };
@@ -506,12 +521,31 @@ const hass = {
       }
       card.hass = { ...hass, states: { ...states } };
     }
+    const runtime = request.service_data?.entity_id;
+    const mockRunningRail = runtime === heaterTimer && query.has('heater-running-rail') ||
+      runtime === 'sensor.demo_air_usage' && query.has('climate-running-rail');
+    if (mockRunningRail && request.domain === 'simple_timer' && request.service === 'add_timer') {
+      return new Promise(resolve => {
+        finishRailExtension = () => {
+          const attrs = states[runtime].attributes;
+          attrs.timer_finishes_at = new Date(Date.parse(attrs.timer_finishes_at) + request.service_data.duration * 60000).toISOString();
+          card.hass = { ...hass, states: { ...states } };
+          resolve({});
+        };
+      });
+    }
     if (request.domain === 'simple_timer' && request.service === 'cancel_timer' &&
         (query.has('embedded-heater') || query.has('heater-level-timeout')) && request.service_data.entity_id === heaterTimer) {
       const attrs = states[heaterTimer].attributes;
       states[heaterTimer] = { ...states[heaterTimer], attributes: { ...attrs, timer_state: 'idle', device_active: false } };
       states[heaterFan] = { ...states[heaterFan], state: 'off' };
       states[heaterRelay] = { ...states[heaterRelay], state: 'off' };
+      card.hass = { ...hass, states: { ...states } };
+    }
+    if (mockRunningRail && runtime === 'sensor.demo_air_usage' && request.domain === 'simple_timer' &&
+        request.service === 'cancel_timer') {
+      states[runtime] = { ...states[runtime], attributes: { ...states[runtime].attributes, timer_state:'idle', device_active:false } };
+      states['climate.demo_air'] = { ...states['climate.demo_air'], state:'off' };
       card.hass = { ...hass, states: { ...states } };
     }
     if (request.domain === 'climate' && query.has('climate-labels')) {
@@ -544,6 +578,28 @@ if (query.has('room-selection')) {
   if (query.has('room-selection-paired-later')) {
     hass.entities['light.fixture_paired_later'] = { area_id:'studio' };
     states['light.fixture_paired_later'] = { state:'off', attributes:{ friendly_name:'Paired later', supported_color_modes:['onoff'] } };
+  }
+  if (query.has('room-auto-management')) {
+    for (const [entity, name] of [['light.fixture_auto_accent','Accent lamp'], ['light.fixture_auto_shelf','Shelf lamp']]) {
+      hass.entities[entity] = { area_id:'studio' };
+      states[entity] = { state:'off', attributes:{ friendly_name:name, supported_color_modes:['onoff'] } };
+    }
+    hass.areas.pantry = { area_id:'pantry', name:'Pantry' };
+    hass.entities['switch.fixture_auto_pantry'] = { area_id:'pantry' };
+    states['switch.fixture_auto_pantry'] = { state:'off', attributes:{ friendly_name:'Pantry switch' } };
+    const hidden = 'light.fixture_auto_registry_hidden';
+    const disabled = 'switch.fixture_auto_registry_disabled';
+    hass.entities[hidden] = { area_id:'studio', hidden_by:'user' };
+    hass.entities[disabled] = { area_id:'studio', disabled_by:'user' };
+    states[hidden] = { state:'off', attributes:{ friendly_name:'Registry hidden lamp' } };
+    states[disabled] = { state:'off', attributes:{ friendly_name:'Registry disabled switch' } };
+  }
+  if (query.has('room-auto-management-paired-later')) {
+    hass.areas.nursery = { area_id:'nursery', name:'Nursery' };
+    hass.entities['switch.fixture_auto_nursery'] = { area_id:'nursery' };
+    states['switch.fixture_auto_nursery'] = { state:'off', attributes:{ friendly_name:'Nursery switch' } };
+    hass.entities['light.fixture_auto_paired'] = { area_id:'studio' };
+    states['light.fixture_auto_paired'] = { state:'off', attributes:{ friendly_name:'00 paired studio lamp', supported_color_modes:['onoff'] } };
   }
   if (query.has('empty-source-room')) delete states['switch.demo_heater'];
 }
@@ -907,7 +963,8 @@ if (query.has('toolbar-panels')) {
     const graphAction = configuration.tap_action?.action === 'fire-dom-event' && configuration.tap_action;
     const graphMoreInfo = configuration.tap_action?.action === 'more-info' && configuration.entity;
     const weatherSensor = query.has('weather-native-width') && configuration.entity?.startsWith('sensor.demo_weather_history_');
-    const energySensor = query.has('energy-native-width') && configuration.entity === 'sensor.demo_last_water';
+    const energySensor = query.has('energy-native-width') && ['sensor.demo_meter','sensor.demo_bill_forecast',
+      'sensor.demo_water_meter','sensor.demo_last_water'].includes(configuration.entity);
     const intrinsicSensor = configuration.type === 'sensor' && (weatherSensor || energySensor);
     const card = document.createElement(intrinsicSensor ? 'hui-sensor-card' : graphAction || graphMoreInfo ? 'button' : 'div');
     const dialog = document.querySelector('bayit-dashboard')?.shadowRoot.querySelector('.modal[open]');
@@ -1075,6 +1132,8 @@ const selected = query.has('configuration') ? rendererStrategy(stored().strategy
   profiles: [{ entity: 'climate.demo_air', kind: 'climate', timed: {
     simple_timer_entity: 'sensor.demo_air_usage', simple_timer_target: 'input_boolean.demo_air_timer',
     min_minutes: 15, max_minutes: 120, step_minutes: 15, presets: [30,60,90,120],
+    ...(query.has('climate-running-rail') && { min_minutes:1, step_minutes:1, idle_zero_duration:true,
+      running_slider_stop:!query.has('legacy-running-rail') }),
     ...(query.has('timer-usage') && { allow_daily_usage_reset: !query.has('usage-view-only') }),
     ...(query.has('different-usage-source') && { daily_usage_entity: 'sensor.demo_read_only_usage' }),
   } }],
@@ -1096,7 +1155,9 @@ const selected = query.has('configuration') ? rendererStrategy(stored().strategy
       heater_popup_quick_power: !query.has('omit-heater-popup-power') }),
     ...(query.has('heater-level-feedback') && { level_activity_script: heaterActivityScript }),
     ...(query.has('preselect') && { level_preselect_entity: nextLevel }),
-    timed: { simple_timer_entity: heaterTimer, simple_timer_target: heaterRelay } }],
+    timed: { simple_timer_entity: heaterTimer, simple_timer_target: heaterRelay,
+      ...(query.has('heater-running-rail') && { min_minutes:1, step_minutes:1, max_minutes:60,
+        idle_zero_duration:true, presets:[15,30,45,60], running_slider_stop:!query.has('legacy-running-rail') }) } }],
 } : query.has('overview-opt-in') ? {
   hidden_entities: ['light.demo_dashboard_hidden'],
   toolbar: [{kind:'overview',sections:[
@@ -1326,7 +1387,7 @@ if (query.has('room-media-registry-icon')) {
 if (query.has('room-media-config-icon')) {
   selected.room_overrides.studio.entity_icons = { 'media_player.demo_tv':'mdi:projector-screen' };
 }
-const config = Strategy.generate(selected, query.has('empty') ? { ...hass, states: {} } : hass);
+const config = Strategy.generate(selected, query.has('empty') ? { ...hass, areas: {}, states: {} } : hass);
 const cardConfig = { ...config.views[0].cards[0],
   ...(query.has('embedded-popup-card') && { page: false }),
   ...(query.has('explicit-preference-key') && { preference_key: 'fixture-shared' }),
@@ -1361,6 +1422,24 @@ window.bayitTest = {
     hass.entities = { ...hass.entities, 'button.fixture_refresh_lamp': { device_id:deviceId } };
     hass.services = { ...hass.services, button: registered ? {press:{}} : {} };
     card.hass = { ...hass };
+  },
+  acknowledgeLightOff(holdObservation = false) {
+    if (holdObservation) {
+      const schedule = window.setTimeout;
+      window.setTimeout = (callback, duration, ...args) => {
+        if (duration !== 100) return schedule.call(window, callback, duration, ...args);
+        window.setTimeout = schedule;
+        resumeLightObservation = () => callback(...args);
+        return 0;
+      };
+    }
+    resolveLightOff({});
+  },
+  lightObservationHeld() { return Boolean(resumeLightObservation); },
+  releaseLightObservation() {
+    const resume = resumeLightObservation;
+    resumeLightObservation = undefined;
+    resume?.();
   },
   finishLightStatusRefresh() { finishLightStatusRefresh?.(); },
   finishFixedColorRegistryReads() {
@@ -1461,6 +1540,7 @@ window.bayitTest = {
     card.hass = { ...hass, states: { ...states } };
   },
   finishLevel: () => finishLevel(),
+  finishRailExtension: () => finishRailExtension(),
   rejectNextLevel: () => { rejectLevel = true; },
   finishPreselect: () => finishPreselect(),
   finishClimatePreset: () => finishClimatePreset(),
@@ -1891,6 +1971,59 @@ async function assertAppearanceHelperEditor(browser) {
   }
 }
 
+async function assertHomeToolbarFit(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({ viewport:{width:320,height:844}, hasTouch:true, reducedMotion:'reduce' });
+    try {
+      await page.goto(base + '/fixture-home/home?toolbar-panels&security-cover-rail&locale=' + locale);
+      const rail = page.locator('.toolbar-actions');
+      await rail.locator('[data-role=settings]').waitFor();
+      const geometry = () => rail.evaluate(node => {
+        const bounds = element => {
+          const {left,right,top,bottom,width,height} = element.getBoundingClientRect();
+          return {left,right,top,bottom,width,height};
+        };
+        const buttons = [...node.querySelectorAll('.chrome-button:not([hidden])')].map(bounds);
+        return { rail:bounds(node), buttons, horizontalOverflow:node.scrollWidth - node.clientWidth };
+      });
+      const assertFit = async (controls, width) => {
+        const {rail:row,buttons,horizontalOverflow} = await geometry();
+        assert.equal(buttons.length,controls);
+        assert.equal(horizontalOverflow,0);
+        assert.ok(buttons.every(button => button.width >= 44 && button.height >= 44 &&
+          button.left >= row.left - .1 && button.right <= row.right + .1));
+        if (controls !== 6) return;
+        assert.ok(buttons.every((button,index) => button.top === buttons[0].top &&
+          (!index || button.left - buttons[index - 1].right >= 3.9)));
+        assert.ok(Math.abs(buttons[0].left - row.left) < .1);
+        if (width === 320) assert.ok(Math.abs(buttons.at(-1).right - row.right) < .1);
+        else {
+          assert.ok(buttons.every(button => button.width === 48 && button.height === 48));
+          assert.ok(Math.abs(buttons.at(-1).left - (row.left + 5 * (row.width + 8) / 6)) < .1);
+        }
+      };
+      for (const width of [320,375,391]) {
+        await page.setViewportSize({width,height:844});
+        await assertFit(6,width);
+      }
+      await page.setViewportSize({width:320,height:844});
+      await page.evaluate(() => {
+        const toolbar = window.bayitTest.config.views[0].cards[0].toolbar;
+        window.bayitTest.reviseStrategy({}, {toolbar:toolbar.filter(item => item.kind !== 'security')});
+      });
+      await assertFit(5,320);
+      await page.evaluate(() => {
+        const toolbar = window.bayitTest.config.views[0].cards[0].toolbar;
+        window.bayitTest.reviseStrategy({}, {toolbar:[...toolbar,{kind:'link',id:'fixture-link',path:'/config'}]});
+      });
+      await assertFit(7,320);
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertHomeButtonShapes(browser) {
   for (const width of [320, 391]) {
     for (const locale of ['en', 'he']) {
@@ -1915,6 +2048,17 @@ async function assertHomeButtonShapes(browser) {
         await check('10px');
         await settings.tap();
         await panel.locator('.appearance-layout > summary').tap();
+        const shapeOptions = panel.locator('[data-appearance-choices=shape]');
+        const shapeRow = await shapeOptions.evaluate(row => [...row.children].map(control => {
+          const bounds = control.getBoundingClientRect();
+          const swatch = control.querySelector('.shape-swatch');
+          return {value:control.value,x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,
+            radius:getComputedStyle(swatch).borderTopLeftRadius,hidden:swatch.getAttribute('aria-hidden')};
+        }));
+        assert.deepEqual(shapeRow.map(control => [control.value,control.radius,control.hidden]),
+          [['circle','999px','true'],['soft','5px','true'],['square','0px','true']]);
+        assert.ok(shapeRow.every((control,index) => control.y === shapeRow[0].y && control.width >= 44 && control.height >= 44 &&
+          (!index || (locale === 'he' ? control.x < shapeRow[index - 1].x : control.x > shapeRow[index - 1].x))));
         for (const [shape, radius] of [['circle', '999px'], ['square', '3px'], ['soft', '10px']]) {
           await panel.locator(`[data-preference="shape"][value="${shape}"]`).tap();
           assert.equal(await page.locator('.shell').getAttribute('data-shape'), shape);
@@ -1928,6 +2072,69 @@ async function assertHomeButtonShapes(browser) {
         await page.close();
       }
     }
+  }
+}
+
+async function assertAppearanceGalleryLayout(browser) {
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    const title = locale === 'he' ? 'מראה' : 'Appearance';
+    const url = base + '/fixture-home/home?configuration&member&locale=' + locale;
+    const dialog = page.getByRole('dialog',{name:title,exact:true});
+    const gallery = dialog.locator('.wallpaper-gallery');
+    const category = id => gallery.locator('[data-wallpaper-category=' + id + ']');
+    const selection = id => gallery.locator('[data-wallpaper-choice=' + id + ']');
+    const options = gallery.locator('[data-wallpaper-choice]');
+    const more = gallery.locator('.wallpaper-more');
+    const open = async () => {
+      await page.getByRole('button',{name:title,exact:true}).press('Enter');
+      await gallery.locator('summary').press('Enter');
+      await options.nth(5).waitFor();
+      assert.equal(await options.count(),6);
+      assert.equal(await category('all').getAttribute('aria-pressed'),'true');
+      assert.equal(await more.getAttribute('aria-expanded'),'false');
+    };
+    try {
+      await page.goto(url);
+      await open();
+      for (const width of [320,391]) {
+        await page.setViewportSize({width,height:844});
+        const rail = await gallery.locator('.wallpaper-categories').evaluate(rail => {
+          const buttons = [...rail.children].map(button => button.getBoundingClientRect());
+          return { oneRow:buttons.every(button => button.top === buttons[0].top && button.width >= 44 && button.height >= 44),
+            overflows:rail.scrollWidth > rail.clientWidth, direction:getComputedStyle(rail).direction };
+        });
+        assert.deepEqual(rail,{oneRow:true,overflows:true,direction:locale === 'he' ? 'rtl' : 'ltr'});
+      }
+      await category('light').press('Tab');
+      const lastFocused = await category('personal').evaluate(button => {
+        const box = button.getBoundingClientRect();
+        const rail = button.parentElement.getBoundingClientRect();
+        return {active:button.getRootNode().activeElement?.dataset.wallpaperCategory,
+          left:box.left - rail.left,right:rail.right - box.right};
+      });
+      assert.ok(lastFocused.active === 'personal' && lastFocused.left >= -1 && lastFocused.right >= -1,JSON.stringify({locale,lastFocused}));
+      await category('personal').press('Enter');
+      await gallery.locator('input[type=file]').waitFor({state:'attached'});
+      await category('nature').press('Enter');
+      assert.equal(await options.count(),6);
+      assert.equal(await category('nature').getAttribute('aria-pressed'),'true');
+      await more.press('Enter');
+      assert.equal(await more.getAttribute('aria-expanded'),'true');
+      assert.ok(await options.count() > 6);
+      await selection('jade').press('Enter');
+      await page.locator('.shell[data-background=jade]').waitFor();
+      await more.press('Enter');
+      assert.equal(await options.count(),6);
+      assert.equal(await selection('jade').getAttribute('aria-pressed'),'true');
+      await selection('jade').locator('.wallpaper-selected-mark').waitFor();
+      await dialog.locator('button[data-role=close]').tap();
+      await dialog.waitFor({state:'hidden'});
+      await page.reload();
+      await open();
+      assert.equal(await selection('jade').getAttribute('aria-pressed'),'true');
+      assert.deepEqual(await page.evaluate(() => window.bayitTest.calls),[]);
+    } finally { await page.close(); }
   }
 }
 
@@ -1961,8 +2168,16 @@ async function assertSharedAppearance(browser) {
     const share = admin.getByRole('button', { name: 'Save as household defaults', exact: true });
     const saved = admin.getByText('Household appearance saved.', { exact: true });
     const reset = admin.getByRole('button', { name: 'Use household defaults', exact: true });
-    await wallpaperSummary.tap();
-    await admin.getByRole('button', { name: 'Misty forest', exact: true }).tap();
+    const chooseForest = async () => {
+      await wallpaperSummary.tap();
+      await admin.locator('[data-wallpaper-category=nature]').tap();
+      const forest = admin.getByRole('button', { name: 'Misty forest', exact: true });
+      const expand = admin.locator('.wallpaper-more[aria-expanded=false]');
+      await forest.or(expand).first().waitFor();
+      if (!await forest.isVisible()) await expand.tap();
+      await forest.tap();
+    };
+    await chooseForest();
     await wallpaperSummary.tap();
     assert.equal(await admin.locator('.appearance-layout').evaluate(layout => layout.open), false);
     await reset.press('Enter');
@@ -1970,8 +2185,7 @@ async function assertSharedAppearance(browser) {
     await admin.locator('.appearance-actions').waitFor({ state: 'hidden' });
     assert.deepEqual(await appearance(adminPage), ['aurora', 'soft', 'classic']);
 
-    await wallpaperSummary.tap();
-    await admin.getByRole('button', { name: 'Misty forest', exact: true }).tap();
+    await chooseForest();
     await wallpaperSummary.tap();
     assert.deepEqual(await appearance(adminPage), ['jade', 'soft', 'classic']);
     assert.equal(await adminPage.evaluate(() => window.bayitTest.calls.length), 0);
@@ -2213,6 +2427,196 @@ async function assertQuietRoomLightIcon(browser) {
       }
       await page.emulateMedia({contrast:'no-preference'});
     }
+  } finally {
+    await page.close();
+  }
+}
+
+async function assertRoomCardHold(browser) {
+  const page = await browser.newPage({
+    viewport: { width: 391, height: 845 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce',
+  });
+  await page.addInitScript(() => {
+    window.bayitHaptics = [];
+    window.bayitNativeHaptics = [];
+    window.addEventListener('haptic', event => window.bayitHaptics.push(event.detail));
+  });
+  const haptics = () => page.evaluate(() => window.bayitHaptics);
+  const card = page.locator('.room[data-room=studio]');
+  const heading = card.getByRole('button', { name: 'Studio', exact: true });
+  const blankArea = card.locator('.room-status-strip');
+  const quick = card.locator('.quick-button[data-entity="light.demo_lamp"]');
+  const room = page.getByRole('dialog', { name: 'Studio', exact: true });
+  const details = page.getByRole('dialog', { name: 'Desk lamp', exact: true });
+  const pointer = (target, type, x = 20) => target.dispatchEvent(type, {
+    button: 0, pointerId: 103, pointerType: 'touch', isPrimary: true,
+    clientX: x, clientY: 150, bubbles: true, composed: true,
+  });
+  const dismiss = async dialog => {
+    await dialog.getByRole('button', { name: 'Close', exact: true }).tap();
+    await dialog.waitFor({ state: 'hidden' });
+  };
+  async function expectHold(target, dialog) {
+    await pointer(target, 'pointerdown');
+    await page.waitForTimeout(550);
+    await target.dispatchEvent('contextmenu', { bubbles: true, composed: true, cancelable: true });
+    assert.ok(!(await dialog.isVisible()), 'A Home hold should open on release');
+    await pointer(target, 'pointerup');
+    await dialog.waitFor({ timeout: 2200 });
+    const hash = await page.evaluate(() => location.hash);
+    const historyLength = await page.evaluate(() => history.length);
+    await target.dispatchEvent('click', { detail: 1, composed: true, cancelable: true, bubbles: true });
+    assert.equal(await page.evaluate(() => location.hash), hash);
+    assert.equal(await page.evaluate(() => history.length), historyLength);
+    assert.ok(await dialog.isVisible());
+  }
+  try {
+    await page.goto(base + '/fixture-home/home?room-grid&locale=en');
+    const scroll = await card.evaluate(node => {
+      const region = node.closest('.room-scroll');
+      const shell = region.parentElement;
+      const clip = region.getBoundingClientRect();
+      const frame = shell.getBoundingClientRect();
+      return {
+        left: Math.round(clip.left - frame.left),
+        right: Math.round(frame.right - clip.right),
+        bottom: Math.round(frame.bottom - clip.bottom - parseFloat(getComputedStyle(shell).paddingBottom)),
+        scrollbar: getComputedStyle(region).scrollbarWidth,
+      };
+    });
+    assert.deepEqual(scroll, { left: 16, right: 16, bottom: 8, scrollbar: 'thin' });
+    await expectHold(heading, room);
+    assert.equal(await card.getAttribute('data-popup-origin'), '');
+    await dismiss(room);
+    await expectHold(blankArea, room);
+    assert.equal(await card.getAttribute('data-popup-origin'), '');
+    await dismiss(room);
+
+    await pointer(blankArea, 'pointerdown');
+    await pointer(blankArea, 'pointermove', 55);
+    await page.waitForTimeout(550);
+    await pointer(blankArea, 'pointerup', 55);
+    assert.ok(!(await room.isVisible()));
+
+    await pointer(quick, 'pointerdown');
+    await page.waitForTimeout(550);
+    await pointer(quick, 'pointermove', 55);
+    await pointer(quick, 'pointerup', 55);
+    assert.ok(!(await details.isVisible()), 'A drag after the hold threshold must not open a device');
+    await pointer(quick, 'pointerdown');
+    await page.waitForTimeout(550);
+    await pointer(quick, 'pointercancel');
+    assert.ok(!(await details.isVisible()), 'A cancelled hold must not open a device');
+
+    await expectHold(quick, details);
+    assert.ok(!(await room.isVisible()));
+    await dismiss(details);
+    await heading.press('Shift+Enter');
+    await room.waitFor();
+    await dismiss(room);
+    await heading.tap();
+    await room.waitFor();
+    await dismiss(room);
+    assert.deepEqual(await haptics(), [], 'Taps, keyboard shortcuts and synthetic events should not vibrate');
+    if (browser.browserType().name() === 'chromium') {
+      const cdp = await page.context().newCDPSession(page);
+      const nativeHaptics = () => page.evaluate(() => window.bayitNativeHaptics);
+      const startTouch = async target => {
+        const box = await target.boundingBox();
+        const point = { x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 };
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+        return point;
+      };
+      const message = { id: 0, type: 'haptic', payload: { hapticType: 'heavy' } };
+      try {
+        for (const [target, dialog] of [[heading, room], [quick, details]]) {
+          const useNativeBridge = target === quick;
+          if (useNativeBridge) await page.evaluate(() => {
+            window.webkit = { messageHandlers: { externalBus: {
+              postMessage: message => window.bayitNativeHaptics.push(message),
+            } } };
+          });
+          await startTouch(target);
+          await page.waitForFunction(native => (native ? window.bayitNativeHaptics : window.bayitHaptics).length === 1,
+            useNativeBridge);
+          assert.ok(!(await dialog.isVisible()), 'The popup should wait for the actual touch release');
+          await cdp.send('Input.dispatchTouchEvent', { type:'touchEnd', touchPoints:[] });
+          await dialog.waitFor();
+          await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          assert.ok(await dialog.isVisible(), 'The compatibility click must leave the popup open');
+          assert.deepEqual(await haptics(), ['heavy']);
+          assert.deepEqual(await nativeHaptics(), useNativeBridge ? [message] : []);
+          await dismiss(dialog);
+        }
+        await startTouch(quick);
+        await cdp.send('Input.dispatchTouchEvent', { type:'touchCancel', touchPoints:[] });
+        await page.waitForTimeout(550);
+        assert.ok(!(await details.isVisible()));
+        assert.deepEqual(await nativeHaptics(), [message], 'A hold cancelled before its threshold should not vibrate');
+
+        const point = await startTouch(quick);
+        await page.waitForFunction(() => window.bayitNativeHaptics.length === 2);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...point, x: point.x + 40 }] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        assert.ok(!(await details.isVisible()), 'Moving after the feedback should still cancel the hold');
+        assert.deepEqual(await nativeHaptics(), [message, message]);
+
+        await heading.evaluate(button => { button.inert = true; });
+        await startTouch(blankArea);
+        await page.waitForTimeout(550);
+        await cdp.send('Input.dispatchTouchEvent', { type:'touchEnd', touchPoints:[] });
+        assert.deepEqual(await nativeHaptics(), [message, message], 'An inert room heading should not vibrate');
+      } finally { await cdp.detach(); }
+    }
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service')), []);
+  } finally {
+    await page.close();
+  }
+}
+
+async function assertRoomLightReversal(browser) {
+  const page = await browser.newPage({
+    viewport: { width: 391, height: 845 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce',
+  });
+  const room = page.getByRole('dialog', { name: 'Studio', exact: true });
+  const turnOff = room.getByRole('button', { name: 'Desk lamp · Turn off', exact: true });
+  const turnOn = room.getByRole('button', { name: 'Desk lamp · Turn on', exact: true });
+  const state = next => page.evaluate(value => window.bayitTest.setRoomState('light.demo_lamp', value), next);
+  const calls = () => page.evaluate(() => window.bayitTest.calls
+    .filter(call => call.type === 'call_service' && call.target?.entity_id === 'light.demo_lamp')
+    .map(call => call.service));
+  const startTurnOff = async () => {
+    await page.goto(base + '/fixture-home/home?room-grid&hold-light-inverse&locale=en');
+    await state('on');
+    await page.getByRole('button', { name: 'Studio', exact: true }).tap();
+    await turnOff.tap();
+    assert.deepEqual(await calls(), ['turn_off']);
+  };
+
+  try {
+    await startTurnOff();
+    await state('off');
+    await turnOn.waitFor();
+    const blockedBeforeAck = await turnOn.getAttribute('aria-disabled');
+    await turnOn.tap({ force: true });
+    assert.deepEqual(await calls(), ['turn_off'], 'Observation alone cannot replace a pending light command');
+
+    await startTurnOff();
+    await page.evaluate(() => window.bayitTest.acknowledgeLightOff(true));
+    // Freeze the previous command between observations without delaying the HA state update or user input.
+    await page.waitForFunction(() => window.bayitTest.lightObservationHeld());
+    const blockedBeforeState = await turnOff.getAttribute('aria-disabled');
+    await turnOff.tap({ force: true });
+    assert.deepEqual(await calls(), ['turn_off'], 'Acknowledgement alone cannot replace a pending light command');
+
+    await state('off');
+    await turnOn.tap({ timeout: 3000 });
+    assert.equal(await page.evaluate(() => window.bayitTest.lightObservationHeld()), true);
+    assert.deepEqual(await calls(), ['turn_off', 'turn_on'],
+      'The inverse touch must send after acknowledgement and observed state, before the previous confirmation poll');
+    assert.equal(blockedBeforeAck, 'true');
+    assert.equal(blockedBeforeState, 'true');
+    await page.evaluate(() => window.bayitTest.releaseLightObservation());
   } finally {
     await page.close();
   }
@@ -3510,7 +3914,7 @@ async function assertManualRoomOrderRestored(browser) {
       assert.equal((await stored()).room_selection, 'auto');
       assert.deepEqual((await stored()).manual_area_ids, manual);
       assert.ok((await homeRooms()).includes('lounge'));
-      assert.ok(!(await homeRooms()).includes('spare'));
+      assert.ok((await homeRooms()).includes('spare'));
       await openRooms();
       await chooser.selectOption(custom);
       await setup.getByRole('button', { name:words.remove, exact:true }).tap();
@@ -3542,7 +3946,7 @@ async function assertManualRoomOrderRestored(browser) {
       await page.reload();
       await openRooms();
       await mode.selectOption('custom');
-      assert.deepEqual(await ids(), ['lounge','studio']);
+      assert.deepEqual(await ids(), await homeRooms());
     } finally {
       await page.close();
     }
@@ -3626,6 +4030,460 @@ async function assertRoomEditorQuickPaths(browser) {
   }
 }
 
+async function assertAutomaticRoomManagement(browser) {
+  const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+  page.setDefaultTimeout(8000);
+  const url = base + '/fixture-home/home?configuration&room-selection&room-auto-management&locale=en';
+  const lamp = 'light.demo_lamp';
+  const accent = 'light.fixture_auto_accent';
+  const shelf = 'light.fixture_auto_shelf';
+  const paired = 'light.fixture_auto_paired';
+  const studioName = 'Recording studio';
+  const settings = page.locator('.chrome-button[data-role=settings]');
+  const mode = page.locator('.shell[data-home-editing]');
+  const studio = page.locator('.room[data-room=studio]');
+  const lounge = page.locator('.room[data-room=lounge]');
+  const spare = page.locator('.room[data-room=spare]');
+  const nursery = page.locator('.room[data-room=nursery]');
+  const pantry = page.locator('.room[data-room=pantry]');
+  const config = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+  const roomOrder = () => page.locator('.room').evaluateAll(rooms => rooms.map(room => room.dataset.room));
+  const calls = () => page.evaluate(() => window.bayitTest.calls.filter(call =>
+    call.type === 'lovelace/config/save' || call.type === 'call_service' || call.domain || call.type?.includes('_registry/update')));
+  const roomManager = page.getByRole('dialog', { name:'Manage rooms', exact:true });
+  const roomList = roomManager.locator('[data-room-management]');
+  const deviceManager = page.getByRole('dialog', { name:'Manage devices · ' + studioName, exact:true });
+  const deviceList = deviceManager.locator('[data-room-contents]');
+  const action = (root, name, item) => root.getByRole('button', { name:name + ' · ' + item, exact:true });
+  const close = async dialog => {
+    await dialog.getByRole('button', { name:'Close', exact:true }).tap();
+    await dialog.waitFor({ state:'hidden' });
+  };
+  const enter = async () => {
+    await settings.tap();
+    await page.getByRole('button', { name:'Edit dashboard', exact:true }).tap();
+    await mode.waitFor();
+  };
+  const openRooms = async () => {
+    await mode.getByRole('button', { name:'Manage rooms', exact:true }).tap();
+    await roomList.waitFor();
+  };
+  const openDevices = async () => {
+    await action(studio, 'Manage devices', studioName).tap();
+    await deviceList.waitFor();
+  };
+  const save = async dialog => {
+    assert.deepEqual(await calls(), []);
+    await page.evaluate(() => window.bayitTest.holdNextSetupSave());
+    await dialog.getByRole('button', { name:'Save dashboard', exact:true }).tap();
+    await page.waitForFunction(() => window.bayitTest.calls.some(call => call.type === 'lovelace/config/save'));
+    assert.deepEqual((await calls()).map(call => call.type), ['lovelace/config/save']);
+    await Promise.all([page.waitForEvent('load'), page.evaluate(() => window.bayitTest.finishHeldSetupSave())]);
+    await mode.waitFor({ state:'detached' });
+    await settings.waitFor();
+  };
+  const inspectRoom = async (tile, title, callback) => {
+    await tile.locator('.room-title').tap();
+    const dialog = page.getByRole('dialog', { name:title, exact:true });
+    await dialog.waitFor();
+    await callback(dialog);
+    await close(dialog);
+  };
+  const roomEntities = dialog => dialog.locator('.device[data-entity]').evaluateAll(items =>
+    items.map(item => item.dataset.entity));
+  const onlyFixtures = ids => ids.filter(id => [lamp, accent, shelf, paired].includes(id));
+
+  try {
+    const original = {
+      type:'custom:bayit-9', room_selection:'auto', show_unassigned:false,
+      room_overrides:{ studio:{ name:studioName }, lounge:{ additional_entities:[lamp] } },
+      room_shortcuts:{ studio:['switch.demo_heater', lamp] },
+      background:'lagoon', shape:'soft', layout:'classic',
+      profiles:[{ entity:'switch.demo_heater', kind:'heater', timed:{ timer_entity:'timer.demo_heater', start_script:'script.demo_start' } }],
+    };
+    await page.addInitScript(strategy => {
+      const key = 'bayit9-browser-fixture';
+      if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy }));
+    }, original);
+    await page.goto(url);
+    await spare.waitFor();
+    await pantry.waitFor();
+    await studio.waitFor();
+    const registryBefore = await page.locator('bayit-dashboard').evaluate((card, id) => card._hass.entities[id], lamp);
+    assert.ok(registryBefore);
+    await enter();
+    await openRooms();
+    const order = roomList.getByLabel('Room order', { exact:true });
+    await order.selectOption('alphabetical');
+    await action(roomList, 'Hide room', 'Pantry').tap();
+    await action(roomList, 'Move up', studioName).tap();
+    await action(roomList, 'Move up', studioName).tap();
+    assert.equal(await order.inputValue(), 'custom');
+    await action(roomList, 'Show room', 'Pantry').waitFor();
+    await close(roomManager);
+
+    // Room and device edits share one draft and commit only when explicitly saved.
+    await openDevices();
+    assert.equal(await deviceList.getByRole('button', { name:/Registry (?:hidden|disabled)/ }).count(), 0);
+    const choices = deviceManager.getByLabel('Available devices', { exact:true });
+    await choices.waitFor();
+    assert.equal(await choices.getByRole('option', { name:/Registry (?:hidden|disabled)/ }).count(), 0);
+    await action(deviceList, 'Move up', 'Shelf lamp').tap();
+    await action(deviceList, 'Hide device', 'Desk lamp').tap();
+    await action(deviceList, 'Move up', 'Shelf lamp').tap();
+    await action(deviceList, 'Show device', 'Desk lamp').waitFor();
+    const roomSearch = deviceList.getByRole('searchbox', { name:'Find a device in this room', exact:true });
+    const visibility = deviceList.getByLabel('Device visibility', { exact:true });
+    await visibility.selectOption('hidden');
+    await action(deviceList, 'Show device', 'Desk lamp').waitFor();
+    assert.equal(await action(deviceList, 'Hide device', 'Shelf lamp').count(), 0);
+    assert.equal(await action(deviceList, 'Move up', 'Desk lamp').count(), 0);
+    await roomSearch.fill('No matching lamp');
+    assert.equal(await action(deviceList, 'Show device', 'Desk lamp').count(), 0);
+    await roomSearch.fill('Desk');
+    await action(deviceList, 'Show device', 'Desk lamp').waitFor();
+    await roomSearch.fill('');
+    await visibility.selectOption('all');
+    assert.deepEqual(await config(), original);
+    await save(deviceManager);
+
+    assert.deepEqual(await roomOrder(), ['studio','lounge','spare']);
+    assert.equal(await studio.locator('.quick-button[data-entity="' + lamp + '"]').count(), 0);
+    const afterHide = await config();
+    assert.equal(afterHide.room_selection, 'auto');
+    assert.deepEqual(afterHide.hidden_room_ids, ['pantry']);
+    assert.equal(afterHide.room_order_mode, 'custom');
+    assert.deepEqual(afterHide.room_order.slice(0, 2), ['studio','lounge']);
+    assert.deepEqual(afterHide.room_overrides.studio.hidden_entities, [lamp]);
+    assert.deepEqual(afterHide.room_overrides.studio.entity_order.filter(id => [accent, shelf].includes(id)), [shelf,accent]);
+    assert.deepEqual(afterHide.room_shortcuts, original.room_shortcuts);
+    assert.deepEqual(afterHide.room_overrides.lounge, original.room_overrides.lounge);
+    assert.deepEqual(afterHide.profiles, original.profiles);
+    for (const key of ['background','shape','layout']) {
+      assert.equal(afterHide[key], original[key]);
+      assert.equal(await page.locator('.shell').getAttribute('data-' + key), original[key]);
+    }
+    assert.deepEqual(await page.locator('bayit-dashboard').evaluate((card, id) => card._hass.entities[id], lamp), registryBefore);
+    await inspectRoom(studio, studioName, async dialog => {
+      assert.deepEqual(onlyFixtures(await roomEntities(dialog)), [shelf,accent]);
+    });
+    await inspectRoom(lounge, 'Lounge', async dialog => {
+      await dialog.locator('.device[data-entity="' + lamp + '"]').waitFor();
+    });
+
+    // A clean reload with newly registered data keeps discovering areas and devices.
+    await page.goto(url + '&room-auto-management-paired-later');
+    await nursery.waitFor();
+    assert.deepEqual(await roomOrder(), ['studio','lounge','spare','nursery']);
+    await inspectRoom(studio, studioName, async dialog => {
+      assert.deepEqual(onlyFixtures(await roomEntities(dialog)), [shelf,accent,paired]);
+    });
+    await inspectRoom(nursery, 'Nursery', async dialog => {
+      await dialog.locator('.device[data-entity="switch.fixture_auto_nursery"]').waitFor();
+    });
+    await enter();
+    await openRooms();
+    await action(roomList, 'Show room', 'Pantry').tap();
+    await close(roomManager);
+    await openDevices();
+    await action(deviceList, 'Show device', 'Desk lamp').tap();
+    await save(deviceManager);
+
+    await pantry.waitFor();
+    await inspectRoom(pantry, 'Pantry', async dialog => {
+      await dialog.locator('.device[data-entity="switch.fixture_auto_pantry"]').waitFor();
+    });
+    assert.equal((await config()).room_selection, 'auto');
+    assert.equal((await config()).hidden_room_ids?.length ?? 0, 0);
+    assert.equal((await config()).room_overrides.studio.hidden_entities?.length ?? 0, 0);
+    await studio.locator('.quick-button[data-entity="' + lamp + '"]').waitFor();
+    await inspectRoom(studio, studioName, async dialog => {
+      const lights = onlyFixtures(await roomEntities(dialog));
+      assert.ok(lights.includes(lamp));
+      assert.deepEqual(lights.filter(id => id !== lamp), [shelf,accent,paired]);
+    });
+
+    // Registry-first pairing must hydrate the new room's controls when its first state arrives.
+    const late = 'light.fixture_auto_live';
+    const liveRoom = page.locator('.room[data-room=live_room]');
+    await page.evaluate(entity => {
+      const hass = document.querySelector('bayit-dashboard')._hass;
+      return window.bayitTest.reviseStrategy({
+        areas:{ ...hass.areas, live_room:{ area_id:'live_room', name:'Live room' } },
+        devices:{ ...hass.devices, live_switch:{ area_id:'live_room' } },
+        entities:{ ...hass.entities, [entity]:{ device_id:'live_switch' } },
+      });
+    }, late);
+    await liveRoom.waitFor();
+    assert.equal(await liveRoom.locator('.quick-button').count(), 0);
+    const updateLiveState = state => page.evaluate(([entity, state]) => {
+      const hass = document.querySelector('bayit-dashboard')._hass;
+      return window.bayitTest.reviseStrategy({ states:{
+        ...hass.states, [entity]:{ state, attributes:{ friendly_name:'Live room lamp', supported_color_modes:['onoff'] } },
+      } });
+    }, [late, state]);
+    assert.equal(await updateLiveState('off'), true);
+    await liveRoom.locator('.quick-button[data-entity="' + late + '"]').waitFor();
+    assert.equal(await updateLiveState('on'), false, 'An ordinary state update must not recreate the dashboard');
+    assert.deepEqual(await calls(), []);
+
+    // A curated installation may use the same inline tools without changing its selection mode.
+    const autoSettings = await config();
+    const missing = 'light.fixture_group_missing';
+    const sections = [
+      { id:'reading', kind:'lights', title:'Reading lights', columns:2, entities:[accent,missing,shelf,lamp] },
+      { id:'paired', kind:'lights', title:'Paired fixture', entities:[paired] },
+    ];
+    const authored = { ...autoSettings.room_overrides.studio, entity_order:undefined, sections,
+      entities:[accent,shelf,lamp,paired,'switch.demo_heater',missing] };
+    await page.evaluate(strategy => sessionStorage.setItem('bayit9-browser-fixture', JSON.stringify({ strategy })),
+      { ...autoSettings, room_selection:'manual', area_ids:['lounge','studio'],
+        room_overrides:{ ...autoSettings.room_overrides, studio:authored } });
+    await page.reload();
+    await lounge.waitFor();
+    assert.deepEqual(await roomOrder(), ['lounge','studio']);
+    await enter();
+    await openRooms();
+    assert.equal(await roomList.getByLabel('Room order', { exact:true }).count(), 0);
+    await action(roomList, 'Move up', studioName).tap();
+    await action(roomList, 'Hide room', 'Lounge').tap();
+    await close(roomManager);
+    await openDevices();
+    await action(deviceList, 'Move up', 'Shelf lamp').tap();
+    await save(deviceManager);
+    assert.deepEqual(await roomOrder(), ['studio']);
+    const curated = await config();
+    const reorderedSections = [{ ...sections[0], entities:[shelf,missing,accent,lamp] }, sections[1]];
+    assert.deepEqual(curated.room_overrides.studio.sections, reorderedSections);
+    assert.deepEqual(curated.room_overrides.studio.entities, authored.entities);
+    await inspectRoom(studio, studioName, async dialog => {
+      await dialog.getByText('Reading lights', { exact:true }).waitFor();
+      assert.deepEqual(onlyFixtures(await roomEntities(dialog)), [shelf,accent,lamp,paired]);
+    });
+    assert.equal(curated.room_selection, 'manual');
+    assert.deepEqual(curated.area_ids, ['studio','lounge']);
+    assert.deepEqual(curated.room_order, autoSettings.room_order);
+    assert.deepEqual(curated.profiles, original.profiles);
+    await enter();
+    await openRooms();
+    await action(roomList, 'Show room', 'Lounge').tap();
+    await roomList.getByLabel('Available rooms', { exact:true }).selectOption('spare');
+    await roomList.getByRole('button', { name:'Show room', exact:true }).tap();
+    await save(roomManager);
+    assert.deepEqual(await roomOrder(), ['studio','lounge','spare']);
+    assert.equal((await config()).room_selection, 'manual');
+    assert.deepEqual((await config()).area_ids, ['studio','lounge','spare']);
+    assert.deepEqual((await config()).room_overrides.studio.sections, reorderedSections);
+    assert.deepEqual(await calls(), []);
+  } finally {
+    await page.close();
+  }
+
+  const rtl = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+  try {
+    await rtl.goto(url.replace('locale=en', 'locale=he'));
+    await rtl.locator('.chrome-button[data-role=settings]').tap();
+    await rtl.getByRole('button', { name:'עריכת הדשבורד', exact:true }).tap();
+    const shell = rtl.locator('.shell[data-home-editing]');
+    await shell.waitFor();
+    assert.equal(await shell.getAttribute('dir'), 'rtl');
+    await shell.getByRole('button', { name:'ניהול חדרים', exact:true }).tap();
+    const rooms = rtl.getByRole('dialog', { name:'ניהול חדרים', exact:true });
+    await rooms.getByLabel('סדר החדרים', { exact:true }).waitFor();
+    assert.equal(await rooms.locator('.modal-body').evaluate(body => body.scrollWidth <= body.clientWidth), true);
+    await rooms.getByRole('button', { name:'סגירה', exact:true }).tap();
+    await rooms.waitFor({ state:'hidden' });
+    await shell.locator('.room[data-room=studio]').getByRole('button', { name:'ניהול מכשירים · Studio', exact:true }).tap();
+    const devices = rtl.getByRole('dialog', { name:'ניהול מכשירים · Studio', exact:true });
+    await devices.locator('[data-room-contents=studio]').waitFor();
+    assert.equal(await devices.locator('.modal-body').evaluate(body => body.scrollWidth <= body.clientWidth), true);
+    assert.deepEqual(await rtl.evaluate(() => window.bayitTest.calls.filter(call =>
+      call.type === 'lovelace/config/save' || call.type === 'call_service' || call.domain)), []);
+  } finally {
+    await rtl.close();
+  }
+}
+
+
+async function assertDirectHomeEditing(browser) {
+  const url = base + '/fixture-home/home?configuration&room-selection';
+  const page = await browser.newPage({ viewport:{ width:320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
+  page.setDefaultTimeout(8000);
+  try {
+    await page.addInitScript(() => {
+      const key = 'bayit9-browser-fixture';
+      if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy:{
+        type:'custom:bayit-9', show_unassigned:false,
+        room_overrides:{ studio:{ turn_off_entities:['light.demo_lamp'] } },
+      } }));
+    });
+    await page.goto(url);
+    const settings = page.locator('.chrome-button[data-role=settings]');
+    const editEntry = page.getByRole('button', { name:'Edit dashboard', exact:true });
+    const mode = page.locator('.shell[data-home-editing]');
+    const bar = mode.locator('.home-edit-bar');
+    const studio = page.locator('.room[data-room=studio]');
+    const loungeLamp = 'light.demo_lounge';
+    const lamp = studio.locator('.quick-button[data-entity="light.demo_lamp"]');
+    const power = studio.locator('.room-turn-off');
+    const title = studio.locator('.room-title');
+    const setup = page.getByRole('dialog', { name:'Customize home', exact:true });
+    const roomName = setup.getByLabel('Room display name', { exact:true });
+    const roomPicker = setup.getByLabel('Room to customize', { exact:true });
+    const deviceSearch = setup.getByLabel('Find a device to add', { exact:true });
+    const save = setup.getByRole('button', { name:'Save dashboard', exact:true });
+    const close = setup.getByRole('button', { name:'Close', exact:true });
+    const stored = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+    const writes = () => page.evaluate(() => window.bayitTest.calls.filter(call =>
+      call.type === 'lovelace/config/save' || call.type === 'call_service' || call.domain));
+    const enter = async () => {
+      await settings.tap();
+      await editEntry.tap();
+      await bar.waitFor();
+      assert.equal(await page.locator('.modal[open]').count(),0);
+    };
+    const finishSave = async () => {
+      await page.evaluate(() => window.bayitTest.holdNextSetupSave());
+      await save.tap();
+      await page.waitForFunction(() => window.bayitTest.calls.some(call => call.type === 'lovelace/config/save'));
+      assert.deepEqual((await writes()).map(call => call.type),['lovelace/config/save']);
+      await Promise.all([page.waitForEvent('load'), page.evaluate(() => window.bayitTest.finishHeldSetupSave())]);
+      await setup.waitFor({ state:'hidden' });
+      assert.equal(await mode.count(),0);
+    };
+    const assertFocus = async field => {
+      assert.equal(await field.evaluate(node => node.getRootNode().activeElement === node),true);
+    };
+
+    await lamp.waitFor();
+    await page.evaluate(() => window.bayitTest.setRoomState('light.demo_lamp','on'));
+    await studio.locator('.room-turn-off[aria-disabled=false]').waitFor();
+    const runtime = await Promise.all([lamp.elementHandle(), power.elementHandle(), title.elementHandle()]);
+    await enter();
+    await mode.locator('.room-edit-actions').first().waitFor();
+    const runtimeInert = await page.evaluate(nodes => nodes.every(node => !node.isConnected || node.disabled ||
+      node.getAttribute('aria-disabled') === 'true' || node.closest('[inert]')),runtime);
+    assert.equal(runtimeInert,true);
+    await page.evaluate(nodes => nodes.forEach(node => node.click()),runtime);
+    assert.deepEqual(await writes(),[]);
+    assert.equal(await page.locator('.modal[open]').count(),0);
+    assert.equal(new URL(page.url()).hash,'');
+    for (const handle of runtime) await handle.dispose();
+
+    await studio.getByRole('button', { name:'Edit room · Studio', exact:true }).tap();
+    await roomName.waitFor();
+    await assertFocus(roomName);
+    assert.equal(await roomPicker.inputValue(),'studio');
+    await roomName.fill('Reading studio');
+    await roomName.press('Enter');
+    assert.equal(await save.isEnabled(),true);
+    assert.equal((await stored()).room_overrides.studio.name,undefined);
+    await close.tap();
+    await setup.waitFor({ state:'hidden' });
+    await bar.waitFor();
+
+    await studio.getByRole('button', { name:'Add device · Studio', exact:true }).tap();
+    await deviceSearch.waitFor();
+    await assertFocus(deviceSearch);
+    assert.equal(await roomPicker.inputValue(),'studio');
+    assert.equal(await roomName.inputValue(),'Reading studio');
+    await deviceSearch.fill('Lounge lamp');
+    await setup.getByLabel('Available devices',{ exact:true }).selectOption(loungeLamp);
+    await setup.getByRole('button',{ name:'Also show in this room', exact:true }).tap();
+    assert.equal((await stored()).room_overrides.studio.additional_entities,undefined);
+    await close.tap();
+    await setup.waitFor({ state:'hidden' });
+    await studio.getByRole('button',{ name:'Shortcuts · Studio', exact:true }).tap();
+    const automaticShortcuts = setup.getByRole('checkbox',{ name:'Choose shortcuts automatically', exact:true });
+    await automaticShortcuts.waitFor();
+    await assertFocus(automaticShortcuts);
+    assert.equal(await setup.getByLabel('Room',{ exact:true }).inputValue(),'studio');
+    await automaticShortcuts.uncheck();
+    await setup.getByLabel('Shortcut 1',{ exact:true }).selectOption(loungeLamp);
+    assert.equal((await stored()).room_shortcuts,undefined);
+    assert.deepEqual(await writes(),[]);
+    await finishSave();
+    await studio.getByRole('button',{ name:'Reading studio', exact:true }).waitFor();
+    const override = (await stored()).room_overrides.studio;
+    assert.equal(override.name,'Reading studio');
+    assert.deepEqual(override.additional_entities,[loungeLamp]);
+    assert.equal((await stored()).room_shortcuts.studio[0],loungeLamp);
+    await studio.locator('.quick-button[data-entity="' + loungeLamp + '"]').waitFor();
+
+    await enter();
+    await bar.getByRole('button',{ name:'Add room', exact:true }).tap();
+    const newRoom = setup.getByLabel('New room name',{ exact:true });
+    await newRoom.waitFor();
+    await assertFocus(newRoom);
+    await newRoom.fill('Garden studio');
+    await setup.getByRole('button',{ name:'Create room', exact:true }).tap();
+    const id = await roomPicker.inputValue();
+    assert.match(id,/^bayit_room_[a-f0-9]{24}$/);
+    assert.equal((await stored()).room_overrides[id],undefined);
+    assert.deepEqual(await writes(),[]);
+    await finishSave();
+    await page.locator('.room[data-room="' + id + '"]').getByRole('button',{ name:'Garden studio', exact:true }).waitFor();
+    assert.equal((await stored()).room_overrides[id].name,'Garden studio');
+
+    await enter();
+    await bar.getByRole('button',{ name:'Dashboard settings', exact:true }).tap();
+    await setup.getByLabel('Dashboard title',{ exact:true }).waitFor();
+    await close.tap();
+    await setup.waitFor({ state:'hidden' });
+    const editReadingStudio = studio.getByRole('button',{ name:'Edit room · Reading studio', exact:true });
+    const done = bar.getByRole('button',{ name:'Done', exact:true });
+    const unsaved = bar.getByText(/(?:^| · )Unsaved changes$/);
+    const review = page.getByRole('dialog',{ name:'Finish editing', exact:true });
+    await editReadingStudio.tap();
+    await roomName.fill('Discarded studio draft');
+    await roomName.press('Enter');
+    await close.tap();
+    await setup.waitFor({ state:'hidden' });
+    await unsaved.waitFor();
+    await done.tap();
+    await review.getByRole('button',{ name:'Save dashboard', exact:true }).waitFor();
+    assert.equal(await review.locator('bayit-9-strategy-editor').count(),0);
+    assert.deepEqual(await writes(),[]);
+    await review.getByRole('button',{ name:'Close', exact:true }).tap();
+    await review.waitFor({ state:'hidden' });
+    await unsaved.waitFor();
+    await editReadingStudio.tap();
+    assert.equal(await roomName.inputValue(),'Discarded studio draft');
+    await close.tap();
+    await setup.waitFor({ state:'hidden' });
+    await done.tap();
+    await review.getByRole('button',{ name:'Discard draft', exact:true }).tap();
+    await review.waitFor({ state:'hidden' });
+    await mode.waitFor({ state:'detached' });
+    assert.equal((await stored()).room_overrides.studio.name,'Reading studio');
+    assert.deepEqual(await writes(),[]);
+
+    await enter();
+    await editReadingStudio.tap();
+    assert.equal(await roomName.inputValue(),'Reading studio');
+    await close.tap();
+    await setup.waitFor({ state:'hidden' });
+    await done.tap();
+    await mode.waitFor({ state:'detached' });
+    await enter();
+    await page.keyboard.press('Escape');
+    await mode.waitFor({ state:'detached' });
+    assert.deepEqual(await writes(),[]);
+  } finally { await page.close(); }
+
+  const member = await browser.newPage({ viewport:{ width:391,height:844 }, hasTouch:true, reducedMotion:'reduce' });
+  try {
+    await member.goto(url + '&member');
+    await member.locator('.chrome-button[data-role=settings]').tap();
+    await member.getByRole('dialog',{ name:'Appearance', exact:true }).waitFor();
+    assert.equal(await member.getByRole('button',{ name:'Edit dashboard', exact:true }).count(),0);
+    await member.locator('bayit-dashboard').evaluate(card => card.setHomeEditing(true));
+    assert.equal(await member.locator('.shell[data-home-editing]').count(),0);
+    assert.deepEqual(await member.evaluate(() => window.bayitTest.calls.filter(call =>
+      ['lovelace/config','lovelace/config/save','call_service'].includes(call.type) || call.domain)),[]);
+  } finally { await member.close(); }
+}
+
 async function assertCompactSettings(browser) {
   const page = await browser.newPage({ viewport: { width:391, height:845 }, isMobile:true, hasTouch:true, reducedMotion:'reduce' });
   page.setDefaultTimeout(8000);
@@ -3654,7 +4512,11 @@ async function assertCompactSettings(browser) {
         };
       });
       const preview = settings.querySelector('.wallpaper-current-preview');
-      return { height:rect(element).height, blocks:[...settings.children].map(child => child.className),
+      const edit = settings.querySelector('.home-edit-entry');
+      const finder = element.querySelector('.modal-heading-actions .finder-entry');
+      return { height:rect(element).height, editHeight:rect(edit).height, gap:parseFloat(getComputedStyle(settings).rowGap),
+        finder: { height:rect(finder).height, label:finder.getAttribute('aria-label') },
+        blocks:[...settings.children].filter(child => child !== edit).map(child => child.className),
         rows:disclosures.map(detail => [detail.open, rect(detail.querySelector('summary')).height]),
         systemPositions:systems.map(button => rect(button).y), shortcutCount:shortcuts.length,
         actions:rows, menuCaptionHeight:rect(systems[0].querySelector('span')).height,
@@ -3675,7 +4537,10 @@ async function assertCompactSettings(browser) {
       assert.ok(first.x < second.x);
     }
     assert.equal(geometry.hasOverflow, false);
-    assert.ok(geometry.height <= 442, JSON.stringify(geometry));
+    assert.ok(geometry.editHeight >= 44);
+    assert.ok(geometry.finder.height >= 44);
+    assert.equal(geometry.finder.label, 'חיפוש חדרים ומכשירים');
+    assert.ok(geometry.height - geometry.editHeight - geometry.gap <= 442, JSON.stringify(geometry));
     assert.equal(await dialog.locator('[data-preference]:visible').count(), 0);
     assert.equal(await dialog.locator('[data-wallpaper-choice]').count(), 0);
     await headings.nth(1).press('Enter');
@@ -3683,8 +4548,15 @@ async function assertCompactSettings(browser) {
     await headings.nth(1).press('Space');
     assert.equal(await dialog.locator('[data-preference]:visible').count(), 0);
     await dialog.getByRole('button', { name:'כניסה', exact:true }).tap();
-    await page.getByRole('dialog', { name:'כניסה', exact:true }).waitFor();
+    const entrance = page.getByRole('dialog', { name:'כניסה', exact:true });
+    await entrance.waitFor();
     assert.equal(new URL(page.url()).hash, '#panel/devices');
+    assert.equal(await entrance.evaluate(node => node.hasAttribute('data-pointer-open')), true);
+    await entrance.locator('[data-role=close]').press('Enter');
+    await open.press('Enter');
+    await dialog.getByRole('button', { name:'כניסה', exact:true }).press('Enter');
+    await entrance.waitFor();
+    assert.equal(await entrance.evaluate(node => node.hasAttribute('data-pointer-open')), false);
     assert.deepEqual(await page.evaluate(() => window.bayitTest.calls), []);
 
     for (const locale of ['en', 'he']) {
@@ -3701,13 +4573,13 @@ async function assertCompactSettings(browser) {
         const rows = [...group.children].map(button => button.getBoundingClientRect());
         return {
           fits:rows.every(row => row.left >= area.left && row.right <= area.right && row.height >= 44),
-          readable:caption.getBoundingClientRect().height <= 23,
-          nextRow:rows[0].y < rows[1].y,
+          readable:caption.getBoundingClientRect().height <= 38 && caption.scrollWidth <= caption.clientWidth + 1,
+          sameRow:Math.abs(rows[0].y - rows[1].y) < 1 && rows[0].right <= rows[1].left,
           direction:getComputedStyle(caption).direction,
           keyboardOrder:menu.nextElementSibling === setup,
         };
       });
-      assert.deepEqual(layout, { fits:true, readable:true, nextRow:true, direction:locale === 'he' ? 'rtl' : 'ltr', keyboardOrder:true });
+      assert.deepEqual(layout, { fits:true, readable:true, sameRow:true, direction:locale === 'he' ? 'rtl' : 'ltr', keyboardOrder:true });
 
       await page.emulateMedia({ contrast:'more' });
       const hasContrast = await page.evaluate(() => matchMedia('(prefers-contrast: more)').matches);
@@ -4889,10 +5761,12 @@ async function assertHeatingProfileBindingsStayExplicit(browser) {
   const labels = [
     { locale:'en', appearance:'Appearance', setup:'Customize home', profiles:'Boiler and heater controls',
       edit:'Edit', name:'Display name', target:'Device linked to Simple Timer', cutoff:'Automatic heater cutoff',
+      runningStop:'Show Stop beside the duration slider while the timer runs',
       next:'Next-start level helper', saveProfile:'Save profile', saveDashboard:'Save dashboard',
       mismatch:'Simple Timer reports', error:'Choose a Simple Timer sensor linked' },
     { locale:'he', appearance:'מראה', setup:'התאמת הבית', profiles:'שליטה בדוד ובתנורים',
       edit:'עריכה', name:'שם לתצוגה', target:'המכשיר שמקושר ל־Simple Timer', cutoff:'כיבוי אוטומטי של התנור',
+      runningStop:'הצגת כפתור עצירה ליד מחוון הזמן כשהטיימר פועל',
       next:'עזר לעוצמה בהפעלה הבאה', saveProfile:'שמירת בקר', saveDashboard:'שמירת הדשבורד',
       mismatch:'Simple Timer מדווח על', error:'בחרו חיישן Simple Timer שמקושר' },
   ];
@@ -4909,7 +5783,9 @@ async function assertHeatingProfileBindingsStayExplicit(browser) {
       home_heater_cutoff_automation:'automation.demo_step_cutoff', heater_popup_quick_power:true,
       timed:{ ...timing, simple_timer_entity:runtime, simple_timer_target:beforeRelay } },
   ];
-  const renamed = initial.map(profile => ({ ...profile, name:profile.name + ' renamed' }));
+  const renamed = initial.map(profile => ({ ...profile, name:profile.name + ' renamed',
+    ...(profile.kind === 'climate' && { timed:{ ...profile.timed, running_slider_stop:true } }),
+  }));
   for (const [index, words] of labels.entries()) {
     const page = await browser.newPage({ viewport:{ width:index ? 391 : 320, height:844 }, hasTouch:true, reducedMotion:'reduce' });
     page.setDefaultTimeout(8000);
@@ -4954,6 +5830,7 @@ async function assertHeatingProfileBindingsStayExplicit(browser) {
         assert.equal(await target.inputValue(), profile.timed.simple_timer_target);
         await setup.getByRole('status').filter({ hasText:words.mismatch }).waitFor();
         await field(words.name).fill(renamed[position].name);
+        if (profile.kind === 'climate') await field(words.runningStop).check();
         await button(words.saveProfile).press('Enter');
       }
       assert.deepEqual(await readProfiles(), initial);
@@ -4961,6 +5838,9 @@ async function assertHeatingProfileBindingsStayExplicit(browser) {
       assert.deepEqual(await canStartTimers(), [false, false]);
 
       await open();
+      await edit(renamed[0]);
+      assert.ok(await field(words.runningStop).isChecked());
+      await button(words.saveProfile).press('Enter');
       await edit(renamed[1]);
       assert.equal(await field(words.cutoff).inputValue(), initial[1].home_heater_cutoff_automation);
       assert.equal(await field(words.next).inputValue(), initial[1].level_preselect_entity);
@@ -5259,6 +6139,75 @@ async function assertStandaloneTimedHeater(browser) {
     } finally {
       await page.close();
     }
+  }
+}
+
+async function assertRunningTimerRail(browser, fixture) {
+  for (const locale of ['en', 'he']) {
+    const page = await browser.newPage({ viewport:{width:320,height:845}, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const url = base + '/fixture-home/home?' + fixture.flags + '&locale=' + locale;
+    const route = '#device/studio/' + fixture.entity;
+    const timer = page.getByRole('dialog', { name:fixture.name, exact:true }).locator('.device-timer');
+    const row = timer.locator('.timer-tools');
+    const slider = row.locator('input[type=range]');
+    const play = row.locator('.timer-command[data-action=start_timed]');
+    const stop = row.locator('.timer-command[data-action=stop_timed]');
+    const extend = timer.locator('.timer-preset[data-action=extend_timed]');
+    const calls = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.domain === 'simple_timer'));
+    const service = (name, data) => ({ type:'call_service',domain:'simple_timer',service:name,
+      service_data:{ entity_id:fixture.runtime, ...data } });
+    const startAction = service('start_timer', { duration:30, unit:'min', reverse_mode:false });
+    const extendAction = service('add_timer', { duration:fixture.presets[0], unit:'min' });
+    try {
+      await page.goto(url + route);
+      await slider.fill('0');
+      assert.equal(await play.isDisabled(),true);
+      await slider.fill('30');
+      const idle = await row.locator('.timer-command').all();
+      assert.equal(idle.length,1);
+      assert.equal(await idle[0].locator('ha-icon').getAttribute('icon'),'mdi:play');
+      const position = await play.boundingBox();
+      await play.tap();
+      await stop.waitFor();
+      assert.deepEqual(await calls(),[startAction]);
+      assert.equal(await row.locator('.timer-command').count(),1);
+      assert.equal(await stop.locator('ha-icon').getAttribute('icon'),'mdi:stop');
+      assert.ok(Math.abs((await stop.boundingBox()).x - position.x) <= 1);
+      assert.equal(await slider.getAttribute('aria-label'),locale === 'he' ? 'משך ההפעלה הבאה' : 'Next timer duration');
+      assert.deepEqual(await slider.evaluate(node => [node.min,node.max,node.step,node.value]),
+        ['0',String(fixture.presets.at(-1)),'1','30']);
+      await slider.fill('0');
+      assert.equal(await stop.isEnabled(),true);
+      await slider.fill('12');
+      assert.deepEqual(await calls(),[startAction]);
+      assert.deepEqual((await extend.allTextContents()).map(text => text.split(' ')[0]),fixture.presets.map(value => '+' + value));
+      await extend.first().tap();
+      assert.deepEqual(await calls(),[startAction,extendAction]);
+      await row.locator('button[data-action=stop_timed]:disabled').waitFor();
+      assert.equal(await slider.isDisabled(),true);
+      await stop.dispatchEvent('click');
+      assert.deepEqual(await calls(),[startAction,extendAction]);
+      await page.evaluate(() => window.bayitTest.finishRailExtension());
+      await row.locator('button[data-action=stop_timed]:enabled').waitFor();
+      await stop.evaluate((button, runtime) => {
+        window.bayitTest.setFixtureAttributes(runtime, { switch_entity_id:'switch.demo_foreign' });
+        button.click();
+      }, fixture.runtime);
+      await stop.waitFor({state:'detached'});
+      assert.deepEqual(await calls(),[startAction,extendAction]);
+      await page.evaluate(({ runtime, owner }) => window.bayitTest.setFixtureAttributes(runtime, { switch_entity_id:owner }), fixture);
+      await stop.tap();
+      await play.waitFor();
+      assert.equal(await slider.inputValue(),'12');
+      assert.deepEqual(await calls(),[startAction,extendAction,service('cancel_timer', { turn_off_entity:true })]);
+
+      await page.goto(url + '&legacy-running-rail' + route);
+      await play.tap();
+      await stop.waitFor();
+      assert.equal(await row.locator('.timer-command').count(),2);
+      assert.equal(await row.locator('button[data-action=extend_timed] ha-icon').getAttribute('icon'),'mdi:plus');
+    } finally { await page.close(); }
   }
 }
 
@@ -5816,11 +6765,46 @@ async function assertToolbarLockPalette(browser) {
         }
       }
     }
+    const calls = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.domain));
+    const confirm = page.getByRole('dialog', { name:'Confirm action', exact:true });
+    const accept = confirm.getByRole('button', { name:'Confirm', exact:true });
+    for (const [state, caption, busy] of [
+      ['locking', 'Locking', true], ['unlocking', 'Unlocking', true],
+      ['jammed', 'Jammed', false], ['unavailable', 'Unavailable', false],
+    ]) {
+      await setState(state);
+      assert.equal(await action.locator('.tile-state').textContent(), caption);
+      assert.equal(await action.getAttribute('aria-busy'), String(busy));
+      assert.ok(await action.isDisabled());
+    }
+
+    await setState('locked');
+    await action.focus();
+    await page.keyboard.down('Space');
+    await setState('unlocked');
+    await page.keyboard.up('Space');
+    assert.equal(await confirm.isVisible(), false, 'Repainting the lock must not reverse the armed action');
+
+    await action.tap();
+    await confirm.getByRole('button', { name:'Cancel', exact:true }).tap();
+    await action.tap();
+    await accept.waitFor();
+    await setState('jammed');
+    await accept.tap();
+    assert.deepEqual(await calls(), []);
+
     await setState('unlocked');
     await action.tap();
-    const confirm = page.getByRole('dialog', { name:'Confirm action', exact:true });
-    await confirm.getByRole('button', { name:'Cancel', exact:true }).tap();
-    assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)), []);
+    await accept.tap();
+    assert.deepEqual(await calls(), [{ type:'call_service', domain:'lock', service:'lock', service_data:{},
+      target:{entity_id:'lock.fixture_entry'} }]);
+
+    await setState('locked');
+    await page.evaluate(() => window.bayitTest.setFixtureAttributes('lock.fixture_entry', { code_format:'^[0-9]+$' }));
+    await action.tap();
+    await accept.tap();
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.moreInfoCalls), ['lock.fixture_entry']);
+    assert.equal((await calls()).length,1);
   } finally {
     await page.close();
   }
@@ -6090,8 +7074,8 @@ async function assertWeatherSurvivesRegistryReplay(browser) {
       return { hadDevice, hidden, retainsDevice, stateOnly, registryAfterState, legacy, saved, title:card().config.title,
         serviceCalls:window.bayitTest.calls.filter(call => call.type === 'call_service').length };
     });
-    assert.deepEqual(changed, { hadDevice:true, hidden:true, retainsDevice:false, stateOnly:false,
-      registryAfterState:true, legacy:true, saved:true, title:'Revised dashboard', serviceCalls:0 });
+    assert.deepEqual(changed, { hadDevice:true, hidden:true, retainsDevice:false, stateOnly:true,
+      registryAfterState:false, legacy:true, saved:true, title:'Revised dashboard', serviceCalls:0 });
   } finally {
     await page.close();
   }
@@ -6197,6 +7181,93 @@ async function assertToolbarPressAcrossReplacement(browser) {
     }
   } finally {
     await page.close();
+  }
+}
+
+async function assertSharedCompactLockFeedback(browser) {
+  const entity = 'lock.demo_compact_entry';
+  const panels = [
+    { id:'front-entry', kind:'devices', label:'Entry' },
+    { id:'home-overview', kind:'overview', label:'Overview' },
+    { id:'compact-security', kind:'security', label:'Security' },
+  ];
+  const toolbar = panels.map(panel => ({ ...panel, sections:[{
+    kind:panel.kind === 'security' ? 'locks' : 'status', layout:'compact', entities:[{ entity, role:'lock' }],
+  }] }));
+  for (const locale of ['en','he']) {
+    const he = locale === 'he';
+    const words = he ? { lock:'נעילה', unlock:'פתיחת מנעול', locking:'ננעל', unlocking:'משתחרר',
+      jammed:'תקוע', unavailable:'לא זמין', confirm:'אישור' } :
+      { lock:'Lock', unlock:'Unlock', locking:'Locking', unlocking:'Unlocking', jammed:'Jammed',
+        unavailable:'Unavailable', confirm:'Confirm' };
+    const page = await browser.newPage({ viewport:{width:320,height:756}, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(5000);
+    await page.addInitScript(toolbar => {
+      sessionStorage.setItem('bayit9-browser-fixture', JSON.stringify({strategy:{type:'custom:bayit-9',toolbar}}));
+    }, toolbar);
+    const url = base + '/fixture-home/home?configuration&toolbar-panels&compact-entrance-status&await-lock-state&locale=' + locale;
+    const confirmation = page.locator('dialog.confirm[open]');
+    const confirm = confirmation.getByRole('button', { name:words.confirm, exact:true });
+    const state = value => page.evaluate(({entity,value}) => window.bayitTest.setRoomState(entity,value), {entity,value});
+    const calls = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service'));
+    try {
+      for (const { id, label } of panels) {
+        await page.goto(url + '&fixture-panel=' + id + '#panel/' + id);
+        const panel = page.getByRole('dialog', { name:label, exact:true });
+        await panel.waitFor();
+        const action = panel.locator('.compact-lock-action');
+        const presented = word => panel.getByRole('button', { name:words[word] + ' · Front lock', exact:true }).and(action);
+        for (const reported of ['locking','unlocking','jammed','unavailable']) {
+          await state(reported);
+          const disabled = presented(reported).and(action.locator(':scope:disabled'));
+          await disabled.waitFor({timeout:3000});
+          const moving = reported === 'locking' || reported === 'unlocking';
+          assert.equal(await disabled.getAttribute('aria-busy'), String(moving));
+          assert.equal(await disabled.getAttribute('data-lock-transition'), moving ? '' : null);
+          if (moving) assert.equal(await disabled.locator('ha-icon').getAttribute('icon'), 'mdi:lock-clock');
+          await disabled.evaluate(button => button.click());
+        }
+        await state('locked');
+        const opening = presented('unlock');
+        await opening.evaluate((button, entity) => {
+          window.bayitTest.setRoomState(entity, 'unlocked');
+          button.click();
+          window.bayitTest.setRoomState(entity, 'locked');
+        }, entity);
+        assert.equal(await confirmation.count(), 0);
+        assert.deepEqual(await calls(), []);
+
+        await opening.tap();
+        await confirm.waitFor();
+        await state('jammed');
+        await confirm.tap();
+        await confirmation.waitFor({state:'hidden'});
+        assert.deepEqual(await calls(), []);
+        await state('locked');
+        await opening.tap();
+        await confirm.tap();
+        await confirmation.waitFor({state:'hidden'});
+        assert.deepEqual(await calls(), [{ type:'call_service', domain:'lock', service:'unlock',
+          service_data:{}, target:{entity_id:entity} }]);
+        assert.equal(await opening.getAttribute('aria-busy'), 'true');
+        assert.equal(await opening.getAttribute('data-lock-transition'), null);
+        assert.equal(await opening.locator('ha-icon').getAttribute('icon'), 'mdi:lock-open-variant-outline');
+        await state('unlocking');
+        await presented('unlocking').locator('ha-icon[icon="mdi:lock-clock"]').waitFor();
+        await state('unlocked');
+        await presented('lock').and(action.locator(':scope:enabled')).waitFor();
+        assert.equal(await action.getAttribute('aria-busy'), 'false');
+
+        await page.evaluate(entity => window.bayitTest.setFixtureAttributes(entity,{code_format:'^[0-9]+$'}), entity);
+        await state('locked');
+        await opening.tap();
+        await confirm.tap();
+        await page.waitForFunction(entity => window.bayitTest.moreInfoCalls.includes(entity), entity);
+        assert.equal((await calls()).length, 1);
+      }
+    } finally {
+      await page.close();
+    }
   }
 }
 
@@ -8317,11 +9388,25 @@ async function assertUtilityAndSensorGrid(browser) {
     try {
       await page.goto(url + '&energy-reading-cards&energy-native-width&native-more-info=modern');
       await page.getByRole('button', { name:energy, exact:true }).tap();
-      const water = page.getByRole('dialog',{name:energy,exact:true}).locator('[data-section=water]');
-      const forecast = water.locator('hui-sensor-card');
+      const energyDialog = page.getByRole('dialog',{name:energy,exact:true});
+      const energyCards = energyDialog.locator('hui-sensor-card');
+      const forecastName = he ? 'תחזית חודשית' : 'Monthly water forecast';
+      const forecast = energyCards.filter({hasText:forecastName});
       await forecast.waitFor();
+      await energyCards.nth(3).waitFor();
       for (const width of [320,391]) {
         await page.setViewportSize({width,height:844});
+        const faces = await energyCards.evaluateAll(cards => cards.map(card => {
+          const root = card.shadowRoot;
+          const name = root.querySelector('.name');
+          const icon = root.querySelector('.icon');
+          const labelLeft = name.getBoundingClientRect().right <= icon.getBoundingClientRect().left;
+          const { direction } = getComputedStyle(card);
+          return { labelLeft, direction, semanticLtr:card.matches(':dir(ltr)'),
+            sectionDirection:getComputedStyle(card.closest('.toolbar-section')).direction };
+        }));
+        assert.deepEqual(faces,Array.from({length:4}, () => ({labelLeft:true,direction:'ltr',semanticLtr:true,
+          sectionDirection:he ? 'rtl' : 'ltr'})));
         const fit = await forecast.evaluate(card => {
           const native = card.getBoundingClientRect();
           const wrapper = card.closest('.energy-reading').getBoundingClientRect();
@@ -8329,18 +9414,24 @@ async function assertUtilityAndSensorGrid(browser) {
           const label = card.shadowRoot.querySelector('.name');
           return { sameCell: Math.abs(native.left-wrapper.left) < 1 && Math.abs(native.right-wrapper.right) < 1,
             inGutter: native.left < prior.right, name:label.textContent, fullName:label.title,
-            reading:card.dataset.readingState, direction:getComputedStyle(card).direction };
+            reading:card.dataset.readingState };
         });
         assert.ok(fit.sameCell && !fit.inGutter, JSON.stringify({locale,width,fit}));
-        assert.equal(fit.name, he ? 'תחזית חודשית' : 'Monthly water forecast');
+        assert.equal(fit.name, forecastName);
         assert.equal(fit.fullName, fit.name);
         assert.equal(fit.reading, '48');
-        assert.equal(fit.direction, locale === 'he' ? 'rtl' : 'ltr');
       }
+      const panelHash = new URL(page.url()).hash;
       await forecast.tap();
       const native = page.getByRole('dialog',{name:'Native entity details',exact:true});
       await native.waitFor();
       assert.equal(new URL(page.url()).searchParams.get('more-info-entity-id'), 'sensor.demo_last_water');
+      assert.equal(new URL(page.url()).hash,panelHash);
+      await native.getByRole('button',{name:'Close native details',exact:true}).tap();
+      await energyCards.nth(0).tap();
+      await native.waitFor();
+      assert.equal(new URL(page.url()).searchParams.get('more-info-entity-id'), 'sensor.demo_meter');
+      assert.equal(new URL(page.url()).hash,panelHash);
       assert.deepEqual(await page.evaluate(()=>window.bayitTest.calls),[]);
 
       const dialog = page.getByRole('dialog',{name:sensors,exact:true});
@@ -8438,7 +9529,7 @@ async function assertEnergyReadingCards(browser) {
           };
         });
         assert.deepEqual(order, {
-          chartOnLeft: true, directions: Array(2).fill(locale === 'he' ? 'rtl' : 'ltr'),
+          chartOnLeft: true, directions: ['ltr','ltr'],
         });
       }
       assert.ok(await electricity.evaluate(section => {
@@ -8484,8 +9575,8 @@ async function assertEnergyReadingCards(browser) {
       assert.deepEqual(await legacyCharts.evaluateAll(nodes => nodes.map(node => {
         const style = getComputedStyle(node);
         return [style.borderTopWidth, style.borderTopLeftRadius, style.getPropertyValue('--accent-color').trim(),
-          style.getPropertyValue('--state-icon-color').trim()];
-      })), Array.from({length:2}, () => ['0px', '20px', '#f69c13', '#276fb4']));
+          style.getPropertyValue('--state-icon-color').trim(), style.direction];
+      })), Array.from({length:2}, () => ['0px', '20px', '#f69c13', '#276fb4', locale === 'he' ? 'rtl' : 'ltr']));
 
       await page.goto(url + '&energy-reading-cards&editor');
       await page.getByText(locale === 'he' ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens', { exact: true }).tap();
@@ -9178,6 +10269,13 @@ async function assertStandaloneTimedClimate(browser) {
     const range = panel.locator('.timer-range');
     const summary = panel.locator('.climate-extra-controls > summary');
     const swing = panel.getByRole('combobox', { name: he ? 'נדנוד אופקי' : 'Horizontal swing', exact: true });
+    const modes = panel.locator('select[data-action=set_hvac_mode]');
+    const advertisedModes = ['auto', 'cool', 'dry', 'fan_only', 'heat', 'off', 'heat_cool'];
+    const setAdvertisedModes = async () => {
+      await page.evaluate(hvac_modes => window.bayitTest.setFixtureAttributes('climate.demo_air', { hvac_modes }), advertisedModes);
+      await modes.locator('option[value=heat_cool]').waitFor({ state: 'attached' });
+    };
+    const modeValues = () => modes.locator('option[value]:not([value=""])').evaluateAll(options => options.map(option => option.value));
     const currentStatus = () => readings.textContent().then(text => text.replace(/[⁦-⁩]/g, ''));
     const calls = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service'));
     const style = (input, name) => input.evaluate((el, property) => getComputedStyle(el).getPropertyValue(property).trim(), name);
@@ -9205,6 +10303,11 @@ async function assertStandaloneTimedClimate(browser) {
       assert.equal(await panel.locator('.modal-heading-actions .climate-preset-shortcut').count(), 1);
       assert.equal(await summary.textContent(), he ? 'פקדי מזגן נוספים' : 'More climate controls');
       assert.equal(await swing.count(), 0);
+      await setAdvertisedModes();
+      assert.deepEqual(await modeValues(), ['off', 'auto', 'heat_cool', 'cool', 'heat', 'fan_only', 'dry']);
+      assert.equal(await modes.locator('option[value=heat_cool]').textContent(), he ? 'חימום / קירור' : 'Heat / cool');
+      assert.equal(await modes.inputValue(), 'off');
+      assert.deepEqual(await calls(), []);
       for (const width of [320, 391]) {
         await page.setViewportSize({ width, height: 844 });
         const geometry = await panel.evaluate(dialog => {
@@ -9223,7 +10326,7 @@ async function assertStandaloneTimedClimate(browser) {
               preset.right <= power.left + 1 && power.right <= close.left + 1,
             rows: new Set(positions).size,
             fits: [dialog.querySelector('.modal-body'), controls].every(el => el.scrollWidth <= el.clientWidth + 1),
-            sizes: [...dialog.querySelectorAll('.modal-heading button, .modal-heading-actions button, [data-role=close], .step-control,' +
+            sizes: [...dialog.querySelectorAll('.modal-heading button, .modal-heading-actions button, [data-role=close], .step-control, button.target-reading,' +
               '.climate-selector select, .timer-range, .timer-command, .timer-preset, .timer-history, .timer-usage, .climate-extra-controls > summary')]
               .filter(el => !el.hidden).map(el => [el.className, el.getBoundingClientRect().width, el.getBoundingClientRect().height]),
             height: dialog.getBoundingClientRect().height,
@@ -9296,14 +10399,41 @@ async function assertStandaloneTimedClimate(browser) {
       await page.goto(fixtureUrl + route);
       await panel.locator('.device-state-head').waitFor();
       assert.equal(await panel.getAttribute('data-standalone-climate'), null);
-      await page.goto(fixtureUrl + '&compact-climate-controls#room-studio');
+      await setAdvertisedModes();
+      assert.deepEqual(await modeValues(), advertisedModes);
       const room = page.getByRole('dialog', { name: 'Studio', exact: true });
+      const presetPicker = pane => pane.locator('select[data-action=set_preset_mode]');
+      await page.goto(fixtureUrl + '#room-studio');
+      await presetPicker(room).waitFor();
+
+      await page.goto(fixtureUrl + '&compact-climate-controls#room-studio');
       await room.locator('.room-climate-power').waitFor();
       assert.equal(await room.getAttribute('data-standalone-climate'), null);
       assert.equal(await room.locator('.compact-device-heading-info').count(), 0);
+      const roomPreset = room.locator('.climate-extra-controls > summary');
+      await roomPreset.waitFor();
+      assert.equal(await roomPreset.textContent(), he ? 'תוכנית' : 'Preset');
+      assert.ok((await roomPreset.boundingBox()).height >= 44);
+      assert.ok(!(await presetPicker(room).isVisible()));
+      await roomPreset.press('Enter');
+      assert.equal(await presetPicker(room).inputValue(), 'eco');
+      await page.evaluate(() => window.bayitTest.setFixtureAttributes('climate.demo_air',
+        { preset_modes: ['none', 'eco', 'boost', 'sleep'] }));
+      await presetPicker(room).locator('option[value=sleep]').waitFor({ state: 'attached' });
+      assert.equal(await roomPreset.evaluate(control => control.getRootNode().activeElement === control), true);
+      assert.equal(await presetPicker(room).inputValue(), 'eco');
+      assert.deepEqual(await calls(), []);
+      await presetPicker(room).selectOption('sleep');
+      await room.locator('button[data-action=set_preset_mode]').tap();
+      assert.deepEqual(await calls(), [{ type: 'call_service', domain: 'climate', service: 'set_preset_mode',
+        target: { entity_id: entity }, service_data: { preset_mode: 'sleep' } }]);
+      await page.evaluate(() => window.bayitTest.finishClimatePreset());
+      await room.locator('button[data-action=set_preset_mode]:enabled').waitFor();
+      assert.equal(await presetPicker(room).inputValue(), 'sleep');
+      await roomPreset.press('Enter');
+      assert.ok(!(await presetPicker(room).isVisible()));
 
       const shortcutOnly = fixtureUrl + '&compact-climate-controls&only-preset-shortcut';
-      const presetPicker = pane => pane.locator('select[data-action=set_preset_mode]');
       const hideDuplicatedPicker = async (pane, hash) => {
         await page.goto(shortcutOnly + hash);
         const shortcut = pane.locator('.climate-preset-shortcut:visible');
@@ -10048,6 +11178,120 @@ async function assertCompactRoomDevicePair(browser) {
   }
 }
 
+async function assertNewRoomPanelLinksAvailableBeforeSave(browser) {
+  const media = 'media_player.demo_tv';
+  const vacuum = 'vacuum.demo_robot';
+  for (const locale of ['en', 'he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({ viewport:{width:320,height:844}, hasTouch:true, reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const roomName = he ? 'חדר קולנוע' : 'Cinema room';
+    const mediaName = he ? 'שלט קולנוע' : 'Cinema remote';
+    const vacuumName = he ? 'ניקוי הבית' : 'Whole home cleaning';
+    const formerName = he ? 'שלט זמני' : 'Temporary remote';
+    const renamed = he ? 'שלט בחדר קולנוע' : 'Cinema room remote';
+    const setupName = he ? 'התאמת הבית' : 'Customize home';
+    const appearanceName = he ? 'מראה' : 'Appearance';
+    const setup = page.getByRole('dialog', { name:setupName, exact:true });
+    const button = (name, node=page) => node.getByRole('button', { name, exact:true });
+    const field = name => setup.getByLabel(name, { exact:true });
+    const rooms = () => setup.getByText(he ? 'חדרים' : 'Rooms', { exact:true });
+    const toolbar = () => setup.getByText(he ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens', { exact:true });
+    const roomToEdit = () => field(he ? 'חדר להתאמה אישית' : 'Room to customize');
+    const mediaLink = () => field((he ? 'פתיחה בלחיצה ארוכה על מכשיר מדיה' : 'Open on media press and hold') + ' · Television');
+    const vacuumLink = () => field((he ? 'חלונית השואב' : 'Vacuum panel') + ' · Robot');
+    const stored = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('bayit9-browser-fixture')).strategy);
+    const services = () => page.evaluate(() => window.bayitTest.calls.filter(call => call.type === 'call_service' || call.domain));
+    const open = async () => {
+      await button(appearanceName).tap();
+      await button(setupName).tap();
+      await rooms().tap();
+      await roomToEdit().selectOption('studio');
+    };
+    const save = async () => {
+      await Promise.all([page.waitForEvent('load'), button(he ? 'שמירת הדשבורד' : 'Save dashboard', setup).tap()]);
+      await button(appearanceName).waitFor();
+    };
+    const addPanel = async (kind, name) => {
+      await field(he ? 'סוג הכפתור' : 'Button type').selectOption(kind);
+      await button(he ? 'הוספת כפתור' : 'Add button', setup).tap();
+      const label = field(he ? 'תווית הכפתור' : 'Button label');
+      await label.fill(name);
+      await label.press('Tab');
+      await field(he ? 'מקום הצגה' : 'Show in').selectOption('linked');
+    };
+    const checkHold = async (entity, panel) => {
+      const room = page.getByRole('dialog', { name:roomName, exact:true });
+      const launch = room.locator('[data-entity="' + entity + '"] .device-panel-launch');
+      await launch.press('Shift+Enter');
+      const linked = page.getByRole('dialog', { name:panel, exact:true });
+      await linked.waitFor();
+      await button(he ? 'חזרה לחדר' : 'Back to room', linked).tap();
+      await room.waitFor();
+    };
+    try {
+      await page.addInitScript(({ media, vacuum }) => {
+        const key = 'bayit9-browser-fixture';
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({ strategy:{
+          type:'custom:bayit-9', toolbar:[{id:'settings',kind:'settings'}],
+          room_overrides:{studio:{entities:['light.demo_lamp',media,vacuum]}},
+        } }));
+      }, { media, vacuum });
+      const url = base + '/fixture-home/home?configuration&toolbar-panels&room-media-test&locale=' + locale;
+      await page.goto(url);
+      await open();
+      const name = field(he ? 'שם החדר לתצוגה' : 'Room display name');
+      await name.fill(roomName);
+      await name.press('Tab');
+      assert.equal(await mediaLink().count(), 0);
+      assert.equal(await vacuumLink().count(), 0);
+
+      await rooms().tap();
+      await toolbar().tap();
+      await addPanel('media', mediaName);
+      await addPanel('media', formerName);
+      await addPanel('vacuum', vacuumName);
+      await toolbar().tap();
+      await rooms().tap();
+      assert.equal(await roomToEdit().inputValue(), 'studio');
+      assert.equal(await name.inputValue(), roomName);
+      await mediaLink().selectOption({ label:formerName });
+
+      await rooms().tap();
+      await toolbar().tap();
+      await button((he ? 'הסרה' : 'Remove') + ' · ' + formerName, setup).tap();
+      await button(mediaName, setup).tap();
+      const label = field(he ? 'תווית הכפתור' : 'Button label');
+      await label.fill(renamed);
+      await label.press('Tab');
+      await toolbar().tap();
+      await rooms().tap();
+      assert.equal(await mediaLink().inputValue(), '', 'A removed Media screen can no longer be selected');
+      assert.equal(await mediaLink().locator('option').filter({hasText:formerName}).count(), 0);
+      const mediaId = (await mediaLink().selectOption({ label:renamed }))[0];
+      assert.equal(await mediaLink().evaluate(input => input.getRootNode().activeElement === input), true);
+      const vacuumId = (await vacuumLink().selectOption({ label:vacuumName }))[0];
+      await field((he ? 'פתיחת חלונית השואב באמצעות' : 'Open the vacuum panel with') + ' · Robot').selectOption('hold');
+      assert.equal((await stored()).toolbar.length, 1);
+      assert.deepEqual(await services(), []);
+
+      await save();
+      const after = await stored();
+      assert.deepEqual(after.toolbar.slice(1).map(({ id, label, placement }) => [id, label, placement]),
+        [[mediaId, renamed, 'linked'], [vacuumId, vacuumName, 'linked']]);
+      assert.equal(after.room_overrides.studio.name, roomName);
+      assert.equal(after.room_overrides.studio.media_panel_links[media], mediaId);
+      assert.equal(after.room_overrides.studio.vacuum_panel_links[vacuum], vacuumId);
+      assert.deepEqual(after.room_overrides.studio.vacuum_panel_hold_entities, [vacuum]);
+      await button(roomName).tap();
+      await checkHold(media, renamed);
+      await checkHold(vacuum, vacuumName);
+      assert.deepEqual(await services(), []);
+    } finally {
+      await page.close();
+    }
+  }
+}
 async function assertCompactRoomMedia(browser) {
   for (const locale of ['en','he']) {
     const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
@@ -11279,6 +12523,129 @@ async function assertKitchenApplianceTiles(browser) {
 }
 
 
+async function assertRoomLiftBeforeReveal(browser) {
+  const page = await browser.newPage({
+    viewport:{width:391,height:760}, isMobile:true, hasTouch:true, reducedMotion:'no-preference',
+  });
+  try {
+    await page.goto(base + '?popup-geometry&locale=he');
+    const source = page.getByRole('button',{name:'Studio',exact:true});
+    const pane = page.locator('dialog.modal:not(.confirm)');
+    const measureTap = async (spacerHeight, reducedMotion, scrollClockSkew = 0) => {
+      await page.emulateMedia({reducedMotion});
+      await source.evaluate((button,{height,skew}) => {
+        const clip = button.closest('.room-scroll');
+        const nativeFrame = window.requestAnimationFrame;
+        const observeFrame = nativeFrame.bind(window);
+        // Reproduce a scroll frame clock trailing the compositor during a trusted tap.
+        if (skew) {
+          window.requestAnimationFrame = callback => observeFrame(now => callback(now - skew));
+          window.restoreRoomRevealFrame = () => { window.requestAnimationFrame = nativeFrame; };
+        }
+        let spacer = clip.querySelector('[data-test-spacer]');
+        if (!spacer) {
+          spacer = Object.assign(document.createElement('div'),{ariaHidden:'true'});
+          spacer.dataset.testSpacer = '';
+          clip.prepend(spacer);
+        }
+        spacer.style.height = height + 'px';
+        clip.scrollTop = 0;
+        window.roomReveal = undefined;
+        button.addEventListener('click', event => {
+          const root = button.getRootNode();
+          const dialog = root.querySelector('dialog.modal');
+          const animation = dialog.getAnimations()[0];
+          if (!animation) {
+            window.roomReveal = { reduced:true, hasHighlight:button.closest('.room').hasAttribute('data-popup-origin') };
+            return;
+          }
+          const {duration,delay} = animation.effect.getTiming();
+          const clips = [];
+          const sampledAt = performance.now();
+          const sample = (frameTime = sampledAt) => {
+            const frame = {
+              scroll:clip.scrollTop, opacity:Number(getComputedStyle(dialog).opacity),
+              animationTime:animation.currentTime, elapsed:frameTime - sampledAt,
+            };
+            clips.push(frame);
+            if (animation.playState === 'finished') {
+              const atHalf = clips.find(frame => frame.opacity >= .5);
+              const leadFrames = clips.filter(frame => frame.animationTime === null || frame.animationTime < delay);
+              window.roomReveal = {duration,delay,trusted:event.isTrusted,atHalf,final:clips.at(-1),
+                lead:{
+                  hidden:leadFrames.every(frame => frame.opacity === 0),
+                  // The opening click and a stale frame timestamp give the scroll loop no time to advance.
+                  sampled:leadFrames.some(frame => frame.elapsed >= 1),
+                  moved:leadFrames.some(frame => frame.scroll > clips[0].scroll),
+                },
+              };
+            } else observeFrame(sample);
+          };
+          sample();
+        },{once:true});
+      },{height:spacerHeight,skew:scrollClockSkew});
+      await source.tap();
+      await page.waitForFunction(() => window.roomReveal);
+      const result = await page.evaluate(() => {
+        window.restoreRoomRevealFrame?.();
+        delete window.restoreRoomRevealFrame;
+        return window.roomReveal;
+      });
+      await pane.locator('[data-role=close]').tap();
+      await pane.waitFor({state:'hidden'});
+      assert.deepEqual(await source.evaluate(button => ({
+        scroll:button.closest('.room-scroll').scrollTop,
+        highlight:button.closest('.room').hasAttribute('data-popup-origin'),
+        focused:button.getRootNode().activeElement === button,
+      })),{scroll:0,highlight:false,focused:true});
+      return result;
+    };
+    const near = await measureTap(0,'no-preference');
+    assert.equal(near.delay,0);
+    assert.equal(near.duration,190);
+    for (const skew of [0, 44]) {
+      const distant = await measureTap(400,'no-preference',skew);
+      const detail = JSON.stringify({skew,...distant});
+      assert.ok(distant.trusted && distant.delay > 0 && distant.lead.hidden,detail);
+      assert.ok(!distant.lead.sampled || distant.lead.moved,detail);
+      assert.ok(Math.abs(distant.duration + distant.delay - near.duration) < .001,detail);
+      assert.ok(distant.final.scroll > 400 && distant.atHalf.scroll >= .8 * distant.final.scroll,detail);
+    }
+    assert.deepEqual(await measureTap(400,'reduce'),{reduced:true,hasHighlight:true});
+
+    await page.emulateMedia({reducedMotion:'no-preference'});
+    await source.evaluate(button => {
+      const clip = button.closest('.room-scroll');
+      const trailingSpace = document.createElement('div');
+      trailingSpace.style.height = '600px';
+      clip.append(trailingSpace);
+      button.addEventListener('click', () => {
+        const dialog = button.getRootNode().querySelector('dialog.modal');
+        const animation = dialog.getAnimations()[0];
+        const initial = Number(getComputedStyle(dialog).opacity);
+        clip.scrollTop = 133;
+        clip.dispatchEvent(new Event('scroll'));
+        window.interruptedRoomReveal = {
+          initial, scroll:clip.scrollTop, opacity:Number(getComputedStyle(dialog).opacity), state:animation.playState,
+        };
+      },{once:true});
+    });
+    await source.tap();
+    assert.deepEqual(await page.evaluate(() => window.interruptedRoomReveal),
+      {initial:0,scroll:133,opacity:1,state:'finished'});
+    await pane.locator('[data-role=close]').tap();
+    await pane.waitFor({state:'hidden'});
+    assert.deepEqual(await source.evaluate(button => ({
+      scroll:button.closest('.room-scroll').scrollTop,
+      highlight:button.closest('.room').hasAttribute('data-popup-origin'),
+      focused:button.getRootNode().activeElement === button,
+    })),{scroll:133,highlight:false,focused:true});
+    assert.deepEqual(await page.evaluate(() => window.bayitTest.calls.filter(call => call.domain)),[]);
+  } finally {
+    await page.close();
+  }
+}
+
 async function assertPopupPageLifecycle(browser) {
   const page = await browser.newPage({
     viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: 'no-preference',
@@ -11559,6 +12926,10 @@ async function assertFilledWhiteLightRail(browser) {
       assert.equal(await brightness.getAttribute('aria-valuetext'), he ? 'אין ערך מדווח' : 'No reported value');
       assert.equal(await control.locator('output:visible').textContent(), '—');
       assert.equal(await style(brightness, '--white-rail-progress'), '0%');
+      assert.match(await style(brightness, '--white-rail-background'), /2px no-repeat$/);
+      assert.equal(await style(brightness, '--white-rail-track-border'), 'transparent');
+      assert.equal(await toggle.locator('ha-icon').getAttribute('icon'), 'mdi:thermometer');
+      assert.ok((await brightness.boundingBox()).height >= 44);
       await page.evaluate(id => {
         window.bayitTest.setFixtureAttributes(id, {
           brightness: 153, color_temp_kelvin: 2500, color_mode: 'color_temp', rgb_color: [246, 144, 80],
@@ -11569,6 +12940,7 @@ async function assertFilledWhiteLightRail(browser) {
       assert.equal(await brightness.getAttribute('aria-valuetext'), '60%');
       assert.equal(await style(brightness, '--white-rail-progress'), '60%');
       assert.equal(await style(brightness, '--white-rail-fill'), '#f69050');
+      assert.equal(await style(brightness, '--white-rail-track-border'), '');
       for (const width of [320, 391]) {
         await page.setViewportSize({ width, height: 844 });
         const [slider, selector] = await Promise.all([brightness.boundingBox(), toggle.boundingBox()]);
@@ -11632,6 +13004,7 @@ async function assertFilledWhiteLightRail(browser) {
       await temperature.waitFor();
       assert.equal(await temperature.getAttribute('aria-valuetext'), '2500 K');
       assert.equal(await toggle.getAttribute('aria-pressed'), 'true');
+      assert.equal(await toggle.locator('ha-icon').getAttribute('icon'), 'mdi:brightness-4');
       assert.equal((await serviceCalls()).length, 1);
       await temperature.press('ArrowRight');
       await page.waitForFunction(() => window.bayitTest.calls.filter(call => call.type === 'call_service').length === 2);
@@ -11643,6 +13016,10 @@ async function assertFilledWhiteLightRail(browser) {
         return white && !white.disabled && !white.style.getPropertyValue('--white-rail-color');
       });
 
+      await toggle.tap();
+      await brightness.waitFor();
+      assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
+      assert.equal(await toggle.locator('ha-icon').getAttribute('icon'), 'mdi:thermometer');
       await modes(['color_temp', 'rgbw']);
       await control.waitFor({ state: 'detached' });
       await modes(['color_temp', 'rgb']);
@@ -11863,10 +13240,11 @@ async function assertRoomCoverColumns(browser) {
       const key = 'bayit9-browser-fixture';
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, JSON.stringify({ strategy:{ type:'custom:bayit-9',
-        area_ids:['studio', 'bayit_room_playroom'], show_unassigned:false, room_overrides:{
+        area_ids:['studio', 'bayit_room_playroom', 'bayit_room_dressing'], show_unassigned:false, room_overrides:{
           studio:{ entities:['cover.demo_shade', 'light.demo_lamp', 'switch.demo_heater'], sections:[section],
             entity_names:{ 'cover.demo_shade':coverName } },
           bayit_room_playroom:{ name:'Playroom', sections:[{ kind:'covers', entities:['cover.demo_curtain'] }] },
+          bayit_room_dressing:{ name:'Dressing room', entities:['cover.demo_shade', 'cover.demo_curtain'] },
         } } }));
     }, { coverName, section });
     const openRoom = async (room) => {
@@ -11920,6 +13298,28 @@ async function assertRoomCoverColumns(browser) {
       assert.equal(full.columns,null);
       assert.ok(Math.abs(full.width - full.innerWidth) <= 1);
       await close(defaultDialog);
+
+      await page.setViewportSize({ width:320, height:640 });
+      await page.evaluate(() => {
+        window.bayitTest.setFixtureAttributes('cover.demo_shade', { supported_features:1 });
+        window.bayitTest.setFixtureAttributes('cover.demo_curtain', { supported_features:3 });
+      });
+      const dressing = await openRoom('Dressing room');
+      const pair = await dressing.locator('[data-group=room_covers]:not([data-columns]) > [data-compact=cover]')
+        .evaluateAll(tiles => tiles.map(tile => {
+          const { x, y } = tile.getBoundingClientRect();
+          const sizes = [...tile.querySelectorAll('.basic-actions button')].map(button => {
+            const { width, height } = button.getBoundingClientRect();
+            return [width, height];
+          });
+          return { x, y, sizes };
+        }));
+      assert.deepEqual(pair.map(tile => tile.sizes.length), [1, 2]);
+      assert.equal(pair[0].y, pair[1].y, 'Keep two narrower covers side by side at 320px');
+      assert.ok(pair[0].x < pair[1].x);
+      assert.ok(pair.every(tile => tile.sizes.every(([width, height]) => width >= 44 && height >= 44)));
+      await close(dressing);
+      await page.setViewportSize({ width:391, height:640 });
 
       await page.getByRole('button', { name:he ? 'מראה' : 'Appearance', exact:true }).tap();
       const setupName = he ? 'התאמת הבית' : 'Customize home';
@@ -12232,7 +13632,15 @@ try {
       continue;
     }
     const rightToLeft = engine === 'WebKit';
+    let selectedCount = 0;
     const run = async (name, scenario) => {
+      if (scenarioFilters.size) {
+        const matches = [...scenarioFilters.keys()].filter(filter => name.toLowerCase().includes(filter));
+        if (!matches.length) return;
+        for (const match of matches) matchedFilters.add(match);
+        selectedCount += 1;
+        console.log('[' + engine + '] ' + name);
+      }
       try {
         await scenario();
       } catch (error) {
@@ -12255,13 +13663,17 @@ try {
       console.log(engine + ': custom popup icons stay scoped to the selected room device');
     });
 
+    await run('Home toolbar fits narrow phones', () => assertHomeToolbarFit(browser));
     await run('Home toolbar and shortcut shapes', () => assertHomeButtonShapes(browser));
+    await run('Compact Appearance gallery on phones', () => assertAppearanceGalleryLayout(browser));
 
     await run('Home appearance settings and synchronization', async () => {
       await assertHomePreferenceAliases(browser);
       await assertSharedAppearance(browser);
       await assertAppearanceHelperEditor(browser);
     });
+
+    await run('Room lift before popup reveal', () => assertRoomLiftBeforeReveal(browser));
 
     await run('Popup lifecycle, origin and scroll', async () => {
       await assertPopupPageLifecycle(browser);
@@ -12326,11 +13738,23 @@ try {
       await assertStandaloneHeaterQuickPower(browser);
     });
 
+    await run('Running heater slider and stop rail', () => assertRunningTimerRail(browser, {
+      flags:'heater-level&embedded-heater&heater-running-rail', entity:'fan.demo_step_heater', name:'Fixture step heater',
+      runtime:'sensor.demo_step_runtime', owner:'switch.demo_step_power', presets:[15,30,45,60],
+    }));
+    await run('Running climate slider and stop rail', () => assertRunningTimerRail(browser, {
+      flags:'device-panel&climate-running-rail', entity:'climate.demo_air', name:'Studio air conditioner',
+      runtime:'sensor.demo_air_usage', owner:'input_boolean.demo_air_timer', presets:[30,60,90,120],
+    }));
+
     await run('Room section edits and popup destination labels', async () => {
       await assertRoomSectionsAndPopupLabels(browser);
     });
 
     await run('Quiet room light icons', () => assertQuietRoomLightIcon(browser));
+
+    await run('Home room card press and hold', () => assertRoomCardHold(browser));
+    await run('Immediate room light reversal', () => assertRoomLightReversal(browser));
 
     await run('Native room gestures and device icons', async () => {
       await assertNativeRoomCoverHeader(browser);
@@ -12350,6 +13774,8 @@ try {
     });
 
     await run('Dashboard save keeps a pending new room available', () => assertNewRoomDraftBlocksDashboardSave(browser));
+    await run('Direct Home editing and permissions', () => assertDirectHomeEditing(browser));
+    await run('Automatic room and device organization from Home', () => assertAutomaticRoomManagement(browser));
 
     await run('Setup editor layout and drafts', async () => {
       await assertSetupFooterLayout(browser);
@@ -13081,23 +14507,46 @@ try {
       const unmute = audio.getByRole('button', { name: remoteRTL ? 'ביטול השתקה' : 'Unmute', exact: true });
       await combined.waitFor();
       assert.ok((await combined.boundingBox()).height >= 44);
+      await combined.locator('ha-icon[icon="mdi:cast-off"]').waitFor();
+      assert.equal(await combined.getAttribute('aria-description'), remoteRTL ? 'כבוי' : 'Off');
       await mute.waitFor();
-      assert.equal(await mute.isDisabled(),true);
+      assert.equal(await mute.isEnabled(), true);
       assert.equal(await unmute.count(), 0);
+      await mute.evaluate(button => {
+        const { services, entities } = document.querySelector('bayit-dashboard')._hass;
+        const volumeService = services.media_player.volume_mute;
+        delete services.media_player.volume_mute;
+        button.click();
+        services.media_player.volume_mute = volumeService;
+        const entity = 'media_player.demo_tv';
+        const registry = entities[entity];
+        entities[entity] = { ...registry, hidden: true };
+        button.click();
+        entities[entity] = registry;
+      });
       assert.equal(await remotePage.getByRole('button', { name: remoteRTL ? 'הדלקה' : 'Turn on', exact: true }).count(), 2);
       assert.deepEqual(await remotePage.evaluate(() => window.bayitTest.calls), []);
       await combined.tap();
+      await remotePage.evaluate(() => window.bayitTest.setRoomState('media_player.demo_speaker', 'standby'));
+      const standby = remoteRTL ? 'מצב המתנה' : 'Standby';
+      await combined.and(remote.locator('[aria-description="' + standby + '"]')).waitFor();
+      assert.equal(await combined.isDisabled(), false);
+      await remotePage.evaluate(() => window.bayitTest.setRoomState('media_player.demo_speaker', 'idle'));
+      await combined.locator('ha-icon[icon="mdi:play-pause"]').waitFor();
+      assert.equal(await combined.getAttribute('aria-description'), null);
       await volumeUp.tap();
-      await remotePage.evaluate(() => window.bayitTest.setFixtureAttributes('media_player.demo_tv', { is_volume_muted: false }));
       await mute.tap();
       await unmute.waitFor();
+      await unmute.tap();
       assert.deepEqual(await remotePage.evaluate(() => window.bayitTest.calls), [
         { type: 'call_service', domain: 'media_player', service: 'media_play_pause',
           target: { entity_id: 'media_player.demo_speaker' }, service_data: {} },
         { type: 'call_service', domain: 'media_player', service: 'volume_up',
           target: { entity_id: 'media_player.demo_tv' }, service_data: {} },
-        { type: 'call_service', domain: 'media_player', service: 'volume_mute',
-          target: { entity_id: 'media_player.demo_tv' }, service_data: { is_volume_muted: true } },
+        ...[true, false].map(is_volume_muted => ({
+          type: 'call_service', domain: 'media_player', service: 'volume_mute',
+          target: { entity_id: 'media_player.demo_tv' }, service_data: { is_volume_muted },
+        })),
       ]);
       const activeOnly = await openRemote('&active-only');
       assert.equal(await activeOnly.getByRole('button').count(), 0);
@@ -13171,6 +14620,9 @@ try {
       const allowUsageReset = editorPage.getByRole('checkbox', { name: 'Allow reset of this daily usage counter', exact: true });
       assert.equal(await allowUsageReset.isChecked(), false);
       await allowUsageReset.check();
+      const runningStop = editorPage.getByRole('checkbox', { name:'Show Stop beside the duration slider while the timer runs', exact:true });
+      assert.equal(await runningStop.isChecked(),false);
+      await runningStop.check();
       await editorPage.getByRole('button', {name: 'Save profile'}).click();
       const heaterProfile = await editorPage.evaluate(() => window.latest.profiles.find(item => item.entity.startsWith('fan.')));
       assert.equal(heaterProfile?.level_select_script, 'script.demo_select_heat_step');
@@ -13179,6 +14631,7 @@ try {
       assert.equal(heaterProfile?.level_preselect_entity, 'input_number.demo_next_step');
       assert.equal(heaterProfile?.timed.simple_timer_target, 'switch.demo_step_power');
       assert.equal(heaterProfile?.timed.allow_daily_usage_reset, true);
+      assert.equal(heaterProfile?.timed.running_slider_stop, true);
       assert.equal(await editorPage.evaluate(() => window.bayitTest.calls.length), 0);
       await editorPage.getByLabel('Language').selectOption('he');
       await editorPage.getByLabel('שם הדשבורד').waitFor();
@@ -13699,14 +15152,14 @@ try {
     });
 
     await run('Cover controls and room details', async () => {
-      for (const [locale, width] of [['he', 320], ['en', 375], ['he', 390]]) {
+      for (const [locale, width] of [['he', 320], ['en', 375], ['he', 391]]) {
         const coverGridPage = await browser.newPage({ viewport: { width, height: 800 }, hasTouch: true, reducedMotion: 'reduce' });
         await coverGridPage.goto(base + '?cover-grid&locale=' + locale);
         await coverGridPage.getByRole('button', { name: 'Studio', exact: true }).tap();
         const dialog = coverGridPage.getByRole('dialog', { name: 'Studio', exact: true });
         const covers = dialog.locator('[data-group="room_covers"] > [data-compact="cover"]');
         await covers.nth(1).waitFor();
-        if (width === 390) {
+        if (width === 391) {
           const transparent = 'rgba(0, 0, 0, 0)';
           const material = () => covers.first().evaluate(tile => {
             const icon = tile.querySelector('.device-panel-launch .device-icon');
@@ -13741,13 +15194,19 @@ try {
           }),
         })));
         const [first, second] = geometry;
-        assert.equal(first.top, second.top);
-        assert.ok(first.left < second.left, 'Room cover order matches the grid in either language');
         for (const tile of geometry) {
           assert.equal(tile.scroll, false);
           assert.deepEqual(tile.buttons.map(([action]) => action), ['open', 'stop', 'close']);
           assert.equal(new Set(tile.buttons.map(([, top]) => top)).size, 1, 'Cover actions stay on one line');
-          assert.ok(tile.buttons.every(([, , width, height]) => width >= 28 && height >= 44));
+          assert.ok(tile.buttons.every(([, , width, height]) => width >= 44 && height >= 44),
+            JSON.stringify({ locale, width, geometry }));
+        }
+        if (width === 391) {
+          assert.equal(first.top, second.top);
+          assert.ok(first.left < second.left, 'Room cover order matches the grid in either language');
+        } else {
+          assert.equal(first.left, second.left);
+          assert.ok(first.top < second.top, 'Stack covers when their commands need the extra space');
         }
         const curtain = dialog.locator('[data-entity="cover.demo_curtain"]');
         assert.equal(await curtain.locator('[data-action="open"] ha-icon').getAttribute('icon'), 'mdi:arrow-expand-horizontal');
@@ -13822,7 +15281,7 @@ try {
         ]);
         await coverGridPage.close();
       }
-      console.log(engine + ': cover rails at 320–390 px, room detail tap/hold/keyboard, Back and zero movement');
+      console.log(engine + ': cover rails at 320–391 px, room detail tap/hold/keyboard, Back and zero movement');
     });
 
     await run('Light effects and inline timer details', async () => {
@@ -14616,6 +16075,7 @@ try {
       assert.equal(await wallpaper.locator('[data-wallpaper-choice]').count(), 0);
       await wallpaper.locator('summary').click();
       await wallpaper.getByRole('button', { name:'Materials', exact:true }).click();
+      await wallpaper.locator('.wallpaper-more[aria-expanded=false]').click();
       await wallpaper.getByRole('button', { name:'Brushed bronze', exact:true }).click();
       await wallpaper.locator('.wallpaper-current').getByText('Brushed bronze', { exact:true }).waitFor();
       assert.equal(await panelsPage.locator('.shell').getAttribute('data-background'), 'bronze');
@@ -14928,6 +16388,7 @@ try {
 
     await run('Overview popup header icon', () => assertOverviewPopupHeaderIcon(browser));
 
+    await run('Shared compact lock feedback', () => assertSharedCompactLockFeedback(browser));
     await run('Full-width Entrance lock action', () => assertEntranceStackedLock(browser));
 
     await run('Compact Entrance and Overview', async () => {
@@ -16141,7 +17602,7 @@ try {
       await roomMode(roomSetup).selectOption('auto');
       await saveRoomConfig(roomSetup);
       await lastRoomPage.getByRole('button', { name: 'Studio', exact: true }).waitFor();
-      assert.deepEqual(await roomOrder(lastRoomPage), ['lounge', 'studio']);
+      assert.deepEqual(new Set(await roomOrder(lastRoomPage)), new Set(['lounge', 'spare', 'studio']));
       await lastRoomPage.close();
       console.log(engine + ' 320: explicit empty room selection, keyboard order, and member behavior');
 
@@ -16230,7 +17691,7 @@ try {
           hint: 'לאחר השמירה המכשיר יעבור בדשבורד מחדר Lounge לחדר הזה. החדר הקודם יוסתר כל עוד הוא ריק.' }],
       ]) {
         const placementPage = await newRoomConfigPage();
-        await placementPage.goto(roomConfigUrl + '&locale=' + locale);
+        await placementPage.goto(roomConfigUrl + '&hide-empty-rooms&locale=' + locale);
         const source = placementPage.locator('.room[data-room="lounge"]');
         const moved = placementPage.locator('.room[data-room="studio"] [data-entity="light.demo_lounge"]');
         await source.locator('[data-entity="light.demo_lounge"]').waitFor();
@@ -16263,6 +17724,7 @@ try {
     await run('Legacy strategy options survive visual setup and Home Assistant reload', () => assertLegacyOptionsRoundTrip(browser));
     await run('Automatic toolbar links survive visual customization', () => assertAutomaticToolbarRoutesSurviveCustomization(browser));
     await run('Extra screen contents survive reversible mode changes', () => assertToolbarPanelContentsDrafts(browser));
+    await run('Assign new Media and Vacuum screens before the first dashboard save', () => assertNewRoomPanelLinksAvailableBeforeSave(browser));
 
     await run('Room placement, links and clean installation', async () => {
       await assertRoomMirrorPlacement(browser);
@@ -16281,12 +17743,22 @@ try {
       console.log(engine + ': no-device installation and administrator room setup in English and Hebrew');
     });
 
-    await run('Browser close', () => browser.close());
+    try {
+      await browser.close();
+    } catch (error) {
+      recordFailure(engine, 'Browser close', error);
+    }
+    if (scenarioFilters.size) console.log('[' + engine + '] ' + selectedCount + ' selected scenario(s)');
   }
 } finally {
   server.close();
   await once(server, 'close');
 }
+
+for (const [filter, name] of scenarioFilters) {
+  if (!matchedFilters.has(filter)) console.error('No dashboard scenario matched ' + JSON.stringify(name));
+}
+if (matchedFilters.size !== scenarioFilters.size) process.exitCode = 1;
 
 if (failures.length) {
   console.error('\nDashboard browser tests reported ' + failures.length + ' failure(s).');

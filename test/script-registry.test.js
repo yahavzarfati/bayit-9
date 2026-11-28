@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { setImmediate } from 'node:timers/promises';
 import test from 'node:test';
-import { createScriptRegistry } from '../src/script-registry.js';
+import { createScriptRegistry } from '../src/entity-registry-lookup.js';
 
 test('reads scoped script identities once per snapshot and discards invalidated responses', async () => {
   const selected = 'script.current_name';

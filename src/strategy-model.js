@@ -7,9 +7,9 @@ import { normalizeMediaRemote } from './media-device-support.mjs';
 import { wallpaperChoices } from './wallpapers.js';
 import { normalizeSharedWallpapers } from './shared-wallpapers.js';
 import { normalizeAppearanceHelpers } from './appearance-helpers.js';
-import { normalizeLightEffectCategorySource, normalizeLightEffectFavoriteLights, normalizeLightEffectGroups, normalizeLightModeSource } from './light-effects.js';
+import { normalizeLightEffectCategorySource, normalizeLightEffectLights, normalizeLightEffectGroups, normalizeLightModeSource } from './light-effects.js';
 import { normalizePopupAliasCloseRoutes, normalizePopupAliases, popupRouteFragment } from './popup-routes.js';
-import { canOpenBoilerSchedule, isBoilerScheduleProfile } from './boiler-schedule.js';
+import { canCreateBoilerSchedule, canEditBoilerSchedule, canOpenBoilerSchedule, isBoilerScheduleProfile } from './boiler-schedule.js';
 import { calendarAccent, normalizeCalendarAgenda, supportsDailyForecast } from './calendar-agenda.js';
 
 export const CARD_TYPE = 'custom:bayit-dashboard';
@@ -239,6 +239,8 @@ export function normalizeProfile(value) {
       { allow_daily_usage_reset: true }),
     ...(Array.isArray(timed.presets) && { presets }),
     ...(simpleTimer && timed.idle_zero_duration === true && min === step && { idle_zero_duration: true }),
+    ...(simpleTimer && (profile.kind === 'heater' || profile.kind === 'climate') &&
+      timed.running_slider_stop === true && { running_slider_stop: true }),
     duration_field: typeof timed.duration_field === 'string' && /^[a-z][a-z0-9_]{0,39}$/.test(timed.duration_field)
       ? timed.duration_field : 'duration',
     min_minutes: min,
@@ -422,11 +424,19 @@ export function normalizeShortcutDetailRoutes(room, raw, panels, excluded = []) 
   return Object.fromEntries(routes);
 }
 
-function dashboardAreas(config, hass) {
-  const areas = new Map(Object.entries(hass.areas ?? {}).map(([id, area]) => [
-    area.area_id ?? id,
-    { name: area.name ?? id, icon: area.icon || 'mdi:home-outline' },
+function dashboardAreas(config, hass, locale) {
+  const floors = new Map(Object.entries(hass.floors ?? {}).map(([id, floor]) => [
+    floor.floor_id ?? id, floor.name ?? id,
   ]));
+  // Home Assistant builds hass.areas in registry order and preserves changes to that order.
+  const areas = new Map(Object.entries(hass.areas ?? {}).map(([id, area], index) => {
+    const floorName = floors.get(area.floor_id);
+    const ordered = Boolean(floorName) || (Number.isFinite(area.created_at) && Number.isFinite(area.modified_at));
+    return [area.area_id ?? id, {
+      name: area.name ?? id, icon: area.icon || 'mdi:home-outline', nativeOrder: index, ordered,
+      floorId: area.floor_id ?? undefined, floorName,
+    }];
+  }));
   for (const [id, override] of Object.entries(config.room_overrides ?? {})) {
     if (!override || typeof override !== 'object' || Array.isArray(override)) continue;
     const area = areas.get(id);
@@ -442,11 +452,14 @@ function dashboardAreas(config, hass) {
     const entityIds = usesAutomaticRoomDevices(override, sections, !area) ? undefined
       : Array.isArray(override.entities) ? idList(override.entities) : idList(sections?.flatMap(section => section.entities));
     areas.set(id, {
+      ...area,
       name: name || area?.name,
       classicTitleBreak: override.classic_title_break,
       icon: icon ?? area?.icon ?? 'mdi:home-outline',
       entityIds,
       additionalEntities: entityIds === undefined ? idList(override.additional_entities) : undefined,
+      hiddenEntities: new Set(idList(override.hidden_entities)),
+      entityOrder: idList(override.entity_order),
       keepInAutomaticRoom: new Set(idList(override.keep_in_automatic_room_entities)),
       sections,
       readOnly: new Set(idList(override.read_only_entities)),
@@ -468,6 +481,7 @@ function dashboardAreas(config, hass) {
       temperatureFallback: typeof override.room_temperature_fallback_entity === 'string' ? override.room_temperature_fallback_entity : undefined,
       temperatureGraphColors: override.room_temperature_graph_colors,
       shutdown: idList(override.turn_off_entities).filter(supportsRoomShutdown),
+      groupControls: override.group_controls,
       activities: override.activities,
       climatePower: new Set(idList(override.climate_power_entities)),
       compactClimateControls: new Set(idList(override.compact_climate_controls_entities)),
@@ -491,13 +505,26 @@ function dashboardAreas(config, hass) {
       custom: !area,
     });
   }
-  return areas;
+  const unassigned = pickUnassignedId(areas);
+  const override = Object.hasOwn(config.room_overrides ?? {}, unassigned) && config.room_overrides[unassigned];
+  areas.set(unassigned, {
+    name: labels[locale].unassigned, icon: 'mdi:map-marker-outline', unassigned: true,
+    hiddenEntities: new Set(idList(override?.hidden_entities)), entityOrder: idList(override?.entity_order),
+    groupControls: override?.group_controls,
+  });
+  return { areas, unassigned };
 }
 
-export function dashboardRoomOptions(config = {}, hass = {}) {
-  return [...dashboardAreas(config, hass)].map(([id, room]) => ({
-    id, name: room.name, icon: room.icon, custom: room.custom === true,
-  }));
+export function dashboardRoomOptions(config = {}, hass = {}, { includeUnassigned = false, presentationOrder = false } = {}) {
+  const locale = languageFor(config.locale, hass);
+  const { areas, unassigned } = dashboardAreas(config, hass, locale);
+  const ids = [...areas.keys()].filter(id => includeUnassigned || id !== unassigned);
+  if (presentationOrder) sortRoomIds(ids, areas, config, locale);
+  return ids.map(id => {
+    const { name, icon, custom, floorId, floorName } = areas.get(id);
+    return { id, name, icon, custom: custom === true,
+      ...(id === unassigned && { unassigned: true }), ...(floorId && { floorId }), ...(floorName && { floorName }) };
+  });
 }
 
 function compareText(a, b, language) {
@@ -510,8 +537,12 @@ function pickUnassignedId(areas) {
   return id;
 }
 
+function entityDisplayName(state, registry, profile) {
+  return profile?.name ?? state?.attributes?.friendly_name ?? registry?.name ?? registry?.en;
+}
+
 function presentEntity(entity, state, registry, profile) {
-  const name = profile?.name ?? state.attributes?.friendly_name ?? registry?.name ?? registry?.en;
+  const name = entityDisplayName(state, registry, profile);
   const icon = registry?.icon ?? registry?.ic ?? state.attributes?.icon;
   return {
     entity,
@@ -632,7 +663,7 @@ export function selectableRoomEntities(config = {}, hass = {}) {
 function entityArea(info, hass) {
   const deviceId = info?.device_id ?? info?.di;
   const device = deviceId && hass.devices?.[deviceId];
-  return info?.area_id ?? info?.ai ?? device?.area_id;
+  return info?.area_id || info?.ai || device?.area_id;
 }
 
 export function selectedRoomIds(config) {
@@ -641,11 +672,30 @@ export function selectedRoomIds(config) {
   return ids.length || config.room_selection === 'manual' ? ids : null;
 }
 
-function groupRoomDevices(config, hass, areas) {
-  const unassigned = pickUnassignedId(areas);
+function sortRoomIds(ids, areas, config, locale) {
   const selection = selectedRoomIds(config);
-  const explicitOrder = new Map((selection ?? []).map((id, index) => [id, index]));
-  const isSelected = id => selection === null || explicitOrder.has(id);
+  const preferred = selection ?? (config.room_order_mode === 'custom' ? idList(config.room_order) : []);
+  const preferredOrder = new Map(preferred.map((id, index) => [id, index]));
+  const sortByRegistry = config.room_order_mode === 'home_assistant' ||
+    config.room_order_mode !== 'alphabetical' && [...areas.values()].some(area => area.ordered);
+  const last = Number.MAX_SAFE_INTEGER;
+  return ids.sort((a, b) => {
+    const left = areas.get(a);
+    const right = areas.get(b);
+    if (left.unassigned || right.unassigned) return Number(!!left.unassigned) - Number(!!right.unassigned);
+    const byPreference = (preferredOrder.get(a) ?? last) - (preferredOrder.get(b) ?? last);
+    const byRegistry = sortByRegistry ? (left.nativeOrder ?? last) - (right.nativeOrder ?? last) : 0;
+    return byPreference || byRegistry || compareText(left.name, right.name, locale) || compareText(a, b, locale);
+  });
+}
+
+function groupRoomDevices(config, hass, locale) {
+  const { areas, unassigned } = dashboardAreas(config, hass, locale);
+  const selection = selectedRoomIds(config);
+  const selected = selection && new Set(selection);
+  const isSelected = id => selected === null || selected.has(id);
+  const showEmpty = config.show_empty_rooms === true ||
+    config.show_empty_rooms !== false && selection === null && config.discovery_mode !== 'controls';
   const hidden = new Set(idList(config.hidden_entities));
   const extra = new Set(idList(config.included_entities));
   const profiles = profilesOf(config.profiles);
@@ -660,10 +710,11 @@ function groupRoomDevices(config, hass, areas) {
   const grouped = new Map();
   const discoverableDomains = config.discovery_mode === 'controls' ? CONTROL_DOMAINS : DEFAULT_RANK;
   const visible = entity => isVisibleEntity(entity, states, registry, hidden);
+  const isNativeArea = id => areas.has(id) && id !== unassigned && !areas.get(id).custom;
 
   const movedFromAutomaticRooms = new Set();
   for (const [id, room] of areas) {
-    if (!isSelected(id) || (!room.entityIds && config.room_selection !== 'manual')) continue;
+    if (id === unassigned || !isSelected(id) || (!room.entityIds && config.room_selection !== 'manual' && !showEmpty)) continue;
     const ids = (room.entityIds ?? []).filter(visible);
     grouped.set(id, ids);
     for (const entity of ids) {
@@ -672,6 +723,11 @@ function groupRoomDevices(config, hass, areas) {
   }
 
   const availableIds = new Set(registry ? Object.keys(registry) : Object.keys(states));
+  if (registry) {
+    for (const [id, state] of Object.entries(states)) {
+      if (isNativeArea(state?.attributes?.area_id)) availableIds.add(id);
+    }
+  }
   for (const explicit of [...extra, ...profiles.keys()]) availableIds.add(explicit);
   for (const entity of availableIds) {
     if (movedFromAutomaticRooms.has(entity) || !visible(entity)) continue;
@@ -681,9 +737,9 @@ function groupRoomDevices(config, hass, areas) {
     if (!isExplicit && (!discoverableDomains.has(domainOf(entity)) || isDiagnostic || adapterEntities.has(entity))) continue;
 
     const assigned = entityArea(info, hass);
-    const area = areas.get(assigned);
-    const areaId = area && !area.custom ? assigned : unassigned;
-    if (areaId === unassigned ? config.show_unassigned === false : !isSelected(areaId) || area.entityIds) continue;
+    const fallback = states[entity].attributes?.area_id;
+    const areaId = isNativeArea(assigned) ? assigned : isNativeArea(fallback) ? fallback : unassigned;
+    if (areaId === unassigned ? config.show_unassigned === false : !isSelected(areaId) || areas.get(areaId).entityIds) continue;
     if (!grouped.has(areaId)) grouped.set(areaId, []);
     grouped.get(areaId).push(entity);
   }
@@ -695,40 +751,61 @@ function groupRoomDevices(config, hass, areas) {
     if (additions.length) grouped.set(id, [...new Set([...(grouped.get(id) ?? []), ...additions])]);
   }
 
-  return { grouped, unassigned, explicitOrder, visible, profiles };
+  return { areas, grouped, visible, profiles, hiddenRooms: new Set(idList(config.hidden_room_ids)) };
 }
 
-export function dashboardRoomMemberships(config, hass, locale) {
-  const areas = dashboardAreas(config, hass);
-  const { grouped } = groupRoomDevices(config, hass, areas);
-  return Array.from(grouped, ([id, entities]) => ({ id, entities, name: areas.get(id)?.name ?? labels[locale].unassigned }));
+function roomMemberIds(grouped, area, id, { includeLocallyHidden = false } = {}) {
+  const entities = grouped.get(id);
+  return includeLocallyHidden || !area.hiddenEntities?.size ? entities
+    : entities.filter(entity => !area.hiddenEntities.has(entity));
+}
+
+function sortRoomEntities(entities, area, name, locale) {
+  const order = new Map((area.entityOrder ?? []).map((id, index) => [id, index]));
+  if (area.entityIds && !order.size) return entities;
+  return [...entities].sort((a, b) => {
+    const preferred = (order.get(a) ?? Number.MAX_SAFE_INTEGER) - (order.get(b) ?? Number.MAX_SAFE_INTEGER);
+    if (preferred || area.entityIds) return preferred;
+    const rank = (DEFAULT_RANK.get(domainOf(a)) ?? 100) - (DEFAULT_RANK.get(domainOf(b)) ?? 100);
+    return rank || compareText(name(a) ?? a, name(b) ?? b, locale);
+  });
+}
+
+function roomEntityName(entity, hass, profiles) {
+  return entityDisplayName(hass.states[entity], hass.entities?.[entity], profiles.get(entity));
+}
+
+export function dashboardRoomMemberships(config, hass, locale, options = {}) {
+  const { areas, grouped, profiles, hiddenRooms } = groupRoomDevices(config, hass, locale);
+  const ids = [...grouped.keys()].filter(id => options.includeHiddenRooms || !hiddenRooms.has(id));
+  return sortRoomIds(ids, areas, config, locale).map(id => {
+    const room = areas.get(id);
+    const entities = sortRoomEntities(roomMemberIds(grouped, room, id, options), room,
+      entity => roomEntityName(entity, hass, profiles), locale);
+    return { id, entities, name: room.name };
+  });
 }
 
 export function discoverRooms(config, hass, locale) {
-  const areas = dashboardAreas(config, hass);
-  const favoriteLights = new Set(normalizeLightEffectFavoriteLights(config.light_effect_favorites));
+  return projectRooms(config, hass, locale, groupRoomDevices(config, hass, locale));
+}
+
+function projectRooms(config, hass, locale, { areas, grouped, visible, profiles, hiddenRooms }) {
+  const favoriteLights = new Set(normalizeLightEffectLights(config.light_effect_favorites));
+  const sceneGridLights = new Set(idList(config.light_effect_scene_grid));
+  const directSceneLights = new Set(normalizeLightEffectLights(config.light_effect_scene_on_select));
   const panelKinds = new Map([...areas.values()].some(area => Object.keys(area.panelLinks ?? {}).length)
     ? roomPanelOptions(config, hass).map(panel => [panel.id, panel.kind]) : []);
   const detailPanels = [...areas.values()].some(area => area.shortcutDetailRoutes)
     ? shortcutPanelOptions(config) : [];
-  const { grouped, unassigned, explicitOrder, visible, profiles } = groupRoomDevices(config, hass, areas);
   const present = entity => presentEntity(entity, hass.states[entity], hass.entities?.[entity], profiles.get(entity));
-  const roomFor = id => areas.get(id) ?? { name: labels[locale].unassigned, icon: 'mdi:map-marker-outline' };
-  const roomIds = [...grouped.keys()].sort((a, b) => {
-    if (a === unassigned || b === unassigned) return a === unassigned ? 1 : -1;
-    const bySelection = (explicitOrder.get(a) ?? Infinity) - (explicitOrder.get(b) ?? Infinity);
-    return bySelection || compareText(roomFor(a).name, roomFor(b).name, locale);
-  });
+  const roomIds = sortRoomIds([...grouped.keys()].filter(id => !hiddenRooms.has(id)), areas, config, locale);
 
   return roomIds.map(id => {
-    const area = roomFor(id);
-    const entities = grouped.get(id).map(present);
-    if (!area.entityIds) {
-      entities.sort((a, b) => {
-        const rank = (DEFAULT_RANK.get(domainOf(a.entity)) ?? 100) - (DEFAULT_RANK.get(domainOf(b.entity)) ?? 100);
-        return rank || compareText(a.name ?? a.entity, b.name ?? b.entity, locale);
-      });
-    }
+    const area = areas.get(id);
+    const entities = sortRoomEntities(roomMemberIds(grouped, area, id), area,
+      entity => roomEntityName(entity, hass, profiles), locale).map(present);
+    const visibleInRoom = entity => !area.hiddenEntities?.has(entity) && visible(entity);
     if (area.entityIcons) {
       for (const entity of entities) {
         if (!Object.hasOwn(area.entityIcons, entity.entity)) continue;
@@ -737,6 +814,8 @@ export function discoverRooms(config, hass, locale) {
       }
     }
     const room = { id, name: area.name, icon: area.icon, entities };
+    if (area.groupControls === true || (area.groupControls !== false && !area.custom && !area.unassigned &&
+        area.entityIds === undefined)) room.group_controls = true;
     if (classicRoomTitle(area.name, area.classicTitleBreak)) room.classic_title_break = area.classicTitleBreak;
     if (area.panelHidden?.length) {
       const members = new Set(entities.map(device => device.entity));
@@ -767,7 +846,7 @@ export function discoverRooms(config, hass, locale) {
       const targets = area.shutdown.filter(entity => members.has(entity) && !area.readOnly?.has(entity));
       if (targets.length) room.turn_off_entities = targets;
     }
-    const activities = normalizeRoomActivities(area.activities, visible).filter(activity => activity.kind !== 'boiler' ||
+    const activities = normalizeRoomActivities(area.activities, visibleInRoom).filter(activity => activity.kind !== 'boiler' ||
       entities.some(device => device.entity === activity.boiler_entity && device.kind === 'boiler'));
     if (activities.length) room.activities = activities;
     for (const device of entities) {
@@ -820,7 +899,7 @@ export function discoverRooms(config, hass, locale) {
             if (area.vacuumPanelHolds?.has(device.entity)) device.room_vacuum_panel_on_hold = true;
             const display = roomVacuumPresentation(area.vacuumPanelPresentations?.[device.entity]);
             if (display) device.room_vacuum_presentation = display;
-            const summary = normalizeRoomVacuumSummary(area.vacuumPanelSummaries?.[device.entity], visible);
+            const summary = normalizeRoomVacuumSummary(area.vacuumPanelSummaries?.[device.entity], visibleInRoom);
             if (summary) device.room_vacuum_summary = summary;
           }
         }
@@ -856,6 +935,10 @@ export function discoverRooms(config, hass, locale) {
       if (groups.length) {
         device.effect_groups = groups;
         if (favoriteLights.has(device.entity)) device.effect_favorites = true;
+        if (sceneGridLights.has(device.entity)) {
+          device.effect_scene_grid = true;
+          if (directSceneLights.has(device.entity) && !isReadOnlyRole(device.role)) device.effect_scene_on_select = true;
+        }
         const categorySource = !isReadOnlyRole(device.role) &&
           normalizeLightEffectCategorySource(config.light_effect_category_sources?.[device.entity], groups);
         if (categorySource) device.effect_category_source = categorySource;
@@ -1000,6 +1083,16 @@ export function isWeatherReadingsList(kind, section) {
   return supportsWeatherReadingsList(kind, section) && section.layout === 'readings-list';
 }
 
+export function supportsWeatherStatus(kind, section, item) {
+  return isWeatherReadingsList(kind, section) && idForDomain(item?.entity, 'binary_sensor') &&
+    (!item.role || item.role === 'status');
+}
+
+export function normalizeWeatherStatus(kind, section, item) {
+  return supportsWeatherStatus(kind, section, item) && ['rain', 'warning'].includes(item.weather_status)
+    ? item.weather_status : undefined;
+}
+
 export function supportsReadingCards(kind, section) {
   return supportsEnergyReadingCards(kind, section) ||
     (['weather','sensors'].includes(kind) && section?.kind === 'readings');
@@ -1080,7 +1173,8 @@ export function sensorComparisonOptions(kind, section) {
   if (!supportsSensorComparison(kind, section) || options?.enabled !== true) return undefined;
   const bucket = SENSOR_COMPARISON_INTERVALS.includes(options.bucket_minutes) ? options.bucket_minutes : 30;
   const hours = Number.isInteger(options.hours) && options.hours >= 1 && options.hours <= 72 ? options.hours : 24;
-  return { enabled: true, hours: Math.min(hours, sensorComparisonMaxHours(bucket)), bucket_minutes: bucket };
+  return { enabled: true, hours: Math.min(hours, sensorComparisonMaxHours(bucket)), bucket_minutes: bucket,
+    ...(options.layout === 'compact' && { layout: 'compact' }) };
 }
 
 export function sensorSeriesColor(item) {
@@ -1090,7 +1184,9 @@ export function sensorSeriesColor(item) {
 }
 
 export function supportsToolbarCompactHistory(kind, section, item) {
-  return (kind === 'overview' || kind === 'devices') && section?.kind === 'status' && isCompactToolbarStatus(kind, section) &&
+  const compactStatus = (kind === 'overview' || kind === 'devices') && section?.kind === 'status' &&
+    isCompactToolbarStatus(kind, section);
+  return (compactStatus || kind === 'sensors' && isReadingCards(kind, section)) &&
     item?.role === 'graph' && typeof item.entity === 'string' && domainOf(item.entity) === 'sensor';
 }
 
@@ -1136,11 +1232,12 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds, visible
       const accent = kind === 'calendar' && domain === 'calendar' ? calendarAccent(item.accent_color) : undefined;
       const readout = normalizeToolbarReadout(kind, section, item);
       const dangerAction = isSecurityDangerAction(kind, section.kind, item);
-      const seriesColor = comparison && sensorSeriesColor(item);
+      const seriesColor = (comparison || kind === 'sensors' && compactHistory) && sensorSeriesColor(item);
       const forecast = supportsHourlyWeatherForecast(kind, section, item);
       const hourlyForecast = forecast && item?.hourly_forecast === true;
       const clockWeatherCard = forecast && item?.clock_weather_card === true;
       const horizonCard = item?.horizon_card === true && supportsHorizonCard(kind, section, item);
+      const weatherStatus = normalizeWeatherStatus(kind, section, item);
       return [{ ...descriptor, ...(name && { name }), ...(ROOM_ICON.test(icon) && { icon }),
         ...(role && { role }), ...(command && { command }),
         ...(confirmation !== undefined && { confirmation }), ...(dangerAction && { action_appearance: 'danger' }),
@@ -1150,7 +1247,8 @@ function toolbarSections(value, describe, kind, { vacuumPanels, roomIds, visible
         ...(vacuumSummary && { vacuum_summary: vacuumSummary }),
         ...(accent && { accent_color: accent }), ...(readout && { readout }),
         ...(seriesColor && { series_color: seriesColor }), ...(hourlyForecast && { hourly_forecast: true }),
-        ...(clockWeatherCard && { clock_weather_card: true }), ...(horizonCard && { horizon_card: true }) }];
+        ...(clockWeatherCard && { clock_weather_card: true }), ...(horizonCard && { horizon_card: true }),
+        ...(weatherStatus && { weather_status: weatherStatus }) }];
     });
     return [{ id, kind: section.kind, ...(title !== undefined && { title }),
       ...(isCompactAutomationActions(kind, section) && { layout: 'compact-actions' }),
@@ -1277,7 +1375,10 @@ export function popupAliasDestinations(config, hass = {}) {
     ...room.entities.flatMap(item => {
       const device = { kind:'device', room:room.id, entity:item.entity,
         name:item.popup_name || item.name || item.entity, roomName:room.name };
-      return canOpenBoilerSchedule(item, hass, hidden) ? [device, { ...device, detail:'schedule' }] : [device];
+      if (!canOpenBoilerSchedule(item, hass, hidden)) return [device];
+      return [device, { ...device, detail:'schedule' },
+        ...(canCreateBoilerSchedule(item, hass, hidden) ? [{ ...device, detail:'schedule/new' }] : []),
+        ...(canEditBoilerSchedule(item, hass, hidden) ? [{ ...device, detail:'schedule/edit' }] : [])];
     }),
   ]);
   const bar = card.toolbar?.filter(item => !item.placement) ?? availableAutomaticToolbarKinds(card, hass)
@@ -1322,6 +1423,7 @@ export function generateDashboard(config = {}, hass = {}) {
   const locale = languageFor(config.locale, hass);
   const title = typeof config.title === 'string' && config.title.trim()
     ? config.title.trim() : labels[locale].title;
+  const membership = groupRoomDevices(config, hass, locale);
   const card = {
     type: CARD_TYPE,
     page: true,
@@ -1330,16 +1432,19 @@ export function generateDashboard(config = {}, hass = {}) {
     ...(config.wide_alignment === 'left' && { wide_alignment: 'left' }),
     locale,
     title,
-    rooms: discoverRooms(config, hass, locale),
+    rooms: projectRooms(config, hass, locale, membership),
   };
   if (!card.rooms.length) card.setup_rooms_on_empty = true;
   const popupAliases = normalizePopupAliases(config.popup_aliases);
   if (Object.keys(popupAliases).length) card.popup_aliases = popupAliases;
   const popupCloseRoutes = normalizePopupAliasCloseRoutes(config.popup_alias_close_routes, popupAliases);
   if (Object.keys(popupCloseRoutes).length) card.popup_alias_close_routes = popupCloseRoutes;
-  const visible = new Set(card.rooms.flatMap(room => room.entities.map(device => device.entity)));
-  const overview = idList(config.overview_entities).filter(id => visible.has(id));
-  if (overview.length) card.overview = overview;
+  const overview = idList(config.overview_entities);
+  if (overview.length) {
+    const assigned = new Set([...membership.grouped.values()].flat());
+    const visible = overview.filter(id => assigned.has(id));
+    if (visible.length) card.overview = visible;
+  }
   const context = dashboardContext(config, hass, locale);
   if (Object.keys(context).length) card.context = context;
   const toolbar = dashboardToolbar(config, hass, new Set(card.rooms.map(room => room.id)));

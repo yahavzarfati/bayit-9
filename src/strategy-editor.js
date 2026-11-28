@@ -1,4 +1,5 @@
 import { normalizeSharedWallpaperPath, normalizeSharedWallpapers } from './shared-wallpapers.js';
+import { stateInventoryChanged } from './state-inventory.js';
 import { appearanceHelperChoices, normalizeAppearanceHelpers } from './appearance-helpers.js';
 import {
   BACKGROUNDS, classicRoomTitle, CUSTOM_ROOM_PREFIX, dashboardRoomMemberships, dashboardRoomOptions, DEFAULT_ROOM_TEMPERATURE_GRAPH_COLOR, DEVICE_ICONS, discoverRooms,
@@ -15,15 +16,19 @@ import { climateOptionLabel } from './panel-controls.js';
 import { buildToolbarEditor } from './toolbar-editor.js';
 import { activityKinds, activitySources, normalizeRoomActivities } from './room-appliance.mjs';
 import { availableLightFixedColorScript, getDeviceModel, isPairedLightCompanion, isPairedLightStatusRefresh, supportsRoomShutdown } from './device-control.mjs';
-import { createScriptRegistry } from './script-registry.js';
+import { createScriptRegistry } from './entity-registry-lookup.js';
+import { buildRoomLayout, initialRoomLayoutBindings, resolveRoomLayout,
+  roomLayoutCandidates, roomLayoutOverride } from './room-templates.js';
 import { lightEffectCategoryOptions, lightEffectCategoryTitles, normalizeLightEffectCategorySource,
-  normalizeLightEffectFavoriteLights, normalizeLightEffectGroups, normalizeLightModeSource } from './light-effects.js';
+  normalizeLightEffectLights, normalizeLightEffectGroups, normalizeLightModeSource } from './light-effects.js';
 import { createPopupRouteId, isPopupAliasCloseRoute, isPopupFragment, normalizePopupAliasCloseRoutes, normalizePopupAliases,
   parsePopupRoute } from './popup-routes.js';
 
 const WORDS = {
   en: {
     lightEffects: 'Light effect categories', effectLight: 'Light', effectGroup: 'Category',
+    effectLayout: 'Effect browser layout', effectPaged: 'Pages', effectSceneGrid: 'Scene grid',
+    effectSceneOnSelect: 'Scene grid (activate on selection)',
     effectFavorites: 'Allow personal favorites on this device', lightStatusRefresh: 'Light status refresh button',
     lightModeSource: 'Light opening mode source', lightFixedColorOption: 'Fixed-color option',
     lightApplyThroughSelector: 'Apply effects through this light’s selector',
@@ -40,6 +45,13 @@ const WORDS = {
     areas: 'Rooms', unassigned: 'Include devices without a room',
     roomSelection: 'Rooms on the dashboard', allRooms: 'Automatic', selectedRooms: 'Choose rooms and order',
     shownRoomOrder: 'Displayed rooms and order',
+    manageRooms: 'Manage rooms', roomOrder: 'Room order', orderHomeAssistant: 'Home Assistant order',
+    orderAlphabetical: 'Alphabetical', orderCustom: 'Custom order', showRoom: 'Show room',
+    roomContents: 'Room contents', hideDevice: 'Hide device', showDevice: 'Show device',
+    roomContentsSearch: 'Find a device in this room', roomContentsVisibility: 'Device visibility',
+    roomContentsAll: 'All', roomContentsVisible: 'Visible', roomContentsHidden: 'Hidden',
+    hiddenOnDashboard: 'Hidden on this dashboard', hiddenInRoom: 'Hidden in this room',
+    hiddenInRoomPanel: 'Hidden in the room panel',
     roomToAdd: 'Available rooms', addRoom: 'Show room', createRoom: 'New dashboard-only room',
     newRoomName: 'New room name', newRoomHint: 'This room exists only on this dashboard.',
     finishNewRoom: 'Create this room or cancel it before saving the dashboard.',
@@ -80,6 +92,8 @@ const WORDS = {
     moveUp: 'Move up', moveDown: 'Move down', hideRoom: 'Hide room',
     automaticDevices: 'Automatic', manualDevices: 'Choose devices and order',
     roomDevices: 'Devices in this room', deviceToAdd: 'Available devices', addDevice: 'Add device',
+    roomGroupControls: 'Room group controls', roomGroupControlsAuto: 'Automatic',
+    roomGroupControlsShow: 'Show group controls', roomGroupControlsHide: 'Hide group controls',
     extraRoomDevices: 'Additional devices',
     extraRoomDeviceHint: 'Home Assistant keeps adding new devices from this area. A device added here stays in its other rooms.',
     addExtraRoomDevice: 'Also show in this room', noExtraRoomDevices: 'No additional devices.',
@@ -110,6 +124,16 @@ const WORDS = {
     roomVacuumReadings: {status_entity:'Status sensor', battery_entity:'Battery sensor',
       progress_entity:'Progress sensor', cleaning_entity:'Cleaning indicator'},
     sections: 'Room sections', sectionMode: 'Section arrangement', automaticSections: 'Automatic grouping',
+    roomTemplates: 'Room layouts', roomTemplateRoom: 'Room to arrange', roomTemplateChoice: 'Layout template',
+    roomTemplateChoose: 'Choose a layout', roomTemplateNoDevice: 'No compatible device in this room',
+    roomTemplateDaily: 'Daily controls', roomTemplateComfort: 'Comfort and readings', roomTemplateAccess: 'Access and security',
+    roomTemplateCopy: 'Use layout from', roomTemplateSkip: 'Leave in automatic grouping',
+    roomTemplateHint: 'Choose a layout and check which devices from this room go in each group. Other devices stay in automatic groups.',
+    roomTemplateReplace: 'Replace this room’s current groups', roomTemplateApply: 'Apply room layout',
+    roomTemplateEmpty: 'This layout has no groups that can be filled here.',
+    roomTemplateApplied: 'Layout added to the dashboard draft.',
+    roomTemplateNeedsRoom: 'Assign devices to a room in Home Assistant or create a room with devices to begin.',
+    roomTemplateChanged: 'The room or its devices have changed. Review the layout again.',
     manualSections: 'Arrange sections manually',
     editSection: 'Section to customize', addSection: 'Add section', removeSection: 'Delete section',
     sectionType: 'Section type', sectionTitle: 'Section heading', sectionDevice: 'Room device',
@@ -165,6 +189,7 @@ const WORDS = {
     timerLinkError: 'Choose a Simple Timer sensor linked to this heating device or its supported proxy.',
     timerTargetMismatch: 'Simple Timer reports {device}. Timer controls need a matching target.',
     idleZeroDuration: 'Allow an unselected timer duration (0 minutes)',
+    runningSliderStop: 'Show Stop beside the duration slider while the timer runs',
     dailyUsage: 'Daily usage sensor', allowDailyUsageReset: 'Allow reset of this daily usage counter', presets: 'Preset minutes', presetError: 'Use preset minutes within the selected range and step.',
     levelSteps: 'Number of heating levels', levelRead: 'Heating level feedback', levelSelect: 'Level selection script',
     levelSelectError: 'Set 2–12 heating levels and choose the level feedback helper for this script.',
@@ -185,6 +210,8 @@ const WORDS = {
   },
   he: {
     lightEffects: 'קטגוריות אפקטים לתאורה', effectLight: 'תאורה', effectGroup: 'קטגוריה',
+    effectLayout: 'תצוגת אפקטים', effectPaged: 'עמודים', effectSceneGrid: 'רשת סצנות',
+    effectSceneOnSelect: 'רשת סצנות (הפעלה בבחירה)',
     effectFavorites: 'אפשר סימון מועדפים אישיים במכשיר', lightStatusRefresh: 'כפתור לרענון מצב המנורה',
     lightModeSource: 'מקור למצב הפתיחה של התאורה', lightFixedColorOption: 'אפשרות לצבע קבוע',
     lightApplyThroughSelector: 'הפעלת אפקטים דרך הבורר של המנורה',
@@ -201,6 +228,13 @@ const WORDS = {
     areas: 'חדרים', unassigned: 'הצגת מכשירים ללא חדר',
     roomSelection: 'חדרים בדשבורד', allRooms: 'בחירה אוטומטית', selectedRooms: 'בחירת חדרים וסדר',
     shownRoomOrder: 'חדרים מוצגים וסדר',
+    manageRooms: 'ניהול חדרים', roomOrder: 'סדר החדרים', orderHomeAssistant: 'הסדר של Home Assistant',
+    orderAlphabetical: 'לפי שם', orderCustom: 'סדר מותאם אישית', showRoom: 'הצגת חדר',
+    roomContents: 'תכולת החדר', hideDevice: 'הסתרת מכשיר', showDevice: 'הצגת מכשיר',
+    roomContentsSearch: 'חיפוש מכשיר בחדר הזה', roomContentsVisibility: 'תצוגת מכשירים',
+    roomContentsAll: 'הכול', roomContentsVisible: 'מוצגים', roomContentsHidden: 'מוסתרים',
+    hiddenOnDashboard: 'מוסתר בדשבורד הזה', hiddenInRoom: 'מוסתר בחדר הזה',
+    hiddenInRoomPanel: 'מוסתר בחלונית החדר',
     roomToAdd: 'חדרים זמינים', addRoom: 'הצגת חדר', createRoom: 'חדר חדש לדשבורד',
     newRoomName: 'שם החדר החדש', newRoomHint: 'החדר יופיע בדשבורד הזה בלבד.',
     finishNewRoom: 'צרו את החדר או בטלו את היצירה לפני שמירת הדשבורד.',
@@ -241,6 +275,8 @@ const WORDS = {
     moveUp: 'העברה למעלה', moveDown: 'העברה למטה', hideRoom: 'הסתרת חדר',
     automaticDevices: 'בחירה אוטומטית', manualDevices: 'בחירת מכשירים וסדר',
     roomDevices: 'מכשירים בחדר', deviceToAdd: 'מכשירים זמינים', addDevice: 'הוספת מכשיר',
+    roomGroupControls: 'שליטה קבוצתית בחדר', roomGroupControlsAuto: 'אוטומטית',
+    roomGroupControlsShow: 'הצגת שליטה קבוצתית', roomGroupControlsHide: 'הסתרת שליטה קבוצתית',
     extraRoomDevices: 'מכשירים נוספים',
     extraRoomDeviceHint: 'מכשירים חדשים באזור הזה ימשיכו להופיע בחדר אוטומטית. מכשיר שיוצג כאן יישאר גם בחדרים האחרים שלו.',
     addExtraRoomDevice: 'הצגה גם בחדר הזה', noExtraRoomDevices: 'אין מכשירים נוספים.',
@@ -271,6 +307,16 @@ const WORDS = {
     roomVacuumReadings: {status_entity:'חיישן מצב', battery_entity:'חיישן סוללה',
       progress_entity:'חיישן התקדמות', cleaning_entity:'חיווי ניקוי פעיל'},
     sections: 'קבוצות בחדר', sectionMode: 'סידור הקבוצות', automaticSections: 'קיבוץ אוטומטי',
+    roomTemplates: 'פריסות חדר', roomTemplateRoom: 'חדר לסידור', roomTemplateChoice: 'תבנית פריסה',
+    roomTemplateChoose: 'בחירת פריסה', roomTemplateNoDevice: 'אין מכשיר תואם בחדר הזה',
+    roomTemplateDaily: 'שליטה יומיומית', roomTemplateComfort: 'נוחות ומדידות', roomTemplateAccess: 'כניסה ואבטחה',
+    roomTemplateCopy: 'שימוש בפריסה של', roomTemplateSkip: 'השארה בקיבוץ האוטומטי',
+    roomTemplateHint: 'בחרו פריסה ובדקו אילו מכשירים מהחדר יופיעו בכל קבוצה. שאר המכשירים נשארים בקיבוץ האוטומטי.',
+    roomTemplateReplace: 'החלפת הקבוצות הקיימות בחדר הזה', roomTemplateApply: 'החלת פריסת חדר',
+    roomTemplateEmpty: 'אין קבוצות בפריסה הזו שאפשר למלא בחדר.',
+    roomTemplateApplied: 'הפריסה נוספה לטיוטת הדשבורד.',
+    roomTemplateNeedsRoom: 'כדי להתחיל, שייכו מכשירים לחדר ב־Home Assistant או צרו חדר עם מכשירים.',
+    roomTemplateChanged: 'החדר או המכשירים שבו השתנו. בדקו שוב את הפריסה.',
     manualSections: 'סידור ידני של הקבוצות',
     editSection: 'קבוצה לעריכה', addSection: 'הוספת קבוצה', removeSection: 'מחיקת קבוצה',
     sectionType: 'סוג הקבוצה', sectionTitle: 'כותרת הקבוצה', sectionDevice: 'מכשיר בחדר',
@@ -326,6 +372,7 @@ const WORDS = {
     timerLinkError: 'בחרו חיישן Simple Timer שמקושר למכשיר החימום הזה או לפקד שמפעיל אותו.',
     timerTargetMismatch: 'Simple Timer מדווח על {device}. כדי להשתמש בפקדי הטיימר, היעד צריך להתאים.',
     idleZeroDuration: 'אפשרות להשאיר את משך הטיימר ללא בחירה (0 דקות)',
+    runningSliderStop: 'הצגת כפתור עצירה ליד מחוון הזמן כשהטיימר פועל',
     dailyUsage: 'חיישן שימוש יומי', allowDailyUsageReset: 'אפשרות לאפס את מונה השימוש היומי הזה', presets: 'הגדרות דקות מהירות', presetError: 'בחרו דקות בטווח ובמרווח שנקבעו.',
     levelSteps: 'מספר דרגות החימום', levelRead: 'משוב על דרגת החימום', levelSelect: 'סקריפט לבחירת עוצמה',
     levelSelectError: 'הגדירו 2–12 דרגות חימום ובחרו את העזר שמדווח על העוצמה עבור הסקריפט.',
@@ -396,9 +443,11 @@ const ROOM_CSS = `
 .room-entry-name small { display: block; color: var(--secondary-text-color); font-size: .8em; margin-block-start: 2px; }
 .room-entry-buttons { display: flex; gap: 4px; }
 .room-entry-buttons button { min-inline-size: 44px; block-size: 44px; padding: 0 5px; }
+.room-entry-buttons button ha-icon { --mdc-icon-size: 20px; pointer-events: none; }
 .room-entry-buttons button:disabled, .room-add button:disabled { cursor: default; opacity: .45; }
 .room-add { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; align-items: end; }
 .room-add button { min-block-size: 44px; }
+.room-panel-links { display: contents; }
 .room-add-hint { overflow-wrap: anywhere; }
 .room-add-hint:not(:empty) { margin-block-start: 6px; }
 .room-choice-heading { margin: 3px 0 0; font-size: 1em; }
@@ -417,6 +466,9 @@ const ROOM_CSS = `
 }
 .room-icon-preview { box-sizing: border-box; inline-size: 44px; block-size: 44px; display: grid; place-items: center; border: 1px solid var(--divider-color,#999); border-radius: 8px; }
 .room-danger { justify-self: start; color: var(--error-color,#b00020); border-color: currentColor; }
+.room-layout-group { display: grid; gap: 8px; }
+.room-layout-group legend { max-inline-size: 100%; overflow-wrap: anywhere; }
+.room-layout-status:empty { display: none; }
 @media (max-width: 340px) {
   .room-add { grid-template-columns: minmax(0,1fr); }
   .room-add button { justify-self: start; }
@@ -450,15 +502,14 @@ const GLASS_EDITOR_CSS = `
 }
 `;
 
-function hasStates(states) {
-  for (const id in states ?? {}) {
-    if (Object.hasOwn(states, id)) return true;
-  }
-  return false;
-}
-
 function configuredIds(value) {
   return Array.isArray(value) ? [...new Set(value.filter(id => typeof id === 'string' && id.trim()))] : [];
+}
+
+function preferredOrder(items, previous) {
+  const ids = items.filter(item => !item.fixed).map(item => item.id);
+  const ordered = new Set(ids);
+  return [...ids, ...configuredIds(previous).filter(id => !ordered.has(id))];
 }
 
 function moveItem(items, index, shift) {
@@ -468,7 +519,7 @@ function moveItem(items, index, shift) {
   return copy;
 }
 
-function orderedList(items, change, words, removeLabel, protectLast = false, key = '', canReorder = true) {
+function orderedList(items, change, words, removeLabel, protectLast = false, key = '', canReorder = true, visibility) {
   return node('ul', { className: 'room-list' }, items.map((item, index) => {
     const action = (symbol, actionLabel, disabled, actionKey, handler) => {
       const control = button(symbol, handler);
@@ -478,6 +529,14 @@ function orderedList(items, change, words, removeLabel, protectLast = false, key
       control.dataset.roomFocus = key + ':' + item.id + ':' + actionKey;
       return control;
     };
+    const visibilityButton = () => {
+      const control = action('', item.hidden ? visibility.showLabel : removeLabel, false, 'visibility', () =>
+        visibility.toggle(item.id, !item.hidden, key + ':' + item.id + ':visibility'));
+      const icon = node('ha-icon', { icon: item.hidden ? 'mdi:eye-off-outline' : 'mdi:eye-outline' });
+      icon.setAttribute('aria-hidden', 'true');
+      control.append(icon);
+      return control;
+    };
     return node('li', { className: 'room-entry' }, [
       node('span', { className: 'room-entry-name' }, [
         item.name,
@@ -485,10 +544,12 @@ function orderedList(items, change, words, removeLabel, protectLast = false, key
       ]),
       node('span', { className: 'room-entry-buttons' }, [
         ...(canReorder ? [
-          action('↑', words.moveUp, index === 0, 'up', () => change(moveItem(items, index, -1), key + ':' + item.id + ':up')),
-          action('↓', words.moveDown, index === items.length - 1, 'down', () => change(moveItem(items, index, 1), key + ':' + item.id + ':down')),
+          action('↑', words.moveUp, index === 0 || item.fixed || items[index - 1]?.fixed, 'up',
+            () => change(moveItem(items, index, -1), key + ':' + item.id + ':up')),
+          action('↓', words.moveDown, index === items.length - 1 || item.fixed || items[index + 1]?.fixed, 'down',
+            () => change(moveItem(items, index, 1), key + ':' + item.id + ':down')),
         ] : []),
-        action('×', removeLabel, protectLast && items.length === 1, 'remove', () =>
+        visibility ? visibilityButton() : action('×', removeLabel, protectLast && items.length === 1, 'remove', () =>
           change(items.filter(entry => entry.id !== item.id))),
       ]),
     ]);
@@ -634,7 +695,13 @@ export class Bayit9StrategyEditor extends HTMLElement {
   #profileDraftBody;
   #shortcutRoom;
   #refreshShortcutRoutes;
+  #refreshRoomPanelLinks;
   #roomEditing;
+  #roomContext;
+  #roomLayoutRoom;
+  #roomLayoutDrafts = new Map();
+  #roomLayoutMessage;
+  #roomContentsViews = new Map();
   #roomControlEditing = new Map();
   #sectionEditing;
   #manualSectionDrafts = new Map();
@@ -659,7 +726,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const previous = this.#hass;
     this.#hass = value ?? {};
     if (previous.areas !== this.#hass.areas || previous.entities !== this.#hass.entities || previous.devices !== this.#hass.devices
-        || (!hasStates(previous.states) && hasStates(this.#hass.states))
+        || previous.floors !== this.#hass.floors || (!this.#registryRefreshPending &&
+          stateInventoryChanged(previous.states, this.#hass.states))
         || (previous.locale?.language ?? previous.language) !== (value?.locale?.language ?? value?.language)) {
       // Removing a focused control can dispatch a change and rebuild the editor again.
       // Let the field finish editing before replacing the form.
@@ -677,15 +745,71 @@ export class Bayit9StrategyEditor extends HTMLElement {
     if (serialized !== this.#lastConfig) {
       this.#appearanceHelperDrafts.clear();
       this.#manualSectionDrafts.clear();
+      this.#roomLayoutDrafts.clear();
+      this.#roomLayoutMessage = undefined;
       this.#toolbarView.panelContentsDrafts?.clear();
       this.#lastConfig = serialized;
       this.render();
     }
   }
 
-  openRooms() {
+  openRooms({ create = false, roomId, focus = 'name', manage = false } = {}) {
+    this.#roomContext = undefined;
     this.#open.rooms = true;
-    this.render();
+    if (focus === 'templates') {
+      this.#roomContext = 'templates';
+      this.#roomEditing = roomId;
+      this.#renderRoomChange('room-layout-heading');
+      return true;
+    }
+    if (manage) {
+      this.#roomContext = 'manage';
+      this.#renderRoomChange('room-management');
+      return true;
+    }
+    if (create) {
+      this.#open.newRoom = true;
+      this.#renderRoomChange('new-room-name');
+      return true;
+    }
+
+    const selected = selectedRoomIds(this.#config);
+    const contents = focus === 'contents';
+    const room = roomId && dashboardRoomOptions(this.#config, this.#hass, { includeUnassigned: contents })
+      .find(item => item.id === roomId && (selected === null || selected.includes(roomId) || item.unassigned));
+    if (!room) {
+      this.render();
+      return roomId ? false : undefined;
+    }
+
+    if (this.#roomEditing !== room.id) this.#roomDeviceQuery = '';
+    this.#roomEditing = room.id;
+    if (contents) {
+      this.#roomContext = 'contents';
+      this.#renderRoomChange('room-contents');
+      return true;
+    }
+    const editDevices = focus === 'devices' || focus === 'room-device-search';
+    if (editDevices) {
+      const override = this.#roomOverride(room.id);
+      if (usesAutomaticRoomDevices(override, roomSections(override.sections), room.custom)) {
+        this.#open.extraRoomDevices = true;
+      }
+    }
+    this.#renderRoomChange(editDevices ? 'room-device-search' : 'room-name');
+    return true;
+  }
+
+  openRoomShortcuts(roomId) {
+    const language = languageFor(this.#config.locale, this.#hass);
+    if (!discoverRooms(this.#config, this.#hass, language).some(room => room.id === roomId)) return false;
+
+    this.#roomContext = undefined;
+    this.#open.shortcuts = true;
+    this.#shortcutRoom = roomId;
+    const { automatic } = roomShortcutSettings(this.#config, roomId);
+    this.#renderRoomChange(automatic ? 'room-shortcut-mode' : 'room-first-shortcut');
+    return true;
   }
 
   focusPendingRoom() {
@@ -734,7 +858,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
     }));
     if (Object.hasOwn(change, 'hidden_entities')) this.#refreshLightEffects?.(true);
     if (Object.hasOwn(change, 'hidden_entities') || Object.hasOwn(change, 'shared_wallpapers')) this.#refreshAppearanceHelpers?.();
-    if (Object.hasOwn(change, 'toolbar')) this.#refreshShortcutRoutes?.();
+    if (Object.hasOwn(change, 'toolbar')) {
+      this.#refreshShortcutRoutes?.();
+      this.#refreshRoomPanelLinks?.();
+    }
   }
 
   #commitRooms(change, focusKey) {
@@ -860,13 +987,163 @@ export class Bayit9StrategyEditor extends HTMLElement {
     ]);
   }
 
+  #discoveredRoomMembers(id, language) {
+    return dashboardRoomMemberships(this.#config, this.#hass, language, {
+      includeLocallyHidden: true, includeHiddenRooms: true,
+    }).find(room => room.id === id)?.entities ?? [];
+  }
+
   #roomMembership(room, override, sections, language) {
     if (!usesAutomaticRoomDevices(override, sections, room.custom)) {
       return configuredIds(Array.isArray(override.entities) ? override.entities : sections?.flatMap(section => section.entities));
     }
-    // Resolve the visible room with other rooms' explicit assignments in scope.
-    const visible = discoverRooms(this.#config, this.#hass, language).find(item => item.id === room.id);
-    return visible?.entities.map(item => item.entity) ?? [];
+    return this.#discoveredRoomMembers(room.id, language);
+  }
+
+  #roomTemplateRooms(language) {
+    return discoverRooms({ ...this.#config, hidden_room_ids: [] }, this.#hass, language);
+  }
+
+  #roomTemplatesPanel(words, language, fixedRoomId, { heading = false } = {}) {
+    const panel = node('section', { className: 'stack' });
+    panel.dataset.roomTemplates = '';
+    const rooms = this.#roomTemplateRooms(language);
+    const roomId = fixedRoomId ?? this.#roomLayoutRoom;
+    const room = rooms.find(item => item.id === roomId) ?? (!fixedRoomId && rooms[0]);
+    if (heading) {
+      const textContent = fixedRoomId && room ? words.roomTemplates + ' · ' + room.name : words.roomTemplates;
+      const title = node('h3', { className: 'room-choice-heading', textContent, tabIndex: -1 });
+      title.dataset.roomFocus = 'room-layout-heading';
+      panel.append(title);
+    }
+    if (!room) {
+      panel.append(node('p', { textContent: words.roomTemplateNeedsRoom }));
+      return panel;
+    }
+    const names = distinctEditorLabels(rooms, nativeAreaNames(this.#hass));
+    if (!fixedRoomId) {
+      const roomPicker = select(rooms.map(item => [item.id, names.get(item.id)]), room.id);
+      roomPicker.dataset.roomFocus = 'room-layout-room';
+      roomPicker.addEventListener('change', () => {
+        this.#roomLayoutRoom = roomPicker.value;
+        this.#renderRoomChange('room-layout-room');
+      });
+      panel.append(field(words.roomTemplateRoom, roomPicker));
+    }
+    const states = this.#hass.states ?? {};
+    const copyOptions = new Map(rooms.filter(item => item.id !== room.id && item.sections?.some(group => group.entities.length))
+      .map(item => ['copy:' + item.id, item]));
+    const options = [['', words.roomTemplateChoose],
+      ['daily', words.roomTemplateDaily], ['comfort', words.roomTemplateComfort], ['access', words.roomTemplateAccess],
+    ];
+    const draft = this.#roomLayoutDrafts.get(room.id) ?? { choice: '', bindings: new Map(), replace: false };
+    const layoutPicker = select([...options, ...[...copyOptions].map(([key, source]) =>
+      [key, words.roomTemplateCopy + ' ' + names.get(source.id)])], draft.choice);
+    if (layoutPicker.selectedIndex < 0) layoutPicker.value = '';
+    layoutPicker.dataset.roomFocus = 'room-layout-choice';
+    const status = node('p', { className: 'room-layout-status', tabIndex: -1 });
+    status.setAttribute('role', 'status');
+    status.dataset.roomFocus = 'room-layout-status';
+    if (this.#roomLayoutMessage?.room === room.id) status.textContent = words[this.#roomLayoutMessage.key];
+    const preview = node('div', { className: 'stack' });
+    const dictionary = languages[language];
+    const draw = () => {
+      preview.replaceChildren();
+      const choice = layoutPicker.value;
+      if (!choice) return;
+      const layout = buildRoomLayout(room, choice, states, copyOptions.get(choice));
+      if (!layout.length) {
+        preview.append(node('p', { textContent: words.roomTemplateEmpty }));
+        return;
+      }
+      const baseline = JSON.stringify(roomSections(this.#roomOverride(room.id).sections));
+      const needsReplacement = Boolean(room.sections?.length);
+      const byId = new Map(room.entities.map(item => [item.entity, item.name]));
+      const captions = distinctEntityLabels([...byId.keys()], id => byId.get(id));
+      let expected;
+      const apply = button(words.roomTemplateApply, () => {
+        const current = this.#roomTemplateRooms(language).find(item => item.id === room.id);
+        const override = this.#roomOverride(room.id);
+        const sections = resolveRoomLayout(layout, draft.bindings, current, this.#hass.states);
+        if (JSON.stringify(sections) !== JSON.stringify(expected) ||
+            JSON.stringify(roomSections(override.sections)) !== baseline) {
+          this.#roomLayoutDrafts.delete(room.id);
+          this.#roomLayoutMessage = { room: room.id, key: 'roomTemplateChanged' };
+          this.#renderRoomChange('room-layout-choice');
+          return;
+        }
+        const isCustom = room.id.startsWith(CUSTOM_ROOM_PREFIX);
+        const next = roomLayoutOverride(override, sections, isCustom,
+          this.#roomMembership({ id: room.id, custom: isCustom }, override, roomSections(override.sections), language));
+        if (!next) return;
+        this.#roomLayoutDrafts.delete(room.id);
+        this.#roomLayoutMessage = { room: room.id, key: 'roomTemplateApplied' };
+        this.#setRoomOverride(room.id, next, 'room-layout-status');
+      });
+      const refreshActions = () => {
+        expected = resolveRoomLayout(layout, draft.bindings, room, states);
+        apply.disabled = !expected.length || needsReplacement && !draft.replace;
+      };
+      const controls = new Map();
+      for (const group of layout) {
+        const controlsForGroup = group.inputs.map((input, index) => {
+          const candidates = roomLayoutCandidates(room, input, states);
+          const selector = select([], '');
+          const label = input.label || (group.title || dictionary['room_' + group.kind]) + ' ' + (index + 1);
+          controls.set(input.id, { selector, candidates });
+          selector.addEventListener('change', () => {
+            if (selector.value) draft.bindings.set(input.id, selector.value);
+            else draft.bindings.delete(input.id);
+            refreshOptions();
+            refreshActions();
+          });
+          return field(label, selector);
+        });
+        preview.append(node('fieldset', { className: 'room-layout-group' }, [
+          node('legend', { textContent: group.title || dictionary['room_' + group.kind] }), ...controlsForGroup,
+        ]));
+      }
+      const refreshOptions = () => {
+        for (const [id, entity] of draft.bindings) {
+          if (!controls.get(id)?.candidates.some(item => item.entity === entity)) draft.bindings.delete(id);
+        }
+        const claimed = new Set(draft.bindings.values());
+        for (const [id, { selector, candidates }] of controls) {
+          const selected = draft.bindings.get(id);
+          const choices = candidates.filter(item => item.entity === selected || !claimed.has(item.entity));
+          selector.replaceChildren(option('', choices.length ? words.roomTemplateSkip : words.roomTemplateNoDevice),
+            ...choices.map(item => option(item.entity, captions.get(item.entity))));
+          selector.value = choices.some(item => item.entity === selected) ? selected : '';
+          selector.disabled = !choices.length;
+        }
+      };
+      refreshOptions();
+      if (needsReplacement) preview.append(checkbox(words.roomTemplateReplace, draft.replace, checked => {
+        draft.replace = checked;
+        refreshActions();
+      }));
+      refreshActions();
+      preview.append(node('div', { className: 'actions' }, [apply]));
+    };
+    layoutPicker.addEventListener('change', () => {
+      draft.choice = layoutPicker.value;
+      const layout = buildRoomLayout(room, draft.choice, states, copyOptions.get(draft.choice));
+      draft.bindings = initialRoomLayoutBindings(layout, room, states);
+      draft.replace = false;
+      this.#roomLayoutDrafts.set(room.id, draft);
+      this.#roomLayoutMessage = undefined;
+      status.textContent = '';
+      draw();
+    });
+    panel.append(node('p', { textContent: words.roomTemplateHint }), field(words.roomTemplateChoice, layoutPicker), status, preview);
+    draw();
+    return panel;
+  }
+
+  #roomTemplatesDisclosure(words, language, roomId) {
+    return disclosure(words.roomTemplates, this.#open.roomTemplates, open => {
+      this.#open.roomTemplates = open;
+    }, () => [this.#roomTemplatesPanel(words, language, roomId)]);
   }
 
   #roomSectionsPanel(room, override, words, language) {
@@ -1542,6 +1819,17 @@ export class Bayit9StrategyEditor extends HTMLElement {
       ? [node('h4', { className: 'room-choice-heading', textContent: words.roomDevices })]
       : [field(words.roomDevices, choice)];
     const options = [];
+    const groupControls = select([['', words.roomGroupControlsAuto], ['on', words.roomGroupControlsShow],
+      ['off', words.roomGroupControlsHide]], override.group_controls === true ? 'on' :
+      override.group_controls === false ? 'off' : '');
+    groupControls.dataset.roomFocus = 'room-group-controls';
+    groupControls.addEventListener('change', () => {
+      const next = { ...this.#roomOverride(room.id) };
+      if (groupControls.value) next.group_controls = groupControls.value === 'on';
+      else delete next.group_controls;
+      this.#setRoomOverride(room.id, next, 'room-group-controls');
+    });
+    options.push(field(words.roomGroupControls, groupControls));
     const chosen = this.#roomMembership(room, override, sections, language);
     const states = this.#hass.states ?? {};
     const hidden = new Set(configuredIds(this.#config.hidden_entities));
@@ -1616,11 +1904,49 @@ export class Bayit9StrategyEditor extends HTMLElement {
         hint:words.roomShutdownHint, reset:words.roomShutdownReset,
       }));
     }
+    options.push(this.#roomPanelLinks(room, chosen, words, language));
+    const membershipEditor = () => this.#roomDeviceMembership(room, {
+      override, sections, chosen, manual, words, language, areas,
+      available: available ?? new Map(selectableRoomEntities(this.#config, this.#hass).map(item => [item.entity, item])),
+    });
+    const membershipFields = manual ? membershipEditor() : [
+      disclosure(words.extraRoomDevices, this.#open.extraRoomDevices, open => { this.#open.extraRoomDevices = open; }, () => [
+        node('p', { textContent: words.extraRoomDeviceHint }), ...membershipEditor(),
+      ]),
+    ];
+    return [...children, ...membershipFields, ...options];
+  }
+
+  #roomPanelLinks(room, chosen, words, language) {
+    const controls = node('div', { className: 'room-panel-links', hidden: true });
     const linkedDevices = chosen.flatMap(id => {
       const kind = ROOM_PANEL_KINDS.get(id.split('.')[0]);
       return kind ? [{ id, kind }] : [];
     });
-    const panels = linkedDevices.length ? roomPanelOptions(this.#config, this.#hass) : [];
+    if (!linkedDevices.length) return controls;
+
+    const kinds = new Set(linkedDevices.map(device => device.kind));
+    let signature;
+    this.#refreshRoomPanelLinks = () => {
+      const panels = roomPanelOptions(this.#config, this.#hass).filter(panel => kinds.has(panel.kind));
+      const updated = JSON.stringify(panels);
+      if (updated === signature) return;
+      signature = updated;
+      const active = this.shadowRoot.activeElement;
+      const focusKey = active && controls.contains(active) ? active.dataset.roomFocus : undefined;
+      const fields = this.#roomPanelLinkFields(room, linkedDevices, panels, words, language);
+      controls.replaceChildren(...fields);
+      controls.hidden = !fields.length;
+      if (focusKey) [...controls.querySelectorAll('[data-room-focus]')]
+        .find(input => input.dataset.roomFocus === focusKey)?.focus({ preventScroll: true });
+    };
+    this.#refreshRoomPanelLinks();
+    return controls;
+  }
+
+  #roomPanelLinkFields(room, linkedDevices, panels, words, language) {
+    const override = this.#roomOverride(room.id);
+    const options = [];
     for (const { id, kind } of linkedDevices) {
       const targets = panels.filter(panel => panel.kind === kind);
       if (!targets.length) continue;
@@ -1632,21 +1958,21 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const chosenPanel = override[key]?.[id];
       const holdEntities = Array.isArray(override.vacuum_panel_hold_entities) ? override.vacuum_panel_hold_entities : [];
       const setHold = (next, hold) => {
-        const selected = new Set(holdEntities);
+        const selected = new Set(configuredIds(next.vacuum_panel_hold_entities));
         if (hold) selected.add(id);
         else selected.delete(id);
         if (selected.size) next.vacuum_panel_hold_entities = [...selected];
         else delete next.vacuum_panel_hold_entities;
       };
       const setDisplay = (next, display) => {
-        const displays = { ...override.vacuum_panel_presentation };
+        const displays = { ...next.vacuum_panel_presentation };
         if (display) displays[id] = display;
         else delete displays[id];
         if (Object.keys(displays).length) next.vacuum_panel_presentation = displays;
         else delete next.vacuum_panel_presentation;
       };
       const setSummary = (next, summary) => {
-        const summaries = { ...override.vacuum_panel_summary };
+        const summaries = { ...next.vacuum_panel_summary };
         if (summary) summaries[id] = summary;
         else delete summaries[id];
         if (Object.keys(summaries).length) next.vacuum_panel_summary = summaries;
@@ -1656,7 +1982,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const focusKey = 'room-panel-' + id;
       input.dataset.roomFocus = focusKey;
       input.addEventListener('change', () => {
-        const next = { ...override };
+        const next = { ...this.#roomOverride(room.id) };
         const links = { ...next[key] };
         if (input.value) links[id] = input.value;
         else delete links[id];
@@ -1676,7 +2002,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
           holdEntities.includes(id) ? 'hold' : 'tap');
         gesture.dataset.roomFocus = 'room-vacuum-gesture-' + id;
         gesture.addEventListener('change', () => {
-          const next = { ...override };
+          const next = { ...this.#roomOverride(room.id) };
           setHold(next, gesture.value === 'hold');
           this.#setRoomOverride(room.id, next, gesture.dataset.roomFocus);
         });
@@ -1685,14 +2011,14 @@ export class Bayit9StrategyEditor extends HTMLElement {
           roomVacuumPresentation(override.vacuum_panel_presentation?.[id]) ?? '');
         display.dataset.roomFocus = 'room-vacuum-display-' + id;
         display.addEventListener('change', () => {
-          const next = { ...override };
+          const next = { ...this.#roomOverride(room.id) };
           setDisplay(next, display.value);
           this.#setRoomOverride(room.id, next, display.dataset.roomFocus);
         });
         options.push(field(words.roomVacuumDisplay + ' · ' + name, display));
         if (display.value !== 'tile') {
           const summary = normalizeRoomVacuumSummary(override.vacuum_panel_summary?.[id]);
-          const candidates = (available ? [...available.values()] : selectableRoomEntities(this.#config, this.#hass));
+          const candidates = selectableRoomEntities(this.#config, this.#hass);
           const readings = Object.entries(ROOM_VACUUM_SUMMARY_DOMAINS).map(([key, domain]) => {
             const choices = candidates.filter(item => item.entity.startsWith(domain + '.'))
               .map(item => [item.entity, item.name || item.entity])
@@ -1702,8 +2028,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
             const source = select([['', words.roomVacuumNoReading], ...choices], selected || '');
             source.dataset.roomFocus = 'room-vacuum-reading-' + id + '-' + key;
             source.addEventListener('change', () => {
-              const next = { ...override };
-              setSummary(next, normalizeRoomVacuumSummary({ ...summary, [key]: source.value }));
+              const next = { ...this.#roomOverride(room.id) };
+              setSummary(next, normalizeRoomVacuumSummary({ ...next.vacuum_panel_summary?.[id], [key]: source.value }));
               this.#setRoomOverride(room.id, next, source.dataset.roomFocus);
             });
             return field(words.roomVacuumReadings[key], source);
@@ -1714,19 +2040,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
         }
       }
     }
-    const membershipEditor = () => this.#roomDeviceMembership(room, {
-      override, sections, chosen, manual, words, language, areas,
-      available: available ?? new Map(selectableRoomEntities(this.#config, this.#hass).map(item => [item.entity, item])),
-    });
-    const membershipFields = manual ? membershipEditor() : [
-      disclosure(words.extraRoomDevices, this.#open.extraRoomDevices, open => { this.#open.extraRoomDevices = open; }, () => [
-        node('p', { textContent: words.extraRoomDeviceHint }), ...membershipEditor(),
-      ]),
-    ];
-    return [...children, ...membershipFields, ...options];
+    return options;
   }
 
-  #roomDeviceMembership(room, { override, sections, chosen, manual, words, language, areas, available }) {
+  #roomDeviceMembership(room, { override, sections, chosen, manual, words, language, areas, available, showMembers = true }) {
     const memberIds = manual ? chosen : configuredIds(override.additional_entities);
     const areaNames = new Map(areas.map(area => [area.id, area.name]));
     const captions = distinctEntityLabels(memberIds, id =>
@@ -1755,12 +2072,13 @@ export class Bayit9StrategyEditor extends HTMLElement {
         return;
       }
       next.entities = entities;
+      if (Array.isArray(next.entity_order)) next.entity_order = entities;
       if (!entities.includes(next.room_temperature_entity)) delete next.room_temperature_entity;
       if (!next.room_temperature_entity || !entities.includes(next.room_temperature_fallback_entity)) {
         delete next.room_temperature_fallback_entity;
       }
-      for (const key of ['keep_in_automatic_room_entities', 'read_only_entities', 'lighting_count_entities', 'turn_off_entities', 'panel_hidden_entities',
-        'room_activity_badge_excluded_entities',
+      for (const key of ['keep_in_automatic_room_entities', 'read_only_entities', 'lighting_count_entities', 'turn_off_entities',
+        'panel_hidden_entities', 'hidden_entities', 'room_activity_badge_excluded_entities',
         'inline_light_entities', 'compact_inline_light_entities', 'dual_light_detail_entities', 'compact_light_reading_entities',
         'white_light_preset_entities',
         'native_cover_header_entities', 'native_light_hold_entities', 'shortcut_no_details', 'shortcut_power_entities',
@@ -1786,8 +2104,9 @@ export class Bayit9StrategyEditor extends HTMLElement {
       if (sections && removed.size) next.sections = withoutRemoved(sections);
       this.#setRoomOverride(room.id, next, focusKey);
     };
-    const membership = records.length ? orderedList(records, change, words, words.remove, false, 'devices', manual)
-      : node('p', { textContent: manual ? words.noDevices : words.noExtraRoomDevices });
+    const membership = !showMembers ? [] : [records.length ?
+      orderedList(records, change, words, words.remove, false, 'devices', manual) :
+      node('p', { textContent: manual ? words.noDevices : words.noExtraRoomDevices })];
 
     const choiceRows = (inventory, existing) => {
       const selected = new Set([...existing, ...memberIds]);
@@ -1798,8 +2117,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         a.name.localeCompare(b.name, language));
     };
     const currentChoices = () => {
-      const existing = manual ? chosen : dashboardRoomMemberships(this.#config, this.#hass, language)
-        .find(item => item.id === room.id)?.entities ?? [];
+      const existing = manual ? chosen : this.#discoveredRoomMembers(room.id, language);
       return choiceRows(selectableRoomEntities(this.#config, this.#hass), existing);
     };
 
@@ -1882,7 +2200,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     picker.input.addEventListener('focus', () => refresh(true));
     refresh(false, choiceRows(available.values(), chosen));
     const controls = manual ? node('div', {}, [picker.wrapper, keepAutomatic, placement]) : picker.wrapper;
-    return [field(words.roomDeviceSearch, filter), controls, membership];
+    return [field(words.roomDeviceSearch, filter), controls, ...membership];
   }
 
   #customRoomForm(rooms, selection, words) {
@@ -1914,7 +2232,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       this.#open.newRoom = false;
       this.#roomEditing = id;
       this.#roomDeviceQuery = '';
-      this.#commitRooms(change, 'room-edit');
+      this.#commitRooms(change, this.#roomContext === 'manage' ? 'room-display:' + id + ':visibility' : 'room-edit');
     });
     add.disabled = !this.#newRoomName.trim();
     name.addEventListener('input', () => {
@@ -2004,7 +2322,147 @@ export class Bayit9StrategyEditor extends HTMLElement {
     }, [body]);
   }
 
-  #roomsPanel(words, language) {
+  #roomManagementList(words, selection, { heading = false } = {}) {
+    const availableRooms = dashboardRoomOptions(this.#config, this.#hass, {
+      includeUnassigned: this.#config.show_unassigned !== false, presentationOrder: true,
+    });
+    const byId = new Map(availableRooms.map(room => [room.id, room]));
+    const selectedRooms = selection === null ? availableRooms : [
+      ...selection.map(id => byId.get(id) ?? { id, name: id, missing: true }),
+      ...availableRooms.filter(room => room.unassigned && !selection.includes(room.id)),
+    ];
+    const names = distinctEditorLabels(selectedRooms, nativeAreaNames(this.#hass));
+    const hidden = new Set(configuredIds(this.#config.hidden_room_ids));
+    const items = selectedRooms.map(room => ({
+      id: room.id, name: names.get(room.id), hidden: hidden.has(room.id), fixed: room.unassigned === true,
+      secondary: hidden.has(room.id) ? words.hiddenOnDashboard :
+        room.missing ? words.missing : room.custom ? words.customRoom : room.floorName,
+    }));
+    const changeOrder = (ordered, focusKey) => this.#commitRooms(selection === null ? {
+      room_order_mode: 'custom', room_order: preferredOrder(ordered, this.#config.room_order),
+    } : {
+      room_selection: 'manual', area_ids: ordered.filter(room => !room.fixed).map(room => room.id),
+    }, focusKey);
+    const visibility = {
+      showLabel: words.showRoom,
+      toggle: (id, hide, focusKey) => {
+        if (hide) hidden.add(id);
+        else hidden.delete(id);
+        this.#commitRooms({ hidden_room_ids: hidden.size ? [...hidden] : undefined }, focusKey);
+      },
+    };
+    const panel = node('section', { className: 'stack' });
+    panel.dataset.roomManagement = '';
+    if (heading) {
+      const title = node('h3', { className: 'room-choice-heading', textContent: words.manageRooms, tabIndex: -1 });
+      title.dataset.roomFocus = 'room-management';
+      panel.append(title);
+    }
+    if (selection === null) {
+      const modes = [['home_assistant', words.orderHomeAssistant],
+        ['alphabetical', words.orderAlphabetical], ['custom', words.orderCustom]];
+      const configuredMode = this.#config.room_order_mode;
+      const mode = select(modes, modes.some(([id]) => id === configuredMode) ? configuredMode : 'home_assistant');
+      mode.dataset.roomFocus = 'room-order-mode';
+      mode.addEventListener('change', () => {
+        const change = { room_order_mode: mode.value };
+        if (mode.value === 'custom' && !configuredIds(this.#config.room_order).length) {
+          change.room_order = preferredOrder(items, []);
+        }
+        this.#commitRooms(change, 'room-order-mode');
+      });
+      panel.append(field(words.roomOrder, mode));
+    }
+    panel.append(items.length ? orderedList(items, changeOrder, words, words.hideRoom, false, 'room-display', true, visibility) :
+      node('p', { textContent: words.noRooms }));
+    return panel;
+  }
+
+  #roomContentsPanel(room, words, language, { withAdd = false, areas = [] } = {}) {
+    const override = this.#roomOverride(room.id);
+    const sections = roomSections(override.sections);
+    const manual = !usesAutomaticRoomDevices(override, sections, room.custom);
+    const discovered = this.#discoveredRoomMembers(room.id, language);
+    const members = new Set(discovered);
+    const grouped = new Set(sections?.flatMap(section => section.entities.filter(id => members.has(id))));
+    const chosen = [...grouped, ...discovered.filter(id => !grouped.has(id))];
+    const inventory = new Map(selectableRoomEntities(this.#config, this.#hass).map(item => [item.entity, item]));
+    const profiles = Array.isArray(this.#config.profiles) ? this.#config.profiles.map(normalizeProfile).filter(Boolean) : [];
+    const names = distinctEntityLabels(chosen, id => override.entity_names?.[id] ||
+      profiles.find(profile => profile.entity === id)?.name || inventory.get(id)?.name);
+    const hidden = new Set(configuredIds(override.hidden_entities));
+    const panelHidden = new Set(configuredIds(override.panel_hidden_entities));
+    const items = chosen.map(id => ({
+      id, name: names.get(id), hidden: hidden.has(id),
+      secondary: hidden.has(id) ? words.hiddenInRoom : panelHidden.has(id) ? words.hiddenInRoomPanel : '',
+    }));
+    const changeOrder = (ordered, focusKey) => {
+      const next = { ...this.#roomOverride(room.id) };
+      next.entity_order = preferredOrder(ordered, next.entity_order);
+      if (Array.isArray(next.sections)) {
+        const rank = new Map(ordered.map(({ id }, index) => [id, index]));
+        next.sections = next.sections.map(section => {
+          if (!Array.isArray(section?.entities)) return section;
+          // Leave group membership and the slots of missing entities in place.
+          const sorted = section.entities.filter(id => rank.has(id)).sort((a, b) => rank.get(a) - rank.get(b));
+          let index = 0;
+          const entities = section.entities.map(id => rank.has(id) ? sorted[index++] : id);
+          return entities.some((id, i) => id !== section.entities[i]) ? { ...section, entities } : section;
+        });
+      }
+      this.#setRoomOverride(room.id, next, focusKey);
+    };
+    const view = this.#roomContentsViews.get(room.id) ?? { query: '', visibility: 'all' };
+    this.#roomContentsViews.set(room.id, view);
+    const search = node('input', { type: 'search', value: view.query });
+    search.dataset.roomFocus = 'room-contents-search';
+    const filter = select([['all', words.roomContentsAll], ['visible', words.roomContentsVisible],
+      ['hidden', words.roomContentsHidden]], view.visibility);
+    filter.dataset.roomFocus = 'room-contents-visibility';
+    const visibility = {
+      showLabel: words.showDevice,
+      toggle: (id, hide, focusKey) => {
+        const next = { ...this.#roomOverride(room.id) };
+        if (hide) hidden.add(id);
+        else hidden.delete(id);
+        if (hidden.size) next.hidden_entities = [...hidden];
+        else delete next.hidden_entities;
+        const leavesList = (view.visibility === 'visible' && hide) || (view.visibility === 'hidden' && !hide);
+        this.#setRoomOverride(room.id, next, leavesList ? 'room-contents-visibility' : focusKey);
+      },
+    };
+    const panel = node('section', { className: 'stack' });
+    panel.dataset.roomContents = room.id;
+    if (withAdd) {
+      const title = node('h3', { className: 'room-choice-heading', textContent: room.name, tabIndex: -1 });
+      title.dataset.roomFocus = 'room-contents';
+      panel.append(title);
+    }
+    const results = node('div');
+    const paint = () => {
+      const query = view.query.trim().toLocaleLowerCase(language);
+      const all = view.visibility === 'all';
+      const matching = items.filter(item =>
+        (all || item.hidden === (view.visibility === 'hidden')) &&
+        (!query || (item.name + ' ' + item.id).toLocaleLowerCase(language).includes(query)));
+      results.replaceChildren(matching.length ?
+        orderedList(matching, changeOrder, words, words.hideDevice, false, 'room-contents', all && !query, visibility) :
+        node('p', { textContent: items.length ? words.noMatches : words.noDevices }));
+    };
+    search.addEventListener('input', () => { view.query = search.value; paint(); });
+    filter.addEventListener('change', () => { view.visibility = filter.value; paint(); });
+    paint();
+    panel.append(node('div', { className: 'grid' }, [
+      field(words.roomContentsSearch, search), field(words.roomContentsVisibility, filter),
+    ]), results);
+    if (withAdd && !room.unassigned) panel.append(...this.#roomDeviceMembership(room, {
+      override, sections, chosen: manual ? this.#roomMembership(room, override, sections, language) : chosen,
+      manual, words, language, areas, available: inventory, showMembers: false,
+    }));
+    return panel;
+  }
+
+  #roomsPanel(words, language, { managementOnly = false } = {}) {
     const rooms = dashboardRoomOptions(this.#config, this.#hass).sort((a, b) => a.name.localeCompare(b.name, language));
     const byId = new Map(rooms.map(room => [room.id, room]));
     const areaNames = nativeAreaNames(this.#hass);
@@ -2022,7 +2480,8 @@ export class Bayit9StrategyEditor extends HTMLElement {
       }
       const remembered = this.#config.manual_area_ids;
       const areaIds = Array.isArray(remembered) ? configuredIds(remembered)
-        : discoverRooms(this.#config, this.#hass, language).map(room => room.id).filter(id => byId.has(id));
+        : dashboardRoomMemberships(this.#config, this.#hass, language, { includeHiddenRooms: true })
+          .map(room => room.id).filter(id => byId.has(id));
       this.#commitRooms({ room_selection: 'manual', area_ids: areaIds, manual_area_ids: undefined }, 'room-mode');
     });
     const discovery = select([['all', words.allDevices], ['controls', words.controls]],
@@ -2042,7 +2501,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     let roomOrder;
     let availablePicker;
     if (customSelection) {
-      if (ordered.length) roomManagement.push(disclosure(words.shownRoomOrder + ' · ' + ordered.length,
+      if (ordered.length && !managementOnly) roomManagement.push(disclosure(words.shownRoomOrder + ' · ' + ordered.length,
         this.#open.roomOrder, open => { this.#open.roomOrder = open; }, () => {
           roomOrder = orderedList(ordered, (items, focusKey) => this.#commitRooms({
             room_selection: 'manual', area_ids: items.map(item => item.id),
@@ -2055,12 +2514,27 @@ export class Bayit9StrategyEditor extends HTMLElement {
         const picker = addPicker(words.roomToAdd, available.map(room => [room.id, names.get(room.id)]), words.addRoom, words.none, id => {
           this.#roomEditing = id;
           this.#roomDeviceQuery = '';
-          this.#commitRooms({ room_selection: 'manual', area_ids: [...selected, id] }, 'room-edit');
+          const hidden = configuredIds(this.#config.hidden_room_ids);
+          const next = { room_selection: 'manual', area_ids: [...selected, id] };
+          if (hidden.includes(id)) next.hidden_room_ids = hidden.length > 1 ? hidden.filter(roomId => roomId !== id) : undefined;
+          this.#commitRooms(next, managementOnly ? 'room-display:' + id + ':visibility' : 'room-edit');
         });
         availablePicker = picker.input;
         roomManagement.push(picker.wrapper);
       }
     }
+    if (managementOnly) {
+      const [roomSelection, newRoom] = children;
+      const panel = this.#roomManagementList(words, selection, { heading: true });
+      panel.firstElementChild.after(roomSelection, ...roomManagement);
+      panel.append(newRoom, field(words.discovery, discovery), unassigned, this.#roomTemplatesDisclosure(words, language));
+      return [panel];
+    }
+    const manage = disclosure(words.manageRooms, this.#open.roomManagement, open => {
+      this.#open.roomManagement = open;
+    }, () => [this.#roomManagementList(words, selection)]);
+    if (customSelection) roomManagement.push(manage);
+    else roomManagement.unshift(manage);
     roomManagement.push(field(words.discovery, discovery), unassigned);
 
     const editable = customSelection ? selected.map(id => byId.get(id)).filter(Boolean) : rooms;
@@ -2158,7 +2632,11 @@ export class Bayit9StrategyEditor extends HTMLElement {
       const fields = [
         titleBreakField,
         this.#roomIconPicker(active, override, words, language),
+        disclosure(words.roomContents, this.#open.roomContents, open => {
+          this.#open.roomContents = open;
+        }, () => [this.#roomContentsPanel(active, words, language)]),
         ...this.#roomDevicePanel(active, words, language, rooms),
+        this.#roomTemplatesDisclosure(words, language, active.id),
         this.#roomSectionsPanel(active, override, words, language),
         this.#roomAppliancePanel(active, override, words, language),
       ];
@@ -2179,6 +2657,12 @@ export class Bayit9StrategyEditor extends HTMLElement {
           this.#roomDeviceQuery = '';
           this.#commitRooms({
             room_overrides: after,
+            ...(configuredIds(this.#config.hidden_room_ids).includes(active.id) && {
+              hidden_room_ids: configuredIds(this.#config.hidden_room_ids).filter(id => id !== active.id),
+            }),
+            ...(configuredIds(this.#config.room_order).includes(active.id) && {
+              room_order: configuredIds(this.#config.room_order).filter(id => id !== active.id),
+            }),
             ...(customSelection && { room_selection: 'manual', area_ids: selected.filter(id => id !== active.id) }),
             ...(Array.isArray(this.#config.manual_area_ids) && this.#config.manual_area_ids.includes(active.id) && {
               manual_area_ids: this.#config.manual_area_ids.filter(id => id !== active.id),
@@ -2340,6 +2824,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         }
         const choices = [['', words.none], ...options];
         inputs = Array.from({ length: MAX_ROOM_SHORTCUTS }, (_, index) => select(choices, chosen?.[index] ?? ''));
+        inputs[0].dataset.roomFocus = 'room-first-shortcut';
         for (const input of inputs) input.addEventListener('change', () => { refresh(); save(); });
         fields = inputs.map((input, index) => field(words.shortcut + ' ' + (index + 1), input));
         refresh();
@@ -2365,6 +2850,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
         save();
       }
     });
+    automatic.firstElementChild.dataset.roomFocus = 'room-shortcut-mode';
     return [node('p', { textContent: words.shortcutHint }), field(words.shortcutRoom, roomInput), automatic, list, power, details];
   }
 
@@ -2497,8 +2983,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const popupPowerField = node('label', { className: 'check' }, [popupPower, words.heaterPopupQuickPower]);
     const resetUsageInput = node('input', { type: 'checkbox', checked: timed.allow_daily_usage_reset === true });
     const resetUsage = node('label', { className: 'check' }, [resetUsageInput, words.allowDailyUsageReset]);
+    const runningStopInput = node('input', { type: 'checkbox', checked: timed.running_slider_stop === true });
+    const runningStop = node('label', { className: 'check' }, [runningStopInput, words.runningSliderStop]);
     const simpleFields = node('div', { className: 'stack' },
-      [field(words.simpleTimerDevice, simple), targetField, targetWarning, cutoffField, popupPowerField, resetUsage]);
+      [field(words.simpleTimerDevice, simple), targetField, targetWarning, cutoffField, popupPowerField, runningStop, resetUsage]);
     const boilerDetailsInput = node('input', { type: 'checkbox', checked: current.boiler_timer_with_details === true });
     const boilerDetails = node('label', { className: 'check' }, [boilerDetailsInput, words.boilerTimerWithDetails]);
     const availableViewHelper = id => /^input_boolean\.[a-z0-9_]+$/.test(id) &&
@@ -2550,6 +3038,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
       serverFields.hidden = usingSimple;
       simpleFields.hidden = !usingSimple;
       resetUsage.hidden = !simple.value || Boolean(usage.value && usage.value !== simple.value);
+      runningStop.hidden = !usingSimple || !simple.value || (kind.value !== 'heater' && kind.value !== 'climate');
       syncIdleZero();
       schedule.hidden = kind.value !== 'boiler' || !usingSimple;
       boilerDetails.hidden = kind.value !== 'boiler' || !(usingSimple ? simple.value : timer.value);
@@ -2646,6 +3135,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
           daily_usage_entity: usage.value, presets: presetValues,
           allow_daily_usage_reset: usingSimple && !resetUsage.hidden && resetUsageInput.checked,
           idle_zero_duration: !idleZero.hidden && idleZeroInput.checked,
+          running_slider_stop: !runningStop.hidden && runningStopInput.checked,
           duration_field: durationField.value, min_minutes: min.valueAsNumber,
           max_minutes: max.valueAsNumber, step_minutes: step.valueAsNumber,
         },
@@ -2978,7 +3468,22 @@ export class Bayit9StrategyEditor extends HTMLElement {
       }
 
       if (groups.length) {
-        const enabled = new Set(normalizeLightEffectFavoriteLights(this.#config.light_effect_favorites));
+        const sceneGrids = () => new Set(configuredIds(this.#config.light_effect_scene_grid));
+        const directScenes = () => new Set(normalizeLightEffectLights(this.#config.light_effect_scene_on_select));
+        const sceneLayout = sceneGrids().has(entity) ? directScenes().has(entity) ? 'direct-grid' : 'grid' : '';
+        const layout = mark(select([['', words.effectPaged], ['grid', words.effectSceneGrid],
+          ['direct-grid', words.effectSceneOnSelect]], sceneLayout), 'layout');
+        layout.addEventListener('change', () => {
+          const current = sceneGrids();
+          const direct = directScenes();
+          if (layout.value) current.add(entity);
+          else current.delete(entity);
+          if (layout.value === 'direct-grid') direct.add(entity);
+          else direct.delete(entity);
+          this.#commit({ light_effect_scene_grid: [...current], light_effect_scene_on_select: [...direct] });
+        });
+        fields.push(field(words.effectLayout, layout));
+        const enabled = new Set(normalizeLightEffectLights(this.#config.light_effect_favorites));
         const favorites = node('input', { type:'checkbox', checked:enabled.has(entity) });
         favorites.addEventListener('change', () => {
           if (favorites.checked) enabled.add(entity);
@@ -3235,7 +3740,10 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const targetLabel = item => {
       const name = item.kind === 'panel' ? item.name || languages[language][item.panelKind] : item.name;
       const caption = item.roomName ? name + ' · ' + item.roomName : name;
-      return item.detail === 'schedule' ? languages[language].boiler_schedule + ' · ' + caption : caption;
+      const titles = languages[language];
+      if (item.detail === 'schedule/new') return titles.boiler_schedule_new + ' · ' + caption;
+      if (item.detail === 'schedule/edit') return titles.boiler_schedule_edit + ' · ' + caption;
+      return item.detail === 'schedule' ? titles.boiler_schedule + ' · ' + caption : caption;
     };
     let renderedTargets;
     const updateTargets = value => {
@@ -3356,6 +3864,18 @@ export class Bayit9StrategyEditor extends HTMLElement {
     this.#editedSectionHeading = undefined;
     const language = languageFor(this.#config.locale, this.#hass);
     const words = WORDS[language];
+    if (this.#roomContext) {
+      const areas = dashboardRoomOptions(this.#config, this.#hass, { includeUnassigned: true });
+      const room = areas.find(item => item.id === this.#roomEditing);
+      const children = this.#roomContext === 'manage' ? this.#roomsPanel(words, language, { managementOnly: true }) :
+        this.#roomContext === 'templates' ? [this.#roomTemplatesPanel(words, language, this.#roomEditing, { heading: true })] :
+          room ? [this.#roomContentsPanel(room, words, language, { withAdd: true, areas })] :
+            [node('p', { textContent: words.noRooms })];
+      const form = node('form', { dir: language === 'he' ? 'rtl' : 'ltr' }, children);
+      form.addEventListener('submit', event => event.preventDefault());
+      this.shadowRoot.replaceChildren(node('style', { textContent: CSS + ROOM_CSS + GLASS_EDITOR_CSS }), form);
+      return;
+    }
     const title = node('input', { value: this.#config.title ?? '', maxLength: 80 });
     title.addEventListener('change', () => this.#commit({ title: title.value.trim() }));
 
@@ -3371,6 +3891,7 @@ export class Bayit9StrategyEditor extends HTMLElement {
     const lightEffects = node('div');
     this.#refreshLightEffects = undefined;
     this.#refreshAppearanceHelpers = undefined;
+    this.#refreshRoomPanelLinks = undefined;
     const showLightEffects = () => {
       if (!lightEffects.childElementCount) {
         lightEffects.append(this.#lightEffectPanel(discoverRooms(this.#config, this.#hass, language), words));

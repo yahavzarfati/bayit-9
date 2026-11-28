@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  CUSTOM_ROOM_PREFIX, dashboardRoomOptions, discoverOverviewEntities, discoverRooms, generateDashboard,
+  CUSTOM_ROOM_PREFIX, dashboardRoomMemberships, dashboardRoomOptions, discoverOverviewEntities, discoverRooms, generateDashboard,
   normalizeOverviewDiscovery, normalizeProfile, normalizeRoomVacuumSummary, normalizeShortcutDetailRoutes, popupAliasDestinations, roomPanelOptions, roomVacuumSummary,
   selectableRoomEntities, shortcutDetailPanels, suggestedDashboard,
 } from '../src/strategy-model.js';
@@ -284,13 +284,23 @@ test('popup destination picker includes only accessible linked boiler schedules'
   const schedulePath = '#device/studio/' + entity + '/schedule';
   hass.states[entity] = {state:'off',attributes:{}};
   hass.states[timer] = {state:'0',attributes:{switch_entity_id:entity,entry_id:'fixture-runtime',timer_state:'idle'}};
-  hass.services = {scheduler:{add:{}}};
+  hass.services = {scheduler:{add:{},edit:{}},simple_timer:{start_timer:{}}};
+  hass.user = {is_admin:true};
   hass.callWS = () => Promise.resolve([]);
   const config = {area_ids:['studio','lounge'],room_overrides:{
     studio:{entities:[entity]}, lounge:{entities:[entity],read_only_entities:[entity]},
   },profiles:[{entity,kind:'boiler',timed:{simple_timer_entity:timer}}]};
-  const options = () => popupAliasDestinations(config,hass).filter(item=>item.detail === 'schedule').map(item=>item.fragment);
+  const options = () => popupAliasDestinations(config,hass).filter(item=>item.detail).map(item=>item.fragment);
+  assert.deepEqual(options(),[schedulePath,schedulePath + '/new',schedulePath + '/edit']);
+  delete hass.services.scheduler.edit;
+  assert.deepEqual(options(),[schedulePath,schedulePath + '/new']);
+  hass.services.scheduler.edit = {};
+  hass.user.is_admin = false;
   assert.deepEqual(options(),[schedulePath]);
+  hass.user.is_admin = true;
+  delete hass.services.simple_timer.start_timer;
+  assert.deepEqual(options(),[schedulePath]);
+  hass.services.simple_timer.start_timer = {};
   hass.states[timer].attributes.switch_entity_id = 'switch.fixture_wrong';
   assert.deepEqual(options(),[]);
   hass.states[timer].attributes.switch_entity_id = entity;
@@ -527,12 +537,15 @@ test('explicitly enables the Oref map on Security entries with only its typed op
     { kind: 'weather', oref_map: { enabled: true } },
     { kind: 'security', placement: 'settings', oref_map: { enabled: true, auto_fit: false, show_pre_alert: true,
       show_end: 'false', show_home: true, show_location: true, tileLayer: 'https://fixture.invalid', entities: ['zone.home'] } },
+    { kind: 'security', oref_map: { enabled: true, aspect_ratio: '1:1' } },
+    { kind: 'security', oref_map: { enabled: true, aspect_ratio: '0:1' } },
   ] }, {}).views[0].cards[0].toolbar;
   assert.deepEqual(toolbar.slice(0, 4).map(entry => entry.oref_map), Array(4).fill(undefined));
   assert.equal(toolbar[4].placement, 'settings');
   assert.deepEqual(toolbar[4].oref_map, {
-    enabled: true, auto_fit: false, hebrew_basemap: true, show_pre_alert: true, show_end: true,
+    enabled: true, auto_fit: false, hebrew_basemap: true, show_pre_alert: true, show_end: true, aspect_ratio: '4:3',
   });
+  assert.deepEqual(toolbar.slice(5).map(entry => entry.oref_map.aspect_ratio), ['1:1', '4:3']);
 });
 
 function home() {
@@ -683,6 +696,13 @@ test('maps effect categories to visible controllable lights and preserves native
   config.light_effect_favorites = ['light.demo_lamp', 'light.demo_hidden', 'switch.demo_switch', 'light.demo_read_only'];
   assert.deepEqual(discoverRooms(config, { states }, 'en')[0].entities.map(device => device.effect_favorites),
     [true, undefined, undefined]);
+  const direct = () => discoverRooms(config, { states }, 'en')[0].entities.map(device => device.effect_scene_on_select);
+  config.light_effect_scene_on_select = [...Object.keys(states), null, ' light.demo_lamp', 'light.demo_lamp'];
+  assert.deepEqual(direct(), [undefined, undefined, undefined]);
+  config.light_effect_scene_grid = Object.keys(states);
+  assert.deepEqual(direct(), [true, undefined, undefined]);
+  config.light_effect_scene_on_select = { 'light.demo_lamp': true };
+  assert.deepEqual(direct(), [undefined, undefined, undefined]);
 });
 
 test('projects a Home activity badge exclusion only for members of the authored room', () => {
@@ -862,6 +882,87 @@ test('discovers rooms via device and entity registries without exposing hidden o
   assert.deepEqual(rooms.studio.entities.map(entry => entry.entity), ['fan.demo_fan']);
   assert.equal(rooms.studio.icon, 'mdi:desk');
   assert.equal(rooms.bayit9_unassigned.entities[0].entity, 'switch.demo_boiler');
+});
+
+test('lists every native area in full automatic mode and keeps new rooms after a custom order prefix', () => {
+  const hass = home();
+  hass.floors = { upstairs: { floor_id: 'upstairs', name: 'Upstairs' } };
+  hass.areas = {
+    spare: { area_id: 'spare', name: 'Spare', floor_id: 'upstairs' },
+    lounge: { ...hass.areas.lounge, name: 'Lounge' },
+    studio: { ...hass.areas.studio, name: 'Studio' },
+    porch: { ...hass.areas.porch, name: 'Porch' },
+  };
+  const config = { locale: 'en', show_unassigned: false };
+  const ids = settings => discoverRooms({ ...config, ...settings }, hass, 'en').map(room => room.id);
+  assert.deepEqual(ids(), ['spare', 'lounge', 'studio', 'porch']);
+  assert.deepEqual(ids({ room_order_mode: 'alphabetical' }), ['lounge', 'porch', 'spare', 'studio']);
+  assert.deepEqual(ids({ room_order_mode: 'custom', room_order: ['porch', 'unknown'] }),
+    ['porch', 'spare', 'lounge', 'studio']);
+  assert.deepEqual(ids({ room_order_mode: 'custom', room_order: ['porch'], hidden_room_ids: ['studio'] }),
+    ['porch', 'spare', 'lounge']);
+  assert.deepEqual(ids({ room_order_mode: 'custom', room_order: ['porch'], show_empty_rooms: false }),
+    ['porch', 'lounge', 'studio']);
+  assert.deepEqual(ids({ area_ids: ['studio', 'spare'] }), ['studio']);
+  assert.deepEqual(ids({ room_selection: 'manual', area_ids: ['studio', 'spare'], hidden_room_ids: ['studio'] }), ['spare']);
+  const options = dashboardRoomOptions(config, hass, { presentationOrder: true, includeUnassigned: true });
+  assert.deepEqual(options.map(room => room.id), ['spare', 'lounge', 'studio', 'porch', 'bayit9_unassigned']);
+  assert.deepEqual([options[0].floorId, options[0].floorName], ['upstairs', 'Upstairs']);
+  assert.equal(options.at(-1).unassigned, true);
+});
+
+test('fills missing registry room assignments narrowly from state attributes without duplicating assigned devices', () => {
+  const hass = home();
+  const add = (id, attributes, registry) => {
+    hass.states[id] = { state: 'off', attributes };
+    if (registry) hass.entities[id] = registry;
+  };
+  add('light.fixture_state_only', { area_id: 'studio' });
+  add('light.fixture_other_state', { area_id: 'unknown' });
+  add('light.fixture_unplaced', {});
+  add('light.fixture_direct', { area_id: 'studio' }, { ai: 'porch', di: 'dimmer' });
+  add('light.fixture_device', { area_id: 'porch' }, { area_id: '', device_id: 'dimmer' });
+  add('light.fixture_hidden', { area_id: 'studio' }, { hidden: true });
+  add('sensor.fixture_diagnostic', { area_id: 'studio' }, { ec: 'diagnostic' });
+  const assigned = discoverRooms({}, hass, 'en').flatMap(room => room.entities.map(item => [item.entity, room.id]));
+  const placements = Object.fromEntries(assigned);
+  assert.equal(Object.keys(placements).length, assigned.length);
+  assert.equal(placements['light.fixture_state_only'], 'studio');
+  assert.equal(placements['light.fixture_direct'], 'porch');
+  assert.equal(placements['light.fixture_device'], 'lounge');
+  assert.ok(['light.fixture_other_state', 'light.fixture_unplaced', 'light.fixture_hidden', 'sensor.fixture_diagnostic']
+    .every(id => !Object.hasOwn(placements, id)));
+});
+
+test('keeps hidden rooms and entities assigned for editing and independent overview controls', () => {
+  const hass = home();
+  const lamp = 'light.demo_lamp';
+  const fan = 'fan.demo_fan';
+  const boiler = 'switch.demo_boiler';
+  const config = {
+    room_selection: 'manual', area_ids: ['studio', 'lounge', 'porch'],
+    hidden_room_ids: ['lounge', 'bayit9_unassigned'],
+    overview_entities: [fan, lamp, boiler],
+    room_overrides: {
+      studio: { additional_entities: [lamp], hidden_entities: [fan], entity_order: [fan, lamp] },
+      bayit9_unassigned: { hidden_entities: [boiler] },
+    },
+    room_shortcuts: { studio: [fan, lamp] },
+  };
+  const { rooms, overview } = generateDashboard(config, hass).views[0].cards[0];
+  assert.deepEqual(rooms.map(room => room.id), ['studio', 'porch']);
+  assert.deepEqual(rooms[0].entities.map(entity => entity.entity), [lamp]);
+  assert.deepEqual(rooms[0].shortcuts, [lamp]);
+  assert.deepEqual(overview, [fan, lamp, boiler]);
+  const inventory = dashboardRoomMemberships(config, hass, 'en', {
+    includeLocallyHidden: true, includeHiddenRooms: true,
+  });
+  assert.deepEqual(inventory.map(room => room.id), ['studio', 'lounge', 'porch', 'bayit9_unassigned']);
+  assert.deepEqual(inventory.find(room => room.id === 'studio').entities, [fan, lamp]);
+  assert.deepEqual(inventory.at(-1).entities, [boiler]);
+  const shown = discoverRooms({ ...config, hidden_room_ids: [] }, hass, 'en');
+  assert.deepEqual(shown.find(room => room.id === 'lounge').entities.map(entity => entity.entity), [lamp]);
+  assert.deepEqual(shown.at(-1).entities, []);
 });
 
 test('handles registry-less and empty instances without fixed entity ids', () => {
@@ -1707,6 +1808,20 @@ test('keeps an idle zero-duration selection only on a matching Simple Timer rang
   const card = generateDashboard({ profiles: [boiler] }, hass).views[0].cards[0];
   const projected = card.rooms.flatMap(room => room.entities).find(item => item.entity === boiler.entity);
   assert.deepEqual(projected.timed, normalized.timed);
+});
+
+test('scopes the running slider and stop rail to opted-in Simple Timer heater and climate profiles', () => {
+  const timed = { simple_timer_entity:'sensor.demo_runtime', running_slider_stop:true };
+  const heater = { entity:'fan.demo_heater', kind:'heater', timed };
+  assert.equal(normalizeProfile(heater).timed.running_slider_stop,true);
+  const climate = { entity:'climate.demo_air', kind:'climate', timed };
+  assert.equal(normalizeProfile(climate).timed.running_slider_stop,true);
+  for (const profile of [
+    { ...heater, kind:'boiler' },
+    { ...climate, timed:{ ...timed, running_slider_stop:false } },
+    { ...heater, timed:{ ...timed, running_slider_stop:'true' } },
+    { ...heater, timed:{ ...timed, start_script:'script.demo_start' } },
+  ]) assert.equal(normalizeProfile(profile).timed.running_slider_stop,undefined);
 });
 
 test('projects next-start level only for a heater fan with an explicitly linked Simple Timer switch', () => {

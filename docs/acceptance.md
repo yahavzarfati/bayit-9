@@ -4,6 +4,8 @@ The workflow tests Home Assistant Container 2026.5.0 and 2026.11.2. It builds th
 
 The test uses Home Assistant's onboarding and token endpoints to create a temporary admin, assigns a demo light to a synthetic area, and registers the built module via the Lovelace WebSocket API. Chromium opens the real dashboard picker, finds Bayit 9 under **Community dashboards**, and creates it. It opens the generated room, actuates the demo light, checks the resulting Home Assistant state, and verifies that an appearance choice persists after reload at a 390-pixel viewport.
 
+Two additional profiles verify the Dwains-informed workflows with native floors, rooms and demo devices in separate fresh Core instances. The English rental flat exercises the Community dashboards picker. The Hebrew garden house uses the header layout at mobile width. Both check automatic placement, saved room edits, hide and restore, late discovery, entity aliases and the exact targets of a confirmed group action.
+
 The 2026.11.2 job also runs the heating blueprints against a native Timer and a simulated switch. The browser test uses the same Lovelace module registration as a frontend install. The HACS download and update lifecycle and native iPhone Companion runtime are outside this test.
 
 ## Run locally on Linux or macOS
@@ -16,6 +18,8 @@ npm test
 npx playwright-core install chromium
 bash scripts/run-ha-acceptance.sh 2026.11.2
 bash scripts/run-ha-acceptance.sh 2026.5.0
+bash scripts/run-ha-acceptance.sh 2026.11.3 rental-flat
+bash scripts/run-ha-acceptance.sh 2026.11.3 garden-house
 ```
 
 On a clean Ubuntu runner, use `npx playwright-core install --with-deps chromium` to supply Chromium's system libraries. The launcher generates the test URL and fixture marker. It removes the container and temporary configuration on exit. A failed run saves supported diagnostics under `test-results/ha-acceptance/<version>/`.

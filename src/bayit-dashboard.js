@@ -3,13 +3,15 @@ import { languages } from './bayit-dashboard-i18n.js';
 import { automaticToolbarKinds, classicRoomTitle, DEVICE_ICONS, hasDynamicPresenceIcon, isAutomationScriptToggle, isCompactToolbarStatus, isToolbarReadouts, isVacuumProgramAction,
   isCompactAutomationActions, isEnergyReadingCards, isReadingCards, isSecurityDangerAction, isWeatherReadingsList,
   isVisibleEntity, MAX_ROOM_SHORTCUTS, normalizeClimatePresetShortcut, normalizeRoomControlName, normalizeRoomIcon, normalizeShortcutDetailEntities,
-  normalizeRoomVacuumSummary, normalizeToolbarReadout, normalizeRoomTemperatureGraphColor, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, overviewSectionOptions,
+  normalizeRoomVacuumSummary, normalizeToolbarReadout, normalizeRoomTemperatureGraphColor, normalizeShortcutDetailRoutes, normalizeUnreportedSwingMode, normalizeWeatherStatus, overviewSectionOptions,
   supportsRoomSectionColumns,
   ROOM_PANEL_KINDS, normalizeShortcutPowerEntities, roomShortcutDevices, roomTemperatureUnit, roomVacuumPresentation, roomVacuumSummary, supportsRoomTemperatureSource, supportsRoomApplianceTile, supportsRoomBoilerQuickPower, supportsRoomBoilerScheduleEntry, supportsRoomCompactDevice, shortcutDetailPanels, STRATEGY_NAME, supportsNativeShortcutDetails,
   sensorComparisonOptions, sensorSeriesColor, settingsScreenEntries, stackedToolbarLockOptions, supportsHorizonCard, supportsHourlyWeatherForecast, supportsShortcutWithoutDetails,
   supportsToolbarCompactHistory, supportsToolbarPanelIcon, supportsToolbarVacuumSummary, toolbarPlacement, toolbarPopupPosition, usesRoomPopupPosition } from './strategy-model.js';
-import { loadConfiguration, saveConfiguration } from './dashboard-configuration.js';
-import { createScriptRegistry } from './script-registry.js';
+import { loadConfiguration, rebaseConfigurationDraft, saveConfiguration } from './dashboard-configuration.js';
+import { createEntityRegistryLookup, createScriptRegistry } from './entity-registry-lookup.js';
+import { createDeviceFinder, finderTitle } from './device-finder.js';
+import { roomGroupActions, roomGroupMembers } from './room-group-actions.mjs';
 import { bundledHomeIcon } from './home-icon-paths.js';
 import { allowsCoverRailAction, availableLightFixedColorScript, canSendDeviceCommands, climatePowerServiceRegistered, compactRoomLockCommand, createDeviceController, fixedLightColorScriptActive, getDeviceModel, homeHeaterPowerAction, isPairedLightCompanion, isPairedLightStatusRefresh, isReadOnlyRole, pairedLightEffectOptions, roomBoilerQuickPowerAction, roomClimatePowerAction, roomClimatePowerState, roomShutdownTargets, routesFixedLightColor,
   simpleTimerStatusEntity, simpleTimerUsageResetAvailable, supportsHomeHeaterPower, supportsRoomShutdown } from './device-control.mjs';
@@ -36,12 +38,13 @@ import { normalizeSharedWallpapers } from './shared-wallpapers.js';
 import { appearanceHelperChoices, normalizeAppearanceHelpers, reportedAppearanceHelper } from './appearance-helpers.js';
 import { createPageChrome, homePreferencePaths, isActiveDashboardPage } from './page-chrome.js';
 import { openBoilerHistory, boilerHistoryStyles } from './boiler-history.js';
-import { canOpenBoilerSchedule, createBoilerSchedulePanel, isBoilerScheduleProfile } from './boiler-schedule.js';
+import { canCreateBoilerSchedule, canEditBoilerSchedule, canOpenBoilerSchedule, createBoilerSchedulePanel, isBoilerScheduleProfile } from './boiler-schedule.js';
 
 export const backgrounds = Object.freeze(Object.keys(wallpaperChoices));
 const options = { background: backgrounds, shape: appearanceHelperChoices('shape'), layout: appearanceHelperChoices('layout') };
 const setupDrafts = new Map();
 const appearanceReturns = new WeakMap();
+const finderHandoffs = new WeakMap();
 const appearanceReturnMs = 12000;
 
 function forgetAppearanceReturn(view, entry = appearanceReturns.get(view)) {
@@ -97,6 +100,7 @@ const toolbarIcons = {
 };
 const presenceIcons = ['mdi:home-off-outline', 'mdi:account', 'mdi:account-group'];
 const powerDomains = new Set(['light', 'switch', 'fan', 'climate', 'water_heater']);
+const lightPowerStates = new Map([['turn_on', 'on'], ['turn_off', 'off']]);
 const roomSectionKinds = new Set(['lights', 'covers', 'climate', 'heating', 'sensors', 'devices', 'garage', 'weather', 'security', 'media', 'vacuum', 'laundry']);
 const localPath = /^\/(?!\/)[a-z0-9][a-z0-9/_-]*(?:#[a-z0-9_-]+)?$/i;
 const deviceGroups = {
@@ -373,6 +377,10 @@ function normalizeEntity(item) {
     if (groups.length) {
       entry.effect_groups = groups;
       if (item.effect_favorites === true) entry.effect_favorites = true;
+      if (item.effect_scene_grid === true) {
+        entry.effect_scene_grid = true;
+        if (item.effect_scene_on_select === true && supportsNativeShortcutDetails(entry)) entry.effect_scene_on_select = true;
+      }
       const categorySource = supportsNativeShortcutDetails(entry) && normalizeLightEffectCategorySource(item.effect_category_source, groups);
       if (categorySource) entry.effect_category_source = categorySource;
     }
@@ -405,6 +413,7 @@ export function normalizeDashboardConfig(config = {}) {
     }
     const parsed = { id, name, icon: validIcon(room.icon, 'mdi:door-open'), entities: [...unique.values()],
       classicTitle: classicRoomTitle(name, room.classic_title_break),
+      ...(room.group_controls === true && { groupControls: true }),
       activities: normalizeRoomActivities(room.activities).filter(activity => activity.kind !== 'boiler' ||
         unique.get(activity.boiler_entity)?.kind === 'boiler') };
     if (Array.isArray(room.panel_hidden_entities)) {
@@ -501,16 +510,17 @@ export function normalizeDashboardConfig(config = {}) {
             const summary = normalizeRoomVacuumSummary(raw.vacuum_summary);
             if (summary) entity.vacuum_summary = summary;
           }
-          const seriesColor = comparison && sensorSeriesColor(raw);
+          const compactHistory = raw?.compact_history_graph === true && supportsToolbarCompactHistory(item.kind, section, raw);
+          const seriesColor = (comparison || item.kind === 'sensors' && compactHistory) && sensorSeriesColor(raw);
           if (seriesColor) entity.series_color = seriesColor;
-          if (raw?.compact_history_graph === true && supportsToolbarCompactHistory(item.kind, section, raw)) {
-            entity.compact_history_graph = true;
-          }
+          if (compactHistory) entity.compact_history_graph = true;
           if (supportsHourlyWeatherForecast(item.kind, section, raw)) {
             if (raw.hourly_forecast === true) entity.hourly_forecast = true;
             if (raw.clock_weather_card === true) entity.clock_weather_card = true;
           }
           if (raw?.horizon_card === true && supportsHorizonCard(item.kind, section, raw)) entity.horizon_card = true;
+          const weatherStatus = normalizeWeatherStatus(item.kind, section, raw);
+          if (weatherStatus) entity.weather_status = weatherStatus;
           if (item.kind === 'sensors' && section.kind !== 'series' && entity.role === 'graph' &&
               domainFor(entity) === 'sensor' && known.has(raw.graph_room_id)) entity.graph_room_id = raw.graph_room_id;
           return entity;
@@ -560,6 +570,10 @@ const layout = `
     <header class="toolbar">
       <div class="brand"><h1></h1></div>
       <div class="toolbar-actions"></div>
+      <div class="home-edit-bar" hidden>
+        <p class="home-edit-caption"></p>
+        <div class="home-edit-actions"></div>
+      </div>
     </header>
     <div class="room-scroll"><div class="rooms" role="region"></div></div>
     <div class="home-empty" hidden>
@@ -602,6 +616,7 @@ export class BayitDashboard extends HTMLElement {
     const role = name => get('[data-role="' + name + '"]');
     this.nodes = {
       shell: get('.shell'), toolbar: get('.toolbar'), toolbarActions: get('.toolbar-actions'),
+      homeEditBar: get('.home-edit-bar'), homeEditCaption: get('.home-edit-caption'), homeEditActions: get('.home-edit-actions'),
       roomScroll: get('.room-scroll'), rooms: get('.rooms'), title: get('h1'),
       empty: get('.home-empty'), emptyMessage: role('empty-message'), emptySetup: role('empty-setup'),
       back: role('back'), close: role('close'),
@@ -627,6 +642,18 @@ export class BayitDashboard extends HTMLElement {
     n.emptySetup.onclick = () => {
       if (!n.emptySetup.hidden) this.openSetup(n.emptySetup, { setupRooms: true });
     };
+    n.shell.addEventListener('keydown', event => {
+      const editing = event.target.closest?.('input, select, textarea, [contenteditable=true]');
+      if (event.key === '/' && !event.defaultPrevented && !editing && !event.ctrlKey && !event.metaKey && !event.altKey &&
+          this.config?.page && !this.homeEditing && !n.modal.open) {
+        event.preventDefault();
+        this.openFinder(event.target.closest?.('button'), { keyboard: true });
+        return;
+      }
+      if (event.key !== 'Escape' || event.defaultPrevented || !this.homeEditing || n.modal.open) return;
+      event.preventDefault();
+      this.setHomeEditing(false);
+    });
     n.back.onclick = () => this.backToRoom();
     n.close.onclick = () => this.dismissPanel();
     n.abort.onclick = () => n.confirm.close();
@@ -684,14 +711,19 @@ export class BayitDashboard extends HTMLElement {
 
   setConfig(raw) {
     const next = normalizeDashboardConfig(raw);
+    if (next.page && next.storageKey === this.config?.storageKey) this.keepFinderHandoff();
     this.dropQueuedScriptStops();
     this.retireChangedHeaterFeedback(next);
     this.prepareAppearanceReturn(next);
     this.popupScroll.stop();
     this.nativeMoreInfoReturn?.();
-    if (this.config?.storageKey !== next.storageKey) this.preferences = {};
+    if (this.config?.storageKey !== next.storageKey) {
+      this.preferences = {};
+      this.homeEditing = false;
+    }
     this.popupHistory?.stop({ handoff: this.config?.storageKey === next.storageKey && next.page });
     this.popupHistory = undefined;
+    this.disposeFinder();
     if (this.nodes.confirm.open) this.nodes.confirm.close();
     this.popupMotion.reset();
     this.toolbarPanel?.dispose();
@@ -699,6 +731,7 @@ export class BayitDashboard extends HTMLElement {
     this.roomGraphs?.dispose();
     this.boilerView?.dispose();
     this.config = next;
+    if (!next.page) this.homeEditing = false;
     const devices = [
       ...next.rooms.flatMap(room => room.entities),
       ...Object.values(next.context).flat(),
@@ -731,6 +764,9 @@ export class BayitDashboard extends HTMLElement {
     this.readPreferences();
     this.buildToolbar();
     this.buildRooms();
+    n.homeEditActions.replaceChildren();
+    n.homeEditAdd = undefined;
+    this.syncHomeEditing();
     this.applyPreferences();
     this.pageChrome.update({ enabled: next.page && next.fullscreen });
     this.update();
@@ -739,7 +775,15 @@ export class BayitDashboard extends HTMLElement {
   }
 
   set hass(hass) {
+    const previousUser = this._hass?.user;
     this._hass = hass;
+    const handoff = previousUser?.id !== hass?.user?.id;
+    if (handoff || previousUser?.is_admin !== hass?.user?.is_admin) this.setupAuthorityEpoch = (this.setupAuthorityEpoch ?? 0) + 1;
+    if (handoff && this.nodes.confirm.open) this.nodes.confirm.close();
+    if (this.panel?.type === 'setup' && (handoff || !hass?.user?.is_admin)) {
+      this.dismissPanel({ immediate: true, restoreFocus: false });
+    }
+    if (this.homeEditing && (handoff || !this.canEditHome())) this.setHomeEditing(false, { focus: false });
     this.dropInvalidScriptStops();
     if (this.setup?.editor) this.setup.editor.hass = hass;
     if (this.isConnected && this.fixedColorScripts) this.scriptRegistry.update(hass, this.fixedColorScripts);
@@ -750,6 +794,7 @@ export class BayitDashboard extends HTMLElement {
       const helpers = this.readAppearanceHelpers();
       if (JSON.stringify(helpers) !== this.appearanceHelperVersion) this.applyPreferences(helpers);
       this.popupHistory?.refresh();
+      this.restoreFinderHandoff();
       this.restoreAppearanceReturn();
     });
   }
@@ -771,6 +816,7 @@ export class BayitDashboard extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this.keepFinderHandoff();
     this.dropQueuedScriptStops();
     this.scriptRegistry.dispose();
     const returning = appearanceReturns.get(this.ownerDocument.defaultView);
@@ -794,6 +840,7 @@ export class BayitDashboard extends HTMLElement {
     this.ownerDocument.removeEventListener('visibilitychange', this.applianceVisibility);
     clearTimeout(this.noticeTimer);
     this.frame = this.ticker = 0;
+    this.disposeFinder();
     if (this.nodes.confirm.open) this.nodes.confirm.close();
     this.popupMotion.reset();
     this.toolbarPanel?.dispose();
@@ -825,6 +872,7 @@ export class BayitDashboard extends HTMLElement {
       onChange: event => this.showPopupRoute(event),
     });
     this.popupHistory.start();
+    this.restoreFinderHandoff();
   }
 
   resolvePopup(hash) {
@@ -834,6 +882,8 @@ export class BayitDashboard extends HTMLElement {
       const room = this.roomViews.get(route.room)?.room;
       if (route.kind === 'room') return !!room;
       const device = room?.entities.find(item => item.entity === route.entity);
+      if (route.detail === 'schedule/new') return canCreateBoilerSchedule(device, this._hass, this.config.hiddenEntities);
+      if (route.detail === 'schedule/edit') return canEditBoilerSchedule(device, this._hass, this.config.hiddenEntities);
       return !!device && (!route.detail || canOpenBoilerSchedule(device, this._hass, this.config.hiddenEntities));
     }, this.config.popupAliases);
   }
@@ -859,6 +909,7 @@ export class BayitDashboard extends HTMLElement {
       if (this.panel?.routeHash) this.popupMotion.dismiss({ immediate: true, restoreFocus: false });
       return;
     }
+    if (this.homeEditing) this.setHomeEditing(false, { focus: false });
     const linkedRoom = roomLink && this.roomViews.get(roomLink.room)?.room;
     const returnTo = linkedRoom && { room:linkedRoom, entity:roomLink.entity };
     if (route.kind === 'panel') {
@@ -868,7 +919,8 @@ export class BayitDashboard extends HTMLElement {
       const room = this.roomViews.get(route.room)?.room;
       if (reason === 'room-return' || reason === 'browser-room-return') {
         this.restoreRoomFromPanel(room, source, { hash, browserReturn:reason === 'browser-room-return' });
-      } else this.openPanel(route.kind, null, room, route.entity, undefined, undefined, { hash, detail:route.detail, returnTo });
+      } else this.openPanel(route.kind, null, room, route.entity, undefined, undefined,
+        { hash, detail:route.detail, scheduleId:route.scheduleId, returnTo });
     }
   }
 
@@ -903,10 +955,14 @@ export class BayitDashboard extends HTMLElement {
     return Object.fromEntries(Object.keys(this.config.appearanceHelpers).map(key => [key, this.readAppearanceHelper(key)]));
   }
 
+  householdAppearance(key) {
+    return this.appearanceHelperStates[key]?.selected ?? this.config[key];
+  }
+
   displayedAppearance(key) {
     const local = this.preferences[key];
     if (local && !Object.hasOwn(this.config.appearanceHelpers[key]?.options ?? {}, local)) return local;
-    return this.appearanceHelperStates[key]?.selected ?? this.config[key];
+    return this.householdAppearance(key);
   }
 
   applyPreferences(helpers = this.readAppearanceHelpers()) {
@@ -938,7 +994,8 @@ export class BayitDashboard extends HTMLElement {
     }
     const appearance = this.appearanceActions;
     if (appearance?.panel === this.panel) {
-      appearance.reset.hidden = !Object.keys(this.preferences).length;
+      appearance.reset.hidden = !Object.keys(this.preferences).some(key =>
+        this.displayedAppearance(key) !== this.householdAppearance(key));
       if (appearance.share) {
         appearance.share.disabled = Boolean(this.appearanceSave);
         appearance.share.hidden = this.appearanceSave !== appearance && !Object.keys(this.appearanceChanges()).length;
@@ -994,7 +1051,12 @@ export class BayitDashboard extends HTMLElement {
   }
 
   setPreference(key, value) {
-    this.preferences[key] = value;
+    if (!this.config.appearanceHelpers[key] && value === this.config[key]) {
+      if (!Object.hasOwn(this.preferences, key)) return;
+      delete this.preferences[key];
+    } else {
+      this.preferences[key] = value;
+    }
     this.persistPreferences();
   }
 
@@ -1276,7 +1338,9 @@ export class BayitDashboard extends HTMLElement {
     const items = settings.toolbar?.filter(item => !item.placement) ?? automatic.map(kind => ({
       kind, icon: toolbarIcons[kind], ...(kind === 'presence' && { presence_dynamic_icon: true }),
     }));
-    if (settings.fullscreen && !items.some(item => item.kind === 'settings')) items.push({ kind:'settings', icon:toolbarIcons.settings });
+    if ((settings.fullscreen || settings.page) && !items.some(item => item.kind === 'settings')) {
+      items.push({ kind: 'settings', icon: toolbarIcons.settings, adminOnly: !settings.fullscreen });
+    }
     this.nodes.toolbarActions.replaceChildren();
     this.toolbarViews = items.map(item => {
       const { kind } = item;
@@ -1294,7 +1358,7 @@ export class BayitDashboard extends HTMLElement {
       if (kind !== 'link') {
         element.setAttribute('aria-haspopup', 'dialog');
         if (settings.page) preserveToolbarPopupPress(element, kind, panel.id || kind,
-          () => this.isConnected && !this.nodes.modal.open,
+          () => this.isConnected && !this.nodes.modal.open && !this.homeEditing,
           () => this.popupHistoryPath === this.ownerDocument.defaultView.location.pathname && isActiveDashboardPage(this));
       }
       const badge = ['presence', 'activity'].includes(kind) ? make('span', 'badge') : null;
@@ -1304,6 +1368,7 @@ export class BayitDashboard extends HTMLElement {
         element.append(badge);
       }
       element.onclick = activation => {
+        if (this.homeEditing) return;
         if (kind === 'link') return location.assign(item.path);
         this.openPanel(kind, element, undefined, undefined, panel, undefined, { activation });
       };
@@ -1311,6 +1376,112 @@ export class BayitDashboard extends HTMLElement {
       this.nodes.toolbarActions.append(element);
       return { kind, element, badge, entities, needsContent, panel, presenceIds };
     });
+  }
+
+  canEditHome() {
+    return this.config?.page === true && this._hass?.user?.is_admin === true;
+  }
+
+  async beginHomeEditing(control) {
+    if (!this.canEditHome() || (this.canSyncAppearance() && this.appearanceSave)) return;
+    const panel = this.panel;
+    const userId = this._hass.user.id;
+    const view = this.ownerDocument.defaultView;
+    const path = view.location.pathname;
+    const current = () => this.panel === panel && this.nodes.modal.open && !this.nodes.modal.hasAttribute('data-closing') &&
+      view.location.pathname === path && this._hass?.user?.id === userId && this.canEditHome();
+    control.disabled = true;
+    try {
+      await loadConfiguration(this._hass, path);
+      if (!current() || (this.canSyncAppearance() && this.appearanceSave)) return;
+      this.dismissPanel({ immediate: true, restoreFocus: false });
+      this.setHomeEditing(true);
+    } catch (error) {
+      if (current()) this.announce(this.configurationErrorText(error));
+    } finally {
+      control.disabled = false;
+    }
+  }
+
+  buildHomeEditBar() {
+    const n = this.nodes;
+    const add = button('control-button', '', 'mdi:plus');
+    const rooms = button('control-button', '', 'mdi:home-edit-outline');
+    const settings = button('control-button', '', 'mdi:tune-variant');
+    const done = button('control-button', '', 'mdi:check');
+    for (const [control, role, key] of [[add, 'add', 'home_edit_add_room'],
+      [rooms, 'rooms', 'home_edit_manage_rooms'], [settings, 'settings', 'home_edit_settings'],
+      [done, 'done', 'home_edit_done']]) {
+      control.dataset.role = 'home-edit-' + role;
+      control.append(make('span', '', this.t(key)));
+    }
+    add.setAttribute('aria-haspopup', 'dialog');
+    rooms.setAttribute('aria-haspopup', 'dialog');
+    settings.setAttribute('aria-haspopup', 'dialog');
+    add.onclick = activation => this.openHomeEditor(add, activation, { create: true });
+    rooms.onclick = activation => this.openHomeEditor(rooms, activation, { manage: true });
+    settings.onclick = activation => this.openHomeEditor(settings, activation);
+    done.onclick = activation => {
+      if (this.homeEditDraft()) this.openHomeEditor(done, activation, { review: true });
+      else this.setHomeEditing(false);
+    };
+    n.homeEditAdd = add;
+    n.homeEditActions.replaceChildren(add, rooms, settings, done);
+  }
+
+  setHomeEditing(enabled, { focus = true } = {}) {
+    const editing = enabled && this.canEditHome();
+    if (this.homeEditing === editing) return;
+    this.homeEditing = editing;
+    this.syncHomeEditing();
+    if (focus) {
+      const control = editing ? this.nodes.homeEditAdd
+        : this.toolbarViews.find(view => view.kind === 'settings' && !view.element.hidden)?.element;
+      control?.focus({ preventScroll: true });
+    }
+  }
+
+  syncHomeEditing() {
+    const editing = Boolean(this.homeEditing);
+    const n = this.nodes;
+    n.shell.toggleAttribute('data-home-editing', editing);
+    n.homeEditBar.hidden = !editing;
+    n.toolbarActions.inert = editing;
+    if (editing && !n.homeEditAdd) this.buildHomeEditBar();
+    this.updateHomeEditCaption();
+    for (const view of this.roomViews.values()) {
+      if (editing && !view.editActions) {
+        view.editActions = this.buildRoomEditActions(view.room);
+        view.article.append(view.editActions);
+      }
+      if (view.editActions) view.editActions.hidden = !editing;
+      view.heading.inert = view.quick.inert = editing;
+      if (view.turnOff) view.turnOff.inert = editing;
+    }
+    this.updateEmptySetup();
+  }
+
+  updateEmptySetup() {
+    this.nodes.emptySetup.hidden = this.homeEditing || !this.config.setupRoomsOnEmpty ||
+      this.roomViews.size > 0 || !this.canEditHome();
+  }
+
+  homeEditDraft() {
+    const path = this.ownerDocument.defaultView.location.pathname.split('/')[1];
+    return setupDrafts.get(JSON.stringify([this._hass?.user?.id, path]));
+  }
+
+  updateHomeEditCaption() {
+    const caption = this.t('home_edit_mode');
+    setText(this.nodes.homeEditCaption, this.homeEditing && this.homeEditDraft()
+      ? caption + ' · ' + this.t('home_edit_unsaved') : caption);
+  }
+
+  openHomeEditor(source, activation, setupTarget) {
+    if (!this.homeEditing || !this.canEditHome()) return;
+    const setupTitle = setupTarget?.manage ? this.t('home_edit_manage_rooms')
+      : setupTarget?.focus === 'contents' ? source.getAttribute('aria-label') : undefined;
+    this.openSetup(source, { activation, setupTarget, setupTitle });
   }
 
   entityVisible(entity) {
@@ -1419,15 +1590,19 @@ export class BayitDashboard extends HTMLElement {
       article.dataset.room = room.id;
       const heading = button('room-title');
       label(heading, room.name);
-      heading.setAttribute('aria-haspopup', 'dialog');
       const chevron = icon(this.config.locale === 'he' ? 'mdi:chevron-left' : 'mdi:chevron-right', true);
       chevron.className = 'chevron';
       const count = make('span', 'room-count');
       count.setAttribute('aria-hidden', 'true');
       const name = make('span', 'room-name', room.name);
       heading.append(icon(room.icon, true), name, count, chevron);
-      const openRoom = activation => this.openPanel('room', heading, room, undefined, undefined, undefined, { activation });
+      const openRoom = activation => {
+        if (!this.homeEditing) this.openPanel('room', heading, room, undefined, undefined, undefined, { activation });
+      };
       heading.onclick = openRoom;
+      bindDeviceDetails(heading, activation => {
+        if (!n.modal.open) openRoom(activation);
+      }, { pointerSurface: article });
       article.onclick = event => {
         if (!event.target.closest('button')) openRoom(event);
       };
@@ -1452,7 +1627,7 @@ export class BayitDashboard extends HTMLElement {
             : domainFor(config) === 'climate' ? 'room_climate_power' : 'room_boiler_quick_power';
           powerConfig = { ...config, [flag]: true };
         }
-        const shortcutCurrent = () => this.isConnected && el.isConnected && !this.nodes.modal.open &&
+        const shortcutCurrent = () => this.isConnected && el.isConnected && !this.nodes.modal.open && !this.homeEditing &&
           this.roomViews.get(room.id)?.shortcut.get(config.entity)?.el === el && this.entityVisible(config.entity);
         const showDetails = () => {
           if (shortcutCurrent()) this.openShortcutDetails(config, el, room);
@@ -1462,7 +1637,7 @@ export class BayitDashboard extends HTMLElement {
           bindDeviceDetails(el, () => {
             armedAction = undefined;
             showDetails();
-          }, { requireShortTap: true, activationStart: () => { armedAction = el.dataset.action ?? ''; } });
+          }, { holdOnRelease: true, requireShortTap: true, activationStart: () => { armedAction = el.dataset.action ?? ''; } });
           el.onclick = () => {
             if (!shortcutCurrent()) return;
             const armed = armedAction ?? el.dataset.action;
@@ -1478,7 +1653,7 @@ export class BayitDashboard extends HTMLElement {
           el.onclick = () => {
             if (shortcutCurrent()) this.quickAction(config, el, room, { details, shortcutCurrent });
           };
-          bindDeviceDetails(el, details ? showDetails : undefined);
+          bindDeviceDetails(el, details ? showDetails : undefined, { holdOnRelease: true });
         }
         shortcut.set(config.entity, { el, powerConfig });
         quick.append(el);
@@ -1487,17 +1662,42 @@ export class BayitDashboard extends HTMLElement {
       let turnOff;
       if (room.turnOff?.length) {
         turnOff = homeButton('room-turn-off', this.t('turn_off_room').replace('{name}', room.name), room.icon);
-        turnOff.onclick = () => this.turnOffRoom(room);
+        turnOff.onclick = () => {
+          if (!this.homeEditing) this.turnOffRoom(room);
+        };
         article.append(turnOff);
       }
       n.rooms.append(article);
       this.roomViews.set(room.id, {
-        room, article, heading, name, count, turnOff, temperature, activityBadges: [activity],
+        room, article, heading, name, count, turnOff, quick, temperature, activityBadges: [activity],
         activityAnchor: appliances[0]?.badge.element ?? availability.element, appliances, boilerActivity, availability, shortcut,
       });
       if (this.isConnected && (appliances.length || boilerActivity)) this.applianceObserver?.observe(article);
     }
-    n.empty.hidden = this.roomViews.size > 0;
+    n.roomScroll.hidden = this.roomViews.size === 0;
+    n.empty.hidden = !n.roomScroll.hidden;
+  }
+
+  buildRoomEditActions(room) {
+    const actions = make('div', 'room-edit-actions');
+    actions.hidden = true;
+    for (const [key, glyph, target] of [
+      ['home_edit_room', 'mdi:pencil-outline', { focus: 'name' }],
+      ['home_edit_add_device', 'mdi:plus', { focus: 'devices' }],
+      ['home_edit_manage_devices', 'mdi:format-list-bulleted', { focus: 'contents' }],
+      ['home_edit_shortcuts', 'mdi:lightning-bolt-outline', { shortcuts: true }],
+    ]) {
+      const control = button('room-edit-button', '', glyph);
+      const caption = this.t(key);
+      label(control, caption + ' · ' + room.name);
+      control.setAttribute('aria-haspopup', 'dialog');
+      if (target.focus === 'contents') control.classList.add('room-edit-manage-devices');
+      if (target.shortcuts) control.classList.add('room-edit-shortcuts');
+      control.append(make('span', '', caption));
+      control.onclick = activation => this.openHomeEditor(control, activation, { roomId: room.id, ...target });
+      actions.append(control);
+    }
+    return actions;
   }
 
   roomOffTargets(room) {
@@ -1643,7 +1843,7 @@ export class BayitDashboard extends HTMLElement {
   update() {
     if (!this.config) return;
     const n = this.nodes;
-    n.emptySetup.hidden = !this.config.setupRoomsOnEmpty || this.roomViews.size > 0 || !this._hass?.user?.is_admin;
+    this.updateEmptySetup();
     const active = new Map();
     const haveStates = !!this._hass?.states;
     const visible = entity => this.entityVisible(entity);
@@ -1785,8 +1985,13 @@ export class BayitDashboard extends HTMLElement {
     this.roomGraphs?.update(this._hass);
     this.boilerView?.update(this._hass);
     if (panel === 'activity') this.paintActivity();
+    if (panel === 'finder' && this.nodes.modal.open) {
+      if (!this.finder || this.panel.finderUser !== this._hass?.user?.id) this.paintFinder();
+      else this.finder.refresh();
+    }
     for (const { kind, element, badge, entities, needsContent, panel, presenceIds } of this.toolbarViews) {
-      element.hidden = needsContent && !entities.length && (kind !== 'energy' || !this._hass?.panels?.energy);
+      element.hidden = (panel.adminOnly && !this.canEditHome()) ||
+        (needsContent && !entities.length && (kind !== 'energy' || !this._hass?.panels?.energy));
       if (badge) {
         const count = kind === 'activity' ? active.size
           : presenceIds.filter(entity => this._hass?.states?.[entity]?.state === 'home').length;
@@ -1825,12 +2030,17 @@ export class BayitDashboard extends HTMLElement {
     const returnTo = fromRoomDetail ? { room, entity: selected.entity } : fromLinkedRoom ? returnFromRoom : navigation.returnTo;
     this.popupScroll.stop();
     const scrollRoute = type === 'room' ? { kind: 'room', room: room.id }
-      : boilerControls && this.config.page ? { kind: 'device', room: room.id, entity, detail:navigation.detail } : null;
+      : boilerControls && this.config.page ? { kind: 'device', room: room.id, entity,
+        detail:navigation.detail, scheduleId:navigation.scheduleId } : null;
     const panel = { type, room, returnTo, roomOrigin: type === 'room' && Boolean(source),
       setupRooms: type === 'setup' && navigation.setupRooms === true,
+      setupTarget: type === 'setup' ? navigation.setupTarget : undefined,
+      finderState: type === 'finder' ? navigation.finderState : undefined,
       scrollHash: popupRouteFragment(scrollRoute), routeHash: navigation.hash ?? this.panel?.routeHash };
     this.dropQueuedScriptStops();
     this.panel = panel;
+    this.disposeFinder();
+    this.roomGroupControls = [];
     n.back.hidden = !this.roomReturnAvailable(returnTo);
     n.setupFooter.hidden = true;
     n.setupFooter.replaceChildren();
@@ -1845,10 +2055,12 @@ export class BayitDashboard extends HTMLElement {
     setText(n.modalNotice, '');
     const glyph = model?.icon || room?.icon || toolbar?.panel_icon || toolbar?.icon ||
       source?.querySelector('ha-icon')?.getAttribute('icon');
-    const title = selected?.popup_name || model?.name || room?.name || toolbar?.name || toolbar?.label || this.t(type);
+    const title = selected?.popup_name || model?.name || room?.name || toolbar?.name || toolbar?.label || navigation.setupTitle ||
+      this.t(panel.setupTarget?.review ? 'home_edit_review' : type);
     n.modal.setAttribute('aria-label', title);
     n.modal.toggleAttribute('data-standalone-heater', standaloneHeater);
     n.modal.toggleAttribute('data-standalone-climate', standaloneClimate);
+    n.modalTitle.removeAttribute('tabindex');
     n.modalHeading.replaceChildren(n.modalTitle);
     n.modalHeadingActions.replaceChildren();
     n.modalHeadingActions.hidden = true;
@@ -1858,7 +2070,7 @@ export class BayitDashboard extends HTMLElement {
     if (selected) {
       const titleInDialog = ['light', 'climate'].includes(domainFor(selected)) || ['heater', 'boiler'].includes(selected.kind);
       this.buildDevices([selected], undefined, { titleInDialog, compactDeviceHeading, showRoomPreset: !room.panelHidden?.has(entity) });
-      if (boilerControls) this.buildBoilerView(selected, navigation.detail);
+      if (boilerControls) this.buildBoilerView(selected, navigation.detail, navigation.scheduleId);
     }
     if (type === 'overview') {
       if (toolbar?.sections) this.openToolbarPanel('overview', toolbar);
@@ -1867,6 +2079,7 @@ export class BayitDashboard extends HTMLElement {
     if (contextKeys.includes(type)) this.openToolbarPanel(type, toolbar);
     if (type === 'settings') this.paintSettings();
     if (type === 'setup') void this.paintSetup();
+    if (type === 'finder') this.paintFinder();
     if (type === 'activity') this.paintActivity();
     const kind = type === 'room' || type === 'device' ? type : 'toolbar';
     const roomPosition = usesRoomPopupPosition(toolbar);
@@ -1887,7 +2100,7 @@ export class BayitDashboard extends HTMLElement {
     this.update();
     if (!navigation.hash && this.popupHistory) {
       const route = type === 'room' ? { kind: type, room: room.id }
-        : type === 'device' ? { kind: type, room: room.id, entity, detail:navigation.detail }
+        : type === 'device' ? { kind: type, room: room.id, entity, detail:navigation.detail, scheduleId:navigation.scheduleId }
         : toolbar ? { kind: 'panel', panel: toolbar.id || type } : null;
       const hash = popupRouteFragment(route);
       if (hash) {
@@ -1976,6 +2189,8 @@ export class BayitDashboard extends HTMLElement {
     n.setupFooter.replaceChildren();
     this.panel = null;
     this.setup = null;
+    this.disposeFinder();
+    this.roomGroupControls = [];
     this.toolbarPanel?.dispose();
     this.wallpaperGallery?.dispose();
     this.roomGraphs?.dispose();
@@ -2030,11 +2245,88 @@ export class BayitDashboard extends HTMLElement {
           if (!config.room_temperature_graph_color) this.buildDevice(config, fallback, room, key);
           group.append(this.roomGraphs.mount(config, fallback.firstElementChild));
         }
+        if (room.groupControls) this.addRoomGroupControls(group, room, key, members);
         content.append(group);
       }
     }
     if (!content.childElementCount) content.append(make('p', 'empty', this.t('empty_room')));
     this.updateDevices();
+  }
+
+  addRoomGroupControls(group, room, key, devices) {
+    const domain = { room_lights: 'light', room_covers: 'cover' }[key];
+    if (!domain || devices.filter(device => domainFor(device) === domain).length < 2) return;
+    const controls = make('div', 'room-group-controls');
+    controls.hidden = true;
+    this.roomGroupControls.push({ controls, actions: Object.keys(roomGroupActions[domain]).map(action => {
+      const control = button('control-button', this.t('room_group_' + domain + '_' + action));
+      const entry = { control, room, devices, domain, action };
+      control.disabled = true;
+      control.setAttribute('aria-haspopup', 'dialog');
+      control.onclick = () => this.confirmRoomGroupAction(entry);
+      controls.append(control);
+      return entry;
+    }) });
+    group.append(controls);
+  }
+
+  roomGroupSelection({ room, devices, domain, action }) {
+    return roomGroupMembers(devices, {
+      domain, action, states: this._hass?.states, services: this._hass?.services, registry: this._hass?.entities,
+      visible: entity => !room.panelHidden?.has(entity) && this.entityVisible(entity),
+      pending: entity => this.pending.has(entity),
+    });
+  }
+
+  updateRoomGroupControls() {
+    const commandsReady = canSendDeviceCommands(this._hass);
+    for (const { controls, actions } of this.roomGroupControls ?? []) {
+      for (const entry of actions) {
+        const { candidates, targets } = this.roomGroupSelection(entry);
+        entry.control.hidden = candidates.length < 2;
+        entry.control.disabled = !commandsReady || !targets.length;
+      }
+      controls.hidden = actions.every(entry => entry.control.hidden);
+    }
+  }
+
+  confirmRoomGroupAction(entry) {
+    const panel = this.panel;
+    const n = this.nodes;
+    const active = () => this.panel === panel && panel?.type === 'room' && panel.room === entry.room &&
+      entry.control.isConnected && n.modal.open && !n.modal.hasAttribute('data-closing') &&
+      canSendDeviceCommands(this._hass);
+    if (!active() || n.confirm.open || entry.control.disabled || entry.control.hidden) return;
+    const selection = this.roomGroupSelection(entry);
+    if (selection.candidates.length < 2 || !selection.targets.length) return;
+    const requested = new Set(selection.targets.map(device => device.entity));
+    this.confirming = { source: entry.control, acceptGroup: () => {
+      if (!active()) return;
+      const { targets } = this.roomGroupSelection(entry);
+      const remaining = targets.filter(device => requested.has(device.entity));
+      if (!remaining.length) return this.announce(this.t('room_group_no_targets'));
+      return this.executeRoomGroupAction(remaining, entry.action);
+    } };
+    setText(n.confirmText, this.t('room_group_confirm').replace('{action}', entry.control.textContent)
+      .replace('{room}', entry.room.name).replace('{count}', requested.size));
+    n.confirm.showModal();
+    n.abort.focus({ preventScroll: true });
+  }
+
+  async executeRoomGroupAction(devices, action) {
+    const token = { id: action, coverDirection: action === 'open' ? 'opening' : action === 'close' ? 'closing' : undefined };
+    for (const { entity } of devices) this.pending.set(entity, token);
+    this.update();
+    try {
+      const results = await Promise.allSettled(devices.map(device =>
+        this.controller.execute(device, action, undefined)));
+      const confirmed = results.filter(result => result.status === 'fulfilled' && result.value.status === 'confirmed');
+      if (this.isConnected) this.announce(this.t('room_group_result')
+        .replace('{confirmed}', confirmed.length).replace('{count}', devices.length));
+    } finally {
+      for (const { entity } of devices) if (this.pending.get(entity) === token) this.pending.delete(entity);
+      if (this.isConnected) this.update();
+    }
   }
 
   defaultRoomSections(entities) {
@@ -2069,7 +2361,7 @@ export class BayitDashboard extends HTMLElement {
     const coverPanel = cover && config.role !== 'status';
     const boilerPanel = !!room && config.kind === 'boiler' && config.role !== 'status';
     const compactDevice = !!room && config.room_device_compact === true;
-    const launchFromHeader = !!panelTarget || boilerPanel || coverPanel || compactDevice;
+    const launchFromHeader = !!panelTarget || boilerPanel || coverPanel || compactDevice || toolbarVacuumCompact;
     item.dataset.entity = config.entity;
     item.dataset.treatment = config.kind || domain;
     item.toggleAttribute('data-inline-climate', inlineClimate);
@@ -2162,19 +2454,24 @@ export class BayitDashboard extends HTMLElement {
       const details = make(launchFromHeader ? 'span' : 'div', 'device-detail');
       details.append(name, state);
       const nativeRoomCover = coverPanel && !!room && config.room_cover_native_details === true;
+      const nativeHeader = nativeRoomCover || compactDevice || toolbarVacuumCompact;
       const hasPanel = (cover && !!room && !nativeRoomCover) || boilerPanel;
       if (cover) item.dataset.compact = 'cover';
       const more = launchFromHeader ? button('device-head device-panel-launch')
         : button('round-action', this.t(hasPanel ? 'device_controls' : 'more_info'),
           cover ? roomIcon || config.icon || DEVICE_ICONS.cover : 'mdi:information-outline', true);
-      if (hasPanel || nativeRoomCover || compactDevice) more.setAttribute('aria-haspopup', 'dialog');
+      if (hasPanel || nativeHeader) more.setAttribute('aria-haspopup', 'dialog');
       const openDetails = detail => this.openPanel('device', more, room, config.entity, undefined, undefined, { detail });
       more.onclick = () => {
+        if (toolbarVacuumCompact) {
+          const { modal } = this.nodes;
+          if (this.panel?.type !== 'vacuum' || !more.isConnected || !modal.open ||
+              modal.hasAttribute('data-closing') || !modal.contains(more)) return;
+        }
         if (hasPanel) {
           const schedule = view.boilerScheduleLink && canOpenBoilerSchedule(config, this._hass, this.config.hiddenEntities);
           openDetails(schedule ? 'schedule' : undefined);
-        } else if (!(nativeRoomCover || compactDevice) || isVisibleEntity(config.entity, this._hass?.states ?? {}, this._hass?.entities,
-          this.config.hiddenEntities)) this.moreInfo(config, more);
+        } else if (!nativeHeader || this.entityVisible(config.entity)) this.moreInfo(config, more);
       };
       const head = launchFromHeader ? more : make('header', 'device-head');
       if (titleInDialog) {
@@ -2187,8 +2484,14 @@ export class BayitDashboard extends HTMLElement {
         head.append(glyph, details);
         if (!compactDevice) head.append(icon(panelOpensOnTap ? 'mdi:arrow-top-right' : 'mdi:information-outline'));
         bindPanelLaunch(more);
-      } else if (boilerPanel || coverPanel || compactDevice) {
+      } else if (launchFromHeader) {
         head.append(glyph, details);
+        if (toolbarVacuumCompact) {
+          const marker = make('span', 'round-action');
+          marker.setAttribute('aria-hidden', 'true');
+          marker.append(icon('mdi:information-outline', true));
+          head.append(marker);
+        }
         if (boilerPanel) {
           const arrow = icon('mdi:arrow-top-right');
           if (config.room_boiler_schedule_entry) {
@@ -2202,7 +2505,7 @@ export class BayitDashboard extends HTMLElement {
           } else head.append(arrow);
         }
         bindDeviceDetails(more, view.boilerScheduleLink ? () => openDetails() : more.onclick);
-        const native = toolbarCoverRail || nativeRoomCover || compactDevice;
+        const native = toolbarCoverRail || nativeHeader;
         view.panelLaunch = { action: this.t(native ? 'more_info' : 'device_controls'), native };
       } else {
         if (titleInDialog && domain === 'light' && config.role !== 'status' &&
@@ -2345,7 +2648,7 @@ export class BayitDashboard extends HTMLElement {
     });
   }
 
-  buildBoilerView(config, detail) {
+  buildBoilerView(config, detail, scheduleId) {
     const content = this.nodes.content;
     const controls = make('div', 'boiler-pane');
     controls.append(...content.childNodes);
@@ -2354,9 +2657,32 @@ export class BayitDashboard extends HTMLElement {
     const tabs = make('div', 'boiler-tabs');
     tabs.dir = 'ltr';
     let panel;
+    let openNew = detail === 'schedule/new';
+    let editId = scheduleId;
     const popup = this.panel;
+    const { modal, modalTitle } = this.nodes;
+    const boilerTitle = [...modalTitle.childNodes];
+    const boilerLabel = modal.getAttribute('aria-label');
+    const presentDraft = mode => {
+      if (this.panel !== popup) return;
+      tabs.hidden = Boolean(mode);
+      if (!mode) {
+        modalTitle.replaceChildren(...boilerTitle);
+        modalTitle.removeAttribute('tabindex');
+        modal.setAttribute('aria-label', boilerLabel);
+        return;
+      }
+      const editing = mode === 'edit';
+      const title = this.t(editing ? 'boiler_schedule_edit_title' : 'boiler_schedule_create_title');
+      modalTitle.replaceChildren(icon(editing ? 'mdi:calendar-edit' : 'mdi:plus-circle-outline'), title);
+      modalTitle.tabIndex = -1;
+      modal.setAttribute('aria-label', title);
+      return modalTitle;
+    };
+    const editHref = detail === 'schedule/edit' ? id => popupRouteFragment({
+      kind:'device', room:popup.room.id, entity:config.entity, detail:'schedule/edit', scheduleId:id,
+    }) : undefined;
     const isCurrent = () => {
-      const { modal } = this.nodes;
       const { location } = this.ownerDocument.defaultView;
       return this.isConnected && this.panel === popup && modal.open && !modal.hasAttribute('data-closing') &&
         (!popup?.routeHash || (location.pathname === this.popupHistoryPath && location.hash === popup.routeHash));
@@ -2383,8 +2709,10 @@ export class BayitDashboard extends HTMLElement {
         } : undefined;
         const schedule = createBoilerSchedulePanel(config, {
           host: scheduleHost, viewport: this.nodes.modalBody, hass: this._hass, locale: this.config.locale,
-          compact: stacked, pauseScrollMemory, isCurrent,
+          compact: stacked, openNew, editId, editHref, pauseScrollMemory, presentDraft, isCurrent,
         });
+        openNew = false;
+        editId = undefined;
         return {update:schedule.update,dispose:schedule.destroy};
       }});
     }
@@ -2395,7 +2723,7 @@ export class BayitDashboard extends HTMLElement {
     const detailPreference = this.config.storageKey + ':boiler-detail:' + config.entity;
     const schedulePane = secondary.find(item => item.label === 'boiler_schedule');
     const historyPane = secondary.find(item => item.label === 'boiler_history');
-    const linkedPane = detail === 'schedule' ? schedulePane : undefined;
+    const linkedPane = detail === 'schedule' || openNew || editHref ? schedulePane : undefined;
     const helper = stacked && schedulePane ? config.boiler_detail_preference_entity : undefined;
     const target = helper ? { entity:helper, role:'action', boiler_detail_preference:true } : undefined;
     const readPreference = hass => {
@@ -2475,7 +2803,7 @@ export class BayitDashboard extends HTMLElement {
       tabs.append(tab);
       item.tab = tab;
     }
-    content.className = 'boiler-panel';
+    content.className = stacked ? 'boiler-panel boiler-panel-stacked' : 'boiler-panel';
     const secondaryPanes = secondary.map(item => item.element);
     if (stacked || compactNavigation) content.append(controls, tabs, ...secondaryPanes);
     else content.append(tabs, controls, ...secondaryPanes);
@@ -2635,6 +2963,7 @@ export class BayitDashboard extends HTMLElement {
 
   updateDevices() {
     const commandsReady = canSendDeviceCommands(this._hass);
+    this.updateRoomGroupControls();
     let countdown = false;
     for (const view of this.deviceViews.values()) {
       const model = this.model(view.config);
@@ -2643,6 +2972,9 @@ export class BayitDashboard extends HTMLElement {
       const roomName = view.room ? view.config.room_name : undefined;
       const labelName = roomName || model.name;
       setText(view.name, labelName);
+      if (view.standaloneBoiler && view.config.boiler_timer_with_details) {
+        view.name.hidden = !view.config.popup_name || view.config.popup_name === labelName;
+      }
       view.name.toggleAttribute('data-room-name-hidden', roomName === '' || (view.inlineClimate && roomName === undefined));
       setIcon(view.glyph, (view.room && view.config.room_icon) || model.icon);
       if (model.timer?.state === 'active') countdown = true;
@@ -2753,6 +3085,11 @@ export class BayitDashboard extends HTMLElement {
         label(view.tile, labelName + ' · ' + this.t(toggles ? actionId : 'more_info'));
         if (toggles) view.tile.setAttribute('aria-pressed', String(model.state === 'on'));
         else view.tile.removeAttribute('aria-pressed');
+        if (model.domain === 'light') {
+          if (toggles && !this.canRequest(view.config.entity, actionId, view.config)) {
+            view.tile.setAttribute('aria-disabled', 'true');
+          } else view.tile.removeAttribute('aria-disabled');
+        }
         view.tile.setAttribute('aria-busy', String(!!pending));
         if (!view.room) view.tile.disabled = !toggles && !model.actions.more_info;
         if (!view.inlineLight) continue;
@@ -2838,6 +3175,100 @@ export class BayitDashboard extends HTMLElement {
     }));
   }
 
+  openFinder(source, { activation, keyboard = false, state } = {}) {
+    if (!this.config?.page) return;
+    this.openPanel('finder', source, undefined, undefined, undefined, undefined,
+      { activation, setupTitle: finderTitle(this.config.locale), finderState: state });
+    if (keyboard) this.finder?.focus();
+  }
+
+  keepFinderHandoff() {
+    const view = this.ownerDocument.defaultView;
+    const user = this._hass?.user?.id;
+    if (!user || !this.finder || this.panel?.finderUser !== user || !this.nodes.modal.open ||
+        this.nodes.modal.hasAttribute('data-closing') || view.location.pathname !== this.popupHistoryPath ||
+        view.location.hash !== (this.panel.routeHash ?? '')) return;
+    const previous = finderHandoffs.get(view);
+    view.clearTimeout(previous?.timeout);
+    const transfer = { scope: this.config.storageKey, user, href: view.location.href, state: this.finder.snapshot() };
+    transfer.timeout = view.setTimeout(() => {
+      if (finderHandoffs.get(view) === transfer) finderHandoffs.delete(view);
+    }, 4000);
+    finderHandoffs.set(view, transfer);
+  }
+
+  restoreFinderHandoff() {
+    const view = this.ownerDocument.defaultView;
+    const transfer = finderHandoffs.get(view);
+    if (!transfer || !this.config?.page || !this.isConnected || !this._hass?.states ||
+        transfer.scope !== this.config.storageKey || transfer.user !== this._hass?.user?.id ||
+        transfer.href !== view.location.href || this.nodes.confirm.open) return;
+    finderHandoffs.delete(view);
+    view.clearTimeout(transfer.timeout);
+    this.openFinder(null, { state: transfer.state, keyboard: transfer.state.focused });
+  }
+
+  disposeFinder() {
+    this.finderRegistry?.dispose();
+    this.finderRegistry = undefined;
+    this.finder?.dispose();
+    this.finder = undefined;
+  }
+
+  finderEntries() {
+    const states = this._hass?.states ?? {};
+    const registry = this._hass?.entities ?? {};
+    const rooms = this.config.rooms;
+    const devices = rooms.flatMap(room => room.entities.flatMap(device => {
+      const { entity } = device;
+      if (!this.entityVisible(entity) || room.panelHidden?.has(entity)) return [];
+      const { attributes = {}, state } = states[entity];
+      const info = registry[entity];
+      const metadata = this.finderRegistry?.get(entity) ?? info;
+      const name = device.room_name || device.name || info?.name || attributes.friendly_name || entity;
+      const glyph = device.room_icon || device.icon || attributes.icon || DEVICE_ICONS[domainFor(device)];
+      return [{ room: room.id, entity, name, icon: glyph, kind: device.kind,
+        keywords: [attributes.friendly_name, metadata?.original_name, ...(Array.isArray(metadata?.aliases) ? metadata.aliases : [])]
+          .filter(value => typeof value === 'string' && value),
+        available: !['unavailable', 'unknown'].includes(state) }];
+    }));
+    this.finderRegistry?.update(this._hass, devices.map(device => device.entity));
+    return { rooms, devices };
+  }
+
+  paintFinder() {
+    const { content } = this.nodes;
+    this.disposeFinder();
+    this.panel.finderUser = this._hass?.user?.id;
+    const state = this.panel.finderState;
+    this.panel.finderState = undefined;
+    this.finderRegistry = createEntityRegistryLookup(() => this.finder?.refresh(), {
+      project: entry => entry && { aliases: entry.aliases, original_name: entry.original_name },
+    });
+    this.finder = createDeviceFinder({
+      ownerDocument: this.ownerDocument, locale: this.config.locale,
+      scope: this.config.storageKey, userId: this.panel.finderUser, state,
+      getEntries: () => this.finderEntries(),
+      onRoom: roomId => {
+        const view = this.roomViews.get(roomId);
+        if (view && !view.heading.closest('[hidden]')) this.openPanel('room', view.heading, view.room);
+      },
+      onDevice: (roomId, entityId, source) => {
+        const view = this.roomViews.get(roomId);
+        const device = view?.room.entities.find(item => item.entity === entityId);
+        if (!device || !this.entityVisible(entityId) || view.room.panelHidden?.has(entityId)) return;
+        const shortcut = view.shortcut.get(entityId)?.el;
+        if (shortcut?.isConnected && !shortcut.closest('[hidden]') && !view.room.shortcutNoDetails?.has(entityId)) {
+          this.openShortcutDetails(device, shortcut, view.room);
+        } else if (supportsShortcutWithoutDetails(device) && view.room.shortcutNoDetails?.has(entityId)) {
+          this.moreInfo(device, source);
+        } else this.openDeviceDetails(device, view.heading, view.room);
+      },
+    });
+    content.className = 'finder-page';
+    content.replaceChildren(this.finder.element);
+  }
+
   paintSettings() {
     const content = this.nodes.content;
     content.className = 'settings';
@@ -2857,12 +3288,19 @@ export class BayitDashboard extends HTMLElement {
     const arrangement = make('div', 'appearance-layout-options');
     arrange.append(layoutSummary, arrangement);
     for (const key of ['shape','layout']) {
-      const values = options[key];
+      const shape = key === 'shape';
+      const values = shape ? ['circle', ...options.shape.filter(value => value !== 'circle')] : options.layout;
       const group = make('fieldset', 'prefs-group');
       group.append(make('legend', '', this.t(key)));
       const choices = make('div', 'prefs-options');
+      choices.dataset.appearanceChoices = key;
       for (const value of values) {
         const el = button('control-button', this.t(value));
+        if (shape) {
+          const swatch = make('span', 'shape-swatch');
+          swatch.setAttribute('aria-hidden', 'true');
+          el.prepend(swatch);
+        }
         el.value = value;
         el.dataset.preference = key;
         el.onclick = () => this.chooseAppearance(key, value);
@@ -2882,7 +3320,7 @@ export class BayitDashboard extends HTMLElement {
     const reset = button('control-button', this.t('appearance_reset'));
     reset.onclick = () => {
       if (this.canSyncAppearance() && this.appearanceSave) return;
-      focusSummary(reset, Object.hasOwn(this.preferences, 'background'));
+      focusSummary(reset, this.displayedAppearance('background') !== this.householdAppearance('background'));
       status.textContent = '';
       this.preferences = {};
       this.persistPreferences();
@@ -2910,11 +3348,28 @@ export class BayitDashboard extends HTMLElement {
       control.append(caption);
       return control;
     };
+    if (this.canEditHome()) {
+      const edit = settingsAction(this.t('home_edit_dashboard'), 'mdi:pencil-outline');
+      edit.classList.add('home-edit-entry');
+      edit.onclick = () => void this.beginHomeEditing(edit);
+      content.prepend(edit);
+    }
     const screens = make('div', 'settings-screens');
+    if (this.config.page) {
+      const title = finderTitle(this.config.locale);
+      const finder = button('round-action finder-entry', title, 'mdi:magnify', true);
+      finder.title = title;
+      finder.setAttribute('aria-haspopup', 'dialog');
+      finder.setAttribute('aria-keyshortcuts', '/');
+      finder.onclick = activation => this.openFinder(finder, { activation });
+      const { modalHeadingActions } = this.nodes;
+      modalHeadingActions.replaceChildren(finder);
+      modalHeadingActions.hidden = false;
+    }
     for (const item of this.settingsScreens()) {
       const route = settingsAction(item.name, item.icon);
-      route.onclick = () => item.kind === 'link' ? location.assign(item.path)
-        : this.openPanel(item.kind, route, undefined, undefined, item);
+      route.onclick = activation => item.kind === 'link' ? location.assign(item.path)
+        : this.openPanel(item.kind, route, undefined, undefined, item, undefined, { activation });
       screens.append(route);
     }
     if (screens.childElementCount) {
@@ -2935,7 +3390,7 @@ export class BayitDashboard extends HTMLElement {
     if (this._hass?.user?.is_admin) {
       const setup = settingsAction(this.t('setup'), 'mdi:tune-variant');
       setup.classList.add('setup-entry');
-      setup.onclick = () => this.openSetup(setup);
+      setup.onclick = activation => this.openSetup(setup, { activation });
       system.append(setup);
     }
     if (system.childElementCount) content.append(system);
@@ -2948,6 +3403,9 @@ export class BayitDashboard extends HTMLElement {
 
   async paintSetup() {
     const page = this.panel;
+    const review = page.setupTarget?.review === true;
+    const userId = this._hass?.user?.id;
+    const authority = this.setupAuthorityEpoch;
     const { content, setupFooter } = this.nodes;
     setupFooter.hidden = true;
     setupFooter.replaceChildren();
@@ -2958,48 +3416,59 @@ export class BayitDashboard extends HTMLElement {
     this.setup = null;
     try {
       let current = await loadConfiguration(this._hass, location.pathname);
-      if (this.panel !== page) return;
-      const key = JSON.stringify([this._hass.user.id, current.urlPath]);
+      const owner = () => this.setupAuthorityEpoch === authority &&
+        this._hass?.user?.id === userId && this._hass?.user?.is_admin === true;
+      const active = () => this.panel === page && owner();
+      if (!active()) return;
+      const key = JSON.stringify([userId, current.urlPath]);
       let restored = setupDrafts.get(key);
       if (restored?.pendingSave) {
         // A dismissed editor can be reopened before its save request finishes.
         await restored.pendingSave.catch(() => {});
-        if (this.panel !== page) return;
+        if (!active()) return;
         current = await loadConfiguration(this._hass, location.pathname);
-        if (this.panel !== page) return;
+        if (!active()) return;
         restored = setupDrafts.get(key);
       }
       const session = restored ?? { base: current, draft: current.strategy };
       const baseline = JSON.stringify(session.base.strategy);
-      let conflict = JSON.stringify(current.strategy) !== baseline;
-      const editor = customElements.get('ll-strategy-dashboard-' + STRATEGY_NAME).getConfigElement();
-      editor.classList.add('setup-editor');
-      if (page.setupRooms) editor.openRooms();
-      editor.setConfig(structuredClone(session.draft));
-      editor.hass = this._hass;
-      this.setup = { editor };
-
+      let conflict = !rebaseConfigurationDraft(session.base.strategy, session.draft, current.strategy);
       const save = button('control-button', this.t('setup_save'), 'mdi:content-save-outline');
       const discard = button('control-button', this.t('setup_discard'));
+      let editor;
       const updateActions = () => {
         const dirty = JSON.stringify(session.draft) !== baseline;
         save.disabled = !dirty || conflict || Boolean(session.pendingSave);
         discard.hidden = !dirty && !conflict;
         discard.disabled = Boolean(session.pendingSave);
-        editor.inert = Boolean(session.pendingSave);
+        if (editor) editor.inert = Boolean(session.pendingSave);
       };
-      editor.addEventListener('config-changed', event => {
-        session.draft = event.detail.config;
-        if (JSON.stringify(session.draft) !== baseline) setupDrafts.set(key, session);
-        else if (setupDrafts.get(key) === session) setupDrafts.delete(key);
-        updateActions();
-      });
+      if (!review) {
+        editor = customElements.get('ll-strategy-dashboard-' + STRATEGY_NAME).getConfigElement();
+        editor.classList.add('setup-editor');
+        editor.setConfig(structuredClone(session.draft));
+        editor.hass = this._hass;
+        this.setup = { editor };
+        editor.addEventListener('config-changed', event => {
+          if (!active()) return;
+          session.draft = event.detail.config;
+          if (JSON.stringify(session.draft) !== baseline) setupDrafts.set(key, session);
+          else if (setupDrafts.get(key) === session) setupDrafts.delete(key);
+          this.updateHomeEditCaption();
+          updateActions();
+        });
+      }
       discard.onclick = () => {
+        if (!active()) return;
         if (setupDrafts.get(key) === session) setupDrafts.delete(key);
-        void this.paintSetup();
+        this.updateHomeEditCaption();
+        if (review) {
+          this.dismissPanel({ immediate: true, restoreFocus: false });
+          this.setHomeEditing(false);
+        } else void this.paintSetup();
       };
       save.onclick = async () => {
-        if (editor.focusPendingRoom() || editor.focusPendingProfile()) return;
+        if (!active() || editor?.focusPendingRoom() || editor?.focusPendingProfile()) return;
         const view = this.ownerDocument.defaultView;
         const initialUrl = view.location.href;
         const route = page.routeHash && view.location.hash === page.routeHash ? page.routeHash : null;
@@ -3013,14 +3482,18 @@ export class BayitDashboard extends HTMLElement {
             view.addEventListener(event, observeNavigation, { signal: watch.signal });
           }
         }
-        session.pendingSave = saveConfiguration(this._hass, session.base, session.draft);
+        const initialPath = view.location.pathname;
+        session.pendingSave = saveConfiguration(this._hass, session.base, session.draft, {
+          mergeDraft: true, shouldSave: () => owner() && view.location.pathname === initialPath,
+        });
         updateActions();
         status.textContent = this.t('setup_saving');
         let saved = false;
         try {
-          await session.pendingSave;
-          saved = true;
+          saved = await session.pendingSave;
+          if (!saved) return;
           if (setupDrafts.get(key) === session) setupDrafts.delete(key);
+          this.updateHomeEditCaption();
           if (route) {
             if (!stayedOnRoute || view.location.href !== initialUrl) return;
             // Home Assistant can remount the dashboard when it broadcasts the saved configuration.
@@ -3043,9 +3516,13 @@ export class BayitDashboard extends HTMLElement {
       };
       status.textContent = conflict ? this.t('setup_draft_conflict') : restored ? this.t('setup_draft_restored') : '';
       updateActions();
-      content.replaceChildren(editor);
+      content.replaceChildren(editor ?? make('p', 'setup-status', this.t('home_edit_review_message')));
       setupFooter.replaceChildren(status, save, discard);
       setupFooter.hidden = false;
+      const target = page.setupTarget;
+      if (target?.shortcuts) {
+        if (!editor.openRoomShortcuts(target.roomId)) editor.openRooms({ roomId: target.roomId });
+      } else if (editor && (target || page.setupRooms)) editor.openRooms(target);
     } catch (error) {
       if (this.panel === page) status.textContent = this.configurationErrorText(error);
     }
@@ -3095,7 +3572,9 @@ export class BayitDashboard extends HTMLElement {
     const basic = make('div', 'basic-actions');
     const complex = new Map();
     const standaloneClimate = this.panel?.type === 'device' && model.kind === 'climate';
-    const advancedClimate = standaloneClimate ? make('details', 'climate-extra-controls') : undefined;
+    const compactRoomClimate = view.inlineClimate && view.compactClimateControls;
+    const advancedClimate = standaloneClimate || compactRoomClimate ? make('details', 'climate-extra-controls') : undefined;
+    const climateSummaryFocused = active?.localName === 'summary' && active.parentElement === view.climateExtraControls;
     const advancedVacuum = view.toolbarVacuumCompact ? make('details', 'vacuum-extra-controls') : undefined;
     const { actions } = model;
     view.compactLight = !!((view.lightPower || view.inlineLight) && actions.set_brightness && actions.set_color_temp_kelvin &&
@@ -3173,6 +3652,8 @@ export class BayitDashboard extends HTMLElement {
         view.effectGallery = createLightEffectGallery(view.config.effect_groups, action.options, { make, button, icon,
           t: key => this.t(key), request: (value, control) => this.requestAction(view.config, id, value, control),
           unavailableReason: value => this.lightEffectUnavailableReason(view.config, value),
+          sceneGrid: view.config.effect_scene_grid,
+          sceneOnSelect: view.config.effect_scene_on_select,
           ...(view.config.effect_category_source && { categorySource: {
             allOption: view.config.effect_category_source.all_option,
             read: () => this.lightEffectCategoryState(view.config),
@@ -3231,7 +3712,8 @@ export class BayitDashboard extends HTMLElement {
     const hasAdvanced = !!advancedClimate?.childElementCount;
     if (hasAdvanced) {
       advancedClimate.open = view.climateExtraControls?.open ?? false;
-      advancedClimate.prepend(make('summary', '', this.t('climate_extra_controls')));
+      const heading = compactRoomClimate ? 'set_preset_mode' : 'climate_extra_controls';
+      advancedClimate.prepend(make('summary', '', this.t(heading)));
     }
     view.climateExtraControls = hasAdvanced ? advancedClimate : undefined;
     const hasAdvancedVacuum = !!advancedVacuum?.childElementCount;
@@ -3246,6 +3728,7 @@ export class BayitDashboard extends HTMLElement {
     view.vacuumExtraControls = hasAdvancedVacuum ? advancedVacuum : undefined;
     view.group.replaceChildren(...(basic.childElementCount ? [basic] : []), ...view.special.content, ...complex.values(),
       ...(hasAdvanced ? [advancedClimate] : []), ...(hasAdvancedVacuum ? [advancedVacuum] : []));
+    if (climateSummaryFocused) (view.climateExtraControls?.firstElementChild || view.more)?.focus({ preventScroll: true });
     if (vacuumSummaryFocused) (advancedVacuum?.querySelector('summary') || view.more)?.focus({ preventScroll: true });
     if (focused?.action || focused?.lightMode || focused?.effectFavoriteControl) {
       const successor = [...view.group.querySelectorAll('[data-action], [data-light-mode], [data-effect-favorite-control]')].find(el =>
@@ -3274,10 +3757,11 @@ export class BayitDashboard extends HTMLElement {
       brightness.hidden = showTemperature;
       temperature.hidden = !showTemperature;
       if (presets) presets.hidden = !showTemperature;
-      if (view.compactInlineLight) {
+      if (view.compactInlineLight || view.filledWhiteLightRail) {
         setIcon(mode.firstElementChild, showTemperature ? 'mdi:brightness-4' : 'mdi:thermometer');
-        label(mode, this.t(showTemperature ? 'set_brightness' : 'set_color_temp_kelvin'));
-      } else mode.setAttribute('aria-pressed', String(showTemperature));
+      }
+      if (view.compactInlineLight) label(mode, this.t(showTemperature ? 'set_brightness' : 'set_color_temp_kelvin'));
+      else mode.setAttribute('aria-pressed', String(showTemperature));
     };
     mode.onclick = () => {
       view.compactTemperature = !view.compactTemperature;
@@ -3342,6 +3826,7 @@ export class BayitDashboard extends HTMLElement {
         const percent = value === null ? 0 : id === 'set_brightness' ? value
           : 100 * (value - range.min) / (range.max - range.min);
         field.input.style.setProperty('--white-rail-progress', percent + '%');
+        field.input.toggleAttribute('data-empty-rail', value === null && !view.compactInlineLight);
       };
     }
     if (field.paintProgress || compactWhiteTemperature) {
@@ -3461,7 +3946,13 @@ export class BayitDashboard extends HTMLElement {
 
   canRequest(entity, id, config) {
     const previous = this.pending.get(entity);
-    return !previous || (id === 'stop' && movement.has(previous.id)) ||
+    if (!previous) return true;
+    const power = previous.lightPower;
+    const nextState = lightPowerStates.get(id);
+    // An acknowledged binary light change can be reversed as soon as HA reports it.
+    const canReverseLight = power && previous.acknowledged && nextState && nextState !== power.state &&
+      this._hass?.connection === power.connection && this._hass?.states?.[entity]?.state === power.state;
+    return Boolean(canReverseLight) || (id === 'stop' && movement.has(previous.id)) ||
       (id === 'stop_timed' && this.canInterruptTimer(config, previous));
   }
 
@@ -3535,9 +4026,15 @@ export class BayitDashboard extends HTMLElement {
     if (id === 'set_effect' && config.light_mode_source?.apply_effects) {
       const panel = this.panel;
       const originalScope = shortcutCurrent;
-      shortcutCurrent = () => this.isConnected && this.panel === panel && panel?.type === 'device' &&
-        this.nodes.modal.open && !this.nodes.modal.hasAttribute('data-closing') &&
-        this.nodes.modal.contains(source) && !source.closest('[hidden]') && (!originalScope || originalScope());
+      const sceneChoices = config.effect_scene_on_select && source.closest('.light-effect-choices');
+      shortcutCurrent = () => {
+        const pending = sceneChoices && this.pending.get(config.entity);
+        // Applying across categories can replace the scene tile after the request has started.
+        const activeSource = pending?.id === id && pending.value === value ? sceneChoices : source;
+        return this.isConnected && this.panel === panel && panel?.type === 'device' &&
+          this.nodes.modal.open && !this.nodes.modal.hasAttribute('data-closing') &&
+          this.nodes.modal.contains(activeSource) && !activeSource.closest('[hidden]') && (!originalScope || originalScope());
+      };
       if (!shortcutCurrent() || this.lightEffectUnavailableReason(config, value)) return;
     }
     const roomBoilerQuickPower = roomPowerTile && config.room_boiler_quick_power === true;
@@ -3564,6 +4061,7 @@ export class BayitDashboard extends HTMLElement {
     const request = this.confirming;
     if (!request || !this.nodes.confirm.open) return;
     this.nodes.confirm.close();
+    if (request.acceptGroup) return request.acceptGroup();
     if (request.shortcutCurrent && !request.shortcutCurrent()) return;
     if (request.compactCover && !allowsCoverRailAction(this.model(request.config), request.id)) return;
     if (request.roomPowerTile && this.roomPowerTileAction(request.config) !== request.id) return;
@@ -3593,6 +4091,8 @@ export class BayitDashboard extends HTMLElement {
     if (effectRoute.reason || (effectRoute.category && !shortcutCurrent)) return;
     const category = effectRoute.category;
     const token = { id, value };
+    const lightPowerState = model.domain === 'light' && lightPowerStates.get(id);
+    if (lightPowerState) token.lightPower = { state:lightPowerState, connection:this._hass?.connection };
     if (id === 'start_script' && config.role === 'action' && config.command === 'toggle_script' && scriptToggleCurrent) {
       token.scriptToggle = { config, current:scriptToggleCurrent, connection:this._hass?.connection };
     }
@@ -3633,7 +4133,7 @@ export class BayitDashboard extends HTMLElement {
         }
         return;
       }
-      const onAcknowledged = token.timer || token.scriptToggle ? () => {
+      const onAcknowledged = token.timer || token.scriptToggle || token.lightPower ? () => {
         if (this.pending.get(config.entity) !== token) return;
         token.acknowledged = true;
         if (token.scriptToggle) this.dispatchQueuedScriptStop(token);

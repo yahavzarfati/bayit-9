@@ -67,7 +67,7 @@ test('canonical routes round-trip and reject malformed or untrusted form fragmen
   assert.equal(popupRouteFragment({ kind: 'room', room: 'Studio\n' }), '');
 });
 
-test('a device schedule address has one typed pane and never carries an edit or draft target', () => {
+test('boiler addresses distinguish listing, creating, and editing schedules', () => {
   const route = {kind:'device',room:'Studio_1',entity:'switch.boiler',detail:'schedule'};
   const fragment = '#device/Studio_1/switch.boiler/schedule';
   assert.equal(popupRouteFragment(route),fragment);
@@ -76,8 +76,25 @@ test('a device schedule address has one typed pane and never carries an edit or 
   const aliases = new Map(Object.entries(config));
   assert.deepEqual(resolvePopupRoute('#former-form',route=>route.detail === 'schedule',aliases),route);
   assert.equal(resolvePopupRoute('#former-form',()=>false,aliases),null);
+  const createRoute = { ...route, detail:'schedule/new' };
+  const createFragment = fragment + '/new';
+  assert.equal(popupRouteFragment(createRoute),createFragment);
+  assert.deepEqual(parsePopupRoute(createFragment),createRoute);
+  assert.deepEqual(normalizePopupAliases({'#former-create':createFragment}),{'#former-create':createFragment});
+  assert.equal(resolvePopupRoute(createFragment,route=>route.detail === 'schedule',aliases),null);
   assert.equal(popupRouteFragment({...route,detail:'edit'}),'');
-  assert.equal(parsePopupRoute(fragment + '/edit'),null);
+  const editRoute = { ...route, detail:'schedule/edit' };
+  const editFragment = fragment + '/edit';
+  assert.deepEqual(parsePopupRoute(editFragment),editRoute);
+  assert.equal(popupRouteFragment(editRoute),editFragment);
+  const row = { ...editRoute, scheduleId:'scheduler_1-A' };
+  assert.deepEqual(parsePopupRoute(editFragment + '/scheduler_1-A'),row);
+  assert.equal(popupRouteFragment(row),editFragment + '/scheduler_1-A');
+  for (const id of ['', '../other', 'a/b', 'A'.repeat(65), '%2F']) {
+    assert.equal(popupRouteFragment({ ...row, scheduleId:id }), '');
+  }
+  assert.equal(popupRouteFragment({ ...createRoute, scheduleId:row.scheduleId }), '');
+  assert.equal(parsePopupRoute(createFragment + '/42'),null);
   assert.equal(parsePopupRoute(fragment + '?schedule_id=draft'),null);
 });
 

@@ -11,7 +11,8 @@ const photograph = await readFile(new URL('../dist/' + catalog.misty_lake.photo.
 const states = new Map();
 const helpers = new Map();
 const helperBindings = {
-  background: { entity:'input_select.fixture_palette', options:{ aurora:'Aurora', jade:'Jade', 'shared-garden':'Garden' } },
+  background: { entity:'input_select.fixture_palette', options:{ aurora:'Aurora', jade:'Jade', 'shared-garden':'Garden',
+    lagoon:'Lagoon', dunes:'Dunes' } },
   shape: { entity:'input_select.fixture_shape', options:{ soft:'Rounded', circle:'Round' } },
   layout: { entity:'input_select.fixture_layout', options:{ classic:'Classic', header:'Titles above' } },
 };
@@ -34,7 +35,7 @@ const fixtureId = query.get('fixture');
 const admin = !query.has('member');
 const profile = '/fixture-appearance-backend/' + fixtureId;
 const helperPath = '/fixture-appearance-helpers/' + fixtureId;
-const linked = query.has('helpers');
+const linked = query.has('helpers') || query.has('wallpaper-helper');
 const tracker = { attempts:[], saves:[], release:undefined, reject:false };
 const read = async () => (await fetch(profile, { cache:'no-store' })).json();
 const hass = {
@@ -86,9 +87,9 @@ const hass = {
 };
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
 let card;
-tracker.syncHelpers = async () => {
+tracker.syncHelpers = async (notify = true) => {
   hass.states = await (await fetch(helperPath, { cache:'no-store' })).json();
-  if (card) card.hass = { ...hass };
+  if (card && notify) card.hass = { ...hass };
 };
 tracker.updateRegistry = (entity, metadata) => {
   hass.entities = { ...hass.entities, [entity]:metadata };
@@ -99,6 +100,7 @@ tracker.refresh = async (replace = false) => {
   if (linked) {
     strategy.locale = query.get('locale') || 'en';
     strategy.appearance_helpers = ${JSON.stringify(helperBindings)};
+    if (query.has('wallpaper-helper')) strategy.appearance_helpers = {background:strategy.appearance_helpers.background};
   }
   const config = Strategy.generate(strategy, hass).views[0].cards[0];
   if (replace || !card) {
@@ -202,6 +204,14 @@ async function assertRemountedAppearanceOverrides(browser, prefix) {
       try {
         await page.goto(url);
         await open();
+        const reset = settings.locator('.appearance-actions button').first();
+        await pressed(settings,'shape','soft').press('Enter');
+        assert.equal(await reset.isVisible(), false, 'Reselecting the household default does not create an override');
+        await pressed(settings,'shape','square').press('Enter');
+        await reset.waitFor();
+        await pressed(settings,'shape','soft').press('Enter');
+        await reset.waitFor({ state:'hidden' });
+        assert.deepEqual(await localChoices(), {}, 'Returning to the default follows future household changes');
         await pressed(settings,'shape','square').press('Enter');
         await pressed(settings,'layout','header').press('Enter');
         await after(page,'shape','square');
@@ -280,8 +290,14 @@ async function assertLinkedAppearance(browser, prefix) {
     try {
       const url = home + fixtureId + '&helpers&locale=' + locale;
       await Promise.all([member.goto(url + '&member'), admin.goto(url)]);
+      await member.locator('bayit-dashboard').evaluate(card => localStorage.setItem(card.config.storageKey,
+        JSON.stringify({ shape:'circle', layout:'header', background:'jade' })));
+      await member.reload();
       const memberSettings = await open(member);
       const adminSettings = await open(admin);
+      const reset = locale === 'he' ? 'שימוש בברירת המחדל של הבית' : 'Use household defaults';
+      const resetButton = memberSettings.getByRole('button',{name:reset,exact:true});
+      assert.equal(await resetButton.isVisible(),false, 'Inactive browser choices do not add a reset control');
       await Promise.all([openLayout(memberSettings),openLayout(adminSettings)]);
       const memberRound = pressed(memberSettings,'shape','circle');
       assert.deepEqual(await calls(member),[]);
@@ -329,6 +345,7 @@ async function assertLinkedAppearance(browser, prefix) {
       const selectGroup = (gallery, group) => gallery.locator('[data-wallpaper-category="' + group + '"]').click();
       await selectGroup(memberGallery,'nature');
       const jade = memberGallery.locator('[data-wallpaper-choice=jade]');
+      await memberGallery.locator('.wallpaper-more[aria-expanded=false]').click();
       await member.evaluate(() => { tracker.rejectHelper = true; });
       await jade.click();
       await memberGallery.getByText(locale === 'he'
@@ -349,8 +366,7 @@ async function assertLinkedAppearance(browser, prefix) {
       await after(admin,'background','shared-garden');
       await sync(member);
       assert.equal(await current(member,'background'),'personal');
-      const reset = locale === 'he' ? 'שימוש בברירת המחדל של הבית' : 'Use household defaults';
-      await memberSettings.getByRole('button',{name:reset,exact:true}).click();
+      await resetButton.click();
       await after(member,'background','shared-garden');
       await after(member,'shape','soft');
       await waitAttempts(member,3);
@@ -360,6 +376,67 @@ async function assertLinkedAppearance(browser, prefix) {
     } finally {
       await Promise.all([member.close(),admin.close()]);
     }
+  }
+}
+
+async function assertCompactHouseholdWallpaper(browser, fixtureId) {
+  const page = await browser.newPage({ viewport:{width:320,height:844}, hasTouch:true, reducedMotion:'reduce' });
+  page.setDefaultTimeout(8000);
+  const helper = helperBindings.background;
+  const records = structuredClone(helperSeed);
+  helpers.set(fixtureId, records);
+  const publishWallpaper = async (id, notify = true) => {
+    records[helper.entity].state = helper.options[id];
+    await page.evaluate(notify => tracker.syncHelpers(notify), notify);
+  };
+  records[helper.entity].state = helper.options.jade;
+  try {
+    await page.goto(home + fixtureId + '&wallpaper-helper');
+    await after(page,'background','jade');
+    const settings = await openSettings(page);
+    const gallery = settings.locator('.wallpaper-gallery');
+    await gallery.locator('summary').press('Enter');
+    const choice = id => gallery.locator('[data-wallpaper-choice="' + id + '"]');
+    const previews = gallery.locator('[data-wallpaper-choice]');
+    const expand = gallery.locator('.wallpaper-more[aria-expanded=false]');
+    const activeBackground = id => gallery.locator('[data-wallpaper-choice="' + id + '"][aria-pressed=true]');
+    const previewIds = () => previews.evaluateAll(items => items.map(item => item.dataset.wallpaperChoice));
+    const focused = locator => locator.evaluate(item => item.getRootNode().activeElement === item);
+    await activeBackground('jade').waitFor();
+    const initial = await previewIds();
+    assert.equal(initial.length,6);
+    assert.equal(await choice('lagoon').count(),0);
+    const preserved = choice('design_default');
+    await preserved.focus();
+    await publishWallpaper('lagoon');
+    await after(page,'background','lagoon');
+    await activeBackground('lagoon').waitFor();
+    assert.equal(await gallery.locator('.wallpaper-current').textContent(),catalog.lagoon.en);
+    assert.deepEqual(await previewIds(),[...initial.slice(0,5),'lagoon']);
+    assert.equal(await focused(preserved),true);
+
+    // Deliver a new trusted background with a replacement dashboard while restoring the open gallery.
+    await openLayout(settings);
+    await page.evaluate(() => { tracker.hold = true; tracker.rebuildOnSave = 'replace'; });
+    await pressed(settings,'shape','square').press('Enter');
+    await page.waitForFunction(() => Boolean(tracker.release));
+    await preserved.focus();
+    await publishWallpaper('dunes',false);
+    assert.equal(await current(page,'background'),'lagoon');
+    await page.evaluate(() => tracker.release());
+    await after(page,'shape','square');
+    await after(page,'background','dunes');
+    await activeBackground('dunes').waitFor();
+    assert.equal(await gallery.getAttribute('open'),'');
+    assert.equal(await gallery.locator('[data-wallpaper-category=all]').getAttribute('aria-pressed'),'true');
+    assert.equal(await expand.isVisible(),true);
+    assert.equal(await focused(preserved),true);
+    assert.deepEqual(await previewIds(),[...initial.slice(0,5),'dunes']);
+    const attempts = await page.evaluate(() => tracker.attempts);
+    assert.equal(attempts.filter(request => request.type === 'call_service').length,0);
+    assert.equal(await saves(page),1);
+  } finally {
+    await page.close();
   }
 }
 
@@ -469,7 +546,7 @@ try {
       await after(member,'background','shared-garden');
 
       await gallery.getByRole('button',{name:'All',exact:true}).click();
-      await gallery.getByRole('button',{name:'More wallpapers',exact:true}).click();
+      await gallery.getByRole('button',{name:/^Show all wallpapers/}).click();
       const jade = gallery.locator('[data-wallpaper-choice="jade"]');
       await admin.evaluate(() => { tracker.hold = true; tracker.release = undefined; tracker.rebuildOnSave = 'same'; });
       await jade.focus();
@@ -483,7 +560,7 @@ try {
       assert.equal(states.get(fixtureId).strategy.background,'jade');
       assert.equal(await gallery.getAttribute('open'),'');
       assert.equal(await gallery.getByRole('button',{name:'All',exact:true}).getAttribute('aria-pressed'),'true');
-      assert.equal(await gallery.getByRole('button',{name:'More wallpapers',exact:true}).count(),0);
+      assert.equal(await gallery.getByRole('button',{name:'Show fewer wallpapers',exact:true}).getAttribute('aria-expanded'),'true');
       assert.equal(await focused(jade),true);
       assert.ok(Math.abs(await modalBody.evaluate(body => body.scrollTop) - scroll) <= 2);
       assert.equal(await jade.evaluate(item => {
@@ -535,6 +612,8 @@ try {
       console.log(name + ': opt-in household appearance, selected-key writes, failures, draft guard and personal overrides');
       await assertLinkedAppearance(browser, fixtureId);
       console.log(name + ': linked member and admin appearance, localized controls, registry guard and local-only overrides');
+      await assertCompactHouseholdWallpaper(browser, fixtureId + '-compact-wallpaper');
+      console.log(name + ': compact gallery follows trusted wallpaper updates and preserves its view across replacement');
       await assertRemountedAppearanceOverrides(browser, fixtureId);
       console.log(name + ': household appearance clears only superseded local overrides across a dashboard replacement');
     } finally {

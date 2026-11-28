@@ -52,6 +52,13 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
         condition_type: null, track_conditions: false, actions: [{ service: 'simple_timer.start_timer',
           entity_id: null, service_data: { entry_id: 'fixture-runtime', duration: 30 } }] }],
     }));
+    if (params.has('edit-route-cases')) {
+      const foreign = { ...structuredClone(schedules[0]), schedule_id:'foreign', entity_id:'switch.schedule_foreign', name:'Foreign' };
+      foreign.timeslots[0].actions[0].service_data.entry_id = 'other-runtime';
+      const custom = { ...structuredClone(schedules[0]), schedule_id:'custom', entity_id:'switch.schedule_custom', name:'Custom' };
+      custom.timeslots[0].track_conditions = true;
+      schedules.push(foreign, custom);
+    }
     const requests = [];
     const timerCalls = [];
     const timerResults = [];
@@ -59,6 +66,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     const moreInfo = [];
     const scheduleActions = params.has('schedule-actions') || guardedSchedule;
     const scheduleCalls = [];
+    const scheduleItems = [];
     let pausedScheduleRead;
     let releaseScheduleRead;
     const card = document.createElement('bayit-dashboard');
@@ -69,11 +77,17 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
         '#former-boiler':'#device/bath/switch.fixture_boiler',
         '#former-room-boiler':'#device/bath/switch.fixture_boiler',
         '#former-room-form':'#device/bath/switch.fixture_boiler/schedule',
+        '#former-new-schedule':'#device/bath/switch.fixture_boiler/schedule/new',
+        '#former-room-new-schedule':'#device/bath/switch.fixture_boiler/schedule/new',
+        '#former-edit-schedule':'#device/bath/switch.fixture_boiler/schedule/edit',
       },
       ...(params.has('close-links') && { popup_alias_close_routes:{
         '#former-boiler-form':'#former-boiler',
         '#former-room-boiler':'#room-bath',
         '#former-room-form':'#room-bath',
+        '#former-new-schedule':'#former-boiler',
+        '#former-room-new-schedule':'#room-bath',
+        '#former-edit-schedule':'#room-bath',
       } }),
       rooms: [
       { id: 'kitchen', name: 'Kitchen', entities: [...sensors,
@@ -92,6 +106,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
       for (const schedule of schedules) states[schedule.entity_id] = { state: 'on', last_updated: 'fixture-revision', attributes: {} };
     }
     if (guardedSchedule) services.script = { fixture_schedule_save: {}, fixture_schedule_delete: {} };
+    if (guardedSchedule && params.has('missing-guard')) delete services.script.fixture_schedule_delete;
     const readSchedule = (type, data) => {
       if (pausedScheduleRead !== type) return Promise.resolve(data);
       pausedScheduleRead = undefined;
@@ -99,7 +114,7 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
     };
     const preferenceCalls = [];
     const hass = {
-      user: { id:params.get('account'), is_admin: true }, states, services,
+      user: { id:params.get('account'), is_admin: !params.has('non-admin') }, states, services,
       entities:{ [hiddenPreference]:{ hidden_by:'user' } },
       callWS(request) {
         requests.push(request.type);
@@ -119,7 +134,12 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
           return readSchedule(request.type,schedules);
         }
         if (scheduleActions && request.type === 'scheduler/item') {
-          return readSchedule(request.type,schedules.find(schedule => schedule.schedule_id === request.schedule_id));
+          scheduleItems.push(request.schedule_id);
+          const id = params.has('mismatched-edit-item') ? 'fixture0' : request.schedule_id;
+          const record = structuredClone(schedules.find(schedule => schedule.schedule_id === id));
+          if (record && params.has('stale-edit-item')) record.timeslots[0].actions[0].service_data.entry_id = 'other-runtime';
+          if (record && params.has('custom-edit-item')) record.timeslots[0].track_conditions = true;
+          return readSchedule(request.type, record);
         }
         if (scheduleActions && request.type === 'call_service') {
           if (guardedSchedule) {
@@ -184,7 +204,10 @@ const fixture = '<!doctype html><meta name="viewport" content="width=device-widt
       document.body.append(editor);
     } else document.body.append(card);
     window.fixture = {
-      requests, moreInfo, scheduleCalls, timerCalls, timerResults, preferenceCalls,
+      requests, moreInfo, scheduleCalls, scheduleItems, timerCalls, timerResults, preferenceCalls,
+      retargetSchedule(id) {
+        schedules.find(row => row.schedule_id === id).timeslots[0].actions[0].service_data.entry_id = 'other-runtime';
+      },
       acknowledgeTimer(service) { timerAcks.get(service)({}); timerAcks.delete(service); },
       hideRuntime(hidden) {
         hass.entities = { ...hass.entities, 'sensor.fixture_runtime': hidden ? { hidden_by:'user' } : {} };
@@ -235,6 +258,16 @@ const server = createServer((request, response) => {
 });
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
+
+const draftTitle = {
+  en: {create:'New boiler schedule', edit:'Edit boiler schedule'},
+  he: {create:'אוטומציה חדשה לדוד', edit:'עריכת אוטומציה'},
+};
+
+function boilerDialog(page, locale) {
+  const { create, edit } = draftTitle[locale];
+  return page.getByRole('dialog',{name:new RegExp('^(?:Fixture boiler|' + create + '|' + edit + ')$')});
+}
 
 async function assertSharedBoilerView(browser, locale) {
   const home = 'http://127.0.0.1:' + server.address().port + '?stacked&routed&shared-preference&locale=' + locale;
@@ -601,7 +634,7 @@ async function assertBoilerScheduleLinks(browser, locale) {
   const base = 'http://127.0.0.1:' + server.address().port + '?compact&routed&schedule-link&locale=' + locale;
   const stacked = base + '&stacked&guarded-schedule';
   const regular = '#device/bath/switch.fixture_boiler';
-  const panel = page.getByRole('dialog',{name:'Fixture boiler',exact:true});
+  const panel = boilerDialog(page,locale);
   const schedule = panel.getByRole('button',{name:he ? 'תזמון' : 'Schedule',exact:true});
   const history = panel.getByRole('button',{name:he ? 'היסטוריית שימוש' : 'Usage history',exact:true});
   const morning = panel.locator('.schedule-list').getByText('Morning',{exact:true});
@@ -669,6 +702,180 @@ async function assertBoilerScheduleLinks(browser, locale) {
   } finally {
     await page.close();
   }
+}
+
+async function assertNewBoilerScheduleLink(browser, locale) {
+  const page = await browser.newPage({ viewport:{width:391,height:845}, hasTouch:true, reducedMotion:'reduce' });
+  page.setDefaultTimeout(8000);
+  const he = locale === 'he';
+  const url = 'http://127.0.0.1:' + server.address().port + '?compact&routed&stacked&schedule-link&close-links&locale=' + locale;
+  const canonical = '#device/bath/switch.fixture_boiler/schedule/new';
+  const roomAlias = '#former-room-new-schedule';
+  const dialog = boilerDialog(page,locale);
+  const creation = page.getByRole('dialog',{name:draftTitle[locale].create,exact:true});
+  const timer = page.getByRole('dialog',{name:'Fixture boiler',exact:true});
+  const form = dialog.locator('.schedule-form');
+  const name = form.locator('input[type=text]');
+  const writes = () => page.evaluate(() => window.fixture.scheduleCalls);
+  const noWrite = async () => assert.equal(await page.evaluate(() => window.fixture.requests.includes('call_service')),false);
+  try {
+    await page.goto(url + canonical);
+    await creation.getByRole('heading',{name:draftTitle[locale].create,level:2,exact:true}).waitFor();
+    assert.equal(await form.getByRole('heading').count(),0);
+    assert.equal(await creation.locator('.boiler-tabs').isVisible(),false);
+    assert.equal(await name.inputValue(),'');
+    await noWrite();
+    await name.fill('Discarded');
+    await form.getByRole('button',{name:he ? 'ביטול' : 'Cancel',exact:true}).tap();
+    await dialog.locator('.schedule-list').getByText('Morning',{exact:true}).waitFor();
+    await form.waitFor({state:'hidden'});
+    await timer.locator('.boiler-tabs').waitFor();
+    assert.equal(new URL(page.url()).hash,canonical);
+    await noWrite();
+
+    await page.goto(url + '#room-bath');
+    const room = page.getByRole('dialog',{name:'Bath',exact:true});
+    await room.waitFor();
+    await page.evaluate(fragment => { location.hash = fragment; }, roomAlias);
+    await form.waitFor();
+    await name.fill('Unsaved after Back');
+    await page.evaluate(() => history.back());
+    await room.waitFor();
+    const roomTitle = room.getByRole('heading',{name:'Bath',level:2,exact:true});
+    assert.equal(await roomTitle.getAttribute('tabindex'),null);
+    await page.evaluate(() => history.forward());
+    await form.waitFor();
+    assert.equal(await name.inputValue(),'');
+    await dialog.locator('[data-role=close]').tap();
+    await page.waitForURL(url => url.hash === '#room-bath');
+    await room.waitFor();
+    await noWrite();
+
+    await page.goto(url + '&guarded-schedule#former-new-schedule');
+    await creation.locator('.schedule-form').waitFor();
+    await noWrite();
+    await name.fill('Fixture linked draft');
+    await form.getByRole('button',{name:he ? 'ראשון' : 'Sunday',exact:true}).tap();
+    await form.locator('[data-schedule-commit]').tap();
+    await form.waitFor({state:'hidden'});
+    await timer.locator('.boiler-tabs').waitFor();
+    await dialog.locator('.schedule-list').getByText('Fixture linked draft',{exact:true}).waitFor();
+    assert.deepEqual(await writes(), [{ type:'call_service',domain:'script',service:'fixture_schedule_save',return_response:true,
+      service_data:{schedule_entity:'',expected_revision:'',schedule_name:'Fixture linked draft',schedule_time:'14:30',
+        duration:90,weekdays:['sun']} }]);
+    await dialog.locator('[data-role=close]').tap();
+    await page.waitForURL(url => url.hash === '#former-boiler');
+    await dialog.waitFor();
+    assert.equal(await form.isVisible(),false);
+    assert.equal((await writes()).length,1);
+
+    for (const [options, fragment] of [
+      ['&non-admin',canonical], ['&guarded-schedule&missing-guard',canonical],
+      ['&wrong-runtime-target',canonical], ['&hide-runtime',roomAlias],
+      ['&without-scheduler',canonical], ['', '#device/monitor/switch.fixture_boiler/schedule/new'],
+    ]) {
+      await page.goto(url + options + fragment);
+      await page.getByRole('button',{name:'Bath',exact:true}).waitFor();
+      assert.equal(await page.getByRole('dialog').count(),0);
+      assert.deepEqual(await page.evaluate(() => window.fixture.requests),[]);
+    }
+  } finally {
+    await page.close();
+  }
+}
+
+async function assertBoilerEditLinks(browser, locale) {
+  const page = await browser.newPage({ viewport:{width:391,height:845}, hasTouch:true, reducedMotion:'reduce' });
+  page.setDefaultTimeout(8000);
+  const he = locale === 'he';
+  const url = 'http://127.0.0.1:' + server.address().port +
+    '?compact&routed&stacked&guarded-schedule&schedule-link&close-links&edit-route-cases&locale=' + locale;
+  const route = '#device/bath/switch.fixture_boiler/schedule/edit/';
+  const legacy = '#former-edit-schedule';
+  const dialog = boilerDialog(page,locale);
+  const editing = page.getByRole('dialog',{name:draftTitle[locale].edit,exact:true});
+  const timer = page.getByRole('dialog',{name:'Fixture boiler',exact:true});
+  const bath = page.getByRole('dialog',{name:'Bath',exact:true});
+  const close = dialog.locator('[data-role=close]');
+  const form = dialog.locator('.schedule-form');
+  const name = form.locator('input[type=text]');
+  const save = form.getByRole('button',{name:he ? 'שמירת תזמון' : 'Save schedule',exact:true});
+  const items = () => page.evaluate(() => window.fixture.scheduleItems);
+  const writes = () => page.evaluate(() => window.fixture.scheduleCalls);
+  const noWrite = async () => assert.equal(await page.evaluate(() => window.fixture.requests.includes('call_service')),false);
+  const unavailable = dialog.getByText(he ? 'התזמון הזה אינו זמין לעריכה.' : 'This schedule is no longer available to edit.',{exact:true});
+  try {
+    await page.goto(url + route + 'fixture1');
+    await editing.getByRole('heading',{name:draftTitle[locale].edit,level:2,exact:true}).waitFor();
+    assert.equal(await form.getByRole('heading').count(),0);
+    assert.equal(await editing.locator('.boiler-tabs').isVisible(),false);
+    assert.equal(await name.inputValue(),'Evening');
+    assert.deepEqual(await items(),['fixture1']);
+    await noWrite();
+    await name.fill('Fixture renamed');
+    await save.tap();
+    await form.waitFor({state:'hidden'});
+    await timer.locator('.boiler-tabs').waitFor();
+    assert.deepEqual(await writes(),[{ type:'call_service',domain:'script',service:'fixture_schedule_save',return_response:true,
+      service_data:{schedule_entity:'switch.schedule_fixture1',expected_revision:'fixture-revision',schedule_name:'Fixture renamed',
+        schedule_time:'17:30',duration:30,weekdays:['sun','mon','tue','wed','thu','fri','sat']} }]);
+    assert.ok((await items()).every(id => id === 'fixture1'));
+
+    await page.goto(url + '&edit-link-check=chooser#room-bath');
+    await bath.waitFor();
+    await page.evaluate(fragment => { location.hash = fragment; },legacy);
+    const choice = dialog.getByRole('link',{name:(he ? 'עריכה' : 'Edit') + ' · Morning',exact:true});
+    await choice.waitFor();
+    assert.equal(await choice.getAttribute('href'),route + 'fixture0');
+    assert.equal(await form.isVisible(),false);
+    assert.equal(await dialog.getByRole('link',{name:/Custom|Foreign/}).count(),0);
+    assert.deepEqual(await items(),[]);
+    await page.evaluate(() => window.fixture.pauseScheduleRead('scheduler/item'));
+    await choice.tap();
+    await page.waitForFunction(() => window.fixture.scheduleReadWaiting());
+    await page.evaluate(() => history.back());
+    await bath.waitFor();
+    await page.evaluate(() => window.fixture.releaseScheduleRead());
+    assert.equal(await form.isVisible(),false);
+    await page.evaluate(() => history.forward());
+    await choice.waitFor();
+    await choice.tap();
+    await form.waitFor();
+    assert.equal(await name.inputValue(),'Morning');
+    assert.equal(new URL(page.url()).hash,legacy);
+    await form.getByRole('button',{name:he ? 'ביטול' : 'Cancel',exact:true}).tap();
+    await form.waitFor({state:'hidden'});
+    assert.equal(await choice.evaluate(link => link.getRootNode().activeElement === link),true);
+    await close.tap();
+    await page.waitForURL(url => url.hash === '#room-bath');
+    await bath.waitFor();
+    await noWrite();
+
+    for (const [options, id, reads] of [
+      ['', 'foreign', []], ['', 'custom', []], ['', 'missing', []],
+      ['&mismatched-edit-item', 'fixture1', ['fixture1']], ['&stale-edit-item', 'fixture1', ['fixture1']],
+      ['&custom-edit-item', 'fixture1', ['fixture1']],
+    ]) {
+      await page.goto(url + options + '&edit-link-check=' + id + route + id);
+      await unavailable.waitFor();
+      assert.equal(await form.isVisible(),false);
+      assert.deepEqual(await items(),reads);
+      await noWrite();
+    }
+    await page.goto(url + '&non-admin' + route + 'fixture1');
+    await page.getByRole('button',{name:'Bath',exact:true}).waitFor();
+    assert.equal(await dialog.count(),0);
+    assert.deepEqual(await page.evaluate(() => window.fixture.requests),[]);
+
+    await page.goto(url + route + 'fixture1');
+    await form.waitFor();
+    await name.fill('Must not save');
+    await page.evaluate(() => window.fixture.retargetSchedule('fixture1'));
+    await save.tap();
+    await dialog.getByText(he ? /התזמון השתנה/ : /This schedule changed/,{exact:false}).waitFor();
+    assert.equal(await form.isVisible(),true);
+    await noWrite();
+  } finally { await page.close(); }
 }
 
 async function assertStopDuringTimerReadback(browser, locale) {
@@ -847,9 +1054,7 @@ async function assertClosedBoilerSchedulePreflight(browser, locale) {
   const he = locale === 'he';
   const url = 'http://127.0.0.1:' + server.address().port + '?compact&routed&stacked&guarded-schedule&locale=' + locale;
   const shortcut = page.locator('[data-room="bath"] .quick-button[data-entity="switch.fixture_boiler"]');
-  const panel = page.getByRole('dialog',{name:'Fixture boiler',exact:true});
-  const schedule = panel.getByRole('button',{name:he ? 'תזמון' : 'Schedule',exact:true});
-  const history = panel.getByRole('button',{name:he ? 'היסטוריית שימוש' : 'Usage history',exact:true});
+  const panel = boilerDialog(page,locale);
   const form = panel.locator('.schedule-form');
   const save = form.getByRole('button',{name:he ? 'שמירת תזמון' : 'Save schedule',exact:true});
   const list = panel.locator('.schedule-list');
@@ -883,10 +1088,10 @@ async function assertClosedBoilerSchedulePreflight(browser, locale) {
     await pause('scheduler/item');
     await save.tap();
     await page.waitForFunction(()=>window.fixture.scheduleReadWaiting());
-    await history.tap();
-    await panel.locator('.boiler-history-host').waitFor();
+    await panel.locator('[data-role=close]').tap();
+    await panel.waitFor({state:'hidden'});
     await release();
-    await schedule.tap();
+    await shortcut.tap();
     await morning.waitFor();
     await form.waitFor({state:'hidden'});
     assert.equal(await list.getByText('Cancelled edit',{exact:true}).count(),0);
@@ -943,6 +1148,8 @@ try {
       await routed.close();
       await assertCompactBoilerHistory(browser, locale);
       await assertBoilerScheduleLinks(browser, locale);
+      await assertNewBoilerScheduleLink(browser, locale);
+      await assertBoilerEditLinks(browser, locale);
       await assertRoomBoilerScheduleEntry(browser, locale);
       await assertClosedBoilerSchedulePreflight(browser, locale);
 
@@ -1119,7 +1326,7 @@ try {
       const stackedPage = await browser.newPage({ viewport: { width: 320, height: 680 }, hasTouch: true });
       const stackedUrl = 'http://127.0.0.1:' + server.address().port + '?compact&stacked&locale=' + locale;
       const stackedShortcut = stackedPage.locator('[data-room="bath"] .quick-button[data-entity="switch.fixture_boiler"]');
-      const stackedDialog = stackedPage.getByRole('dialog', { name: 'Fixture boiler', exact: true });
+      const stackedDialog = boilerDialog(stackedPage,locale);
       const stackedStart = stackedDialog.locator('[data-action="start_timed"]');
       const stackedSchedule = stackedDialog.getByRole('button', { name: words.schedule, exact: true });
       const stackedHistory = stackedDialog.getByRole('button', { name: words.history, exact: true });
@@ -1186,6 +1393,8 @@ try {
       const [editBox, switchBox] = await Promise.all([edit.boundingBox(), scheduleSwitch.boundingBox()]);
       assert.ok(editBox.height >= 44 && switchBox.height >= 44 && switchBox.width >= 44);
       assert.ok(Math.abs(editBox.y - switchBox.y) < 1, 'The edit and status controls share a row');
+      assert.ok(editBox.x + editBox.width <= switchBox.x + 1, 'The switch stays to the right of the schedule summary');
+      assert.ok(await scheduleRows.evaluate(list => list.scrollWidth <= list.clientWidth + 1));
       await edit.tap();
       const form = stackedDialog.locator('.schedule-form');
       await form.waitFor();
@@ -1223,7 +1432,7 @@ try {
         startingPageScroll = await rootScroll();
       };
       const add = stackedDialog.getByRole('button', { name: english ? 'Add schedule' : 'הוספת תזמון', exact: true });
-      const heading = form.getByRole('heading');
+      const heading = stackedDialog.getByRole('heading',{level:2});
       const durationControl = form.getByRole('slider', { name:english ? 'Duration' : '\u05de\u05e9\u05da \u05d7\u05d9\u05de\u05d5\u05dd', exact:true });
       const durationValue = form.locator('.schedule-duration-value');
       const cancel = form.getByRole('button', { name: english ? 'Cancel' : 'ביטול', exact: true });
@@ -1233,21 +1442,29 @@ try {
         const start = await dialogViewport.evaluate(node => node.scrollTop);
         await trigger.tap();
         await heading.waitFor();
+        const title = draftTitle[locale][trigger === add ? 'create' : 'edit'];
+        assert.equal(await stackedDialog.getAttribute('aria-label'),title);
+        assert.equal(await heading.textContent(),title);
+        assert.equal(await form.getByRole('heading').count(),0);
         assert.equal(await heading.evaluate(focused), true, 'Opening a form focuses its heading without a software keyboard');
         assert.equal(await heading.evaluate(node => {
           const heading = node.getBoundingClientRect();
-          const body = node.closest('.modal-body').getBoundingClientRect();
-          return heading.top >= body.top && heading.bottom <= body.bottom;
+          const dialog = node.closest('dialog');
+          const body = dialog.querySelector('.modal-body').getBoundingClientRect();
+          return heading.top >= dialog.getBoundingClientRect().top && heading.bottom <= body.top;
         }), true, 'The form heading is inside the visible dialog immediately after tapping');
         assert.equal(await scheduleRows.isVisible(), false, 'The disabled listing is hidden during editing');
         assert.equal(await stackedRange.isVisible(), false, 'Editing hides only the separate boiler timer controls');
-        assert.equal(await stackedHistory.isVisible(), true, 'History remains available to leave the draft');
+        assert.equal(await stackedDialog.locator('.boiler-tabs').isVisible(), false);
         assert.equal(await stackedDialog.locator('.schedule-compact > .schedule-toolbar').isVisible(), false);
         assert.deepEqual(await rootScroll(), startingPageScroll);
         return start;
       }
       async function expectFormReturn(trigger, originalOffset) {
         await form.waitFor({ state: 'hidden' });
+        assert.equal(await stackedDialog.getAttribute('aria-label'),'Fixture boiler');
+        await stackedSchedule.waitFor();
+        await stackedHistory.waitFor();
         await trigger.waitFor();
         await stackedPage.waitForFunction(selector => {
           const root = document.querySelector('bayit-dashboard').shadowRoot;

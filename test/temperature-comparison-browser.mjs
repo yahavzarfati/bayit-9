@@ -14,19 +14,32 @@ const tracker = { requests:[], native:[], readings:[], held:[] };
 const inside = 'sensor.fixture_inside';
 const outside = 'sensor.fixture_outside';
 const excluded = 'sensor.fixture_excluded';
+const progress = 'sensor.fixture_progress';
+const precise = 'sensor.fixture_precise';
+const readingCards = options.has('readings');
+const names = options.get('locale') === 'he' ?
+  { inside:'טמפרטורת סלון', progress:'התקדמות ניקוי', precise:'מדידה מדויקת' } :
+  { inside:'Lounge temperature', progress:'Cleaning progress', precise:'Precise reading' };
 const unit = options.has('unitless') ? {} : { unit_of_measurement:'°C' };
 const sensor = (state, name, attributes) => ({ state, attributes:{ friendly_name:name, ...attributes } });
-const extraLegend = options.has('legend-density') ? (
-  options.get('locale') === 'he' ? ['חדר משחקים', 'חדר למעלה', 'חדר הורים', 'ממ״ד'] :
-    ['Play Room', 'Upstairs', 'Main Bedroom', 'Office']
-).map((name,index) => ['sensor.fixture_extra_' + index,name]) : [];
+const extraNames = options.get('locale') === 'he' ? ['חדר משחקים', 'חדר למעלה', 'חדר הורים', 'ממ״ד'] :
+  ['Play Room', 'Upstairs', 'Main Bedroom', 'Office'];
+if (options.has('full-series')) extraNames.push(...['Hall', 'Den', 'Kitchen', 'Study', 'Attic', 'Deck']);
+const extraLegend = options.has('legend-density') ?
+  extraNames.map((name,index) => ['sensor.fixture_extra_' + index,name]) : [];
 const hass = {
   config:{ time_zone:'Asia/Jerusalem' }, locale:{ language:options.get('locale') || 'en' }, themes:{},
-  areas:{}, devices:{}, entities:{ [excluded]:{hidden_by:'user'} },
+  areas:readingCards ? { studio:{area_id:'studio',name:'Studio'} } : {},
+  devices:{}, entities:{ [excluded]:{hidden_by:'user'}, ...(readingCards && {'light.fixture_studio':{area_id:'studio'}}) },
   states:{
-    [inside]:sensor('22','Inside',unit),
+    [inside]:sensor(readingCards ? '22.5' : '22','Inside',unit),
     [outside]:sensor('16','Outside',options.has('mixed') ? {unit_of_measurement:'°F'} : unit),
     [excluded]:sensor('30','Hidden series',unit),
+    ...(readingCards && {
+      'light.fixture_studio':sensor('off','Studio light',{supported_color_modes:['onoff']}),
+      [progress]:sensor('0','Cleaning progress',{unit_of_measurement:'%'}),
+      [precise]:sensor('71.2345','Precise reading',{unit_of_measurement:'°F'}),
+    }),
     ...Object.fromEntries(extraLegend.map(([id,name]) => [id,sensor('24',name,unit)])),
   },
   callWS(request) {
@@ -40,6 +53,8 @@ const hass = {
       [inside]:[row(-1450,'20'),row(-1435,'22'),row(-1430,'24'),row(-608,'unavailable'),row(-514,'18'),row(-30,'22')],
       [outside]:[row(-1450,'10'),row(-550,'14'),row(-80,'16')],
       [excluded]:[row(-390,'30')],
+      [progress]:[row(-1500,'0'),row(-120,'45'),row(-25,'0')],
+      [precise]:[row(-1450,'70.5'),row(-110,'74.12'),row(-30,'71.2345')],
       ...Object.fromEntries(extraLegend.map(([id]) => [id,[row(-1430,'22'),row(-30,'24')]])),
     };
     if (options.has('live-history')) data[inside].push(...tracker.readings);
@@ -62,20 +77,36 @@ window.loadCardHelpers = async () => ({
 const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
 const config = { type:'custom:bayit-9', locale:hass.locale.language, toolbar:[
   { id:'chart-fixture', kind:'sensors', label:'Fixture Sensors', sections:[
-    { id:'series', kind:'series', title:'Room comparison',
+    ...(readingCards ? [{
+      id:'readings', kind:'readings', title:'Readings', layout:'reading-cards',
+      entities:[
+        { entity:inside, role:'graph', name:names.inside, icon:'mdi:thermometer',
+          compact_history_graph:true, series_color:'#80BFFF', graph_room_id:'studio' },
+        { entity:outside, role:'graph', name:'Outside' },
+        { entity:progress, role:'graph', name:names.progress, icon:'mdi:robot-vacuum',
+          compact_history_graph:true, series_color:'#69D8A3', graph_hours:168, vacuum_panel_id:'fixture-vacuum' },
+        { entity:precise, role:'graph', name:names.precise, compact_history_graph:true, series_color:'#bf9dff' },
+        { entity:excluded, role:'graph', name:'Hidden reading', compact_history_graph:true },
+      ],
+    }] : [{ id:'series', kind:'series', title:'Room comparison',
       ...(!options.has('legacy') && { comparison:{ enabled:true, hours:options.has('dense') ? 72 : 24,
-        bucket_minutes:options.has('dense') ? 5 : 30 } }),
+        bucket_minutes:options.has('dense') ? 5 : 30,
+        ...(options.has('compact-comparison') && { layout:'compact' }) } }),
       entities:[{ entity:inside, role:'graph', name:'Inside', series_color:'#397BD6', graph_hours:48 },
         { entity:outside, role:'graph', name:'Outside', series_color:'#967000' },
         { entity:excluded, role:'graph', name:'Hidden series', series_color:'#112233' },
         ...extraLegend.map(([entity,name]) => ({ entity, name, role:'graph' }))],
-    },
+    }]),
   ] },
+  ...(readingCards ? [{ id:'fixture-vacuum', kind:'vacuum', label:'Fixture Vacuum', sections:[
+    { id:'status', kind:'status', entities:[{ entity:progress, role:'status' }] },
+  ] }] : []),
 ] };
 const dashboard = document.createElement('bayit-dashboard');
 dashboard.setConfig(Strategy.generate(config, hass).views[0].cards[0]);
 dashboard.hass = hass;
 document.querySelector('main').append(dashboard);
+window.addEventListener('hass-more-info', event => { tracker.details = event.detail.entityId; });
 tracker.hideInside = () => {
   hass.entities[inside] = { hidden_by:'user' };
   dashboard.hass = { ...hass, entities:{ ...hass.entities } };
@@ -119,6 +150,81 @@ const home = 'http://127.0.0.1:' + server.address().port + '/fixture-home/home';
 const hash = '#panel/chart-fixture';
 const inside = 'sensor.fixture_inside';
 const outside = 'sensor.fixture_outside';
+
+async function assertSensorReadingCards(browser) {
+  for (const [width, locale] of [[320,'he'],[391,'en']]) {
+    const page = await browser.newPage({ viewport:{width,height:845},hasTouch:true,reducedMotion:'reduce' });
+    page.setDefaultTimeout(8000);
+    const modal = page.getByRole('dialog',{name:'Fixture Sensors',exact:true});
+    const cards = modal.locator('.toolbar-sensor-chart');
+    const reading = index => cards.nth(index).locator('.room-temperature-value');
+    try {
+      await page.goto(home+'?readings&locale='+locale+hash);
+      await modal.locator('.room-temperature-line').first().waitFor();
+      assert.equal(await cards.count(),3);
+      assert.equal(await reading(0).textContent(),'22.5');
+      assert.equal(await reading(1).textContent(),'0');
+      assert.equal(await reading(2).textContent(),'71.2345');
+      assert.deepEqual(await cards.locator('.room-temperature-unit').allTextContents(), ['°C','%','°F']);
+      assert.equal(await cards.first().locator('ha-icon').getAttribute('icon'),'mdi:thermometer');
+      assert.equal(await cards.nth(1).locator('ha-icon').getAttribute('icon'),'mdi:robot-vacuum');
+      assert.deepEqual(await cards.evaluateAll(items => items.map(item => item.style.getPropertyValue('--room-chart-color'))),
+        ['#80BFFF','#69D8A3','#BF9DFF']);
+      assert.ok(await cards.evaluateAll(items => items.every(item => {
+        const heading = item.querySelector('bdi').getBoundingClientRect();
+        const icon = item.querySelector('ha-icon').getBoundingClientRect();
+        return item.offsetWidth >= 44 && item.offsetHeight >= 44 && item.scrollWidth <= item.clientWidth + 1 &&
+          heading.right <= icon.left && item.querySelector('.room-temperature-fill');
+      })));
+      const requests = await page.evaluate(() => tracker.requests);
+      assert.deepEqual(requests.map(request => request.entity_ids), [[inside],['sensor.fixture_progress'],['sensor.fixture_precise']]);
+      assert.equal(Date.parse(requests[1].end_time) - Date.parse(requests[1].start_time),168.5 * 3600000);
+      assert.deepEqual(await page.evaluate(() => tracker.native.map(card => card.entity)),[outside]);
+
+      await cards.nth(2).press('Enter');
+      assert.equal(await page.evaluate(() => tracker.details),'sensor.fixture_precise');
+      await cards.nth(1).tap();
+      await page.getByRole('dialog',{name:'Fixture Vacuum',exact:true}).waitFor();
+      await page.goto(home+'?readings&locale='+locale+hash);
+      await cards.first().tap();
+      await page.getByRole('dialog',{name:'Studio',exact:true}).waitFor();
+
+      await page.goto(home+'?readings&locale='+locale+hash);
+      await cards.first().waitFor();
+      await page.evaluate(() => tracker.dropInside());
+      await cards.first().getByText('—',{exact:true}).waitFor();
+      assert.equal(await cards.first().locator('.room-temperature-unit').textContent(),'');
+      assert.match(await cards.first().getAttribute('aria-label'),locale === 'he' ? /לא זמין/ : /Unavailable/);
+      await page.evaluate(() => tracker.changeInside('22.500'));
+      await cards.first().getByText('22.500',{exact:true}).waitFor();
+      await page.evaluate(() => tracker.hideInside());
+      await page.waitForFunction(() => document.querySelector('bayit-dashboard').shadowRoot
+        .querySelectorAll('.toolbar-sensor-chart:not([hidden])').length === 2);
+      assert.equal(await cards.first().isHidden(),true);
+      assert.equal(await reading(0).textContent(),'—');
+      assert.equal(await cards.first().locator('.room-temperature-unit').textContent(),'');
+      assert.equal(await cards.first().locator('.room-temperature-line').count(),0);
+      if (locale === 'en') {
+        await page.goto(home+'?readings&editor');
+        const editor = page.locator('#editor');
+        await editor.getByText('Toolbar and extra screens',{exact:true}).click();
+        await editor.getByRole('button',{name:'Fixture Sensors',exact:true}).click();
+        await editor.getByRole('button',{name:'Readings',exact:true}).click();
+        await editor.getByRole('button',{name:'Lounge temperature',exact:true}).click();
+        const compact = editor.getByLabel('Compact history chart',{exact:true});
+        assert.equal(await compact.isChecked(),true);
+        const color = editor.getByLabel('Line color for this sensor',{exact:true});
+        await color.fill('#AACCEE');
+        await color.press('Tab');
+        await compact.uncheck();
+        const entry = await page.evaluate(() => tracker.draft.toolbar[0].sections[0].entities[0]);
+        assert.equal(entry.series_color,'#AACCEE');
+        assert.equal(entry.compact_history_graph,undefined);
+        assert.equal(entry.graph_room_id,'studio');
+      }
+    } finally { await page.close(); }
+  }
+}
 
 async function assertLiveComparison(browser) {
   const page = await browser.newPage({ viewport:{ width:390,height:844 },hasTouch:true,reducedMotion:'reduce' });
@@ -211,6 +317,138 @@ async function assertLiveComparison(browser) {
   } finally { await page.close(); }
 }
 
+async function assertTouchPreviewFits(preview, expectedReadings) {
+  const layout = await preview.evaluate(node => {
+    const bounds = node.closest('.comparison-plot').getBoundingClientRect();
+    const area = node.getBoundingClientRect();
+    const inside = (box, outer) => box.top >= outer.top - 1 && box.bottom <= outer.bottom + 1 &&
+      box.left >= outer.left - 1 && box.right <= outer.right + 1;
+    const rows = [...node.querySelectorAll('li')];
+    return {
+      fits:inside(area,bounds) && node.scrollHeight <= node.clientHeight + 1,
+      pointerEvents:getComputedStyle(node).pointerEvents,
+      readings:rows.length,
+      cropped:rows.filter(row => !inside(row.getBoundingClientRect(),area) ||
+        row.lastElementChild.scrollWidth > row.lastElementChild.clientWidth + 1).map(row => row.textContent),
+    };
+  });
+  assert.deepEqual(layout,{fits:true,pointerEvents:'none',readings:expectedReadings,cropped:[]});
+}
+
+async function assertCompactComparison(browser) {
+  for (const [width, locale] of [[320,'he'],[391,'en']]) {
+    const page = await browser.newPage({ viewport:{width,height:845},hasTouch:true,reducedMotion:'reduce' });
+    const chart = page.locator('.temperature-comparison');
+    const range = chart.getByRole('slider');
+    const plot = chart.locator('.comparison-plot svg');
+    const time = chart.locator('.comparison-selected-time');
+    const preview = chart.locator('.comparison-preview');
+    const legend = chart.getByRole('button', {
+      name: locale === 'he' ? 'הצגה או הסתרה של Inside' : 'Show or hide Inside', exact:true,
+    });
+    const query = home+'?legend-density&locale='+locale;
+    try {
+      await page.goto(query+hash);
+      await range.waitFor();
+      const before = (await chart.boundingBox()).height;
+      assert.equal(await chart.getAttribute('data-comparison-compact'),null);
+      await page.goto(query+'&compact-comparison'+hash);
+      await range.waitFor();
+      const shape = await chart.evaluate(box => {
+        const plot = box.querySelector('svg').getBoundingClientRect();
+        const slider = box.querySelector('input').getBoundingClientRect();
+        const legend = [...box.querySelectorAll('.comparison-series')];
+        return { height:box.offsetHeight, fits:box.scrollWidth <= box.clientWidth + 1,
+          plot:plot.height, slider:slider.height, integrated: Math.abs(slider.bottom - plot.bottom) < 1,
+          rows:new Set(legend.map(button => Math.round(button.getBoundingClientRect().top))).size,
+          targets:legend.every(button => button.offsetWidth >= 44 && button.offsetHeight >= 44),
+          readingsFit:legend.every(button => [...button.querySelectorAll('.comparison-reading-name,.comparison-value')]
+            .every(text => text.scrollWidth <= text.clientWidth + 1)) };
+      });
+      assert.ok(before - shape.height >= 80,JSON.stringify(shape));
+      assert.ok(shape.fits && shape.targets && shape.integrated && shape.readingsFit && shape.slider >= 44,JSON.stringify(shape));
+      assert.equal(shape.rows,2);
+      assert.ok(shape.plot >= 95 && shape.plot <= 112,JSON.stringify(shape));
+      assert.deepEqual(await chart.locator('.comparison-y-axis span').allTextContents(),['25','20','15','10']);
+      assert.equal(await chart.locator('.comparison-x-axis span').count(),4);
+      assert.equal(await time.isHidden(),true);
+
+      await range.press('Home');
+      assert.equal(await range.inputValue(),'0');
+      assert.match(await range.getAttribute('aria-valuetext'),/Inside 23 °C/);
+      await time.waitFor();
+      assert.equal(await range.evaluate(input => getComputedStyle(input).opacity),'1');
+      await range.press('End');
+      const committed = await range.getAttribute('aria-valuetext');
+      const plotWidth = (await plot.boundingBox()).width;
+      await plot.hover({ position:{x:Math.floor(plotWidth * .5),y:18} });
+      assert.equal(await preview.isVisible(),true);
+      assert.equal(await preview.locator('li').count(),6);
+      assert.equal(await range.getAttribute('aria-valuetext'),committed);
+      await plot.tap({ position:{x:Math.floor(plotWidth * .65),y:18} });
+      await preview.waitFor();
+      assert.equal(await preview.getAttribute('data-touch'),'');
+      assert.equal(await preview.locator('.comparison-preview-time').textContent(),await time.textContent());
+      assert.equal(await time.isHidden(),true);
+      await assertTouchPreviewFits(preview,6);
+      assert.notEqual(await range.getAttribute('aria-valuetext'),committed);
+
+      const slider = await range.boundingBox();
+      const chartSelection = await range.getAttribute('aria-valuetext');
+      await range.tap({ position:{x:Math.floor(slider.width * .27),y:Math.floor(slider.height / 2)} });
+      assert.notEqual(await range.getAttribute('aria-valuetext'),chartSelection);
+      await preview.waitFor({state:'hidden'});
+      await range.press('End');
+      const beforeSwipe = await range.getAttribute('aria-valuetext');
+      await plot.evaluate(node => {
+        const bounds = node.getBoundingClientRect();
+        for (const sequence of [
+          [['pointerdown',18],['pointermove',38],['pointerup',18],['click',18]],
+          [['pointerdown',18],['pointercancel',18],['click',18]],
+        ]) {
+          for (const [type,y] of sequence) {
+            node.dispatchEvent(new PointerEvent(type,{pointerType:'touch',pointerId:72,isPrimary:true,bubbles:true,
+              clientX:bounds.left+bounds.width*.4,clientY:bounds.top+y}));
+          }
+        }
+      });
+      assert.equal(await range.getAttribute('aria-valuetext'),beforeSwipe);
+      assert.equal(await preview.isHidden(),true);
+      await page.mouse.move(slider.x + slider.width - 8, slider.y + slider.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(slider.x + slider.width * .27, slider.y + slider.height / 2,{steps:4});
+      await page.mouse.up();
+      assert.notEqual(await range.getAttribute('aria-valuetext'),committed);
+      await legend.press('Space');
+      assert.equal(await legend.getAttribute('aria-pressed'),'false');
+      assert.equal(await legend.locator('.comparison-value').isHidden(),true);
+      await plot.tap({ position:{x:Math.floor(plotWidth * .45),y:18} });
+      await preview.waitFor();
+      assert.equal(await preview.locator('li').count(),5);
+      await legend.tap();
+      assert.equal(await legend.getAttribute('aria-pressed'),'true');
+      await preview.waitFor({state:'hidden'});
+      await plot.tap({ position:{x:Math.floor(plotWidth * .45),y:18} });
+      await preview.waitFor();
+      const beforeScroll = await range.getAttribute('aria-valuetext');
+      await chart.locator('.comparison-visual').evaluate(el => el.dispatchEvent(new Event('scroll')));
+      await preview.waitFor({state:'hidden'});
+      assert.equal(await range.getAttribute('aria-valuetext'),beforeScroll);
+      await page.evaluate(() => tracker.hideInside());
+      await legend.waitFor({state:'detached'});
+      assert.doesNotMatch(await range.getAttribute('aria-valuetext'),/Inside/);
+      assert.equal(await page.evaluate(() => tracker.requests.length),1);
+      if (width === 320) {
+        await page.goto(query+'&compact-comparison&full-series'+hash);
+        await range.waitFor();
+        await plot.tap({ position:{x:Math.floor(plotWidth * .65),y:18} });
+        await preview.waitFor();
+        await assertTouchPreviewFits(preview,12);
+      }
+    } finally { await page.close(); }
+  }
+}
+
 try {
   await runBrowserEngines([[chromium, 'Chromium'], [webkit, 'WebKit']], async (engine, name) => {
     const browser = await engine.launch();
@@ -298,8 +536,30 @@ try {
         assert.equal(request.no_attributes, true);
         assert.equal(request.significant_changes_only, false);
       }
+      const preview = comparison.locator('.comparison-preview');
+      const marker = plot.locator('.comparison-marker');
+      const committed = await range.getAttribute('aria-valuetext');
+      const committedPosition = await marker.getAttribute('x1');
+      await plot.scrollIntoViewIfNeeded();
       const plotBounds = await plot.boundingBox();
-      await plot.click({ position:{ x:plotBounds.width * .6, y:20 } });
+      const olderPoint = { x:plotBounds.width * .6, y:20 };
+      await plot.hover({ position:olderPoint });
+      assert.equal(await preview.isVisible(), true);
+      assert.equal(await preview.locator('li').count(), 2);
+      assert.match(await preview.locator('li').first().textContent(), /InsideNo reading/);
+      assert.notEqual(await marker.getAttribute('x1'), committedPosition);
+      assert.equal(await range.getAttribute('aria-valuetext'), committed);
+      assert.equal(await reading('Inside').innerText(), '22 °C');
+      assert.deepEqual(await plot.boundingBox(), plotBounds);
+      await plot.hover({ position:{ x:plotBounds.width * .3, y:20 } });
+      assert.equal(await preview.getAttribute('data-right'), '');
+      await range.hover();
+      assert.equal(await preview.isHidden(), true);
+      assert.equal(await marker.getAttribute('x1'), committedPosition);
+      await plot.tap({ position:olderPoint });
+      await preview.waitFor();
+      assert.equal(await preview.getAttribute('data-touch'), '');
+      assert.match(await preview.locator('li').first().textContent(), /InsideNo reading/);
       assert.equal(await reading('Inside').innerText(), 'No reading');
       await page.evaluate(() => tracker.dropInside());
       await range.press('End');
@@ -368,6 +628,11 @@ try {
       const draft = await page.evaluate(() => tracker.draft.toolbar[0].sections[0]);
       assert.deepEqual(draft.comparison, { enabled:true, hours:48, bucket_minutes:15 });
       assert.equal(draft.entities[0].series_color, '#12AACC');
+      const compact = editor.getByLabel('Use a compact comparison chart',{exact:true});
+      await compact.check();
+      assert.equal(await page.evaluate(() => tracker.draft.toolbar[0].sections[0].comparison.layout),'compact');
+      await compact.uncheck();
+      assert.equal(await page.evaluate(() => Object.hasOwn(tracker.draft.toolbar[0].sections[0].comparison,'layout')),false);
       assert.deepEqual(mediaRequests, []);
       assert.deepEqual(errors, []);
       for (const locale of ['en','he']) {
@@ -412,6 +677,10 @@ try {
         }
       }
       await assertLiveComparison(browser);
+      await assertSensorReadingCards(browser);
+      await assertCompactComparison(browser);
+      console.log(name + ': compact timeline controls, six and twelve tap-preview readings, and scroll/drag safety');
+      console.log(name + ': opted-in Sensors readings, retained precision, history, graph navigation and editor');
       console.log(name + ': rolling Recorder refresh, historical selection, one trailing refresh, stale response and teardown');
       console.log(name + ': responsive sensor comparison, recorder gaps, keyboard values, native fallback, disposal and editor');
     } finally {

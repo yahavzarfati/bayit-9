@@ -38,7 +38,7 @@ function chartPaths(points, start, end) {
   });
 }
 
-export function createCompactHistoryChart({ entity, name, glyph, color, hours = 24 }, hass, {
+export function createCompactHistoryChart({ entity, name, glyph, color, hours = 24, showHeading = false, actionLabel }, hass, {
   host, make, icon, moreInfo, locale, t, canView = () => true,
 }) {
   const document = host.ownerDocument;
@@ -47,6 +47,13 @@ export function createCompactHistoryChart({ entity, name, glyph, color, hours = 
   root.type = 'button';
   root.dir = 'ltr';
   root.style.setProperty('--room-chart-color', color);
+  const heading = name || t('room_temperature_chart');
+  if (showHeading) {
+    root.classList.add('toolbar-sensor-chart');
+    const title = make('bdi', 'room-temperature-heading', heading);
+    title.title = heading;
+    root.append(title);
+  }
   root.append(icon(glyph || 'mdi:thermometer'));
 
   const reading = make('span', 'room-temperature-reading');
@@ -75,7 +82,7 @@ export function createCompactHistoryChart({ entity, name, glyph, color, hours = 
   root.append(svg);
 
   const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 });
-  const heading = name || t('room_temperature_chart');
+  const action = actionLabel ?? t('more_info');
   let disposed = false;
   let latest;
   let currentHass = hass;
@@ -126,15 +133,15 @@ export function createCompactHistoryChart({ entity, name, glyph, color, hours = 
     if (sensor !== latest) {
       latest = sensor;
       const reported = parseTemperatureValue(sensor?.state);
-      const amount = reported !== null ? number.format(reported) : '—';
+      const amount = reported !== null ? (showHeading ? String(sensor.state).trim() : number.format(reported)) : '—';
       const unit = typeof sensor?.attributes?.unit_of_measurement === 'string' ? sensor.attributes.unit_of_measurement : '';
       value.textContent = amount;
       units.textContent = reported !== null ? unit : '';
-      root.setAttribute('aria-label', heading + ' · ' + (reported !== null ?
-        amount + (unit ? ' ' + unit : '') : t('unknown')) + ' · ' + t('more_info'));
+      root.setAttribute('aria-label', heading + ' · ' + (reported !== null ? amount + (unit ? ' ' + unit : '') :
+        t(showHeading && sensor?.state === 'unavailable' ? 'unavailable' : 'unknown')) + ' · ' + action);
     } else if (!root.hasAttribute('aria-label')) {
       value.textContent = '—';
-      root.setAttribute('aria-label', heading + ' · ' + t('unknown') + ' · ' + t('more_info'));
+      root.setAttribute('aria-label', heading + ' · ' + t('unknown') + ' · ' + action);
     }
     if (!requested || sampleChanged || replacedTransport || !couldRead || queued) scheduleRefresh();
   }
@@ -211,7 +218,25 @@ export const roomTemperatureChartStyles = `
     border:1px solid var(--soft-line); border-radius:12px; background:var(--control);
   }
   .toolbar-history-chart svg { height:34px; }
+  .toolbar-section .room-temperature-chart.toolbar-sensor-chart {
+    grid-template: 28px minmax(57px,auto) 48px / minmax(0,1fr) auto; min-height:145px;
+    padding:10px 0 0; border-radius:8px; background:transparent; align-items:center;
+  }
+  .toolbar-sensor-chart > ha-icon { margin:0 16px 0 8px; color:var(--secondary); }
+  .room-temperature-heading {
+    min-width:0; max-width:calc(100% - 16px); margin-left:16px; white-space:nowrap; overflow:hidden;
+    text-overflow:ellipsis; font-size:14px; font-weight:600; color:var(--secondary);
+  }
+  .toolbar-sensor-chart .room-temperature-reading {
+    grid-column:1/-1; max-width:calc(100% - 26px); margin:0 10px 0 16px; overflow-wrap:anywhere;
+  }
+  .toolbar-sensor-chart .room-temperature-value { min-width:0; font-size:clamp(25px,8.5vw,34px); }
+  .toolbar-sensor-chart .room-temperature-unit { font-size:16px; }
+  .toolbar-sensor-chart svg { grid-column:1/-1; height:48px; align-self:end; }
   .shell[dir=rtl] .toolbar-section[data-layout=compact] > .toolbar-section-items > .toolbar-history-chart {
+    direction:ltr;
+  }
+  .shell[dir=rtl] .toolbar-section[data-layout=reading-cards] > .toolbar-section-items > .toolbar-sensor-chart {
     direction:ltr;
   }
   .room-temperature-chart stop { stop-color:var(--room-chart-color); }

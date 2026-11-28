@@ -1,14 +1,22 @@
 import { spawn } from 'node:child_process';
 import { readdir } from 'node:fs/promises';
+import { parseArgs } from 'node:util';
 
 const repository = new URL('../', import.meta.url);
 const dashboard = 'dashboard-browser.mjs';
 const engines = ['chromium', 'webkit'];
 const requestedGroup = process.env.BAYIT_BROWSER_SUITE;
+const { values: { scenario: requestedScenarios = [] } } = parseArgs({
+  options: { scenario: { type: 'string', multiple: true } },
+});
 
 async function browserSuites() {
   if (requestedGroup && ![...engines, 'standalone'].includes(requestedGroup)) {
     throw new Error('BAYIT_BROWSER_SUITE must be chromium, webkit, or standalone');
+  }
+  if (requestedScenarios.some(scenario => !scenario.trim())) throw new Error('--scenario requires a name');
+  if (requestedScenarios.length && requestedGroup === 'standalone') {
+    throw new Error('--scenario selects dashboard scenarios and cannot be used with the standalone suite');
   }
   const files = await readdir(new URL('test/', repository), { withFileTypes: true });
   const sources = files.filter(entry => entry.isFile() && entry.name !== dashboard && entry.name.endsWith('-browser.mjs'))
@@ -16,11 +24,13 @@ async function browserSuites() {
   const suites = [
     ...engines.map(engine => ({
       group: engine, name: 'Dashboard (' + engine + ')',
-      args: ['test/' + dashboard], env: { BAYIT_BROWSER_ENGINE: engine },
+      args: ['test/' + dashboard, ...requestedScenarios.flatMap(name => ['--scenario', name])],
+      env: { BAYIT_BROWSER_ENGINE: engine },
     })),
     ...sources.map(file => ({ group: 'standalone', name: file, args: ['test/' + file] })),
   ];
-  return suites.filter(suite => !requestedGroup || suite.group === requestedGroup);
+  return suites.filter(suite => (!requestedGroup || suite.group === requestedGroup) &&
+    (!requestedScenarios.length || suite.group !== 'standalone'));
 }
 
 function runSuite({ args, env }) {

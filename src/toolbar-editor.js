@@ -1,17 +1,17 @@
 import {
   availableAutomaticToolbarKinds, dashboardToolbarEntries, discoverRooms, generateDashboard, hasDynamicPresenceIcon, isCompactAutomationActions, isCompactToolbarStatus, isReadingCards, isToolbarLightTile, isVacuumProgramAction, LOCAL_ROUTE,
   isToolbarReadoutEntity, isToolbarReadouts, isWeatherReadingsList, normalizeOverviewDiscovery, normalizeRoomVacuumSummary,
-  normalizeToolbarReadout, overviewSectionOptions, roomPanelOptions, ROOM_VACUUM_SUMMARY_DOMAINS,
+  normalizeToolbarReadout, normalizeWeatherStatus, overviewSectionOptions, roomPanelOptions, ROOM_VACUUM_SUMMARY_DOMAINS,
   securityReadoutLabelStates, selectableRoomEntities, sensorComparisonMaxHours, sensorComparisonOptions,
   SENSOR_COMPARISON_INTERVALS, supportsSensorComparison,
   supportsCompactAutomationActions, supportsCompactToolbarStatus, supportsHorizonCard, supportsHourlyWeatherForecast, supportsReadingCards,
   supportsOverviewActivityList, supportsToolbarCompactHistory, supportsOverviewLightsOff, supportsStackedToolbarLocks,
   supportsSecurityDangerAction, supportsToolbarPanelIcon, supportsToolbarReadouts, supportsToolbarVacuumSummary,
-  supportsWeatherReadingsList, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
+  supportsWeatherReadingsList, supportsWeatherStatus, TOOLBAR_KINDS, TOOLBAR_ROLE_DOMAINS,
   TOOLBAR_ROLES, TOOLBAR_SECTION_KINDS,
   toolbarPlacement, usesRoomPopupPosition,
 } from './strategy-model.js';
-import { normalizeOrefMap, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
+import { normalizeOrefMap, OREF_MAP_ASPECT_RATIOS, OREF_MAP_DEFAULTS } from './oref-alert-map.js';
 import { sameVacuumDevice } from './vacuum-map.js';
 import { normalizeMediaStage } from './now-playing.js';
 import { normalizeMediaRemote } from './media-device-support.mjs';
@@ -56,6 +56,7 @@ const WORDS = {
     orefMapTitle: 'Regional alerts',
     orefMap: 'Show the Oref alert map',
     orefMapHint: 'Requires the Oref Alert integration in Home Assistant.',
+    orefMapShape: 'Map shape', orefMapShapes: { '4:3': 'Wide (4:3)', '1:1': 'Square (1:1)' },
     auto_fit: 'Fit the map to active alerts',
     hebrew_basemap: 'Hebrew basemap',
     show_pre_alert: 'Show advance warnings',
@@ -80,6 +81,7 @@ const WORDS = {
     compactAutomationActions: 'Show compact action buttons',
     weatherReadingsList: 'Show readings as a compact read-only list',
     horizonCard: 'Show the Sun and Moon with Horizon Card',
+    weatherStatus: 'Meaning of the reading', weatherRain: 'Rain now', weatherWarning: 'Weather warning',
     clockWeatherCard: 'Use Clock Weather Card for the forecast',
     readingChartCards: 'Show readings as chart cards',
     hourlyForecast: 'Show the 24-hour forecast above the daily forecast',
@@ -89,6 +91,7 @@ const WORDS = {
     panelIcon: 'Popup header icon',
     sensorComparison: 'Compare trends in a single chart', comparisonHours: 'Time range in hours',
     comparisonInterval: 'Average interval in minutes', seriesColor: 'Line color for this sensor',
+    comparisonCompact: 'Use a compact comparison chart',
     compactReadouts: 'Show compact read-only status tiles', readoutOn: 'Label for on', readoutOff: 'Label for off',
     readoutSafe: 'Label for safe', readoutOk: 'Label for ok',
     readoutDanger: 'Highlight the on state in red', readoutUnit: 'Display unit for numeric readings',
@@ -141,6 +144,7 @@ const WORDS = {
     orefMapTitle: 'התראות אזוריות',
     orefMap: 'הצגת מפת התרעות פיקוד העורף',
     orefMapHint: 'נדרשת אינטגרציית פיקוד העורף ב־Home Assistant.',
+    orefMapShape: 'צורת המפה', orefMapShapes: { '4:3': 'רחבה (4:3)', '1:1': 'ריבועית (1:1)' },
     auto_fit: 'התאמת המפה להתרעות פעילות',
     hebrew_basemap: 'מפת בסיס בעברית',
     show_pre_alert: 'הצגת הנחיות מקדימות',
@@ -165,6 +169,7 @@ const WORDS = {
     compactAutomationActions: 'הצגת כפתורי פעולה קומפקטיים',
     weatherReadingsList: 'הצגת המדדים ברשימה קומפקטית לקריאה בלבד',
     horizonCard: 'הצגת השמש והירח באמצעות Horizon Card',
+    weatherStatus: 'משמעות המדד', weatherRain: 'גשם עכשיו', weatherWarning: 'התראת מזג אוויר',
     clockWeatherCard: 'הצגת התחזית באמצעות Clock Weather Card',
     readingChartCards: 'הצגת המדדים ככרטיסי גרף',
     hourlyForecast: 'הצגת תחזית ל־24 שעות מעל התחזית היומית',
@@ -174,6 +179,7 @@ const WORDS = {
     panelIcon: 'סמל בכותרת החלונית',
     sensorComparison: 'השוואת מגמות בגרף אחד', comparisonHours: 'טווח תצוגה בשעות',
     comparisonInterval: 'מרווח ממוצע בדקות', seriesColor: 'צבע הקו של החיישן',
+    comparisonCompact: 'הצגת גרף השוואה קומפקטי',
     compactReadouts: 'הצגת אריחי מצב קומפקטיים לקריאה בלבד', readoutOn: 'תווית למצב פעיל', readoutOff: 'תווית למצב כבוי',
     readoutSafe: 'תווית למצב בטוח', readoutOk: 'תווית למצב תקין',
     readoutDanger: 'הדגשת מצב פעיל באדום', readoutUnit: 'יחידת תצוגה לערך מספרי',
@@ -437,7 +443,7 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
     role.dataset.toolbarFocus = 'device-role';
     role.addEventListener('change', () => save({
       role: role.value || undefined,
-      ...(role.value && role.value !== 'status' && { readout: undefined }),
+      ...(role.value && role.value !== 'status' && { readout: undefined, weather_status: undefined }),
       ...(role.value && role.value !== 'forecast' && { hourly_forecast: undefined, clock_weather_card: undefined }),
       ...(role.value && role.value !== 'sun' && { horizon_card: undefined }),
       ...(role.value !== 'device' && { vacuum_summary: undefined }),
@@ -468,6 +474,12 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       const horizon = node('input', { type: 'checkbox', checked: record.horizon_card === true });
       horizon.addEventListener('change', () => save({ horizon_card: horizon.checked || undefined }));
       fields.push(node('label', { className: 'check' }, [horizon, words.horizonCard]));
+    }
+    if (supportsWeatherStatus(kind, section, record)) {
+      const meaning = select([['', words.automatic], ['rain', words.weatherRain], ['warning', words.weatherWarning]],
+        normalizeWeatherStatus(kind, section, record) ?? '');
+      meaning.addEventListener('change', () => save({ weather_status: meaning.value || undefined }));
+      fields.push(field(words.weatherStatus, meaning));
     }
     if (supportsToolbarVacuumSummary(kind, section, record)) {
       let sources = normalizeRoomVacuumSummary(record.vacuum_summary);
@@ -545,19 +557,21 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
         }
       }
     }
-    const comparison = sensorComparisonOptions(toolbar[entryIndex].kind, section);
-    if (record.role === 'graph' && domain === 'sensor' && comparison) {
+    const comparison = sensorComparisonOptions(kind, section);
+    const compactGraph = supportsToolbarCompactHistory(kind, section, record);
+    if (record.role === 'graph' && domain === 'sensor' && (comparison || kind === 'sensors' && compactGraph)) {
       fields.push(textField(words.seriesColor, record.series_color, value => save({ series_color: value || undefined }),
         { dir:'ltr', maxLength:7, placeholder:'#80BFFF', pattern:/^#[0-9a-f]{6}$/i,
           error:words.calendarInvalidAccent }).field);
-    } else if (record.role === 'graph') {
+    }
+    if (record.role === 'graph' && !(domain === 'sensor' && comparison)) {
       const hours = node('input', { type: 'number', min: '1', max: '336', step: '1',
         value: record.graph_hours === undefined ? '' : String(record.graph_hours), placeholder: '24' });
       hours.addEventListener('change', () => {
         if (hours.validity.valid) save({ graph_hours: hours.value === '' ? undefined : hours.valueAsNumber });
       });
       fields.push(field(words.graphHours, hours));
-      if (supportsToolbarCompactHistory(toolbar[entryIndex].kind, section, record)) {
+      if (compactGraph) {
         const compactHistory = node('input', { type:'checkbox', checked:record.compact_history_graph === true });
         compactHistory.addEventListener('change', () => save({ compact_history_graph: compactHistory.checked || undefined }));
         fields.push(node('label', { className:'check' }, [compactHistory, words.compactHistory]));
@@ -821,8 +835,11 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       fields.push(node('label', { className:'check' }, [toggle, words.sensorComparison]));
       if (options) {
         const saveComparison = updates => changeSection({
-          comparison: { ...getSections()[sectionIndex].comparison, ...updates },
+          comparison: patch(getSections()[sectionIndex].comparison, updates),
         });
+        const compact = node('input', { type:'checkbox', checked:options.layout === 'compact' });
+        compact.addEventListener('change', () => saveComparison({ layout: compact.checked ? 'compact' : undefined }));
+        fields.push(node('label', { className:'check' }, [compact, words.comparisonCompact]));
         const hours = node('input', { type:'number', min:'1', max:String(sensorComparisonMaxHours(options.bucket_minutes)),
           step:'1', required:true, value:String(options.hours) });
         hours.addEventListener('change', () => {
@@ -865,7 +882,13 @@ export function buildToolbarEditor({ config, hass = {}, locale = 'en', onChange,
       });
       return node('label', { className: 'check' }, [input, words[key]]);
     });
-    const controls = node('div', { className: 'toolbar-editor-stack', hidden: !enabled.checked }, options);
+    const shape = select(OREF_MAP_ASPECT_RATIOS.map(value => [value, words.orefMapShapes[value]]), settings.aspect_ratio);
+    shape.addEventListener('change', () => {
+      settings = { ...settings, aspect_ratio: shape.value };
+      changeEntry({ oref_map: settings });
+    });
+    const controls = node('div', { className: 'toolbar-editor-stack', hidden: !enabled.checked },
+      [field(words.orefMapShape, shape), ...options]);
     enabled.addEventListener('change', () => {
       controls.hidden = !enabled.checked;
       changeEntry({ oref_map: { ...settings, enabled: enabled.checked } });

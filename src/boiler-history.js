@@ -217,4 +217,19 @@ export const boilerHistoryStyles = `
   }
   .boiler-pane:not([hidden]) + .boiler-tabs { margin-block: 8px 0; }
   .boiler-pane { min-width: 0; }
+  .modal:has(.boiler-panel-stacked) { --modal-header-end: 5px; }
+  .boiler-panel-stacked:not(:has(> .boiler-schedule-host:not([hidden]) .schedule-form:not([hidden]))) {
+    padding: 0 8px 8px;
+    border: 1px solid var(--soft-line);
+    border-radius: 16px;
+  }
+  .modal[data-kind=device] .boiler-panel-stacked > .boiler-pane:first-child .device[data-treatment=boiler] {
+    padding: 5px 0 0;
+    border: 0;
+  }
+  .boiler-panel-stacked > .boiler-pane + .boiler-tabs { margin-block-start: 4px; }
+  .boiler-panel-stacked > .boiler-tabs > .control-button:not([aria-pressed=true]) {
+    background: transparent;
+    border-color: transparent;
+  }
 `;

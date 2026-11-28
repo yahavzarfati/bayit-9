@@ -3,6 +3,7 @@ import { supportsLightColor } from './light-color.mjs';
 const iconPattern = /^mdi:[a-z0-9-]+$/;
 const effectAction = 'set_effect';
 const pageSize = 6;
+const sceneColumns = 3;
 const favoriteKeyPrefix = 'bayit-9.light-effect-favorites.v1:';
 const maxFavoriteStorageLength = 65536;
 const lightModes = [
@@ -29,7 +30,7 @@ export function normalizeLightEffectGroups(groups) {
   });
 }
 
-export function normalizeLightEffectFavoriteLights(value) {
+export function normalizeLightEffectLights(value) {
   return Array.isArray(value) ? [...new Set(value.filter(entity => typeof entity === 'string' && /^light\.[a-z0-9_]+$/.test(entity)))] : [];
 }
 
@@ -77,8 +78,9 @@ function favoritesFor(view, key) {
 }
 
 export function createLightEffectGallery(groups, advertised, { make, button, icon, t, request, unavailableReason,
-  personalFavorites, categorySource }) {
+  personalFavorites, categorySource, sceneGrid, sceneOnSelect }) {
   if (!groups?.length) return null;
+  const activateOnSelect = sceneGrid === true && sceneOnSelect === true;
   const available = new Set(advertised);
   const assigned = new Set();
   const mappedTitles = categorySource ? lightEffectCategoryTitles(groups) : new Set();
@@ -102,6 +104,7 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
   const name = t(effectAction);
   const gallery = make('section', 'light-effect-gallery');
   gallery.setAttribute('aria-label', name);
+  if (sceneGrid) gallery.style.setProperty('--scene-columns', sceneColumns);
   const caption = make('p', 'light-effect-caption', name);
   const heading = make('div', 'light-effect-heading');
   heading.append(caption);
@@ -137,14 +140,18 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
     categoryNotice.hidden = true;
   }
   const choices = make('div', 'light-effect-choices');
+  gallery.toggleAttribute('data-scene-grid', sceneGrid === true);
   choices.setAttribute('role', 'group');
   choices.setAttribute('aria-label', t('available_effects'));
   const footer = make('div', 'light-effect-footer');
   const status = make('span', 'light-effect-status');
-  const apply = button('control-button', t('apply'));
-  apply.setAttribute('aria-label', t('apply') + ' · ' + name);
-  apply.dataset.action = effectAction;
-  footer.append(status, apply);
+  const apply = !activateOnSelect && button('control-button', t('apply'));
+  footer.append(status);
+  if (apply) {
+    apply.setAttribute('aria-label', t('apply') + ' · ' + name);
+    apply.dataset.action = effectAction;
+    footer.append(apply);
+  } else status.setAttribute('role', 'status');
   const pager = make('div', 'light-effect-pages');
   const previous = button('control-button', t('previous_effect_page'));
   const next = button('control-button', t('next_effect_page'));
@@ -161,6 +168,8 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
   let localCategoryChosen = false;
   let pageIndex = 0;
   let draft;
+  let blockedScene;
+  let hasChosenScene = false;
   let current;
   let canRequest = false;
   let favoriteKey;
@@ -194,7 +203,7 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
     pageIndex = 0;
     renderChoices();
   };
-  const categorySelect = categories.length > 3 ? make('select', 'control-button') : null;
+  const categorySelect = !sceneGrid && categories.length > 3 ? make('select', 'control-button') : null;
   const categoryButtons = categorySelect ? [] : categories.map(({ title }, index) => {
     const control = button('control-button', title);
     control.dataset.action = effectAction;
@@ -223,7 +232,27 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
   } else if (categoryButtons.length > 1) categoryBar.append(...categoryButtons);
   else categoryBar.hidden = true;
 
-  const pageCount = () => Math.max(1, Math.ceil(categoryEffects().length / pageSize));
+  const pageCount = () => sceneGrid ? 1 : Math.max(1, Math.ceil(categoryEffects().length / pageSize));
+  const selectTabStop = index => {
+    choiceButtons.forEach(({ control }, item) => { control.tabIndex = item === index ? 0 : -1; });
+  };
+  if (sceneGrid) {
+    choices.addEventListener('focusin', event => {
+      const index = choiceButtons.findIndex(({ control }) => control === event.target);
+      if (index >= 0) selectTabStop(index);
+    });
+    choices.addEventListener('keydown', event => {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      const index = choiceButtons.findIndex(({ control }) => control === event.target);
+      if (index < 0) return;
+      const rtl = choices.ownerDocument.defaultView.getComputedStyle(choices).direction === 'rtl';
+      const directions = { ArrowDown: sceneColumns, ArrowUp: -sceneColumns, ArrowLeft: rtl ? 1 : -1, ArrowRight: rtl ? -1 : 1 };
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? choiceButtons.length - 1 : index + directions[event.key];
+      if (!Number.isInteger(next)) return;
+      event.preventDefault();
+      if (next >= 0 && next < choiceButtons.length) choiceButtons[next].control.focus();
+    });
+  }
   for (const [control, offset] of [[previous, -1], [next, 1]]) {
     control.dataset.action = effectAction;
     control.onclick = () => {
@@ -258,18 +287,26 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
       control.disabled = categoryDisabled;
     });
     for (const { control, effect } of choiceButtons) {
-      control.setAttribute('aria-pressed', String(draft === effect));
+      if (!activateOnSelect) control.setAttribute('aria-pressed', String(draft === effect));
       control.setAttribute('aria-current', String(effect === current));
       control.disabled = !canRequest;
     }
     previous.setAttribute('aria-disabled', String(!canRequest || pageIndex === 0));
     next.setAttribute('aria-disabled', String(!canRequest || pageIndex >= pageCount() - 1));
-    const blocked = canRequest && draft && unavailableReason?.(draft);
-    apply.disabled = !canRequest || !draft || draft === current || Boolean(blocked);
+    const selection = activateOnSelect ? blockedScene : draft;
+    const blocked = canRequest && selection && unavailableReason?.(selection);
+    if (activateOnSelect && !blocked) blockedScene = undefined;
+    if (apply) apply.disabled = !canRequest || !draft || draft === current || Boolean(blocked);
     const statusText = draft ? t('selected_effect') + ' · ' + displayName(draft)
       : current ? t('current_effect') + ' · ' + displayName(current) : t('no_current_effect');
-    const detail = blocked ? t(blocked) : statusText;
+    const detail = blocked ? t(blocked) : activateOnSelect ? '' : statusText;
     if (status.textContent !== detail) status.textContent = detail;
+    if (sceneGrid) {
+      const active = current ? t('current_effect') + ' · ' + displayName(current) : t('no_current_effect');
+      if (caption.textContent !== active) caption.textContent = active;
+      status.hidden = activateOnSelect ? !blocked : !draft;
+      footer.hidden = activateOnSelect ? !blocked : !draft && !hasChosenScene;
+    }
     if (favoriteActions) {
       favoriteActions.hidden = !favoriteKey;
       const saved = favorites.has(favoriteTarget);
@@ -297,13 +334,34 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
     pager.hidden = total <= 1;
     pageLabel.textContent = t('effect_page_number').replace('{page}', pageIndex + 1).replace('{total}', total);
     const firstIndex = pageIndex * pageSize;
-    choiceButtons = categoryEffects().slice(firstIndex, firstIndex + pageSize).map(({ effect, name, icon: symbol }) => {
+    const effects = sceneGrid ? categoryEffects() : categoryEffects().slice(firstIndex, firstIndex + pageSize);
+    if (blockedScene && !effects.some(({ effect }) => effect === blockedScene)) blockedScene = undefined;
+    const focused = sceneGrid && choiceButtons.find(({ control }) => control === choices.getRootNode().activeElement)?.effect;
+    choiceButtons = effects.map(({ effect, name, icon: symbol }) => {
       const control = button('control-button');
       control.dataset.action = effectAction;
       if (symbol) control.append(icon(symbol));
-      control.append(make('span', '', name ?? effect));
-      if (name && name !== effect) control.setAttribute('aria-label', name + ' · ' + effect);
+      const label = make('span', '', name ?? effect);
+      if (sceneGrid) label.dir = 'auto';
+      control.append(label);
+      if (name && name !== effect) {
+        control.setAttribute('aria-label', name + ' · ' + effect);
+        if (sceneGrid) {
+          const originalName = make('small', '', effect);
+          originalName.dir = 'auto';
+          control.append(originalName);
+        }
+      }
       control.onclick = () => {
+        if (activateOnSelect) {
+          if (!canRequest || effect === current) return;
+          const reason = unavailableReason?.(effect);
+          blockedScene = reason ? effect : undefined;
+          refresh();
+          if (!reason) request(effect, control);
+          return;
+        }
+        hasChosenScene = true;
         draft = effect;
         refresh();
       };
@@ -312,9 +370,16 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
     choices.replaceChildren(...choiceButtons.map(({ control }) => control));
     choices.hidden = !choiceButtons.length;
     refresh();
+    if (sceneGrid) {
+      const restoreIndex = focused ? effects.findIndex(({ effect }) => effect === focused) : -1;
+      const selectedIndex = effects.findIndex(({ effect }) => effect === (draft ?? current));
+      selectTabStop(restoreIndex >= 0 ? restoreIndex : Math.max(0, selectedIndex));
+      if (restoreIndex >= 0 && canRequest) choiceButtons[restoreIndex].control.focus({ preventScroll: true });
+      else choices.scrollTop = 0;
+    }
   }
 
-  apply.onclick = () => {
+  if (apply) apply.onclick = () => {
     if (!apply.disabled) request(draft, apply);
   };
   function syncFavorites() {
@@ -365,7 +430,7 @@ export function createLightEffectGallery(groups, advertised, { make, button, ico
     favoritesOnly = restore.favoritesOnly;
     categoryIndex = categories[restore.categoryIndex] ? restore.categoryIndex : 0;
     pageIndex = restore.pageIndex;
-    if (available.has(restore.draft)) draft = restore.draft;
+    if (!activateOnSelect && available.has(restore.draft)) draft = restore.draft;
   }
   function syncCategory() {
     if (!categorySource) return false;
@@ -537,6 +602,20 @@ export const lightEffectStyles = `
     box-shadow:inset 0 0 0 1px currentColor;
   }
   .light-effect-choices .control-button[aria-current=true] { border-style:dashed; }
+  .light-effect-gallery[data-scene-grid] .light-effect-categories .control-button {
+    padding-inline:10px; border-radius:12px; font-size:.82rem;
+  }
+  .light-effect-gallery[data-scene-grid] .light-effect-choices {
+    grid-template-columns:repeat(var(--scene-columns),minmax(0,1fr)); max-block-size:210px;
+    overflow-y:auto; overscroll-behavior-y:contain; scroll-padding-block:4px; padding:4px;
+  }
+  .light-effect-gallery[data-scene-grid] .light-effect-choices .control-button {
+    flex-direction:column; justify-content:center; align-items:center; gap:3px; border-radius:12px;
+    min-block-size:60px; padding:6px; text-align:center; line-height:1.15; font-size:.79rem;
+  }
+  .light-effect-gallery[data-scene-grid] .light-effect-choices small { font-size:.68rem; font-weight:500; }
+  .light-effect-gallery[data-scene-grid] .light-effect-footer { justify-content:flex-end; }
+  .light-effect-gallery[data-scene-grid] .light-effect-status { margin-inline-end:auto; }
   .light-effect-pages {
     display:flex; align-items:center; justify-content:space-between; gap:6px; font-size:.75rem;
   }

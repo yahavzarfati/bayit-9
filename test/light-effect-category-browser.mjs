@@ -18,6 +18,12 @@ const markup = '<!doctype html><meta charset="utf-8"><meta name="viewport" conte
     const fixed = 'script.fixture_fixed_color';
     const effects = ['Wave','Night','Glow','Dawn','Unsorted'];
     const groups = categories.slice(0,4).map((title, index) => ({ title, effects:[effects[index]] }));
+    if (query.has('scene-grid')) {
+      const extra = ['Quiet','Clouds','Dreams','Breeze','Stars','Rain','Sea','River','Woods'];
+      effects.push(...extra);
+      groups[1].effects = [{ effect:'Night', name:locale === 'he' ? 'לילה' : 'Night sky' },
+        ...extra.map(effect => ({ effect }))];
+    }
     if (query.has('ambiguous')) groups[2].effects.push(effects[0]);
     const calls = [];
     const registryReads = [];
@@ -44,6 +50,8 @@ const markup = '<!doctype html><meta charset="utf-8"><meta name="viewport" conte
           return { [fixed]:{ entity_id:fixed, platform:'script', unique_id:'fixture_fixed_color' } };
         }
         calls.push(request);
+        if (query.has('scene-grid') && request.type === 'call_service' && request.domain === 'light' &&
+            request.service === 'turn_on') return {};
         if (request.type !== 'call_service' || request.service !== 'select_option' ||
             request.domain !== 'input_select' && !(request.domain === 'select' && query.has('paired'))) {
           throw new Error('Unexpected Home Assistant request');
@@ -63,6 +71,8 @@ const markup = '<!doctype html><meta charset="utf-8"><meta name="viewport" conte
     const config = {
       type:'custom:bayit-9', locale, light_effect_groups:{ [light]:groups },
       light_effect_favorites:[light],
+      ...(query.has('scene-grid') && { light_effect_scene_grid:[light] }),
+      ...(query.has('scene-on-select') && { light_effect_scene_on_select:[light] }),
       ...(!query.has('unbound') && { light_effect_category_sources:{ [light]:{ entity:category, all_option:all } } }),
       ...(query.has('paired') && { light_mode_sources:{ [light]:{ entity:mode, fixed_color_option:'Fixed color',
         fixed_color_script:fixed,apply_effects:true } } }),
@@ -273,6 +283,20 @@ try {
       });
       await helper.selectOption('');
       assert.deepEqual(await first.page.evaluate(() => fixture.setup.light_effect_category_sources),{});
+      const layout = first.page.getByLabel(he ? 'תצוגת אפקטים' : 'Effect browser layout',{exact:true});
+      await layout.selectOption('grid');
+      assert.deepEqual(await first.page.evaluate(() => fixture.setup.light_effect_scene_grid), ['light.fixture_lamp']);
+      assert.deepEqual(await first.page.evaluate(() => fixture.setup.light_effect_scene_on_select), []);
+      await layout.selectOption('direct-grid');
+      assert.deepEqual(await first.page.evaluate(() => [fixture.setup.light_effect_scene_grid, fixture.setup.light_effect_scene_on_select]),
+        [['light.fixture_lamp'], ['light.fixture_lamp']]);
+      await first.open('&editor&unbound&scene-grid&scene-on-select','');
+      await first.page.getByText(he ? 'קטגוריות אפקטים לתאורה' : 'Light effect categories',{exact:true}).tap();
+      await first.page.getByLabel(he ? 'תאורה' : 'Light',{exact:true}).selectOption('light.fixture_lamp');
+      assert.equal(await layout.inputValue(),'direct-grid');
+      await layout.selectOption('');
+      assert.deepEqual(await first.page.evaluate(() => fixture.setup.light_effect_scene_grid), []);
+      assert.deepEqual(await first.page.evaluate(() => fixture.setup.light_effect_scene_on_select), []);
       assert.deepEqual(await first.calls(),[]);
 
       const paired = await pageFor('paired-account');
@@ -331,6 +355,129 @@ try {
       writers.shift().resolve({});
       await paired.page.waitForFunction(() => !document.querySelector('bayit-dashboard').pending.size);
       assert.deepEqual(await paired.calls(),[switchRequest]);
+      for (const width of [320,391]) {
+        const scenes = await pageFor('scene-grid-account-' + width);
+        await scenes.page.setViewportSize({width,height:845});
+        await scenes.open('&scene-grid&unbound');
+        const categoryBar = scenes.gallery.locator('.light-effect-categories');
+        await categoryBar.getByRole('button',exact(sleep)).tap();
+        const choiceGrid = scenes.gallery.locator('.light-effect-choices');
+        const nightName = he ? 'לילה' : 'Night sky';
+        const night = choiceGrid.getByRole('button',exact(nightName + ' · Night'));
+        await night.waitFor();
+        assert.equal(await night.locator('small').textContent(), 'Night');
+        assert.equal(await categoryBar.locator('select').count(),0);
+        assert.equal(await scenes.gallery.locator('.light-effect-pages').isVisible(),false);
+        const applyScene = scenes.gallery.locator('.light-effect-footer button');
+        assert.equal(await applyScene.isVisible(),false);
+        const geometry = await choiceGrid.evaluate(grid => {
+          const frames = [...grid.querySelectorAll('button')].slice(0,4).map(node => node.getBoundingClientRect());
+          return { width:grid.clientWidth, contentWidth:grid.scrollWidth, height:grid.clientHeight,
+            contentHeight:grid.scrollHeight, ys:frames.map(rect => Math.round(rect.top)) };
+        });
+        assert.ok(geometry.contentWidth <= geometry.width + 1 && geometry.contentHeight > geometry.height);
+        assert.equal(new Set(geometry.ys.slice(0,3)).size, 1);
+        assert.ok(geometry.ys[3] > geometry.ys[0]);
+        assert.equal(await choiceGrid.locator('button[tabindex="0"]').count(),1);
+        await night.focus();
+        await night.press('ArrowDown');
+        assert.equal(await scenes.button('Dreams').evaluate(node => node === node.getRootNode().activeElement),true);
+        await scenes.button('Dreams').press(he ? 'ArrowLeft' : 'ArrowRight');
+        assert.equal(await scenes.button('Breeze').evaluate(node => node === node.getRootNode().activeElement),true);
+        await scenes.button('Breeze').press('Home');
+        await night.press('Enter');
+        assert.equal(await night.getAttribute('aria-pressed'),'true');
+        assert.deepEqual(await scenes.calls(),[]);
+        await night.press('Tab');
+        assert.equal(await applyScene.evaluate(node => node === node.getRootNode().activeElement),true);
+        await applyScene.press('Enter');
+        assert.deepEqual(await scenes.calls(),[{type:'call_service',domain:'light',service:'turn_on',
+          service_data:{effect:'Night'},target:{entity_id:'light.fixture_lamp'}}]);
+        await scenes.page.evaluate(() => fixture.setLightEffect('Night'));
+        await night.and(choiceGrid.locator('button[aria-current=true]')).waitFor();
+        assert.ok((await scenes.gallery.locator('.light-effect-caption').textContent()).includes(nightName));
+        const star = scenes.gallery.locator('[data-effect-favorite-control="star"]');
+        assert.equal(await star.getAttribute('aria-pressed'),'false');
+        await star.tap();
+        assert.equal(await star.getAttribute('aria-pressed'),'true');
+        await scenes.gallery.getByRole('button',exact(he ? 'הצגת מועדפים בלבד' : 'Show favorites only')).tap();
+        assert.deepEqual(await choiceGrid.locator('button').allTextContents(),[nightName + 'Night']);
+      }
+      const sharedGrid = await pageFor('shared-scene-grid-account');
+      stored = sleep;
+      await sharedGrid.open('&scene-grid');
+      const chip = name => sharedGrid.gallery.locator('.light-effect-categories').getByRole('button',exact(name));
+      await chip(sleep).and(sharedGrid.gallery.locator('button[aria-pressed=true]')).waitFor();
+      await chip(nature).tap();
+      await waitForWrites(7);
+      assert.deepEqual(await sharedGrid.calls(),[switchRequest]);
+      await sharedGrid.reflect(nature);
+      writers.shift().resolve({});
+      await sharedGrid.button('Wave').waitFor();
+      assert.equal(await chip(nature).getAttribute('aria-pressed'),'true');
+
+      const direct = await pageFor('direct-scene-grid-account');
+      const directPanel = direct.page.getByRole('dialog',exact('Fixture lamp'));
+      const openDirect = async category => {
+        stored = category;
+        await direct.open('&scene-grid&scene-on-select&paired&case=' + encodeURIComponent(category));
+        await directPanel.locator('button[data-light-mode=set_effect]').tap();
+      };
+      await openDirect(all);
+      const directWave = direct.button('Wave');
+      const directNight = direct.button((he ? 'לילה' : 'Night sky') + ' · Night');
+      await direct.page.waitForFunction(() => fixture.registryReads.length > 0);
+      await direct.page.evaluate(() => fixture.setLightEffect('Night'));
+      await directNight.and(direct.gallery.locator('button[aria-current=true]')).waitFor();
+      await direct.page.evaluate(() => fixture.setFixedActive(true));
+      await directWave.tap();
+      await direct.gallery.getByText(he ? 'אפשר לבחור אפקט אחרי ששינוי הצבע הקבוע יסתיים.'
+        : 'Wait for the fixed-color change to finish.',{exact:true}).waitFor();
+      assert.deepEqual(await direct.calls(),[]);
+      assert.equal(await direct.gallery.locator('.light-effect-footer button').count(),0);
+      await direct.page.evaluate(() => fixture.setFixedActive(false));
+      const previousWave = await directWave.elementHandle();
+      await directWave.tap();
+      await waitForWrites(8);
+      assert.deepEqual(await direct.calls(),[switchRequest]);
+      assert.equal(await directNight.getAttribute('aria-current'),'true');
+      assert.equal(await directWave.getAttribute('aria-current'),'false');
+      await directWave.dispatchEvent('click');
+      assert.deepEqual(await direct.calls(),[switchRequest]);
+      writers.shift().resolve({});
+      await direct.page.evaluate(() => fixture.setModes(['Fixed color','Wave']));
+      await direct.reflect(nature);
+      await waitForWrites(9);
+      const waveRequest = {type:'call_service',domain:'select',service:'select_option',
+        target:{entity_id:'select.fixture_light_modes'},service_data:{option:'Wave'}};
+      assert.deepEqual(await direct.calls(),[switchRequest,waveRequest]);
+      assert.equal(await previousWave.evaluate(node => node.isConnected),false);
+      writers.shift().resolve({});
+      assert.equal(await directWave.getAttribute('aria-current'),'false');
+      await direct.page.evaluate(() => fixture.setLightEffect('Wave'));
+      await directWave.and(direct.gallery.locator('button[aria-current=true]')).waitFor();
+      await direct.page.waitForFunction(() => !document.querySelector('bayit-dashboard').pending.size);
+      await directWave.tap();
+      assert.deepEqual(await direct.calls(),[switchRequest,waveRequest]);
+
+      await openDirect(sleep);
+      await directNight.waitFor();
+      const directFavorites = direct.gallery.getByRole('button',exact(he ? 'הצגת מועדפים בלבד' : 'Show favorites only'));
+      await directFavorites.tap();
+      await directWave.waitFor();
+      await directFavorites.tap();
+      await directNight.focus();
+      await directNight.press(he ? 'ArrowLeft' : 'ArrowRight');
+      const quiet = direct.button('Quiet');
+      assert.equal(await quiet.evaluate(node => node === node.getRootNode().activeElement),true);
+      assert.deepEqual(await direct.calls(),[]);
+      await quiet.press('Home');
+      await directNight.press('Space');
+      await waitForWrites(10);
+      assert.deepEqual(await direct.calls(),[{ ...waveRequest,service_data:{option:'Night'} }]);
+      writers.shift().resolve({});
+      await direct.page.evaluate(() => fixture.setLightEffect('Night'));
+      await directNight.and(direct.gallery.locator('button[aria-current=true]')).waitFor();
       assert.deepEqual(errors,[]);
       console.log(engine.name() + ' (' + locale + '): shared light categories across accounts, write guards, All, local fallback and editor');
     } finally { await browser.close(); }

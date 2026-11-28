@@ -152,6 +152,37 @@ function rasterFor(document, image, overlay) {
   };
 }
 
+function rasterForGradient(document, layers, { width, height }) {
+  const canvas = canvasFor(document, sampleSize, sampleSize);
+  const context = canvas.getContext('2d', { alpha: false, willReadFrequently: true });
+  if (!context) return null;
+  for (const { ellipse, angle, stops } of layers.slice().reverse()) {
+    context.save();
+    let gradient;
+    let bounds = [0, 0, sampleSize, sampleSize];
+    if (ellipse) {
+      const [radiusX, radiusY, positionX, positionY] = ellipse.map(value => value * sampleSize / 100);
+      context.translate(positionX, positionY);
+      context.scale(radiusX, radiusY);
+      gradient = context.createRadialGradient(0, 0, 0, 0, 0, 1);
+      bounds = [-positionX / radiusX, -positionY / radiusY, sampleSize / radiusX, sampleSize / radiusY];
+    } else {
+      const radians = angle * Math.PI / 180;
+      const x = Math.sin(radians) * width;
+      const y = -Math.cos(radians) * height;
+      // Project the CSS gradient line onto the square sampling canvas.
+      const half = sampleSize * (Math.abs(x) + Math.abs(y)) / (2 * (x * x + y * y));
+      const center = sampleSize / 2;
+      gradient = context.createLinearGradient(center - x * half, center - y * half, center + x * half, center + y * half);
+    }
+    for (const [offset, color] of stops) gradient.addColorStop(offset / 100, color);
+    context.fillStyle = gradient;
+    context.fillRect(...bounds);
+    context.restore();
+  }
+  return { pixels: context.getImageData(0, 0, sampleSize, sampleSize).data, width, height, darkInkThreshold: .18 };
+}
+
 function linear(channel) {
   return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
 }
@@ -185,7 +216,8 @@ function darkInkOn(raster, area, frame, shade = 0) {
   levels.sort((a, b) => a - b);
   // Keep white on darker images and use near-black once most of the sampled
   // label area is bright enough to make white difficult to read.
-  return levels[Math.floor(levels.length * .36)] > .19;
+  // A gradient uses pure black and white. Their contrast crosses at luminance .179.
+  return levels[Math.floor(levels.length * .36)] > (raster.darkInkThreshold ?? .19);
 }
 
 function visibleRoomNameBounds(name) {
@@ -221,29 +253,47 @@ export function createWallpaperController(shell, {
   let frame = 0;
   let disposed = false;
   const themedNodes = new Set();
+  let gradientRaster;
 
   function refresh() {
     if (disposed || !shell.isConnected) return;
     const modal = shell.querySelector('.modal[open]');
-    if (!output.raster) {
-      if (modal && catalog[output.id]?.darkInk) setInk(modal, shell.dataset.page === 'true');
-      return;
-    }
+    const stock = catalog[output.id];
+    if (modal && !output.raster && stock?.darkInk) setInk(modal, shell.dataset.page === 'true');
+    if (!output.raster && !stock?.gradientLayers) return;
     const box = shell.getBoundingClientRect();
     if (box.width <= 0 || box.height <= 0) return;
-    const raster = output.raster;
-    setInk(shell, darkInkOn(raster, box, box));
+    if (!output.raster && (gradientRaster?.width !== box.width || gradientRaster.height !== box.height)) {
+      const { width, height } = box;
+      gradientRaster = { width, height, raster: null };
+      try {
+        gradientRaster.raster = rasterForGradient(document, stock.gradientLayers, box);
+      } catch {
+        // Some browser privacy settings prevent reading canvas pixels.
+      }
+    }
+    const raster = output.raster ?? gradientRaster?.raster;
+    if (!raster) {
+      if (themedNodes.size) {
+        clearRegionalInk();
+        if (modal && stock.darkInk) setInk(modal, shell.dataset.page === 'true');
+      }
+      return;
+    }
+    if (output.raster) setInk(shell, darkInkOn(raster, box, box));
     const scroller = shell.querySelector('.room-scroll')?.getBoundingClientRect();
-    for (const node of shell.querySelectorAll('.toolbar .chrome-button:not([hidden]), .room')) {
+    const targets = output.raster ? '.toolbar .chrome-button:not([hidden]), .room' : '.room';
+    for (const node of shell.querySelectorAll(targets)) {
       const title = node.querySelector('.room-title');
       // An expanded single-room button can reach far beyond its visible caption.
-      const name = shell.dataset.page === 'true' && node.matches('.room:only-child') ? title?.querySelector('.room-name') : null;
+      const sampleCaption = !output.raster || (shell.dataset.page === 'true' && node.matches('.room:only-child'));
+      const name = sampleCaption ? title?.querySelector('.room-name') : null;
       const region = (name && visibleRoomNameBounds(name)) || (title ?? node).getBoundingClientRect();
       if (scroller && node.classList.contains('room') && (region.bottom < scroller.top || region.top > scroller.bottom)) continue;
       setInk(node, darkInkOn(raster, region, box));
       themedNodes.add(node);
     }
-    if (modal) {
+    if (modal && output.raster) {
       const dimming = shell.dataset.page === 'true' ? 0 : .55;
       setInk(modal, darkInkOn(raster, modal.getBoundingClientRect(), box, dimming));
       themedNodes.add(modal);
@@ -251,7 +301,7 @@ export function createWallpaperController(shell, {
   }
 
   function scheduleRefresh() {
-    if (frame || !output.raster || disposed) return;
+    if (frame || disposed || (!output.raster && !catalog[output.id]?.gradientLayers)) return;
     frame = view.requestAnimationFrame(() => {
       frame = 0;
       refresh();
@@ -266,6 +316,7 @@ export function createWallpaperController(shell, {
 
   function publish(id, background, darkInk, url = null, raster = null, shared = null) {
     const previousUrl = output.url;
+    gradientRaster = undefined;
     Object.assign(output, { id, url, raster, shared });
     clearRegionalInk();
     shell.style.setProperty('--bayit-wallpaper', background);
@@ -478,14 +529,16 @@ export function createWallpaperController(shell, {
 const labels = {
   en: {
     legend: 'Home wallpaper', all: 'All', new: 'New', basic: 'Basic', nature: 'Nature', materials: 'Materials',
-    photos: 'Photos', light: 'Color and light', shared: 'Shared photos', personal: 'My photo', more: 'More wallpapers',
+    photos: 'Photos', light: 'Color and light', shared: 'Shared photos', personal: 'My photo',
+    more: 'Show all wallpapers ({count})', less: 'Show fewer wallpapers',
     upload: 'Choose a photo', saved: 'Use my saved photo', preparing: 'Preparing photo…',
     failed: 'Could not load this wallpaper.', uploadFailed: 'Could not save the photo. Choose an image up to 20 MB.',
     noPhoto: 'Choose a photo from this device.', saving: 'Saving household appearance…',
   },
   he: {
     legend: 'רקע הבית', all: 'הכל', new: 'חדשים', basic: 'בסיס', nature: 'טבע ונוף', materials: 'חומרים וצורות',
-    photos: 'תמונות', shared: 'תמונות משותפות', light: 'אור וצבע', personal: 'תמונה שלי', more: 'עוד רקעים',
+    photos: 'תמונות', shared: 'תמונות משותפות', light: 'אור וצבע', personal: 'תמונה שלי',
+    more: 'הצג את כל הרקעים ({count})', less: 'הצג פחות',
     upload: 'בחירת תמונה', saved: 'שימוש בתמונה השמורה', preparing: 'מכין את התמונה…',
     failed: 'לא ניתן לטעון את הרקע.', uploadFailed: 'לא ניתן לשמור את התמונה. בחרו תמונה בגודל של עד 20 מ״ב.',
     noPhoto: 'בחרו תמונה מהמכשיר הזה.', saving: 'שומר את מראה הבית…',
@@ -519,11 +572,11 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
   element.append(summary, choices);
   const categoryButtons = new Map();
   const sharedById = new Map(sharedWallpapers.map(item => [item.id, item]));
-  const previewUrls = new Set();
-  let category = selected === personalWallpaperId ? 'personal'
-    : sharedById.has(selected) ? 'shared' : catalog[selected]?.group ?? 'nature';
+  const previewUrls = new Map();
+  const previewLimit = 6;
+  let category = selected === personalWallpaperId ? 'personal' : 'all';
   let request = 0;
-  let expandedAll = false;
+  let expanded = false;
   let orderSelection = selected;
   let disposed = false;
   const view = element.ownerDocument.defaultView;
@@ -544,7 +597,7 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
       try {
         const { url } = await loadSharedPhoto(view, shared.preview ?? shared.path);
         if (!disposed && sample.isConnected && element.open) {
-          previewUrls.add(url);
+          previewUrls.set(sample, url);
           sample.style.background = sharedPhotoBackground(url);
         } else view.URL.revokeObjectURL(url);
       } catch { /* The full photo can still be selected if a thumbnail goes missing. */ }
@@ -567,15 +620,17 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
 
   function releasePreviews() {
     previewObserver?.disconnect();
-    for (const url of previewUrls) view.URL.revokeObjectURL(url);
+    for (const url of previewUrls.values()) view.URL.revokeObjectURL(url);
     previewUrls.clear();
   }
 
   function select(id) {
+    const changed = selected !== id;
     selected = id;
     const wallpaper = catalog[id];
     current.textContent = id === personalWallpaperId ? words.personal
       : sharedById.get(id)?.name ?? wallpaper?.[locale] ?? wallpaper?.en ?? '';
+    if (changed && element.open && !expanded && category !== 'personal') refreshCompactSelection();
     for (const option of content.querySelectorAll('[data-wallpaper-choice]')) {
       option.setAttribute('aria-pressed', String(option.dataset.wallpaperChoice === id));
     }
@@ -615,7 +670,11 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
     if (wallpaper?.photo || sharedById.has(id)) sample.dataset.wallpaperPreview = id;
     const caption = document.createElement('span');
     caption.textContent = name;
-    item.append(sample, caption);
+    const marker = document.createElement('span');
+    marker.className = 'wallpaper-selected-mark';
+    marker.setAttribute('aria-hidden', 'true');
+    marker.textContent = '✓';
+    item.append(sample, caption, marker);
     item.onclick = () => choose(id);
     return item;
   }
@@ -628,6 +687,52 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
     saved.hidden = !image;
     if (image) saved.querySelector('.wallpaper-sample').style.background = 'url("' + image + '") center / cover';
     content.querySelector('.wallpaper-no-photo').hidden = !!image;
+  }
+
+  function wallpaperIds(group, firstChoice) {
+    if (group === 'all') {
+      return [...new Set(['design_default', firstChoice, ...featuredWallpapers, ...Object.keys(catalog), ...sharedById.keys()])]
+        .filter(id => catalog[id] || sharedById.has(id));
+    }
+    return group === 'shared' ? [...sharedById.keys()] : wallpaperGroups[group];
+  }
+
+  function visibleWallpaperIds(ids) {
+    if (expanded) return ids;
+    const previews = ids.slice(0, previewLimit);
+    if (ids.indexOf(selected) >= previewLimit) previews[previewLimit - 1] = selected;
+    return previews;
+  }
+
+  function galleryOption(id) {
+    const wallpaper = catalog[id];
+    return wallpaperButton(id, sharedById.get(id)?.name ?? wallpaper[locale] ?? wallpaper.en, wallpaper);
+  }
+
+  function observePreview(sample) {
+    if (previewObserver) previewObserver.observe(sample);
+    else if (element.open) void loadGalleryPreview(sample);
+  }
+
+  function refreshCompactSelection() {
+    const previous = content.querySelector('.wallpaper-option:nth-child(' + previewLimit + ')');
+    if (!previous) return;
+    const ids = wallpaperIds(category, orderSelection);
+    const nextId = visibleWallpaperIds(ids).at(-1);
+    if (previous.dataset.wallpaperChoice === nextId) return;
+    const sample = previous.querySelector('[data-wallpaper-preview]');
+    if (sample) {
+      previewObserver?.unobserve(sample);
+      const url = previewUrls.get(sample);
+      if (url) view.URL.revokeObjectURL(url);
+      previewUrls.delete(sample);
+    }
+    const restoreFocus = previous.getRootNode().activeElement === previous;
+    const next = galleryOption(nextId);
+    previous.replaceWith(next);
+    const newSample = next.querySelector('[data-wallpaper-preview]');
+    if (newSample) observePreview(newSample);
+    if (restoreFocus) next.focus({ preventScroll:true });
   }
 
   function render(group, firstChoice = selected) {
@@ -661,28 +766,23 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
       void fillPersonalPreview();
     } else {
       content.className = 'wallpaper-options';
-      const ids = group === 'all'
-        ? [...new Set(['design_default', firstChoice, ...featuredWallpapers, ...Object.keys(catalog), ...sharedById.keys()])]
-          .filter(id => catalog[id] || sharedById.has(id))
-        : group === 'shared' ? [...sharedById.keys()] : wallpaperGroups[group];
-      const visibleIds = group === 'all' && !expandedAll ? ids.slice(0, 6) : ids;
-      for (const id of visibleIds) {
-        const wallpaper = catalog[id];
-        content.append(wallpaperButton(id, sharedById.get(id)?.name ?? wallpaper[locale] ?? wallpaper.en, wallpaper));
-      }
-      if (visibleIds.length < ids.length) {
-        const more = button(words.more, 'wallpaper-upload wallpaper-more');
+      const ids = wallpaperIds(group, firstChoice);
+      const visibleIds = visibleWallpaperIds(ids);
+      for (const id of visibleIds) content.append(galleryOption(id));
+      if (ids.length > previewLimit) {
+        const more = button(expanded ? words.less : words.more.replace('{count}', ids.length), 'wallpaper-upload wallpaper-more');
+        more.setAttribute('aria-expanded', String(expanded));
         more.onclick = () => {
-          expandedAll = true;
-          render('all');
-          content.children[visibleIds.length]?.focus({ preventScroll: true });
+          const firstUnseen = ids.find(id => !visibleIds.includes(id));
+          expanded = !expanded;
+          render(group, expanded ? orderSelection : selected);
+          const nextFocus = expanded ? [...content.children].find(item => item.dataset.wallpaperChoice === firstUnseen)
+            : content.querySelector('.wallpaper-more');
+          nextFocus?.focus({ preventScroll: true });
         };
         content.append(more);
       }
-      for (const sample of content.querySelectorAll('[data-wallpaper-preview]')) {
-        if (previewObserver) previewObserver.observe(sample);
-        else if (element.open) void loadGalleryPreview(sample);
-      }
+      for (const sample of content.querySelectorAll('[data-wallpaper-preview]')) observePreview(sample);
     }
     select(selected);
   }
@@ -690,7 +790,11 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
   for (const group of ['all', ...Object.keys(wallpaperGroups), ...(sharedById.size ? ['shared'] : []), 'personal']) {
     const item = button(words[group], 'wallpaper-category');
     item.dataset.wallpaperCategory = group;
-    item.onclick = () => { if (category !== group) render(group); };
+    item.onclick = () => {
+      if (category === group) return;
+      expanded = false;
+      render(group);
+    };
     categories.append(item);
     categoryButtons.set(group, item);
   }
@@ -711,15 +815,16 @@ export function createWallpaperGallery({ locale, controller, selected, onSelect,
         category:active.dataset.wallpaperCategory, choice:active.dataset.wallpaperChoice,
         more:active.classList.contains('wallpaper-more'),
       } : undefined;
-      return { open:element.open, category, expandedAll, orderSelection, focus };
+      return { open:element.open, category, expanded, orderSelection, focus, categoryScroll:categories.scrollLeft };
     },
     restoreView(state, preferredChoice) {
       if (!state) return;
-      expandedAll = state.expandedAll;
+      expanded = state.expanded;
       if (categoryButtons.has(state.category)) category = state.category;
       element.open = state.open;
       if (!element.open) return state.focus ? summary : undefined;
       render(category, state.orderSelection);
+      categories.scrollLeft = state.categoryScroll;
       if (state.focus?.summary) return summary;
       if (state.focus?.category) return categoryButtons.get(state.focus.category);
       if (state.focus?.more) return content.querySelector('.wallpaper-more') ?? summary;
@@ -770,6 +875,7 @@ export const wallpaperStyles = `
   }
   :is(.shell,.room,.chrome-button,.modal)[data-wallpaper-ink=dark] :focus-visible,
   .chrome-button[data-wallpaper-ink=dark]:focus-visible { outline-color: #243856; }
+  .shell[data-background=ink_on_paper] .room[data-wallpaper-ink=dark] { --ink: #000; }
   .modal[data-wallpaper-ink=dark] select option { background: #efece8; color: var(--ink); }
   .wallpaper-current-preview {
     inline-size: 36px;
@@ -786,9 +892,11 @@ export const wallpaperStyles = `
     font-size: 12px; font-weight: 600; overflow-wrap: anywhere;
   }
   .wallpaper-choices { padding: 0 9px 9px; }
-  .wallpaper-categories, .wallpaper-options { display: grid; gap: 7px; }
-  .wallpaper-categories { grid-template-columns: repeat(auto-fit,minmax(min(105px,100%),1fr)); margin-block-end: 9px; }
-  .wallpaper-options { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .wallpaper-categories {
+    display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+    overscroll-behavior-inline: contain; margin-block-end: 9px;
+  }
+  .wallpaper-options { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 7px; }
   .wallpaper-category, .wallpaper-option, .wallpaper-upload {
     min-inline-size: 0;
     min-block-size: 44px;
@@ -802,16 +910,27 @@ export const wallpaperStyles = `
     overflow-wrap: anywhere;
   }
   .wallpaper-category[aria-pressed=true], .wallpaper-option[aria-pressed=true] {
-    border-color: var(--warm);
-    box-shadow: inset 0 0 0 1px var(--warm);
+    border-color: var(--ink);
+    box-shadow: inset 0 0 0 1px var(--ink);
   }
+  .wallpaper-category {
+    flex: none; min-width: 44px; padding-inline: 10px; border-radius: 999px; white-space: nowrap;
+  }
+  .wallpaper-category:focus-visible { outline-offset: -2px; }
   .wallpaper-option {
+    position: relative;
     display: grid;
     grid-template-rows: auto 1fr;
     align-items: center;
     gap: 4px;
     text-align: center;
   }
+  .wallpaper-selected-mark {
+    display: none; position: absolute; inset-block-start: 8px; inset-inline-start: 8px;
+    width: 17px; height: 17px; border-radius: 50%; background: var(--ink); color: var(--surface);
+    font-size: 11px; line-height: 1;
+  }
+  .wallpaper-option[aria-pressed=true] > .wallpaper-selected-mark { display: grid; place-items: center; }
   .wallpaper-sample {
     display: block;
     width: 100%;

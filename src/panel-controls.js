@@ -28,6 +28,8 @@ const selectors = {
   set_fan_mode: ['mdi:fan', model => model.attributes.fan_mode],
   set_swing_mode: ['mdi:swap-vertical', model => model.attributes.swing_mode],
 };
+const compactHvacRank = new Map(['off', 'auto', 'heat_cool', 'cool', 'heat', 'fan_only', 'dry']
+  .map((mode, index) => [mode, index]));
 
 const namedFanModes = new Set(['sleep', 'quiet', 'health', 'natural', 'strong', 'medium low', 'medium high']);
 const namedClimatePresets = new Set(['none', 'eco', 'away', 'boost', 'sleep']);
@@ -127,7 +129,11 @@ export function buildPanelControls(model, {
       unavailable.value = '';
       unavailable.disabled = true;
       input.append(unavailable);
-      const options = actions[id].options;
+      const supported = actions[id].options;
+      const options = compactClimateControls && id === 'set_hvac_mode'
+        ? [...supported].sort((left, right) => (compactHvacRank.get(left) ?? compactHvacRank.size) -
+          (compactHvacRank.get(right) ?? compactHvacRank.size))
+        : supported;
       const fallback = id === 'set_swing_mode' && options.includes(unreportedSwingMode)
         ? climateOptionLabel(id, unreportedSwingMode, options, t) : undefined;
       unavailable.hidden = fallback !== undefined;
@@ -184,6 +190,8 @@ export function buildPanelControls(model, {
 
   const running = ['active', 'paused'].includes(model.timer?.state);
   const duration = running ? actions.extend_timed : actions.start_timed;
+  const nextDuration = model.runningTimerSelection;
+  const sliderDuration = nextDuration ?? duration;
   const showStop = !!actions.stop_timed && (running || !duration || model.state === 'on');
   if (model.timer || duration || showStop) {
     for (const id of ['start_timed', 'extend_timed', 'stop_timed']) used.add(id);
@@ -285,32 +293,31 @@ export function buildPanelControls(model, {
     clockRow.append(readings, history);
     card.append(clockRow, watchdog);
     const tools = make('div', 'timer-tools');
-    let input;
-    if (duration) {
-      const id = duration.id;
-      input = make('input', 'timer-range');
+    if (sliderDuration) {
+      const input = make('input', 'timer-range');
       input.type = 'range';
-      input.min = duration.idleZero ? 0 : duration.min;
-      input.max = duration.max;
-      input.step = duration.step;
-      input.value = duration.max;
+      input.min = sliderDuration.idleZero ? 0 : sliderDuration.min;
+      input.max = sliderDuration.max;
+      input.step = sliderDuration.step;
+      input.value = sliderDuration.max;
       if (timerPreferenceKey) {
         try {
           const saved = localStorage.getItem(timerPreferenceKey);
           if (saved && /^\d+$/.test(saved) && Number.isSafeInteger(Number(saved))) input.value = saved;
         } catch { /* Timer actions remain available when browser storage is blocked. */ }
       }
-      input.setAttribute('aria-label', t('duration'));
+      input.setAttribute('aria-label', t(nextDuration ? 'next_timer_duration' : 'duration'));
       const amount = make('output', 'timer-amount');
-      const go = button('control-button timer-command', t(id), running ? 'mdi:plus' : 'mdi:play', true);
-      const noDuration = () => duration.idleZero === true && input.valueAsNumber === 0;
+      const id = !nextDuration && duration.id;
+      const go = id && button('control-button timer-command', t(id), running ? 'mdi:plus' : 'mdi:play', true);
+      const noDuration = () => sliderDuration.idleZero === true && input.valueAsNumber === 0;
       const showDuration = () => {
         const unselected = noDuration();
         amount.textContent = visibleDuration(input.value);
-        if (compactTimer || duration.idleZero) {
+        if (compactTimer || sliderDuration.idleZero) {
           input.setAttribute('aria-valuetext', unselected ? t('timer_no_duration') : spokenDuration(input.value));
         }
-        if (duration.idleZero) go.disabled = input.disabled || unselected;
+        if (go && sliderDuration.idleZero) go.disabled = input.disabled || unselected;
       };
       input.oninput = () => {
         showDuration();
@@ -319,15 +326,18 @@ export function buildPanelControls(model, {
         }
       };
       showDuration();
-      go.onclick = () => {
-        if (!noDuration()) request(id, input.valueAsNumber, go, { timerStartViaSlider: id === 'start_timed' });
-      };
-      go.dataset.action = id;
-      buttons.push(go);
-      tools.append(input, amount, go);
+      tools.append(input, amount);
+      if (go) {
+        go.onclick = () => {
+          if (!noDuration()) request(id, input.valueAsNumber, go, { timerStartViaSlider: id === 'start_timed' });
+        };
+        go.dataset.action = id;
+        buttons.push(go);
+        tools.append(go);
+      }
       updates.push((_, pending) => {
         input.disabled = !!pending;
-        if (noDuration()) go.disabled = true;
+        if (go && noDuration()) go.disabled = true;
       });
     }
     if (showStop) {
@@ -482,6 +492,7 @@ export const panelControlStyles = `
     .compact-climate-rail .climate-controls[data-control-count="4"] .climate-selector { gap: 0; padding-inline: 1px; }
   }
   .modal[data-standalone-climate] .compact-climate-rail .step-control { flex: 0 0 44px; min-width: 44px; }
+  .modal[data-standalone-climate] .compact-climate-rail button.target-reading { min-inline-size: 44px; }
   /* WebKit can let the invisible native select text overflow the bounded visual caption. */
   .modal[data-standalone-climate] .compact-climate-rail .climate-selector { overflow: clip; }
   @container bayit-climate-rail (width < 295px) {
@@ -665,7 +676,9 @@ export const panelControlStyles = `
   .modal[data-standalone-climate] .device { padding: 3px 0 0; border: 0; }
   .modal[data-standalone-climate] .action-list { margin-block-start: 0; }
   .modal:is([data-standalone-heater],[data-standalone-climate]) .timer-usage { min-height: 44px; }
-  .modal[data-standalone-climate] .climate-extra-controls > summary { color: var(--secondary); font-size: 13px; }
+  :is(.modal[data-standalone-climate], .device[data-inline-climate]) .climate-extra-controls > summary {
+    color: var(--secondary); font-size: 13px;
+  }
   .heat-level-options {
     margin-top: 5px;
     grid-template-columns: repeat(auto-fit,minmax(25px,1fr));

@@ -120,7 +120,7 @@ const sections = [securityActions, readouts].filter(Boolean);
 const config = { type: 'custom:bayit-9', toolbar: [
   { kind: 'security', entities: ['lock.fixture'], ...(sections.length && { sections }), oref_map: { enabled: !options.has('disabled'), auto_fit: false,
     hebrew_basemap: false, show_pre_alert: false, show_location: true, show_home: true,
-    tileLayer: 'https://fixture.invalid/', entities: ['zone.home'] } },
+    tileLayer: 'https://fixture.invalid/', entities: ['zone.home'], aspect_ratio: options.get('shape') } },
   { kind: 'settings' },
 ] };
 const dashboard = document.createElement('bayit-dashboard');
@@ -241,6 +241,12 @@ try {
         window.dispatchEvent(new CustomEvent('location-changed'));
       });
       assert.equal(await map.count(), 0);
+
+      await openFixture('?shape=1:1');
+      await security();
+      await map.waitFor();
+      assert.equal(await page.evaluate(() => tracker.configs[0].aspect_ratio), '1:1');
+      assert.deepEqual(await page.evaluate(() => tracker.calls), [['oref_alert', 'last_update', {}, undefined, false, true]]);
 
       await openFixture('?delay');
       await security();
@@ -546,23 +552,31 @@ try {
       assert.equal(await onLabel.count(), 0);
       assert.equal(await page.evaluate(() => tracker.draft.toolbar[0].sections[0].layout), undefined);
 
-      await openFixture('?readouts&disabled&editor&he');
+      await openFixture('?readouts&editor&he&shape=1:1');
       await page.getByText('סרגל ומסכים נוספים', { exact: true }).click();
       await page.getByRole('button', { name: 'Local signal', exact: true }).click();
       assert.equal(await page.getByLabel('תווית למצב פעיל', { exact: true }).inputValue(), 'Signal active');
       assert.equal(await page.getByLabel('הדגשת מצב פעיל באדום', { exact: true }).isChecked(), true);
+      assert.equal(await page.getByLabel('צורת המפה', { exact:true }).inputValue(), '1:1');
 
       await openFixture('?editor&disabled');
       await page.getByText('Toolbar and extra screens', { exact: true }).click();
       const optIn = page.getByLabel('Show the Oref alert map', { exact: true });
       const preAlerts = page.getByLabel('Show advance warnings', { exact: true });
+      const shape = page.getByLabel('Map shape', { exact:true });
       assert.equal(await preAlerts.isVisible(), false);
+      assert.equal(await shape.isVisible(), false);
       await optIn.check();
+      assert.equal(await shape.inputValue(), '4:3');
+      await shape.selectOption({ label:'Square (1:1)' });
       await preAlerts.check();
       assert.equal(await page.evaluate(() => tracker.draft.toolbar[0].oref_map.show_pre_alert), true);
+      assert.equal(await page.evaluate(() => tracker.draft.toolbar[0].oref_map.aspect_ratio), '1:1');
       await optIn.uncheck();
       assert.equal(await page.evaluate(() => tracker.draft.toolbar[0].oref_map.enabled), false);
       assert.equal(await preAlerts.isVisible(), false);
+      await optIn.check();
+      assert.equal(await shape.inputValue(), '1:1');
       assert.deepEqual(errors, []);
       console.log(name + ': optional alert map, capped transient recovery, ' + stripHeight + ' px read-only status tiles, isolated context, navigation and visual editor passed');
     } catch (error) {

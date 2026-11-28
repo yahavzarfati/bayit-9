@@ -22,6 +22,10 @@ const runtimeErrors = [];
 
 try {
   if (process.env.BAYIT_QA_HA_VERSION) assert.equal(api.version, process.env.BAYIT_QA_HA_VERSION);
+  await poll('Home Assistant Core to finish starting', async () => {
+    const config = await api.command('get_config');
+    return config.state === 'RUNNING';
+  }, { timeout: 180000 });
   const fixture = await seedLovelace(api, { registerModule: !releaseReceipt });
   const resourceUrl = releaseReceipt
     ? await installRelease(api, base, JSON.parse(await readFile(releaseReceipt, 'utf8')))
@@ -106,6 +110,7 @@ try {
   const appearance = card.getByRole('dialog', { name: 'Appearance', exact: true });
   const wallpaperPicker = appearance.locator('.wallpaper-gallery:not([open]) > summary');
   await wallpaperPicker.click();
+  await appearance.locator('.wallpaper-more[aria-expanded=false]').click();
   const lagoon = appearance.getByRole('button', { name: 'Lagoon', exact: true });
   await lagoon.click();
   assert.equal(await lagoon.getAttribute('aria-pressed'), 'true');

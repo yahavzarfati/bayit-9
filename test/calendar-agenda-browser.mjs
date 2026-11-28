@@ -53,12 +53,19 @@ const fixture = function () {
   };
   const event = (summary, offset) => ({summary,start:{date:day(offset)},end:{date:day(offset+1)},location:'Fixture hall'});
   const shared = event('Shared appointment with a long but readable fixture title',0);
+  if (query.has('details')) shared.description = 'Budget < 15 minutes\nשורה שנייה &amp; details <incomplete';
   const planned = [shared, event('<b>Literal text</b>',0), {...event('Multi-day appointment',0),end:{date:day(3)}},
     ...Array.from({length:6}, (_, i) => event('Future appointment ' + (i+1), i+1))];
   if (query.has('details')) planned.push({
     summary:'Recurring team appointment',
     start:{ dateTime:date(0,18).toISOString() }, end:{ dateTime:date(1,7).toISOString() },
-    location:'Second floor', description:'<img src="/should-not-be-loaded.png">\nBring notes',
+    location:'Second floor', description:
+      '<p>שער A &amp; B</p><p>Bring notes &amp; a pen.<br>Second line.</p>' +
+      '<p><a href="https://example.invalid/arrival" target="_self" rel="opener" onclick="fixtureClicked()">' +
+      '<b>Arrivals</b> map</a></p><p><a href="jav&#x61;script:void(0)">Ignored destination</a> ' +
+      '<a href="//example.invalid/relative">Relative destination</a></p>' +
+      '<img src="/should-not-be-loaded.png" onerror="fixtureClicked()"><iframe src="/should-not-be-loaded-frame"></iframe>' +
+      '<script>ignoredMarkup()</' + 'script><style>ignoredStyle</style>',
     recurrence_id:'fixture-occurrence', rrule:'FREQ=WEEKLY',
   });
   const hass = {
@@ -138,6 +145,10 @@ const fixture = function () {
     },
     mutations,
     send(index, payload) { loadRequests[index].callback(payload); },
+    setClockPreference(timeFormat, language) {
+      hass.locale = { ...hass.locale, time_format:timeFormat, language };
+      card.hass = { ...hass };
+    },
     useBrowserTimeZone() {
       hass.locale = { ...hass.locale, time_zone:'local' };
       card.hass = { ...hass };
@@ -408,7 +419,7 @@ try {
       const hasFocus = locator => locator.evaluate(node => node.getRootNode().activeElement === node);
       const extraRequests = [];
       page.on('request', request => {
-        if (request.url().includes('/should-not-be-loaded.png')) extraRequests.push(request.url());
+        if (/should-not-be-loaded|example\.invalid/.test(request.url())) extraRequests.push(request.url());
       });
       await page.waitForFunction(() => window.fixture.requests().length === 4);
       await page.evaluate(() => window.fixture.populate());
@@ -426,9 +437,24 @@ try {
       assert.equal(await detail.getByText('Second floor',{exact:true}).count(),1);
       assert.equal(await detail.getByText('Primary',{exact:true}).count(),1);
       assert.equal(await detail.getByText(hebrew ? 'אירוע חוזר' : 'Recurring event',{exact:true}).count(),1);
-      assert.equal(await detail.locator('dd').filter({hasText:'Bring notes'}).textContent(),
-        '<img src="/should-not-be-loaded.png">\nBring notes');
-      assert.equal(await detail.locator('img, a').count(),0);
+      const notes = detail.locator('dd').filter({hasText:'Bring notes'});
+      assert.equal(await notes.textContent(), 'שער A & B\n\nBring notes & a pen.\nSecond line.\n\n' +
+        'Arrivals map\n\nIgnored destination Relative destination');
+      assert.equal(await notes.evaluate(el => getComputedStyle(el).direction),'rtl');
+      const link = notes.getByRole('link',{name:'Arrivals map',exact:true});
+      assert.equal(await link.getAttribute('href'),'https://example.invalid/arrival');
+      assert.equal(await link.getAttribute('target'),'_blank');
+      assert.equal(await link.getAttribute('rel'),'noopener noreferrer');
+      assert.equal(await link.getAttribute('onclick'),null);
+      assert.equal(await detail.locator('img, iframe, script, style, b').count(),0);
+      assert.equal(await notes.getByRole('link').count(),1);
+      await link.focus();
+      await page.evaluate(() => {
+        const index = window.fixture.requests().findIndex(item => item.type === 'weather/subscribe_forecast');
+        window.fixture.send(index,{type:'daily',forecast:[]});
+      });
+      assert.equal(await hasFocus(link),true);
+      await back.focus();
       assert.deepEqual(extraRequests,[]);
       await back.press('Escape');
       await detail.waitFor({state:'hidden'});
@@ -451,6 +477,8 @@ try {
       await sharedEvent.tap();
       await detail.waitFor();
       assert.equal(await detail.getByText('Primary, Secondary',{exact:true}).count(),1);
+      assert.equal(await detail.locator('dd').filter({hasText:'Budget'}).textContent(),
+        'Budget < 15 minutes\nשורה שנייה & details <incomplete');
       await back.click();
       await eventDialog.getByRole('button',{name:names.hide,exact:true}).click();
       await timed.tap();
@@ -596,7 +624,7 @@ try {
       assert.deepEqual(errors,[]);
       await retryPage.close();
 
-      const zonePage = await browser.newPage({ viewport:{width,height:844}, hasTouch:true, reducedMotion:'reduce',
+      const zonePage = await browser.newPage({ viewport:{width,height:844}, hasTouch:true, reducedMotion:'reduce', locale:'en-GB',
         ...(launcher !== chromium && {timezoneId:'America/New_York'}) });
       const devtools = launcher === chromium ? await zonePage.context().newCDPSession(zonePage) : undefined;
       await devtools?.send('Emulation.setTimezoneOverride', {timezoneId:'America/New_York'});
@@ -623,10 +651,30 @@ try {
       const appointment = zoneDialog.getByRole('button',{name:'Appointment near midnight',exact:true});
       await appointment.waitFor();
       assert.equal(await zoneDialog.locator('.calendar-agenda-date').getAttribute('datetime'),'2026-03-07');
-      assert.match(await zoneDialog.locator('.calendar-agenda-time').innerText(),/23:30/);
+      const timeLabel = zoneDialog.locator('.calendar-agenda-time');
+      assert.match(await timeLabel.innerText(),/23:30/);
+      const setClock = (preference, language) => zonePage.evaluate(async ([mode, lang]) => {
+        window.fixture.setClockPreference(mode, lang);
+        await new Promise(requestAnimationFrame);
+      }, [preference, language]);
+      await setClock('language', 'en-US');
+      assert.match(await timeLabel.innerText(),/11:30\s*pm/i);
+      await setClock('system', 'en-US');
+      assert.match(await timeLabel.innerText(),/23:30/);
+      await setClock('language', 'en-GB');
+      assert.match(await timeLabel.innerText(),/23:30/);
+      await setClock('12', 'en-GB');
+      assert.match(await timeLabel.innerText(),/11:30\s*pm/i);
+      await setClock('24', 'en-US');
+      assert.match(await timeLabel.innerText(),/23:30/);
+      assert.deepEqual(await primaryRequests(), requestsWithZone);
       assert.match(await zoneDialog.locator('.calendar-agenda-forecast').innerText(),/26°C/);
       await appointment.click();
-      assert.match(await zoneDialog.locator('.calendar-agenda-detail dd').first().innerText(),/23:30/);
+      const detailTime = zoneDialog.locator('.calendar-agenda-detail dd').first();
+      assert.match(await detailTime.innerText(),/23:30/);
+      await setClock('language', 'en-US');
+      assert.match(await detailTime.innerText(),/11:30\s*pm/i);
+      await setClock('24', 'en-US');
       await zonePage.keyboard.press('Escape');
       await appointment.waitFor();
       await zonePage.evaluate(() => window.fixture.useBrowserTimeZone());

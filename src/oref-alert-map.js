@@ -4,6 +4,7 @@ export const OREF_MAP_DEFAULTS = Object.freeze({
   show_pre_alert: false,
   show_end: true,
 });
+export const OREF_MAP_ASPECT_RATIOS = Object.freeze(['4:3', '1:1']);
 
 const TAG = 'oref-alert-map';
 const READ_SERVICES = ['last_update', 'areas_status'];
@@ -28,6 +29,7 @@ export function normalizeOrefMap(value) {
     enabled: true,
     ...Object.fromEntries(Object.entries(OREF_MAP_DEFAULTS).map(([key, fallback]) =>
       [key, typeof value[key] === 'boolean' ? value[key] : fallback])),
+    aspect_ratio: OREF_MAP_ASPECT_RATIOS.includes(value.aspect_ratio) ? value.aspect_ratio : OREF_MAP_ASPECT_RATIOS[0],
   };
 }
 
@@ -39,7 +41,6 @@ function cardConfig(options) {
     show_home: false,
     show_location: false,
     default_zoom: 8,
-    aspect_ratio: '4:3',
   };
 }
 

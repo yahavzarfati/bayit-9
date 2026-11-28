@@ -2,7 +2,8 @@ import { MORE_INFO_DIALOG, sameMoreInfoPage } from './native-more-info.js';
 
 const fragmentPattern = /^#[a-z0-9_.\-/]{1,511}$/i;
 const roomPattern = /^#room-([a-z0-9][a-z0-9_-]*)$/i;
-const devicePattern = /^#device\/([a-zA-Z0-9][a-zA-Z0-9_-]*)\/([a-z0-9_]+\.[a-z0-9_]+)(?:\/(schedule))?$/;
+const devicePattern = /^#device\/([a-zA-Z0-9][a-zA-Z0-9_-]*)\/([a-z0-9_]+\.[a-z0-9_]+)(?:\/(schedule(?:\/new|\/edit(?:\/([a-zA-Z0-9_-]{1,64}))?)?))?$/;
+const scheduleDetails = new Set(['schedule', 'schedule/new', 'schedule/edit']);
 const panelPattern = /^#panel\/([a-z0-9][a-z0-9_-]*)$/i;
 const navigationEvents = ['location-changed', 'hashchange', 'popstate'];
 const roomReturnTimeout = 350;
@@ -29,7 +30,8 @@ export function parsePopupRoute(fragment) {
   const room = roomPattern.exec(fragment);
   if (room) return { kind: 'room', room: room[1] };
   const device = devicePattern.exec(fragment);
-  if (device) return { kind: 'device', room: device[1], entity: device[2], ...(device[3] && { detail:device[3] }) };
+  if (device) return { kind: 'device', room: device[1], entity: device[2],
+    ...(device[3] && { detail:device[4] ? 'schedule/edit' : device[3] }), ...(device[4] && { scheduleId:device[4] }) };
   const panel = panelPattern.exec(fragment);
   if (panel) return { kind: 'panel', panel: panel[1] };
   return null;
@@ -41,11 +43,14 @@ export function popupRouteFragment(route) {
     return roomPattern.test(hash) && isPopupFragment(hash) ? hash : '';
   }
   if (route?.kind === 'device' && typeof route.room === 'string' && typeof route.entity === 'string') {
-    const detail = route.detail;
-    if (detail !== undefined && detail !== 'schedule') return '';
-    const hash = '#device/' + route.room + '/' + route.entity + (detail ? '/' + detail : '');
+    const { detail, scheduleId } = route;
+    if (detail !== undefined && !scheduleDetails.has(detail)) return '';
+    if (scheduleId !== undefined && (detail !== 'schedule/edit' || typeof scheduleId !== 'string')) return '';
+    const hash = '#device/' + route.room + '/' + route.entity + (detail ? '/' + detail : '') +
+      (scheduleId === undefined ? '' : '/' + scheduleId);
     const parsed = parsePopupRoute(hash);
-    return parsed?.room === route.room && parsed.entity === route.entity && parsed.detail === detail ? hash : '';
+    return parsed?.room === route.room && parsed.entity === route.entity && parsed.detail === detail &&
+      parsed.scheduleId === scheduleId ? hash : '';
   }
   if (route?.kind === 'panel' && typeof route.panel === 'string' && route.panel) {
     const hash = '#panel/' + route.panel;
@@ -71,7 +76,7 @@ export function normalizePopupAliases(config) {
 
 export function isPopupAliasCloseRoute(source, target) {
   return source?.kind === 'device' && source.room === target?.room &&
-    (target.kind === 'room' || (source.detail === 'schedule' && target.kind === 'device' &&
+    (target.kind === 'room' || (scheduleDetails.has(source.detail) && target.kind === 'device' &&
       !target.detail && source.entity === target.entity));
 }
 

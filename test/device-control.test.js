@@ -367,7 +367,22 @@ test("opt-in media remote isolates transport, volume, real services and standby"
   assert.deepEqual(actionIds(getDeviceModel({ ...speaker, media_remote_standby: false }, states)), ["more_info"]);
   assert.deepEqual(actionIds(getDeviceModel(speaker, states)),
     ["media_next_track", "media_play_pause", "media_previous_track", "more_info"]);
-  assert.deepEqual(actionIds(getDeviceModel(audio, states)), ["more_info", "volume_down", "volume_up"]);
+  assert.deepEqual(actionIds(getDeviceModel(audio, states)), ["more_info", "mute", "volume_down", "volume_up"]);
+  assert.deepEqual(planDeviceAction(audio, states, "mute").data, { is_volume_muted: true });
+  assert.equal(getDeviceModel({ ...audio, media_remote_standby: false }, states).actions.mute, undefined);
+  assert.equal(getDeviceModel(config(audio.entity), states).actions.mute, undefined);
+  assert.equal(getDeviceModel({ ...audio, role: "status" }, states).actions.mute, undefined);
+  assert.throws(() => planDeviceAction(audio, states, "unmute"), code("action_unavailable"));
+
+  const standbyAudio = states[audio.entity];
+  for (const [state, flags, muted] of [
+    ["playing", features, undefined], ["unavailable", features, undefined],
+    ["standby", features & ~8, undefined], ["standby", features, "unknown"],
+  ]) {
+    states[audio.entity] = entity(state, { supported_features: flags, is_volume_muted: muted });
+    assert.equal(getDeviceModel(audio, states).actions.mute, undefined);
+  }
+  states[audio.entity] = standbyAudio;
   assert.throws(() => planDeviceAction(audio, states, "media_play_pause"), code("action_unavailable"));
   assert.throws(() => planDeviceAction(speaker, states, "volume_up"), code("action_unavailable"));
   states[speaker.entity] = entity("off", { supported_features: features & ~1 });
@@ -384,8 +399,8 @@ test("opt-in media remote isolates transport, volume, real services and standby"
   services.media_player.media_play_pause = {};
   assert.equal((await controller.execute(speaker, "media_play_pause")).status, "sent");
   assert.equal((await controller.execute(audio, "volume_up")).status, "sent");
-  states[audio.entity].attributes.is_volume_muted = false;
   assert.equal((await controller.execute(audio, "mute")).status, "confirmed");
+  assert.deepEqual(planDeviceAction(audio, states, "unmute").data, { is_volume_muted: false });
   assert.deepEqual(calls, [
     { type: "call_service", domain: "media_player", service: "media_play_pause", target: { entity_id: speaker.entity }, service_data: {} },
     { type: "call_service", domain: "media_player", service: "volume_up", target: { entity_id: audio.entity }, service_data: {} },
@@ -602,6 +617,31 @@ test("water heater exposes supported native power, operation and temperature", (
   assert.equal(getDeviceModel(c, states).kind, "boiler");
   assert.equal(planDeviceAction(c, states, "turn_off").domain, "water_heater");
   assert.deepEqual(planDeviceAction(c, states, "set_operation_mode", "eco").data, { operation_mode: "eco" });
+});
+
+test("the heater running slider range is independent of current timer extension", () => {
+  const heater = config("fan.fixture_heat", { kind:"heater", timed: {
+    simple_timer_entity:"sensor.fixture_heat", simple_timer_target:"switch.fixture_heat", running_slider_stop:true,
+    min_minutes:1, max_minutes:60, step_minutes:1, idle_zero_duration:true,
+  } });
+  const now = Date.now();
+  const sensor = heater.timed.simple_timer_entity;
+  const attrs = { switch_entity_id:heater.timed.simple_timer_target, timer_state:"active",
+    timer_finishes_at:new Date(now + 60_000).toISOString() };
+  const model = (patch = {}, config = heater) => getDeviceModel(config, {
+    [heater.entity]:entity("on"), [sensor]:entity("0", { ...attrs, ...patch }),
+  }, now);
+  assert.deepEqual(model().runningTimerSelection,{min:1,max:60,step:1,idleZero:true});
+  assert.ok(model().actions.stop_timed && model().actions.extend_timed);
+  const expired = model({timer_finishes_at:new Date(now - 1000).toISOString()});
+  assert.deepEqual(expired.runningTimerSelection,model().runningTimerSelection);
+  assert.ok(expired.actions.stop_timed);
+  assert.equal(expired.actions.extend_timed,undefined);
+  const repointed = model({switch_entity_id:"switch.fixture_other"});
+  assert.equal(repointed.runningTimerSelection,undefined);
+  assert.equal(repointed.actions.stop_timed,undefined);
+  assert.equal(model({timer_state:"idle"}).runningTimerSelection,undefined);
+  assert.equal(model({}, { ...heater, role:"status" }).runningTimerSelection,undefined);
 });
 
 test("zero is a Simple Timer idle selection and never a start or extend command value", () => {

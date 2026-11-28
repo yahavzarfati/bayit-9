@@ -10,7 +10,8 @@ const fixture = `<!doctype html><meta charset="utf-8"><meta name="viewport" cont
 <main></main><div id="editor"></div><script type="module">
 import '/bayit-9.js';
 const options = new URL(location.href).searchParams;
-const tracker = { factories: 0, calls: [], configs: [], hass: [], closed: 0 };
+const tracker = { factories: 0, calls: [], configs: [], hass: [], closed: 0, details: [] };
+document.addEventListener('hass-more-info', event => tracker.details.push(event.detail.entityId));
 const compactFixture = options.has('layout-proof');
 const he = options.get('locale') === 'he';
 const vacuum = 'vacuum.fixture';
@@ -42,6 +43,7 @@ const hass = {
     'button.fixture_upper': { state:'unknown', attributes:{ friendly_name:he ? 'שאיבת הקומה העליונה' : 'Vacuum the upper floor' } },
     'button.fixture_mop': { state:'unknown', attributes:{ friendly_name:he ? 'שטיפת הקומה העליונה' : 'Mop the upper floor' } },
     'button.fixture_reset': { state:'unknown', attributes:{ friendly_name:'Reset counter' } },
+    'button.fixture_reset_brush': { state:'unknown', attributes:{ friendly_name:he ? 'איפוס מונה המברשת הראשית' : 'Reset the main brush counter' } },
     'button.fixture_other': { state:'unknown', attributes:{ friendly_name:'Other button' } },
     'sensor.fixture_reading': { state:'47', attributes:{ friendly_name:'Vacuum battery', unit_of_measurement:'%' } },
     'sensor.fixture_status': { state:'Docked', attributes:{ friendly_name:'Robot status' } },
@@ -122,6 +124,7 @@ const config = { type: 'custom:bayit-9', toolbar: [
       ]},
       {id:'resets',kind:'actions',title:'Maintenance resets',entities:[
         {entity:'button.fixture_reset',role:'action',confirmation:'Reset the counter?'},
+        ...(compactFixture ? [{entity:'button.fixture_reset_brush',role:'action',confirmation:true}] : []),
       ]},
     ] : [])],
     vacuum_map: { enabled: !options.has('disabled'), vacuum, selector,
@@ -142,8 +145,8 @@ tracker.setState = (entity, value) => {
   dashboard.hass = { ...hass, states: { ...hass.states } };
 };
 tracker.floor = value => tracker.setState(selector, value);
-tracker.hideEntity = id => {
-  hass.entities[id] = { hidden: true };
+tracker.hideEntity = (id, hidden = true) => {
+  hass.entities[id] = { ...hass.entities[id], hidden };
   dashboard.hass = { ...hass, entities: { ...hass.entities } };
 };
 if (options.has('editor')) {
@@ -262,6 +265,7 @@ async function assertCompactVacuumMap(browser) {
     const map = dialog.locator('xiaomi-vacuum-map-card');
     const robot = dialog.locator('[data-toolbar-vacuum-compact]');
     const programs = dialog.locator('[data-vacuum-compact-program]');
+    const resets = dialog.locator('[data-vacuum-compact-resets]');
     const details = robot.locator('.vacuum-extra-controls');
     const summary = details.locator('summary');
     const read = () => page.evaluate(() => tracker.calls);
@@ -274,23 +278,27 @@ async function assertCompactVacuumMap(browser) {
       const bounds = panel.getBoundingClientRect();
       const map = panel.querySelector('xiaomi-vacuum-map-card')?.getBoundingClientRect();
       const sections = [...panel.querySelectorAll('.toolbar-panes > .toolbar-section')].map(node => node.dataset.section);
-      const programs = [...panel.querySelectorAll('[data-vacuum-compact-program]')].map(button => {
+      const actionBoxes = selector => [...panel.querySelectorAll(selector)].map(button => {
         const box = button.getBoundingClientRect();
         const text = button.querySelector('.tile-label');
         const label = document.createRange();
         label.selectNodeContents(text);
         const linesFit = [...label.getClientRects()].every(line => line.top >= box.top && line.bottom <= box.bottom &&
           line.left >= box.left && line.right <= box.right);
+        const style = getComputedStyle(button);
         return { x: box.x, y: box.y, w: box.width, h: box.height,
-          fullLabel: linesFit && text.scrollHeight <= text.clientHeight && text.scrollWidth <= text.clientWidth + 1 };
+          fullLabel: linesFit && text.scrollHeight <= text.clientHeight && text.scrollWidth <= text.clientWidth + 1,
+          border:style.borderColor, radius:style.borderRadius };
       });
-      const touch = [...panel.querySelectorAll('[data-toolbar-vacuum-compact] .basic-actions button, .vacuum-extra-controls > summary, [data-section=vacuum-map] .weather-tabs button')].map(button => {
+      const touch = [...panel.querySelectorAll('[data-toolbar-vacuum-compact] :is(.device-panel-launch,.basic-actions button), .vacuum-extra-controls > summary, [data-section=vacuum-map] .weather-tabs button')].map(button => {
         const box = button.getBoundingClientRect();
         return [box.width, box.height];
       });
       const body = panel.querySelector('.modal-body');
       return { mapTop: map?.y, mapVisible: map && Math.min(bounds.bottom, map.bottom) - map.y,
-        sections, programs, touch, fits: body.scrollWidth <= body.clientWidth + 1 };
+        sections, programs:actionBoxes('[data-vacuum-compact-program]'),
+        resets:actionBoxes('.toolbar-section[data-section=actions]:last-child .tile-row'),
+        touch, fits: body.scrollWidth <= body.clientWidth + 1 };
     });
     try {
       for (const width of [320, 391]) {
@@ -299,6 +307,7 @@ async function assertCompactVacuumMap(browser) {
         await map.waitFor();
         assert.equal(await robot.count(), 0);
         assert.equal(await programs.count(), 0);
+        assert.equal(await resets.count(), 0);
         const standard = await geometry();
         await open('&compact');
         await map.waitFor();
@@ -314,6 +323,12 @@ async function assertCompactVacuumMap(browser) {
           JSON.stringify({ width, locale, programs:compact.programs }));
         const [first, second, third, fourth] = compact.programs;
         assert.ok(first.x < second.x && third.x < fourth.x && first.y === second.y && third.y === fourth.y && third.y > first.y);
+        assert.equal(await resets.count(), 1);
+        assert.equal(compact.resets.length, 2);
+        assert.ok(compact.resets.every(({ w, h, fullLabel, border, radius }, index) =>
+          w >= 44 && h >= 52 && h < standard.resets[index].h && fullLabel && border !== standard.resets[index].border && radius === '20px'),
+          JSON.stringify({ width, locale, resets:compact.resets }));
+        assert.ok(compact.resets[0].x < compact.resets[1].x);
         assert.equal(await summary.getAttribute('aria-label'), he ? 'פקדי שואב נוספים' : 'More vacuum controls');
         assert.equal(await details.locator('select:visible').count(), 0);
         assert.deepEqual(await read(), []);
@@ -346,9 +361,23 @@ async function assertCompactVacuumMap(browser) {
       assert.deepEqual((await read())[1], { type: 'call_service', domain: 'button', service: 'press',
         service_data: {}, target: { entity_id: 'button.fixture_daily' } });
 
+      const reset = resets.getByRole('button', { name:'Reset counter', exact:true });
+      await reset.tap();
+      await confirm.getByText('Reset the counter?', { exact:true }).waitFor();
+      assert.equal((await read()).length, 2);
+      await confirm.getByRole('button', { name:he ? 'ביטול' : 'Cancel', exact:true }).tap();
+      assert.ok(await reset.evaluate(button => button.getRootNode().activeElement === button));
+      assert.equal((await read()).length, 2);
+      await reset.tap();
+      await confirm.getByRole('button', { name:he ? 'אישור' : 'Confirm', exact:true }).tap();
+      await page.waitForFunction(() => tracker.calls.length === 3);
+      assert.deepEqual((await read())[2], { type:'call_service', domain:'button', service:'press',
+        service_data:{}, target:{ entity_id:'button.fixture_reset' } });
+
       await open('&compact&disabled');
       assert.equal(await robot.count(), 0);
       assert.equal(await programs.count(), 0);
+      assert.equal(await resets.count(), 0);
       assert.equal(await map.count(), 0);
       assert.deepEqual(await read(), []);
     } finally {
@@ -388,8 +417,32 @@ async function assertVacuumHeroSummary(browser) {
       await reading.filter({hasText:atDock}).waitFor();
       assert.match(await reading.textContent(),/47%/);
       assert.doesNotMatch(await reading.textContent(),/28%/);
-      const detail = head.getByRole('button',{name:he ? 'מידע נוסף' : 'More info',exact:true});
-      assert.match(await detail.getAttribute('aria-description'),/47%/);
+      const detail = head.and(dialog.getByRole('button', { name: he ? 'Robot · מידע נוסף' : 'Robot · More info', exact: true }));
+      await detail.waitFor({timeout: 3000});
+      assert.match(await detail.getAttribute('aria-description'), /47%/);
+      for (const width of [320, 391]) {
+        await page.setViewportSize({ width, height: 844 });
+        const { width: hitWidth, height: hitHeight } = await detail.boundingBox();
+        assert.ok(hitWidth >= 210 && hitHeight >= 44);
+      }
+      await detail.getByText('Robot', { exact: true }).tap();
+      const detailEvents = () => page.evaluate(() => tracker.details);
+      assert.deepEqual(await detailEvents(), ['vacuum.fixture']);
+      await reading.dispatchEvent('pointerdown', { pointerType:'touch', pointerId:5, button:0, isPrimary:true });
+      await page.waitForFunction(() => tracker.details.length === 2);
+      await page.evaluate(() => document.dispatchEvent(new PointerEvent('pointerup', { pointerType:'touch', pointerId:5 })));
+      await detail.press('Shift+Enter');
+      assert.deepEqual(await detailEvents(), Array(3).fill('vacuum.fixture'));
+      const wasStillVisible = await detail.evaluate(button => {
+        tracker.hideEntity('vacuum.fixture');
+        const visible = button.isConnected && !button.disabled;
+        button.click();
+        tracker.hideEntity('vacuum.fixture', false);
+        return visible;
+      });
+      assert.equal(wasStillVisible, true, 'The old header can still be present before the registry re-renders');
+      assert.deepEqual(await detailEvents(), Array(3).fill('vacuum.fixture'));
+      assert.deepEqual(await page.evaluate(() => tracker.calls), []);
       await readouts.getByText(he ? 'חדר 3' : 'Third room',{exact:true}).waitFor();
       await readouts.getByText('ROOM 3',{exact:true}).waitFor();
       await state('sensor.fixture_room_conflict','Room 3');

@@ -40,7 +40,8 @@ export function compactRoomMediaCommands(model) {
   return ['turn_on', 'turn_off', play, next, 'mute', 'unmute'].filter(id => id && actions[id]);
 }
 
-function addRemoteActions(role, state, attributes, supports, add) {
+function addRemoteActions(config, state, attributes, supports, add) {
+  const { media_remote_role: role, media_remote_standby: allowStandby } = config;
   const remote = (id, fields) => add(id, { requiresMediaService: true, ...fields });
   if (role === 'transport') {
     if (supports(MEDIA.previous)) remote('media_previous_track');
@@ -51,9 +52,11 @@ function addRemoteActions(role, state, attributes, supports, add) {
       remote('volume_down');
       remote('volume_up');
     }
-    if (supports(MEDIA.mute) && typeof attributes.is_volume_muted === 'boolean') {
-      remote(attributes.is_volume_muted ? 'unmute' : 'mute', { service: 'volume_mute',
-        fixedData: { is_volume_muted: !attributes.is_volume_muted } });
+    const muted = attributes.is_volume_muted;
+    const allowMuteWithoutState = allowStandby === true && MEDIA_STANDBY_STATES.includes(state) && muted == null;
+    if (supports(MEDIA.mute) && (typeof muted === 'boolean' || allowMuteWithoutState)) {
+      remote(muted === true ? 'unmute' : 'mute', { service: 'volume_mute',
+        fixedData: { is_volume_muted: muted !== true } });
     }
   } else if (role === 'power') {
     if (MEDIA_STANDBY_STATES.includes(state) && supports(MEDIA.on)) remote('turn_on');
@@ -69,7 +72,7 @@ export function addSpecialDeviceActions(config, record, supports, add, options) 
     const role = config.media_remote_role;
     if (role) {
       if (role === 'power' || !standby || config.media_remote_standby === true) {
-        addRemoteActions(role, state, attributes, supports, add);
+        addRemoteActions(config, state, attributes, supports, add);
       }
       return;
     }

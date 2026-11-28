@@ -1,5 +1,6 @@
 const HOLD_MS = 500;
 const HOLD_SLOP = 12;
+const HOLD_HAPTIC = 'heavy';
 const TRAILING_CLICK_MS = 700;
 const OPEN_MS = 190;
 const CLOSE_MS = 220;
@@ -13,7 +14,9 @@ function isDetailsKey(event) {
   return event.key === 'ContextMenu' || (event.shiftKey && (event.key === 'F10' || isActivationKey(event)));
 }
 
-export function bindDeviceDetails(button, openDetails, { requireShortTap = false, activationStart } = {}) {
+export function bindDeviceDetails(button, openDetails, {
+  requireShortTap = false, activationStart, pointerSurface = button, holdOnRelease = pointerSurface !== button,
+} = {}) {
   const requirePairedPointer = requireShortTap || !openDetails;
   const doc = button.ownerDocument;
   const view = doc.defaultView;
@@ -22,27 +25,78 @@ export function bindDeviceDetails(button, openDetails, { requireShortTap = false
   let suppressKeyClickUntil = 0;
   let shortTapUntil = 0;
 
+  function acceptsPointer(event) {
+    if (pointerSurface === button) return true;
+    const nearestButton = event.target.closest?.('button');
+    return !nearestButton || nearestButton === button;
+  }
+
+  function consumePointerHoldClick(activation) {
+    const listeners = new AbortController();
+    const options = { signal: listeners.signal, capture: true };
+    let timeout;
+    const stop = () => {
+      clearTimeout(timeout);
+      listeners.abort();
+    };
+    doc.addEventListener('pointerdown', stop, options);
+    doc.addEventListener('click', event => {
+      if (!event.isTrusted || (event.detail <= 0 && !event.pointerType)) return;
+      if (event.pointerType && (event.pointerType !== activation.pointerType || event.pointerId !== activation.pointerId)) return;
+      stop();
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, options);
+    view?.addEventListener('blur', event => { if (event.target === view) stop(); }, options);
+    return () => {
+      if (!listeners.signal.aborted) timeout = setTimeout(stop, TRAILING_CLICK_MS);
+    };
+  }
+
   function finishPointer() {
     if (!held) return;
     clearTimeout(held.timer);
     held.listeners.abort();
     if (held.handled) suppressClickUntil = performance.now() + TRAILING_CLICK_MS;
+    held.releaseClickGuard?.();
     held = undefined;
   }
 
+  function canHold() {
+    return button.isConnected && !button.disabled && !button.closest('[inert]');
+  }
+
+  function acknowledgeHold() {
+    if (!held || held.feedbackSent || !openDetails || !held.touch || !held.activation.isTrusted || !canHold()) return;
+    held.feedbackSent = true;
+    const bridge = view?.webkit?.messageHandlers?.externalBus;
+    if (typeof bridge?.postMessage === 'function') {
+      try {
+        bridge.postMessage({ id: 0, type: 'haptic', payload: { hapticType: HOLD_HAPTIC } });
+        return;
+      } catch {
+        // Let the Home Assistant frontend forward feedback if the bridge is unavailable.
+      }
+    }
+    button.dispatchEvent(new CustomEvent('haptic', { detail: HOLD_HAPTIC, bubbles: true, composed: true }));
+  }
+
   function handleHold() {
-    if (!held || held.handled || !button.isConnected || button.disabled) return;
+    if (!held || held.handled || !canHold()) return;
     held.handled = true;
     suppressClickUntil = Infinity;
-    openDetails?.();
+    // Opening on release can retarget the following compatibility click to the modal.
+    if (holdOnRelease && held.activation.isTrusted) held.releaseClickGuard = consumePointerHoldClick(held.activation);
+    acknowledgeHold();
+    openDetails?.(held.activation);
   }
 
   if (openDetails) {
     button.setAttribute('aria-haspopup', 'dialog');
     button.setAttribute('aria-keyshortcuts', 'Shift+Enter Shift+Space Shift+F10 ContextMenu');
   }
-  button.addEventListener('pointerdown', event => {
-    if (event.button !== 0 || event.isPrimary === false || button.disabled) return;
+  pointerSurface.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || event.isPrimary === false || button.disabled || !acceptsPointer(event)) return;
     finishPointer();
     activationStart?.();
     suppressClickUntil = 0;
@@ -50,38 +104,46 @@ export function bindDeviceDetails(button, openDetails, { requireShortTap = false
     const listeners = new AbortController();
     const options = { signal: listeners.signal, capture: true };
     held = { id: event.pointerId, x: event.clientX, y: event.clientY, touch: event.pointerType === 'touch',
-      startedAt: performance.now(), eventTime: event.timeStamp, listeners };
-    held.timer = setTimeout(() => {
-      if (!button.isConnected) finishPointer();
-      else handleHold();
-    }, HOLD_MS);
+      startedAt: performance.now(), eventTime: event.timeStamp, activation: event, listeners };
+    // A held Home control can acknowledge the touch while leaving scrolling and opening to the release path.
+    if (!holdOnRelease || (openDetails && held.touch && event.isTrusted)) {
+      held.timer = setTimeout(() => {
+        if (!button.isConnected) finishPointer();
+        else if (holdOnRelease) acknowledgeHold();
+        else handleHold();
+      }, HOLD_MS);
+    }
     doc.addEventListener('pointermove', move => {
       if (held && move.pointerId === held.id && !held.handled &&
           Math.hypot(move.clientX - held.x, move.clientY - held.y) > HOLD_SLOP) finishPointer();
     }, options);
     const release = end => {
       if (end.pointerId !== held?.id) return;
-      if (end.type === 'pointerup') {
+      const stayedWithinHold = !holdOnRelease || Math.hypot(end.clientX - held.x, end.clientY - held.y) <= HOLD_SLOP;
+      if (end.type === 'pointerup' && stayedWithinHold) {
         const now = performance.now();
         // The release can arrive before a delayed timer callback.
         const elapsed = Math.max(now - held.startedAt, end.timeStamp - held.eventTime);
         if (elapsed >= HOLD_MS) handleHold();
-        if (requirePairedPointer && !held.handled && end.composedPath().includes(button)) shortTapUntil = now + TRAILING_CLICK_MS;
+        if (requirePairedPointer && !held.handled && end.composedPath().includes(pointerSurface) && acceptsPointer(end)) {
+          shortTapUntil = now + TRAILING_CLICK_MS;
+        }
       }
       finishPointer();
     };
     doc.addEventListener('pointerup', release, options);
-    button.addEventListener('pointerup', release, options);
+    pointerSurface.addEventListener('pointerup', release, options);
     doc.addEventListener('pointercancel', release, options);
     view?.addEventListener('blur', event => { if (event.target === view) finishPointer(); }, options);
   });
   // Mobile browsers may start the callout before the hold timer has run.
-  button.addEventListener('contextmenu', event => {
-    if (!held?.touch && !held?.handled) return;
+  pointerSurface.addEventListener('contextmenu', event => {
+    if ((!held?.touch && !held?.handled) || !acceptsPointer(event)) return;
     event.preventDefault();
-    handleHold();
+    if (!holdOnRelease) handleHold();
   });
-  button.addEventListener('click', event => {
+  pointerSurface.addEventListener('click', event => {
+    if (!acceptsPointer(event)) return;
     if (requireShortTap && !event.isTrusted) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -132,7 +194,7 @@ export function bindDeviceDetails(button, openDetails, { requireShortTap = false
       finishKey();
     }, options);
     view?.addEventListener('blur', finishKey, options);
-    openDetails?.();
+    openDetails?.(event);
   });
 }
 
@@ -150,13 +212,22 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
   const media = view.matchMedia('(prefers-reduced-motion: reduce)');
   let current;
 
+  function finishDrivenAnimation(context) {
+    if (!context.frameDrivenAnimation) return;
+    context.frameDrivenAnimation = false;
+    context.animation?.finish();
+  }
+
   function stopFrame(context) {
-    if (!context.frame) return;
-    view.cancelAnimationFrame(context.frame);
-    context.frame = 0;
+    if (context.frame) {
+      view.cancelAnimationFrame(context.frame);
+      context.frame = 0;
+    }
+    finishDrivenAnimation(context);
   }
 
   function stopAnimation(context) {
+    context.frameDrivenAnimation = false;
     context.animation?.cancel();
     context.animation = undefined;
   }
@@ -242,19 +313,30 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     }
     const started = view.performance.now();
     const frame = now => {
-      if (current !== context || context.externalScroll || !isConnected(clip)) return;
-      const progress = Math.min(1, (now - started) / duration);
+      if (current !== context || context.externalScroll || !isConnected(clip)) {
+        context.frame = 0;
+        finishDrivenAnimation(context);
+        return;
+      }
+      const elapsed = Math.max(0, Math.min(duration, now - started));
+      const progress = elapsed / duration;
       const ease = 1 - Math.pow(1 - progress, 3);
       setScroll(context, start + (target - start) * ease);
       onFrame?.(clip.scrollTop - start);
+      // WebKit can advance an autonomous reveal ahead of the scroll callback.
+      // Seek the reveal only after committing this frame's scroll and origin.
+      if (context.frameDrivenAnimation) {
+        if (progress === 1) finishDrivenAnimation(context);
+        else context.animation.currentTime = elapsed;
+      }
       context.frame = progress < 1 ? view.requestAnimationFrame(frame) : 0;
     };
     context.frame = view.requestAnimationFrame(frame);
   }
 
   function liftSource(context, sourceRect, panelRect, duration) {
-    if (!isConnected(clip) || !clip.contains(context.source) || context.externalScroll) return;
-    if (!['auto', 'scroll'].includes(view.getComputedStyle(clip).overflowY)) return;
+    if (!isConnected(clip) || !clip.contains(context.source) || context.externalScroll) return 0;
+    if (!['auto', 'scroll'].includes(view.getComputedStyle(clip).overflowY)) return 0;
     const start = clip.scrollTop;
     const visibleTop = clip.getBoundingClientRect().top;
     const cardBottom = context.kind === 'room' ? context.highlighted.getBoundingClientRect().bottom : sourceRect.bottom;
@@ -263,7 +345,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     const beforeClip = sourceRect.top - visibleTop - 4;
     const sourceLimit = context.kind === 'room' ? beforeClip : Math.max(0, beforeClip);
     const target = Math.max(0, start + Math.min(desired, sourceLimit));
-    if (Math.abs(target - start) < .5) return;
+    if (Math.abs(target - start) < .5) return 0;
     let available = Math.max(0, clip.scrollHeight - clip.clientHeight);
     if (target > available + .5) {
       const spacer = context.spacer ??= doc.createElement('div');
@@ -280,19 +362,27 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
       spacer.style.blockSize = height + 'px';
       available = Math.max(0, clip.scrollHeight - clip.clientHeight);
     }
-    scrollByAnimation(context, Math.min(target, available), duration,
+    const destination = Math.min(target, available);
+    scrollByAnimation(context, destination, duration,
       moved => setOrigin(sourceRect, panelRect, moved));
+    return destination - start;
   }
 
-  function runAnimation(context, from, to, duration, finished) {
+  function runAnimation(context, from, to, { duration, delay = 0, frameDriven = false }, finished) {
     if (media.matches || typeof dialog.animate !== 'function') {
       finished?.();
       return;
     }
-    const animation = dialog.animate([from, to], { duration, easing: EASING });
+    const animation = dialog.animate([from, to], { duration, delay, fill: 'backwards', easing: EASING });
     context.animation = animation;
+    if (frameDriven) {
+      animation.pause();
+      animation.currentTime = 0;
+      context.frameDrivenAnimation = true;
+    }
     void animation.finished.then(() => {
       if (current !== context || context.animation !== animation) return;
+      context.frameDrivenAnimation = false;
       context.animation = undefined;
       finished?.();
     }, () => {});
@@ -349,6 +439,8 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     highlighted = source, activation } = {}) {
     if (!isConnected(dialog)) return;
     const focusTarget = dialog.querySelector('[autofocus]');
+    // Preserve modal focus without drawing WebKit's keyboard outline after a real tap.
+    const pointerOpen = activation?.isTrusted === true && (activation.detail > 0 || Boolean(activation.pointerType));
     if (!source) {
       resetContext(current, false);
       current = { kind };
@@ -361,7 +453,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     }
     if (dialog.open && current) {
       const context = current;
-      dialog.removeAttribute('data-pointer-open');
+      dialog.toggleAttribute('data-pointer-open', pointerOpen);
       stopFrame(context);
       if (context.closing) stopAnimation(context);
       context.closing = false;
@@ -379,18 +471,23 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     const context = { source, highlighted: highlighted || source, kind, originalScroll, expectedScroll: originalScroll };
     current = context;
     setDialogPosition(kind, roomPosition, centeredToolbar);
-    // Preserve modal focus without drawing WebKit's keyboard outline after a real tap.
-    const pointerOpen = activation?.isTrusted && (activation.detail > 0 || Boolean(activation.pointerType));
     dialog.toggleAttribute('data-pointer-open', pointerOpen);
-    updateArea(context);
+    const area = measureArea();
+    updateArea(context, area);
     if (!dialog.open) dialog.showModal();
     const panelRect = dialog.getBoundingClientRect();
     context.highlighted.dataset.popupOrigin = '';
     watchPage();
     clip?.addEventListener('scroll', onScroll, { passive: true });
     setOrigin(sourceRect, panelRect);
-    liftSource(context, sourceRect, panelRect, media.matches ? 0 : OPEN_MS);
-    runAnimation(context, { transform: 'scale(.35)', opacity: 0 }, { transform: 'none', opacity: 1 }, OPEN_MS);
+    const distance = liftSource(context, sourceRect, panelRect, media.matches ? 0 : OPEN_MS);
+    const band = Math.max(1, panelRect.top - area.top);
+    // Give longer room lifts a head start. Invert the scroll easing to place the
+    // reveal near the context band, while keeping the whole opening within OPEN_MS.
+    const delay = kind === 'room' && distance > band
+      ? OPEN_MS * Math.min(.45, 1 - Math.cbrt(band / distance)) : 0;
+    runAnimation(context, { transform: 'scale(.35)', opacity: 0 }, { transform: 'none', opacity: 1 },
+      { duration: OPEN_MS - delay, delay, frameDriven: delay > 0 });
     focusWithoutScroll(focusTarget);
   }
 
@@ -419,7 +516,7 @@ export function createPopupMotion({ dialog, clip, toolbar }) {
     if (isConnected(clip) && !context.externalScroll && context.originalScroll !== undefined) {
       scrollByAnimation(context, context.originalScroll, CLOSE_MS);
     }
-    runAnimation(context, from, { transform: 'scale(.35)', opacity: 0 }, CLOSE_MS, () => finishDismissal(context));
+    runAnimation(context, from, { transform: 'scale(.35)', opacity: 0 }, { duration: CLOSE_MS }, () => finishDismissal(context));
   }
 
   function reset() {

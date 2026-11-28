@@ -49,8 +49,13 @@ tracker.hide = () => {
 };
 tracker.updateTelevision = (state, supported_features, mute) => {
   hass.states[other] = {state,attributes:{friendly_name:'Alternative player',supported_features,
-    ...(typeof mute === 'boolean' && { is_volume_muted:mute }) }};
+    ...(mute !== undefined && { is_volume_muted:mute }) }};
   dashboard.hass = { ...hass, states:{ ...hass.states } };
+};
+tracker.setMuteService = available => {
+  const { volume_mute, ...remaining } = hass.services.media_player;
+  hass.services = { ...hass.services, media_player:{ ...remaining, ...(available && { volume_mute:{} }) } };
+  dashboard.hass = { ...hass };
 };
 if (options.has('editor')) {
   const editor = Strategy.getConfigElement();
@@ -265,35 +270,69 @@ try {
         const mute = tv.getByRole('button',{name:muteName,exact:true});
         const unmute = tv.getByRole('button',{name:unmuteName,exact:true});
         const update = (state, features, mute) => page.evaluate(args => tracker.updateTelevision(...args), [state,features,mute]);
+        const calls = () => page.evaluate(() => tracker.calls);
+        const expected = is_volume_muted => ({type:'call_service',domain:'media_player',service:'volume_mute',
+          service_data:{is_volume_muted},target:{entity_id:'media_player.fixture_other'}});
         await mute.waitFor();
-        await update('off',1416);
+        await update('off',1416,'unknown');
         await mute.and(tv.locator(':disabled')).waitFor();
         assert.equal(await mute.getAttribute('aria-description'), unavailable);
         assert.equal(await tv.getByRole('button').count(),4);
         const original = await mute.elementHandle();
         const position = await mute.boundingBox();
         await mute.evaluate(button => button.click());
-        assert.deepEqual(await page.evaluate(() => tracker.calls),[]);
-        await update('on',1416,false);
+        assert.deepEqual(await calls(),[]);
+        await update('off',1416);
         await mute.and(tv.locator(':enabled')).waitFor();
         assert.equal(await mute.getAttribute('aria-description'),null);
         assert.equal(await mute.evaluate((button, previous) => button===previous, original),true);
         assert.deepEqual(await mute.boundingBox(),position);
         await mute.tap();
         await page.waitForFunction(() => tracker.calls.length === 1);
-        assert.deepEqual(await page.evaluate(() => tracker.calls), [
-          {type:'call_service',domain:'media_player',service:'volume_mute',service_data:{is_volume_muted:true},
-            target:{entity_id:'media_player.fixture_other'}},
-        ]);
-        await update('on',1416,true);
+        assert.deepEqual(await calls(),[expected(true)]);
+        await update('off',1416,true);
         await unmute.and(tv.locator(':enabled')).waitFor();
-        await update('off',1408);
+        await unmute.press('Enter');
+        await page.waitForFunction(() => tracker.calls.length === 2);
+        assert.deepEqual(await calls(),[expected(true),expected(false)]);
+        await update('off',1416,false);
+        await mute.and(tv.locator(':enabled')).waitFor();
+        const staleEnabled = await mute.evaluate(button => {
+          tracker.setMuteService(false);
+          const enabledBeforeRender = !button.disabled;
+          button.click();
+          return enabledBeforeRender;
+        });
+        assert.equal(staleEnabled,true);
         await mute.waitFor({state:'hidden'});
-        await unmute.waitFor({state:'hidden'});
-        await update('unavailable',1416);
-        assert.equal(await mute.count(),0);
-        assert.equal(await page.evaluate(() => tracker.calls.length),1);
+        assert.deepEqual(await calls(),[expected(true),expected(false)]);
+        await page.evaluate(() => tracker.setMuteService(true));
+        for (const next of [['off',1408],['unknown',1416],['unavailable',1416],['on',1416]]) {
+          await update('off',1416,false);
+          await mute.and(tv.locator(':enabled')).waitFor();
+          const staleState = await mute.evaluate((button, values) => {
+            tracker.updateTelevision(...values);
+            const enabledBeforeRender = !button.disabled;
+            button.click();
+            return enabledBeforeRender;
+          },next);
+          assert.equal(staleState,true);
+          await mute.waitFor({state:'hidden'});
+          assert.deepEqual(await calls(),[expected(true),expected(false)]);
+        }
         await original.dispose();
+
+        await page.goto(home + '?full-remote&locale=' + locale + hash);
+        await mute.and(tv.locator(':enabled')).waitFor();
+        const staleStandby = await mute.evaluate(button => {
+          tracker.updateTelevision('off',1416);
+          const enabledBeforeRender = !button.disabled;
+          button.click();
+          return enabledBeforeRender;
+        });
+        assert.equal(staleStandby,true);
+        await mute.waitFor({state:'hidden'});
+        assert.deepEqual(await calls(),[]);
       }
 
       await page.goto(home + '?legacy' + hash);

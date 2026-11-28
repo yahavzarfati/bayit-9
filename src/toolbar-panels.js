@@ -1,8 +1,8 @@
 import { createOrefMap } from './oref-alert-map.js';
 import { createVacuumMap } from './vacuum-map.js';
 import { createNowPlaying, nowPlayingStyles } from './now-playing.js';
-import { discoverOverviewEntities, isActiveOverviewEntity, isCompactAutomationActions, isCompactToolbarStatus, isReadingCards,
-  isToolbarLightTile, isToolbarReadoutEntity, isToolbarReadouts, isVisibleEntity, isWeatherReadingsList,
+import { discoverOverviewEntities, isActiveOverviewEntity, isCompactAutomationActions, isCompactToolbarStatus,
+  isEnergyReadingCards, isReadingCards, isToolbarLightTile, isToolbarReadoutEntity, isToolbarReadouts, isVisibleEntity, isWeatherReadingsList,
   vacuumReadoutStateLabel } from './strategy-model.js';
 import { compactMediaMutePlaceholder, mediaServiceRegistered } from './media-device-support.mjs';
 import { compactRoomLockCommand, roomShutdownTargets } from './device-control.mjs';
@@ -198,12 +198,14 @@ export function createToolbarPanel(kind, configuration, context) {
   function renderTile(item, itemKind, register = update => handlers.push(update), canActivate) {
     const tile = button('tile-row');
     const securityAction = kind === 'security' && itemKind === 'action';
-    const securityVisible = () => {
+    const automationLock = kind === 'automations' && itemKind === 'action' && domain(item) === 'lock';
+    const guardedAction = securityAction || automationLock;
+    const actionVisible = () => {
       const { states = {}, entities } = context.getHass() ?? {};
       return isVisibleEntity(item.entity, states, entities, context.hiddenEntities);
     };
-    const shortcutCurrent = securityAction ? () => live && dialog?.open && !dialog.hasAttribute('data-closing') &&
-      tile.isConnected && host.contains(tile) && securityVisible() : undefined;
+    const shortcutCurrent = guardedAction ? () => live && dialog?.open && !dialog.hasAttribute('data-closing') &&
+      tile.isConnected && host.contains(tile) && actionVisible() : undefined;
     const compactPerson = itemKind === 'compact-person';
     tile.toggleAttribute('data-compact-person', compactPerson);
     const visual = make('span', 'tile-mark');
@@ -228,13 +230,23 @@ export function createToolbarPanel(kind, configuration, context) {
     }
     tile.append(visual, name, state);
     let action;
+    let armedLockAction;
+    if (automationLock) {
+      const clear = () => { armedLockAction = undefined; };
+      bindDeviceDetails(tile, undefined, { requireShortTap:true, activationStart: () => { armedLockAction = action ?? null; } });
+      tile.addEventListener('pointercancel', clear);
+      tile.addEventListener('blur', clear);
+    }
     tile.onclick = () => {
-      if ((canActivate && !canActivate(item.entity)) || (shortcutCurrent && !shortcutCurrent())) return;
-      if (action) request(item, action, undefined, tile, shortcutCurrent ? { shortcutCurrent } : undefined);
-      else moreInfo(item, tile);
+      const requested = automationLock && armedLockAction !== undefined ? armedLockAction : action;
+      armedLockAction = undefined;
+      const current = automationLock ? () => shortcutCurrent() && compactRoomLockCommand(modelFor(item)) === requested : shortcutCurrent;
+      if ((canActivate && !canActivate(item.entity)) || (current && !current())) return;
+      if (requested) request(item, requested, undefined, tile, current ? { shortcutCurrent:current } : undefined);
+      else if (!automationLock) moreInfo(item, tile);
     };
     register(() => {
-      const visible = !securityAction || securityVisible();
+      const visible = !guardedAction || actionVisible();
       const value = amount(item);
       const model = value.model;
       name.textContent = model.name;
@@ -243,6 +255,7 @@ export function createToolbarPanel(kind, configuration, context) {
       if (itemKind === 'action') {
         if (model.actions.run_script) action = 'run_script';
         else if (model.actions.press_button) action = 'press_button';
+        else if (automationLock) action = compactRoomLockCommand(model);
         else if (model.domain === 'lock') action = model.state === 'locked' ? 'unlock' : model.state === 'unlocked' ? 'lock' : undefined;
         else if (model.actions.turn_on && model.actions.turn_off) action = model.state === 'on' ? 'turn_off' : 'turn_on';
       }
@@ -253,15 +266,15 @@ export function createToolbarPanel(kind, configuration, context) {
       state.hidden = !showState;
       tile.dataset.tone = !visible ? '' : model.state === 'home' ? 'home' : model.state === 'on' ? 'active' : '';
       if (useLockPalette && model.domain === 'lock') paintLockStatus(tile, model);
-      if (kind === 'automations' && itemKind === 'action' && model.domain === 'lock') {
-        tile.toggleAttribute('data-automation-unlocked', model.available && model.state === 'unlocked');
-      }
+      if (automationLock) tile.toggleAttribute('data-automation-unlocked', model.available && model.state === 'unlocked');
       if (kind === 'security' && item.action_appearance === 'danger') {
         tile.toggleAttribute('data-security-danger', visible && action === 'run_script' &&
           model.actions.run_script.requiresConfirmation === true);
       }
-      tile.disabled = !visible || (itemKind === 'action' && pending(item.entity)) || (!action && !model.actions.more_info);
-      tile.setAttribute('aria-busy', String(pending(item.entity)));
+      const busy = pending(item.entity) || (automationLock && model.available &&
+        (model.state === 'locking' || model.state === 'unlocking'));
+      tile.disabled = !visible || (itemKind === 'action' && busy) || (!action && (automationLock || !model.actions.more_info));
+      tile.setAttribute('aria-busy', String(busy));
       label(tile, model.name + (showState ? ' · ' + status : ''));
       if (badge) {
         const presence = !model.available ? 'unknown' : model.state === 'home' ? 'home' : model.state === 'not_home' ? 'away' : 'zone';
@@ -294,7 +307,10 @@ export function createToolbarPanel(kind, configuration, context) {
       const model = modelFor(item);
       glyph.setAttribute('icon', model.icon || 'mdi:information-outline');
       name.textContent = model.name;
-      state.textContent = model.state === 'unknown' ? t('unknown') : stateLabel(model);
+      if (model.state === 'unknown') state.textContent = t('unknown');
+      else if (model.available && item.weather_status && ['on', 'off'].includes(model.state)) {
+        state.textContent = t('weather_' + item.weather_status + '_' + model.state);
+      } else state.textContent = stateLabel(model);
     });
     return row;
   }
@@ -366,7 +382,7 @@ export function createToolbarPanel(kind, configuration, context) {
         const isMute = actions[0] === 'mute';
         const control = button('control-button media-remote-key', t(actions[0]), glyph, true);
         const symbol = (playPause || isMute) && control.querySelector('ha-icon');
-        const playbackState = ({ state }) => playPause && (state === 'playing' || state === 'paused') ? state : undefined;
+        const playbackState = ({ state }) => playPause && ['playing', 'paused', 'off', 'standby'].includes(state) ? state : undefined;
         const visible = hass => isVisibleEntity(entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities);
         const enabledAction = (hass, model) => {
           if (!visible(hass)) return;
@@ -397,8 +413,11 @@ export function createToolbarPanel(kind, configuration, context) {
               displayedPlayback = playback;
               const playing = playback === 'playing';
               const paused = playback === 'paused';
-              symbol.setAttribute('icon', playing ? 'mdi:pause' : paused ? 'mdi:play' : glyph);
+              const standby = playback === 'off' || playback === 'standby';
+              symbol.setAttribute('icon', playing ? 'mdi:pause' : paused ? 'mdi:play' : standby ? 'mdi:cast-off' : glyph);
               label(control, t(playing ? 'media_pause' : paused ? 'media_play' : 'media_play_pause'));
+              if (standby) control.setAttribute('aria-description', t(playback === 'off' ? 'off' : 'media_standby'));
+              else control.removeAttribute('aria-description');
               control.toggleAttribute('data-playback-paused', paused);
             }
           }
@@ -664,30 +683,31 @@ export function createToolbarPanel(kind, configuration, context) {
     const change = button('control-button compact-lock-action', t('lock'), 'mdi:lock-outline', true);
     const changeIcon = change.querySelector('ha-icon');
     const availableAction = model => {
-      if (securityLock) {
-        const hass = context.getHass();
-        return isVisibleEntity(item.entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities)
-          ? compactRoomLockCommand(model) : undefined;
-      }
+      const hass = context.getHass();
+      if (!isVisibleEntity(item.entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities)) return;
+      if (securityLock) return compactRoomLockCommand(model);
       const action = model.state === 'locked' ? 'unlock' : model.state === 'unlocked' ? 'lock' : undefined;
       return action && model.actions[action] ? action : undefined;
     };
+    let displayedAction;
     change.onclick = () => {
-      const action = availableAction(modelFor(item));
-      if (action) request(item, action, undefined, change, securityLock ? { compactDevice:true } : undefined);
+      const action = displayedAction;
+      const current = () => live && dialog?.open && !dialog.hasAttribute('data-closing') &&
+        change.isConnected && availableAction(modelFor(item)) === action;
+      if (action && current()) request(item, action, undefined, change, { compactDevice:securityLock, shortcutCurrent:current });
     };
     handlers.push(() => {
       const model = modelFor(item);
-      const action = availableAction(model);
-      const transitioning = securityLock && model.available && (model.state === 'locking' || model.state === 'unlocking');
+      displayedAction = availableAction(model);
+      const transitioning = model.available && (model.state === 'locking' || model.state === 'unlocking');
       const busy = pending(item.entity) || transitioning;
-      change.disabled = !action || busy;
+      change.disabled = !displayedAction || busy;
       change.setAttribute('aria-busy', String(busy));
-      const caption = action ? t(action) : securityLock ? stateLabel(model) : t('lock');
+      const caption = displayedAction ? t(displayedAction) : stateLabel(model);
       label(change, caption + ' · ' + model.name);
       change.toggleAttribute('data-lock-transition', transitioning);
       changeIcon.setAttribute('icon', transitioning ? 'mdi:lock-clock'
-        : action === 'unlock' ? 'mdi:lock-open-variant-outline' : 'mdi:lock-outline');
+        : displayedAction === 'unlock' ? 'mdi:lock-open-variant-outline' : 'mdi:lock-outline');
     });
     row.append(details, change);
     return row;
@@ -812,6 +832,8 @@ export function createToolbarPanel(kind, configuration, context) {
         forecast_list: { forecast_type: 'daily', count: 5 },
       },
     }, region, projection, presented => {
+      // The card’s temperature scale follows its semantic direction, independent of the label locale.
+      if (presented) slot.firstElementChild.dir = 'ltr';
       nativePresented = presented;
       update();
     });
@@ -828,7 +850,7 @@ export function createToolbarPanel(kind, configuration, context) {
     return slot;
   }
 
-  function render(item, section, { compactStatus, readingCards, compactActions, compactVacuum }) {
+  function render(item, section, { compactStatus, readingCards, compactActions, compactVacuum, compactVacuumResets }) {
     const itemKind = item.role ?? ({ people: 'person', actions: 'action', forecast: 'forecast', sun: 'sun' }[section]);
     if (itemKind === 'person' && domain(item) === 'person') {
       return renderTile(item, section === 'people' && compactStatus ? 'compact-person' : 'person');
@@ -836,7 +858,9 @@ export function createToolbarPanel(kind, configuration, context) {
     if (item.command === 'toggle_script') return renderScriptToggle(item, compactActions);
     if (itemKind === 'action' || (section === 'actions' && itemKind === 'lock')) {
       const tile = renderTile(item, 'action');
-      tile.toggleAttribute('data-vacuum-compact-program', compactVacuum && item.command === 'vacuum_program');
+      const vacuumProgram = compactVacuum && item.command === 'vacuum_program';
+      tile.toggleAttribute('data-vacuum-compact-program', vacuumProgram);
+      tile.toggleAttribute('data-vacuum-compact-action', vacuumProgram || compactVacuumResets);
       return tile;
     }
     if (compactStatus && itemKind === 'lock' && domain(item) === 'lock') return renderCompactLock(item);
@@ -847,13 +871,21 @@ export function createToolbarPanel(kind, configuration, context) {
     }
     if (itemKind === 'graph' && item.compact_history_graph === true) {
       const model = modelFor(item);
+      const sensorReading = kind === 'sensors' && readingCards;
+      const destination = sensorReading && graphDestination?.(item);
+      const actionLabel = destination ? t('vacuum_room_open').replace('{name}',
+        destination.room?.name ?? destination.vacuum?.label ?? t('vacuum')) : undefined;
       const chart = createCompactHistoryChart({
         entity:item.entity, name:model.name, glyph:item.icon || model.icon,
-        hours:item.graph_hours, color:'#F4C95D',
+        hours:item.graph_hours, color:item.series_color ?? '#F4C95D', showHeading:sensorReading,
+        actionLabel,
       }, currentHass, {
         ...context,
         canView: hass => isVisibleEntity(item.entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities),
-        moreInfo: source => { if (modelFor(item).actions.more_info) moreInfo(item, source); },
+        moreInfo: source => {
+          if (destination) openGraphDestination(destination, source);
+          else if (modelFor(item).actions.more_info) moreInfo(item, source);
+        },
       });
       compactHistory.push(chart);
       chart.root.classList.add('toolbar-history-chart');
@@ -970,6 +1002,10 @@ export function createToolbarPanel(kind, configuration, context) {
     panel.dataset.section = section.kind;
     panel.toggleAttribute('data-security-section', kind === 'security');
     panel.toggleAttribute('data-overview-people', kind === 'overview' && section.kind === 'people');
+    const compactVacuumResets = compactVacuum && section.kind === 'actions' && section.entities.length > 0 &&
+      section.entities.every(item => (item.role ?? 'action') === 'action' && domain(item) === 'button' && !item.command &&
+        (item.confirmation === true || (typeof item.confirmation === 'string' && Boolean(item.confirmation.trim()))));
+    panel.toggleAttribute('data-vacuum-compact-resets', compactVacuumResets);
     const compactStatus = isCompactToolbarStatus(kind, section);
     panel.toggleAttribute('data-stacked-lock-actions', compactStatus &&
       (kind === 'security' && section.kind === 'locks' || section.stacked_lock_actions === true));
@@ -992,12 +1028,15 @@ export function createToolbarPanel(kind, configuration, context) {
       panel.append(heading);
     }
     const items = make('div', 'toolbar-section-items');
+    // Energy reading cards keep the title left of the icon in every language.
+    if (isEnergyReadingCards(kind, section)) items.dir = 'ltr';
     if (section.discover) discoveredOverviewSection(panel, items, section, lightsOff);
     else if (section.kind === 'series') {
       const visible = (entity, hass) => isVisibleEntity(entity, hass?.states ?? {}, hass?.entities, context.hiddenEntities);
       const optIn = kind === 'sensors' && dialog && section.comparison?.enabled === true;
       const sources = optIn && comparisonSources(section.entities, currentHass, visible, section.comparison);
       if (sources) {
+        panel.toggleAttribute('data-comparison-compact', section.comparison.layout === 'compact');
         comparisons.push(createTemperatureComparison({ host:items, dialog, context, sources, settings:section.comparison, visible }));
       } else {
         const fallback = make('div','toolbar-section-items');
@@ -1012,7 +1051,7 @@ export function createToolbarPanel(kind, configuration, context) {
         .map(item => {
           if (weatherReadings && isPassiveWeatherReading(item)) return { item, node: renderWeatherReading(item) };
           if (readouts && isToolbarReadoutEntity(kind, item)) return { item, node: renderReadout(item) };
-          return { item, node: render(item, section.kind, { compactStatus, readingCards, compactActions, compactVacuum }) };
+          return { item, node: render(item, section.kind, { compactStatus, readingCards, compactActions, compactVacuum, compactVacuumResets }) };
         });
       items.append(...pairs.map(pair=>pair.node));
       if (section.filter === 'active') handlers.push(() => {
@@ -1049,11 +1088,24 @@ export function createToolbarPanel(kind, configuration, context) {
     tabs.setAttribute('aria-label', t('weather'));
     const buttons = new Map();
     const pages = [...forecastPages.keys()];
+    const pager = detailedForecast ? make('div', 'toolbar-section weather-pager') : undefined;
     let active = 'forecast';
     const selectPage = key => {
+      const changed = active !== key;
+      if (pager && changed && forecastPages.get(active).contains(host.getRootNode().activeElement)) {
+        buttons.get(key).focus({ preventScroll:true });
+      }
       active = key;
-      for (const [name, section] of forecastPages) section.hidden = name !== key;
+      for (const [name, section] of forecastPages) {
+        const inactive = name !== key;
+        if (pager) {
+          section.inert = inactive;
+          if (inactive) section.setAttribute('aria-hidden', 'true');
+          else section.removeAttribute('aria-hidden');
+        } else section.hidden = inactive;
+      }
       for (const [name, tab] of buttons) tab.setAttribute('aria-pressed', String(name === key));
+      if (pager && changed) pager.dataset.weatherPageChanged = '';
     };
     let touch;
     for (const [key, panel] of forecastPages) {
@@ -1081,8 +1133,7 @@ export function createToolbarPanel(kind, configuration, context) {
       });
     }
     selectPage(active);
-    if (detailedForecast) {
-      const pager = make('div', 'toolbar-section weather-pager');
+    if (pager) {
       const panels = [...forecastPages.values()];
       panels[0].before(pager);
       pager.append(...panels, tabs);
@@ -1156,6 +1207,7 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .toolbar-panes, .toolbar-section-items { display: grid; gap: 8px; min-width: 0; }
   .toolbar-section { min-width: 0; border: 1px solid var(--soft-line); border-radius: 13px; padding: 8px; }
   .toolbar-section-title { margin: 0 0 8px; text-align: center; font-size: 14px; }
+  .toolbar-section[data-comparison-compact] > .toolbar-section-title { text-align:left; margin-block-end:5px; }
   .overview-active-heading:has(.overview-lights-off:not([hidden])) {
     display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-block-end: 4px;
   }
@@ -1195,7 +1247,7 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .shell[dir=rtl] .toolbar-section[data-security-section][data-section=covers] > .toolbar-section-items > * { direction: rtl; }
   .toolbar-section[data-layout=reading-cards] > .toolbar-section-items { direction: ltr; }
   .toolbar-section[data-section=readings][data-layout=reading-cards] { border: 0; padding: 0; }
-  .shell[dir=rtl] .toolbar-section[data-layout=reading-cards] > .toolbar-section-items > * { direction: rtl; }
+  .shell[dir=rtl] .toolbar-section[data-layout=reading-cards] > .toolbar-section-items:not([dir=ltr]) > * { direction: rtl; }
   .toolbar-section[data-layout=reading-cards] > .toolbar-section-title {
     color: var(--secondary); font-size: 13px; font-weight: 700;
   }
@@ -1292,23 +1344,31 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .toolbar-section[data-section=vacuum]:has(> .toolbar-section-items > [data-vacuum-compact-device]:only-child) {
     border: 0; padding: 0;
   }
-  .toolbar-section:has(> .toolbar-section-items > [data-vacuum-compact-program]) { padding: 3px 0 0; border: 0; }
-  .toolbar-section:has(> .toolbar-section-items > [data-vacuum-compact-program]) > .toolbar-section-title {
+  .toolbar-section:is([data-vacuum-compact-resets],:has(> .toolbar-section-items > [data-vacuum-compact-program])) {
+    padding: 3px 0 0; border: 0;
+  }
+  .toolbar-section:is([data-vacuum-compact-resets],:has(> .toolbar-section-items > [data-vacuum-compact-program])) > .toolbar-section-title {
     color: var(--secondary); margin-block-end: 4px; font-size: 13px;
   }
   .toolbar-section > .toolbar-section-items:has(> [data-vacuum-compact-program]) { direction: ltr; gap: 6px; }
-  .tile-row[data-vacuum-compact-program] {
+  [data-vacuum-compact-resets] > .toolbar-section-items { direction: ltr; }
+  .tile-row[data-vacuum-compact-action] {
     grid-template-columns: 24px minmax(0,1fr); grid-template-areas: "icon label" "icon state";
     justify-items: stretch; align-items: center; gap: 1px 7px; min-height: 52px; padding: 4px 8px;
     text-align: start; overflow-wrap: anywhere;
   }
-  .tile-row[data-vacuum-compact-program]:has(.tile-state[hidden]) { grid-template-areas: "icon label"; }
-  .tile-row[data-vacuum-compact-program] > .tile-mark {
+  [data-vacuum-compact-resets] .tile-row {
+    border-color: var(--warm);
+    border-radius: 20px;
+    background: color-mix(in srgb,var(--warm) 12%,transparent);
+  }
+  .tile-row[data-vacuum-compact-action]:has(.tile-state[hidden]) { grid-template-areas: "icon label"; }
+  .tile-row[data-vacuum-compact-action] > .tile-mark {
     grid-area: icon; width: 24px; height: 24px; background: transparent;
   }
-  .tile-row[data-vacuum-compact-program] > .tile-label { grid-area: label; font-size: 12px; line-height: 1.4; }
-  .tile-row[data-vacuum-compact-program] > .tile-state { grid-area: state; font-size: 11px; line-height: 1.15; }
-  .shell[dir=rtl] .tile-row[data-vacuum-compact-program] > :is(.tile-label,.tile-state) { direction: rtl; text-align: end; }
+  .tile-row[data-vacuum-compact-action] > .tile-label { grid-area: label; font-size: 12px; line-height: 1.4; }
+  .tile-row[data-vacuum-compact-action] > .tile-state { grid-area: state; font-size: 11px; line-height: 1.15; }
+  .shell[dir=rtl] .tile-row[data-vacuum-compact-action] > :is(.tile-label,.tile-state) { direction: rtl; text-align: end; }
   .tile-row[data-automation-unlocked] {
     background: rgba(255,133,133,.22); border-color: rgba(255,133,133,.38);
   }
@@ -1444,8 +1504,16 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
     }
   }
   .weather-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  .weather-pager { padding-block-end: 5px; }
-  .weather-pager > .toolbar-section { border: 0; padding: 0; }
+  .weather-pager { display:grid; grid-template-columns:minmax(0,1fr); padding-block-end:5px; }
+  .weather-pager > .toolbar-section { grid-area:1 / 1; align-self:start; border:0; padding:0; }
+  .weather-pager > .toolbar-section[inert] { visibility:hidden; opacity:0; pointer-events:none; }
+  .weather-pager > .weather-page-dots { grid-row:2; }
+  @media (prefers-reduced-motion:no-preference) {
+    .weather-pager[data-weather-page-changed] > .toolbar-section:not([inert]) {
+      animation:weather-page-reveal 140ms ease-out;
+    }
+  }
+  @keyframes weather-page-reveal { from { opacity:.7; } to { opacity:1; } }
   .weather-pager .weather-current-summary { border: 0; background: transparent; padding-block: 7px; }
   .weather-pager .daily-weather-row { min-height: 26px; }
   .weather-page-dots { display: flex; justify-content: center; direction: ltr; }
@@ -1468,6 +1536,8 @@ export const toolbarPanelStyles = nowPlayingStyles + calendarAgendaStyles + temp
   .forecast-clock { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 3px 3px 8px; }
   .forecast-clock strong { font-variant-numeric: tabular-nums; font-size: 19px; }
   .forecast-clock span { font-size: 13px; color: var(--secondary); }
+  /* Horizon draws its solar trajectory left to right even when its labels are translated. */
+  [data-section=sun] horizon-card { direction: ltr; }
   .sun-panel { color: var(--ink); padding: 8px; }
   .sun-chart { margin: 0 0 12px; color: var(--secondary); font-size: 11px; }
   .sun-plot { position: relative; height: 104px; border: 1px solid var(--soft-line); border-radius: 12px; }

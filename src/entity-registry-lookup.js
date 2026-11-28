@@ -1,6 +1,6 @@
 const scriptId = /^script\.[a-z0-9_]+$/;
 
-export function createScriptRegistry(onChange) {
+export function createEntityRegistryLookup(onChange, { include = () => true, project = entry => entry } = {}) {
   let snapshot;
   let lookup;
   let watch;
@@ -15,7 +15,7 @@ export function createScriptRegistry(onChange) {
       if (lookup === token) return hass.callWS({ type: 'config/entity_registry/get_entries', entity_ids: ids });
     }).then(response => {
       if (lookup !== token) return;
-      entries = new Map(ids.map(id => [id, response?.[id]]));
+      entries = new Map(ids.map(id => [id, project(response?.[id])]));
       onChange();
     }).catch(() => {
       if (lookup === token) onChange();
@@ -51,7 +51,7 @@ export function createScriptRegistry(onChange) {
   return {
     get: id => entries.get(id),
     update(hass, entityIds) {
-      const ids = [...new Set(entityIds.filter(id => scriptId.test(id)))].sort();
+      const ids = [...new Set(entityIds.filter(include))].sort();
       if (!ids.length || hass?.connected === false || hass?.connection?.connected === false ||
           typeof hass?.callWS !== 'function') {
         dispose();
@@ -68,4 +68,8 @@ export function createScriptRegistry(onChange) {
     },
     dispose,
   };
+}
+
+export function createScriptRegistry(onChange) {
+  return createEntityRegistryLookup(onChange, { include: id => scriptId.test(id) });
 }

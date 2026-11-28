@@ -186,7 +186,7 @@ async function assertSharedRevision(browser, fixtureName, byModifiedDate) {
     await page.getByRole('button', { name: 'Appearance', exact: true }).tap();
     const gallery = page.locator('.wallpaper-gallery');
     await gallery.locator('summary').tap();
-    await gallery.getByRole('button', { name: 'Nature', exact: true }).tap();
+    await gallery.getByRole('button', { name: 'Color and light', exact: true }).tap();
     await gallery.getByRole('button', { name: catalog.aurora.en, exact: true }).tap();
     await page.locator('.shell[data-background=aurora]').waitFor();
     release?.();
@@ -218,13 +218,12 @@ try {
       await page.getByRole('button', { name: 'Appearance', exact: true }).tap();
       const gallery = page.locator('.wallpaper-gallery');
       assert.deepEqual(requests, []);
-      await gallery.locator('summary').tap();
-      assert.deepEqual(requests, []);
       await gallery.evaluate(element => {
         const rules = document.createElement('style');
         rules.textContent = '.wallpaper-options { max-height: 67px; overflow-y: auto; }';
         element.append(rules);
       });
+      await gallery.locator('summary').tap();
 
       const firstPreview = photoPath(prefix, catalog.misty_lake.photo.preview);
       const firstPreviewLoaded = page.waitForResponse(res => res.url() === firstPreview && res.ok());
@@ -263,6 +262,7 @@ try {
       await started.promise;
       assert.equal(await shellBackground(page), catalog.graphite_and_bronze.background);
       await gallery.getByRole('button', { name: 'Nature', exact: true }).tap();
+      await gallery.locator('.wallpaper-more[aria-expanded=false]').tap();
       await gallery.getByRole('button', { name: 'Misty forest', exact: true }).tap();
       release.resolve();
       await (await late).finished();

@@ -1,3 +1,20 @@
+const inkOnPaperLayers = [
+  { ellipse: [57, 75, 90, 84], stops: [[0, 'rgba(36,62,90,.84)'], [46, 'rgba(60,104,130,.68)'], [85, 'rgba(60,104,130,0)']] },
+  { ellipse: [90, 45, 58, 105], stops: [[0, '#4e6c7c'], [94, '#4e6c7c00']] },
+  { angle: 145, stops: [[0, '#cec7b2'], [51, '#b1bcc0'], [89, '#879faf']] },
+];
+
+function gradientBackground(layers) {
+  return layers.map(({ ellipse, angle, stops }) => {
+    const colors = stops.map(([offset, color]) => color + ' ' + offset + '%').join(',');
+    if (ellipse) {
+      const [width, height, x, y] = ellipse;
+      return `radial-gradient(ellipse ${width}% ${height}% at ${x}% ${y}%,${colors})`;
+    }
+    return `linear-gradient(${angle}deg,${colors})`;
+  }).join(',');
+}
+
 export const catalog = Object.freeze({
   design_default: {
     en: 'Design default', he: 'ברירת מחדל', group: 'basic',
@@ -256,10 +273,8 @@ export const catalog = Object.freeze({
   },
   ink_on_paper: {
     en: 'Ink on paper', he: 'דיו על נייר', group: 'materials', darkInk: true,
-    background: `
-      radial-gradient(ellipse 57% 75% at 90% 84%,rgba(36,62,90,.84),rgba(60,104,130,.68) 46%,transparent 85%),
-      radial-gradient(ellipse 90% 45% at 58% 105%,#4e6c7c,transparent 94%),
-      linear-gradient(145deg,#cec7b2,#b1bcc0 51%,#879faf 89%)`,
+    background: gradientBackground(inkOnPaperLayers),
+    gradientLayers: inkOnPaperLayers,
   },
   lagoon: {
     en: 'Lagoon', he: 'לגונה', group: 'nature',

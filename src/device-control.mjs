@@ -131,7 +131,7 @@ function timedProfile(profile, domain, kind) {
   }
   const { start_script, stop_script, timer_entity, simple_timer_entity, simple_timer_target, duration_field = "duration",
     min_minutes = 1, max_minutes = 60, step_minutes = 1, presets, daily_usage_entity,
-    allow_daily_usage_reset, idle_zero_duration } = profile;
+    allow_daily_usage_reset, idle_zero_duration, running_slider_stop } = profile;
   if (
     (start_script !== undefined && !isEntity(start_script, "script")) ||
     (stop_script !== undefined && !isEntity(stop_script, "script")) ||
@@ -151,6 +151,7 @@ function timedProfile(profile, domain, kind) {
   return { start_script, stop_script, timer_entity, simple_timer_entity, simple_timer_target, duration_field,
     min_minutes, max_minutes, step_minutes, presets, daily_usage_entity,
     idle_zero_duration: idle_zero_duration === true && !!simple_timer_entity && min_minutes === step_minutes,
+    running_slider_stop: running_slider_stop === true && !!simple_timer_entity && (kind === "heater" || kind === "climate"),
     allow_daily_usage_reset: allow_daily_usage_reset === true && !!simple_timer_entity &&
       (!daily_usage_entity || daily_usage_entity === simple_timer_entity) };
 }
@@ -517,6 +518,11 @@ function deviceModel(config, states, nowMs, roomBoilerQuickPower) {
   const explicitLevel = isAvailable(level) && level.state.trim() ? Number(level.state) : NaN;
   const percentageLevel = config.level_steps && Number.isFinite(attributes.percentage)
     ? Math.round(attributes.percentage * config.level_steps / 100) : null;
+  const actions = supportedActions(config, states, record, timer, nowMs, roomBoilerQuickPower);
+  const timing = config.timed;
+  const runningTimerSelection = actions.stop_timed && timer?.state === "active" && timing?.running_slider_stop && {
+    min: timing.min_minutes, max: timing.max_minutes, step: timing.step_minutes, idleZero: timing.idle_zero_duration,
+  };
   return {
     entity: config.entity,
     domain: config.domain,
@@ -526,7 +532,7 @@ function deviceModel(config, states, nowMs, roomBoilerQuickPower) {
     state: record?.state ?? "missing",
     available,
     attributes,
-    actions: supportedActions(config, states, record, timer, nowMs, roomBoilerQuickPower),
+    actions,
     level: preselect ? verifiedLevel(states?.[config.level_preselect_entity], config.level_steps)
       : config.level_select_script ? verifiedLevel(level, config.level_steps)
       : Number.isFinite(explicitLevel) ? explicitLevel : percentageLevel,
@@ -537,6 +543,7 @@ function deviceModel(config, states, nowMs, roomBoilerQuickPower) {
       levelChanging: applyingLevel || (selectingLevel && (!preselect || !!sharedHeaterLevelSelector(config))),
     }),
     timer,
+    ...(runningTimerSelection && { runningTimerSelection }),
     ...(usageSource && { usageSource }),
   };
 }

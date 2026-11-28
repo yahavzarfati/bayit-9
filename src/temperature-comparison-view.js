@@ -8,6 +8,7 @@ const plotHeight = 230;
 const minuteMs = 60000;
 const refreshDelayMs = 1500;
 const historyTimeoutMs = 10000;
+const tapSlop = 10;
 let nextComparisonId = 0;
 const clip = (value, max) => Math.min(max, Math.max(0, value));
 
@@ -37,7 +38,26 @@ function formatTime(locale, hass, withDate) {
   catch { return new Intl.DateTimeFormat(locale, options); }
 }
 
-function numericBounds(series) {
+function compactBounds(min, max) {
+  const range = max - min || Math.max(1, Math.abs(max) * .05);
+  const target = range / 4;
+  const magnitude = 10 ** Math.floor(Math.log10(target));
+  if (!Number.isFinite(magnitude) || magnitude <= 0) return;
+  const step = [1, 2, 2.5, 5, 10].find(size => size * magnitude >= target) * magnitude;
+  const first = Math.floor((max === min ? min - range / 2 : min) / step);
+  const count = Math.ceil((max === min ? max + range / 2 : max) / step) - first;
+  const floor = first * step;
+  const ceiling = (first + count) * step;
+  const span = ceiling - floor;
+  if (!Number.isFinite(span) || span <= 0 || count < 1 || count > 6) return;
+  return {
+    y: value => plotHeight * (1 - (value - floor) / span),
+    at: fraction => floor + span * fraction,
+    marks: Array.from({ length:count + 1 }, (_, index) => index / count),
+  };
+}
+
+function numericBounds(series, compact) {
   let min = Infinity;
   let max = -Infinity;
   for (const item of series) {
@@ -48,6 +68,8 @@ function numericBounds(series) {
     }
   }
   if (min === Infinity) return;
+  const fitted = compact && compactBounds(min, max);
+  if (fitted) return fitted;
   const scale = Math.max(1, Math.abs(min), Math.abs(max));
   const low = min / scale;
   const high = max / scale;
@@ -91,20 +113,23 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
   const document = host.ownerDocument;
   const view = document.defaultView;
   const pathname = view.location.pathname;
+  const compact = settings.layout === 'compact';
   const step = settings.bucket_minutes * minuteMs;
   const span = settings.hours * 60 * minuteMs;
   let endMs = Date.now();
   let startMs = endMs - span;
   const x = time => plotWidth * clip((time - startMs) / (endMs - startMs), 1);
   const slot = make('div', 'temperature-comparison');
+  slot.toggleAttribute('data-comparison-compact', compact);
   const message = make('p', 'comparison-message', t('comparison_loading'));
   message.setAttribute('role', 'status');
   const visual = make('div', 'comparison-visual');
   visual.dir = 'ltr';
   visual.hidden = true;
-  visual.setAttribute('aria-hidden', 'true');
+  if (!compact) visual.setAttribute('aria-hidden', 'true');
   const yAxis = make('div', 'comparison-y-axis');
   const xAxis = make('div', 'comparison-x-axis');
+  const plot = make('div', 'comparison-plot');
   const shape = (tag, attributes) => {
     const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
     for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
@@ -112,7 +137,16 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
   };
   const svg = shape('svg', { viewBox:'0 0 ' + plotWidth + ' ' + plotHeight, preserveAspectRatio:'none', focusable:'false' });
   const marker = shape('line', { 'class':'comparison-marker', x1:plotWidth, x2:plotWidth, y1:0, y2:plotHeight });
-  visual.append(yAxis, svg, xAxis);
+  const preview = make('div', 'comparison-preview');
+  preview.hidden = true;
+  const previewTime = make('bdi', 'comparison-preview-time');
+  const previewReadings = make('ul', 'comparison-preview-readings');
+  preview.append(previewTime, previewReadings);
+  if (compact) {
+    for (const decoration of [yAxis, xAxis, svg, preview]) decoration.setAttribute('aria-hidden', 'true');
+  }
+  plot.append(svg, preview);
+  visual.append(yAxis, plot, xAxis);
   const picker = make('label', 'comparison-picker');
   picker.hidden = true;
   const time = make('span', 'comparison-selected-time');
@@ -129,7 +163,8 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
   const keptSeries = make('span', '', t('comparison_keep_series'));
   keptSeries.id = readingPrefix + '-keep';
   keptSeries.hidden = true;
-  slot.append(message, visual, picker, readings, keptSeries);
+  if (compact) plot.append(picker);
+  slot.append(message, visual, ...(compact ? [] : [picker]), readings, keptSeries);
   host.append(slot);
 
   let hass = context.hass;
@@ -147,6 +182,8 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
   const hiddenSeries = new Set();
   let selectedTimes = [];
   let selectedTime = endMs;
+  let previewIndex;
+  let touchGesture;
   const fullTime = formatTime(locale, hass, true);
   const shortTime = formatTime(locale, hass, settings.hours > 24);
   const regularNumber = new Intl.NumberFormat(locale, { maximumFractionDigits:2 });
@@ -170,6 +207,17 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
   let seenSources = sourceSnapshot();
   let hasRecorder = typeof hass?.callWS === 'function';
 
+  function readingAt(item, at) {
+    const value = item.points.findLast(point => point.at <= at)?.value;
+    return Number.isFinite(value) ? valueText(value, item.unit) : t('comparison_no_value');
+  }
+
+  function positionMarker(at) {
+    const coordinate = x(at);
+    marker.setAttribute('x1', coordinate);
+    marker.setAttribute('x2', coordinate);
+  }
+
   function selectTime(index, updateInput = true) {
     const at = selectedTimes[index];
     if (!Number.isFinite(at)) return;
@@ -177,17 +225,53 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
     if (updateInput) input.value = String(index);
     const label = fullTime.format(at);
     time.textContent = label;
-    marker.setAttribute('x1', x(at));
-    marker.setAttribute('x2', x(at));
+    if (compact) picker.toggleAttribute('data-time-selected', at !== endMs);
+    positionMarker(at);
     const output = [];
     for (const item of valueViews) {
       if (hiddenSeries.has(item.entity)) continue;
-      const value = item.points.findLast(point => point.at <= at)?.value;
-      const text = Number.isFinite(value) ? valueText(value, item.unit) : t('comparison_no_value');
+      const text = readingAt(item, at);
       item.value.textContent = text;
       output.push(item.name + ' ' + text);
     }
     input.setAttribute('aria-valuetext', [label, ...output].join(', '));
+  }
+
+  function clearPreview() {
+    if (preview.hidden) return;
+    preview.hidden = true;
+    preview.removeAttribute('data-touch');
+    previewIndex = undefined;
+    previewReadings.replaceChildren();
+    positionMarker(selectedTime);
+  }
+
+  function nearestTime(clientX) {
+    const bounds = svg.getBoundingClientRect();
+    if (!bounds.width || !selectedTimes.length) return;
+    const fraction = clip((clientX - bounds.x) / bounds.width, 1);
+    const at = startMs + fraction * (endMs - startMs);
+    const index = selectedTimes.reduce((best, time, index) =>
+      Math.abs(time - at) < Math.abs(selectedTimes[best] - at) ? index : best, 0);
+    return { index, fraction };
+  }
+
+  function showPreview({ index, fraction }, touched = false) {
+    preview.toggleAttribute('data-touch', touched);
+    preview.toggleAttribute('data-right', fraction < .5);
+    if (previewIndex === index) return;
+    previewIndex = index;
+    const at = selectedTimes[index];
+    positionMarker(at);
+    previewTime.textContent = fullTime.format(at);
+    previewReadings.replaceChildren(...valueViews.filter(item => !hiddenSeries.has(item.entity)).map(item => {
+      const row = make('li');
+      const dot = make('span', 'comparison-swatch');
+      dot.style.setProperty('--series-color', item.color);
+      row.append(dot, make('bdi', '', item.name), make('bdi', '', readingAt(item, at)));
+      return row;
+    }));
+    preview.hidden = false;
   }
 
   function toggleSeries(entity) {
@@ -237,10 +321,11 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
       return;
     }
     key = selectedKey;
+    clearPreview();
     const series = selected.map(item => ({ ...item,
       points:data?.find(candidate => candidate.entity === item.entity)?.points ?? [] }));
     const visibleSeries = series.filter(item => !hiddenSeries.has(item.entity));
-    const bounds = numericBounds(visibleSeries);
+    const bounds = numericBounds(visibleSeries, compact);
     visual.hidden = picker.hidden = !bounds;
     message.hidden = !!bounds && !failure;
     message.textContent = t(pending ? 'comparison_loading' : failure
@@ -265,9 +350,10 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
     if (!bounds) return;
 
     const marks = [0, 1 / 3, 2 / 3, 1];
-    yAxis.replaceChildren(...marks.map(mark => make('span', '', formatNumber(bounds.at(1 - mark)))));
+    const yMarks = bounds.marks ?? marks;
+    yAxis.replaceChildren(...yMarks.map(mark => make('span', '', formatNumber(bounds.at(1 - mark)))));
     xAxis.replaceChildren(...marks.map(mark => make('span', '', shortTime.format(startMs + mark * (endMs - startMs)))));
-    const grid = marks.map(mark => shape('line',
+    const grid = yMarks.map(mark => shape('line',
       { 'class':'comparison-grid', x1:0, x2:plotWidth, y1:plotHeight * mark, y2:plotHeight * mark }));
     const strokes = [];
     const areas = [];
@@ -291,16 +377,50 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
     selectTime(Math.max(0, times.findIndex(at => at >= selectedTime)));
   }
 
-  input.addEventListener('input', () => selectTime(Number(input.value), false));
-  svg.addEventListener('click', event => {
-    const bounds = svg.getBoundingClientRect();
-    if (!bounds.width) return;
-    const fraction = clip((event.clientX - bounds.x) / bounds.width, 1);
-    const at = startMs + fraction * (endMs - startMs);
-    const nearest = selectedTimes.reduce((best, time, index) =>
-      Math.abs(time - at) < Math.abs(selectedTimes[best] - at) ? index : best, 0);
-    selectTime(nearest);
+  input.addEventListener('input', () => {
+    clearPreview();
+    selectTime(Number(input.value), false);
   });
+  input.addEventListener('focus', clearPreview);
+  const exceedsTapSlop = event => Math.hypot(event.clientX - touchGesture.x, event.clientY - touchGesture.y) > tapSlop;
+  svg.addEventListener('pointerdown', event => {
+    if (event.pointerType !== 'touch') touchGesture = undefined;
+    else if (event.isPrimary) touchGesture = { id:event.pointerId, x:event.clientX, y:event.clientY };
+    else if (touchGesture) touchGesture.moved = true;
+  });
+  svg.addEventListener('pointermove', event => {
+    if (touchGesture?.id === event.pointerId && exceedsTapSlop(event)) touchGesture.moved = true;
+  });
+  svg.addEventListener('pointerup', event => {
+    if (touchGesture?.id === event.pointerId) touchGesture.tap = !touchGesture.moved && !exceedsTapSlop(event);
+  });
+  svg.addEventListener('pointercancel', event => {
+    if (touchGesture?.id === event.pointerId) touchGesture.tap = false;
+  });
+  svg.addEventListener('click', event => {
+    const gesture = touchGesture;
+    touchGesture = undefined;
+    const touched = gesture || event.pointerType === 'touch' || event.sourceCapabilities?.firesTouchEvents;
+    if (!active() || (touched && !gesture?.tap)) return;
+    const point = nearestTime(event.clientX);
+    if (!point) return;
+    clearPreview();
+    selectTime(point.index);
+    if (touched) showPreview(point, true);
+  });
+  const previewTarget = compact ? plot : svg;
+  previewTarget.addEventListener('pointermove', event => {
+    if ((event.pointerType !== 'mouse' && event.pointerType !== 'pen') || event.buttons) return;
+    const point = nearestTime(event.clientX);
+    if (point) showPreview(point);
+  });
+  const showingTouchPreview = () => preview.hasAttribute('data-touch');
+  previewTarget.addEventListener('pointerleave', () => { if (!showingTouchPreview()) clearPreview(); });
+  previewTarget.addEventListener('pointercancel', clearPreview);
+  const dismissTouchPreview = () => { if (showingTouchPreview()) clearPreview(); };
+  const onDialogPointerDown = event => { if (!svg.contains(event.target)) dismissTouchPreview(); };
+  dialog?.addEventListener('pointerdown', onDialogPointerDown, true);
+  dialog?.addEventListener('scroll', dismissTouchPreview, true);
 
   function queueRefresh() {
     if (!refreshQueued || pendingRequest || refreshTimer !== undefined || !active()) return;
@@ -372,6 +492,8 @@ export function createTemperatureComparison({ host, dialog, context, sources, se
     },
     dispose() {
       disposed = true;
+      dialog?.removeEventListener('pointerdown', onDialogPointerDown, true);
+      dialog?.removeEventListener('scroll', dismissTouchPreview, true);
       view.cancelAnimationFrame(launch);
       view.clearTimeout(refreshTimer);
       view.clearTimeout(pendingRequest?.timeout);
@@ -387,7 +509,8 @@ export const temperatureComparisonStyles = `
     display:grid; grid-template-columns:auto minmax(0,1fr); gap:4px 7px;
     padding-block:6px 0; color:var(--secondary); font-size:11px; font-variant-numeric:tabular-nums;
   }
-  .comparison-visual svg { inline-size:100%; block-size:clamp(154px,42vw,230px); overflow:visible; }
+  .comparison-plot { position:relative; min-inline-size:0; }
+  .comparison-visual svg { display:block; inline-size:100%; block-size:clamp(154px,42vw,230px); overflow:visible; }
   .comparison-grid, .comparison-marker,.comparison-line { vector-effect:non-scaling-stroke; }
   .comparison-grid { stroke:currentColor; opacity:.20; stroke-width:1; }
   .comparison-marker { stroke:currentColor; opacity:.70; stroke-width:1; stroke-dasharray:3 3; }
@@ -396,6 +519,26 @@ export const temperatureComparisonStyles = `
   .comparison-y-axis { display:flex; flex-direction:column; justify-content:space-between; text-align:end; margin-block:-6px; }
   .comparison-x-axis { grid-column:2; display:flex; justify-content:space-between; gap:3px; }
   .comparison-x-axis > span { min-inline-size:0; text-align:center; }
+  .comparison-preview {
+    position:absolute; inset:0 auto auto 0; z-index:1; pointer-events:none;
+    min-inline-size:0; max-inline-size:100%; box-sizing:border-box; padding:6px 8px;
+    border:1px solid var(--line); border-radius:8px; background:var(--control); color:var(--ink);
+    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  }
+  .comparison-preview[data-right] { inset-inline: auto 0; }
+  .comparison-preview-time { font-weight:700; }
+  .comparison-preview-readings { display:grid; gap:2px; margin:3px 0 0; padding:0; list-style:none; }
+  .comparison-preview-readings li { display:grid; align-items:center; gap:5px;
+    grid-template-columns:8px minmax(0,1fr) auto; overflow-wrap:anywhere; }
+  .comparison-preview-readings li > :last-child { justify-self:end; font-weight:650; }
+  .comparison-preview[data-touch] { inset-inline:0; max-block-size:100%; overflow:hidden; padding:4px 6px; line-height:1.1; }
+  .comparison-preview[data-touch] .comparison-preview-time { display:block; }
+  .comparison-preview[data-touch] .comparison-preview-readings { grid-template-columns:repeat(2,minmax(0,1fr)); gap:2px 7px; }
+  .comparison-preview[data-touch] .comparison-preview-readings li { gap:3px; }
+  .comparison-preview[data-touch] li > bdi { white-space:nowrap; }
+  .comparison-preview[data-touch] li > :nth-child(2) { overflow:hidden; text-overflow:ellipsis; }
+  .comparison-preview[data-touch]:has(li:nth-child(9)) { font-size:10px; padding-block:3px; }
+  .comparison-preview[data-touch]:has(li:nth-child(9)) .comparison-preview-readings { row-gap:1px; }
   .comparison-picker { display:grid; gap:2px; justify-items:center; color:var(--secondary); font-size:12px; }
   .comparison-picker input { inline-size:100%; min-block-size:44px; margin:0; accent-color:var(--warm); }
   .comparison-selected-time { font-variant-numeric:tabular-nums; }
@@ -419,18 +562,58 @@ export const temperatureComparisonStyles = `
       gap:2px 5px; padding-block:3px;
     }
     .comparison-reading-name { grid-area:label; }
-    .comparison-swatch { grid-area:color; }
+    .comparison-series .comparison-swatch { grid-area:color; }
     .comparison-value { grid-area:value; text-align:start; }
   }
   @container bayit-comparison (286px <= width <= 379px) {
     .comparison-readings:has(> :nth-child(3)) { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  }
+  .temperature-comparison[data-comparison-compact] { gap:4px; }
+  .temperature-comparison[data-comparison-compact] .comparison-visual { row-gap:6px; }
+  .temperature-comparison[data-comparison-compact] .comparison-visual svg { block-size:clamp(95px,34cqi,112px); }
+  .temperature-comparison[data-comparison-compact] .comparison-grid { stroke-dasharray:3 3; }
+  .temperature-comparison[data-comparison-compact] .comparison-readings { direction:ltr; gap:0 3px; }
+  .temperature-comparison[data-comparison-compact] .comparison-series {
+    grid-template-columns:8px minmax(0,1fr); grid-template-areas:"color label" "color value";
+    gap:1px 4px; padding-inline:4px; align-content:center; line-height:1.2;
+    border-color:transparent; border-radius:14px;
+  }
+  .temperature-comparison[data-comparison-compact] .comparison-series .comparison-swatch { grid-area:color; }
+  .temperature-comparison[data-comparison-compact] .comparison-reading-name { grid-area:label; text-align:left; }
+  .temperature-comparison[data-comparison-compact] .comparison-value { grid-area:value; text-align:left; }
+  @container bayit-comparison (232px <= width <= 379px) {
+    .temperature-comparison[data-comparison-compact] .comparison-readings:has(> :nth-child(3)) {
+      grid-template-columns:repeat(3,minmax(0,1fr));
+    }
+  }
+  .temperature-comparison[data-comparison-compact] .comparison-picker {
+    position:absolute; inset:auto 0 0; display:block; block-size:44px; pointer-events:none;
+  }
+  .temperature-comparison[data-comparison-compact] .comparison-picker input {
+    display:block; opacity:0; touch-action:pan-y; pointer-events:auto;
+  }
+  .temperature-comparison[data-comparison-compact] .comparison-picker input:focus-visible { opacity:1; }
+  .temperature-comparison[data-comparison-compact] .comparison-selected-time {
+    position:absolute; inset:0 auto auto 3px; transform:translateY(-100%); display:none;
+    padding:2px 5px; border:1px solid var(--soft-line); border-radius:7px; background:var(--surface); color:var(--ink);
+  }
+  .temperature-comparison[data-comparison-compact] .comparison-picker:is([data-time-selected],:has(input:focus-visible)) .comparison-selected-time {
+    display:block;
+  }
+  .temperature-comparison[data-comparison-compact] .comparison-plot:has(.comparison-preview[data-touch]:not([hidden])) .comparison-selected-time {
+    visibility:hidden;
   }
   @media (prefers-contrast:more) {
     .comparison-line { stroke-width:3; }
     .comparison-fill { opacity:.08; }
     .comparison-swatch { outline:1px solid currentColor; }
   }
+  @media (prefers-contrast:more), (prefers-reduced-transparency:reduce) {
+    .comparison-preview { background:var(--surface); }
+  }
   @media (forced-colors:active) {
+    .temperature-comparison[data-comparison-compact] .comparison-series { border-color:ButtonText; }
+    .temperature-comparison[data-comparison-compact] .comparison-picker input { opacity:1; }
     .comparison-grid,.comparison-line,.comparison-marker { stroke:CanvasText; }
     .comparison-fill { display:none; }
     .comparison-swatch { background:CanvasText; }

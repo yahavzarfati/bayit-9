@@ -4,10 +4,16 @@ set -Eeuo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd -- "$root"
 version="${1:-2026.11.2}"
+profile="${2:-baseline}"
 if [[ ! "$version" =~ ^20[0-9]{2}\.[0-9]{1,2}\.[0-9]+$ ]]; then
   echo 'Supply a numbered Home Assistant Core version, such as 2026.11.2' >&2
   exit 2
 fi
+case "$profile" in
+  baseline) runner=(node scripts/ha-acceptance.mjs) ;;
+  rental-flat|garden-house) runner=(node scripts/ha-dwains-acceptance.mjs --home "$profile") ;;
+  *) echo 'Choose baseline, rental-flat, or garden-house' >&2; exit 2 ;;
+esac
 command -v docker >/dev/null
 command -v node >/dev/null
 
@@ -18,6 +24,7 @@ marker="$(node -p "require('node:crypto').randomBytes(16).toString('hex')")"
 name="bayit-acceptance-${marker:0:12}"
 image="ghcr.io/home-assistant/home-assistant:$version"
 results="$root/test-results/ha-acceptance/$version"
+if [[ "$profile" != baseline ]]; then results="$results/$profile"; fi
 mkdir -p -- "$results" "$stage/www"
 cleanup() {
   status=$?
@@ -66,4 +73,4 @@ if [[ ! "$binding" =~ ^127\.0\.0\.1:[0-9]+$ ]]; then
 fi
 
 BAYIT_QA_URL="http://$binding" BAYIT_QA_MARKER="$marker" \
-  BAYIT_QA_HA_VERSION="$version" BAYIT_QA_RESULTS="$results" node scripts/ha-acceptance.mjs
+  BAYIT_QA_HA_VERSION="$version" BAYIT_QA_RESULTS="$results" "${runner[@]}"

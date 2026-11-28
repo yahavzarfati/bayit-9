@@ -1,10 +1,11 @@
 import { Bayit9StrategyEditor } from './strategy-editor.js';
 import { generateDashboard, STRATEGY_NAME, suggestedDashboard } from './strategy-model.js';
 import { preparePageChrome } from './page-chrome.js';
+import { stateInventoryChanged } from './state-inventory.js';
 
 const TAG = 'll-strategy-dashboard-' + STRATEGY_NAME;
 const EDITOR = 'bayit-9-strategy-editor';
-const registryDependencies = ['areas', 'devices', 'entities'];
+const registryDependencies = ['areas', 'devices', 'entities', 'floors'];
 const generatedDashboards = new WeakMap();
 
 export class Bayit9DashboardStrategy extends HTMLElement {
@@ -18,7 +19,8 @@ export class Bayit9DashboardStrategy extends HTMLElement {
   }
 
   static shouldRegenerate(config, previous, current) {
-    if (!registryDependencies.some(key => previous[key] !== current[key])) return false;
+    if (!registryDependencies.some(key => previous[key] !== current[key]) &&
+        !stateInventoryChanged(previous.states, current.states)) return false;
     // HA flattens legacy options only when it invokes generate().
     if (Object.keys(config).length === 2 && 'options' in config && typeof config.options === 'object') return true;
     // Ordinary hass updates can change the input since this dashboard was mounted.

@@ -1,14 +1,18 @@
 # Dashboard configuration
 
-If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Customize home** on a storage-managed dashboard. Open **Rooms** to create or edit a room. Set **Rooms on the dashboard** to **Choose rooms and order**, then open **Displayed rooms and order** to arrange or hide the selected rooms. Each room can use its Home Assistant devices automatically or an ordered list you choose. You can give a room a display name and icon or create a room that exists only in Bayit 9. **Save dashboard** applies your changes across devices. The strategy editor is also available in Home Assistant’s dashboard settings. Switching to **Automatic** keeps your last manual room list and order so you can return to them later.
+If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Edit dashboard** on a storage-managed dashboard. Use **Manage rooms** to reorder rooms and change their visibility, and **Manage devices** on each room card to arrange its devices. These controls preserve automatic discovery and keep hidden items available to restore. You can also select an explicit room list through **Dashboard settings → Rooms**. Switching to **Automatic** keeps your last explicit room list so you can return to it later. **Save dashboard** applies changes across devices.
 
 | Option | Effect |
 | --- | --- |
 | `locale` | `auto`, `en` or `he`. The default uses the Home Assistant language. |
 | `title` | Override the screen title. |
-| `room_selection` | `auto` displays discovered rooms. `manual` uses exactly the rooms listed in `area_ids`, including selected Areas with no devices. An empty manual list keeps those rooms hidden. The setting for devices without a room remains separate. |
+| `room_selection` | `auto` follows Home Assistant's area registry. `manual` uses the rooms listed in `area_ids`, including selected areas with no devices. An empty manual list leaves the area list empty. The setting for devices without a room remains separate. |
 | `area_ids` | Area or dashboard-only room IDs to show in the listed order. Without `room_selection`, existing lists filter discovered rooms and an empty list uses automatic discovery. |
-| `room_overrides` | Room IDs mapped to objects with optional `name`, `icon`, `entities`, `additional_entities`, `entity_icons`, `entity_names`, `sections`, `panel_hidden_entities`, `read_only_entities`, `activities`, `media_panel_links` and `vacuum_panel_links`. Use an ID starting with `bayit_room_` to add a dashboard-only room. |
+| `hidden_room_ids` | Rooms hidden from Bayit 9. Hiding a room preserves its configuration and membership. |
+| `room_order_mode` | In automatic mode, order by Home Assistant, alphabetically, or by a custom list using `home_assistant`, `alphabetical`, or `custom`. |
+| `room_order` | Preferred room IDs for automatic custom order. Newly discovered rooms follow the preferred rooms. |
+| `show_empty_rooms` | Include areas without eligible devices. Full automatic discovery includes them by default. |
+| `room_overrides` | Room-specific configuration, including `name`, `icon`, `entities`, `additional_entities`, `entity_order`, `hidden_entities`, `entity_icons`, `entity_names`, `sections`, `panel_hidden_entities`, `read_only_entities`, `activities`, `media_panel_links` and `vacuum_panel_links`. Use an ID starting with `bayit_room_` to add a dashboard-only room. |
 | `discovery_mode` | `all` includes device controls and readable entities. `controls` discovers only directly controllable domains. You can still add a readable entity to a room manually. |
 | `show_unassigned` | Show unassigned devices in their own room. Default `true`. |
 | `hidden_entities` | Entity IDs to exclude from the dashboard. |
@@ -19,6 +23,8 @@ If you are a Home Assistant administrator, open the Bayit 9 gear and choose **Cu
 | `popup_alias_close_routes` | Optional mapping from a device or Schedule alias to the popup opened on Close. |
 | `light_effect_groups` | Optional categories for a light's advertised effects. Open the light's details, choose an effect and press **Apply**. |
 | `light_effect_favorites` | Lights with configured effect categories that allow personal favorites. |
+| `light_effect_scene_grid` | Lights with configured effect categories that show category buttons and a scrollable scene grid. |
+| `light_effect_scene_on_select` | Scene-grid lights that activate a scene as soon as its tile is selected. |
 | `light_status_refresh_buttons` | Optional mapping from a light to a status request button registered to the same Home Assistant device. |
 | `light_mode_sources` | Optional mapping from a grouped light to a same-device select and its fixed-color option for opening the light details. Use `apply_effects: true` to apply effects through the paired selector. |
 | `light_effect_category_sources` | Optional per-light `input_select` for a category shared across the home. |
@@ -64,6 +70,8 @@ appearance_helpers:
 In **Customize home → Appearance → Shared photos**, add named pictures already served by Home Assistant under `/local/`. Supported formats are JPG, PNG, WebP and AVIF, up to 20 MB per image. An optional smaller preview loads in the gallery before the full-size image. Save the dashboard to make these choices available to its users. In YAML, the same entry can use `{ id: patio_photo, name: Patio, path: /local/wallpapers/patio.webp, preview: /local/wallpapers/patio-small.webp }` under `shared_wallpapers`.
 
 Entity-level room assignment takes precedence over device-level assignment. Home Assistant's disabled and hidden entities remain excluded. Diagnostic and configuration entities are omitted from automatic discovery. A room override with `entities` uses exactly the listed visible entities, in order. An empty list keeps the room with no devices. Omit `entities` to use automatic discovery. `entity_icons` is a mapping from entity ID to icon for that room. Assigning a device explicitly moves it out of automatically discovered rooms on this dashboard. You can include it in multiple rooms by listing it explicitly in each one. These choices leave Home Assistant area assignments as they are.
+
+In **Manage devices**, hiding a member removes its controls and indicators from that room. The member keeps its profile, shortcut settings, and placements in other rooms. Use the **Hidden** filter to find and restore it. Reordering preserves existing section assignments. In YAML, set `hidden_entities` inside the room override for local hiding and `entity_order` for a preferred room device order. The automatic discovery and visibility controls take inspiration from [Dwains Dashboard Next](https://dwainscheeren.github.io/dwains-dashboard-next/areas.html).
 
 Each room section has a `kind`, optional `id` and `title`, and an ordered list of `entities`. Available kinds are `lights`, `covers`, `climate`, `heating`, `sensors`, `devices`, `garage`, `weather`, `security`, `media`, `vacuum` and `laundry`. Use an empty title to hide the heading. Devices without an assigned section follow the default grouping.
 
@@ -127,7 +135,11 @@ Use **Devices turned off by the room icon** to give the icon a quick room shutdo
 
 On a standalone Bayit 9 dashboard, opening a room, device or screen updates the URL. Use the browser's Back and Forward buttons to return to those views. To keep an old bookmark, open **Customize home → Toolbar and extra screens → Popup links** and choose its new destination. Enter the fragment of the old URL, starting with `#`, then save the dashboard. In YAML, add the fragment under `popup_aliases`, such as `"#old-lamp": "#device/studio/light.desk"`. Room links use `#room-<room-id>` and screen links use `#panel/<toolbar-id>`. Links open the viewer with the dashboard's usual device permissions. A bound boiler's Schedule destination opens the current list at `#device/<room-id>/<boiler-entity>/schedule`. Use the list to open a fresh form.
 
-For an old device link, choose **On close** in **Popup links** if Close should open its room. A Schedule link can also close to the regular controls for the same device. In YAML, set `popup_alias_close_routes: { "#old-lamp": "#room-studio" }` alongside the corresponding `popup_aliases` entry. You can select an existing popup link when it opens one of those destinations. Close replaces the current entry and the browser's Back and Forward buttons keep their usual navigation.
+For an old device link, choose **On close** in **Popup links** if Close should open its room. A schedule link can also close to the regular controls for the same device. In YAML, set `popup_alias_close_routes: { "#old-lamp": "#room-studio" }` alongside the corresponding `popup_aliases` entry. You can select an existing popup link when it opens one of those destinations. Close replaces the current entry and the browser's Back and Forward buttons keep their usual navigation.
+
+An administrator with permission to create schedules for a bound boiler can choose **New schedule** as a popup-link destination. The direct link `#device/<room-id>/<boiler-entity>/schedule/new` opens a fresh draft. Save creates the schedule. Cancel returns to the schedule list, and Close still follows the link's **On close** choice.
+
+Choose **Choose schedule to edit** for a legacy edit link. It opens a list where an administrator can select an editable schedule for the linked boiler. Copy a schedule's link from that list to bookmark `#device/<room-id>/<boiler-entity>/schedule/edit/<scheduler-id>`. Bayit 9 checks that the schedule is still editable and still belongs to the boiler before opening the form, and checks again before saving.
 
 A dashboard-only room keeps its links when renamed or reordered. Deleting the room removes aliases that point to it or to one of its devices. Newly created rooms receive their own IDs.
 
@@ -167,7 +179,11 @@ For a light with effect categories, choose a **Light opening mode source** and i
 
 For a paired selector with **Apply effects through this light’s selector** enabled, choose an optional **Fixed-color action script**. Use a visible Home Assistant script dedicated to that light. It receives `rgb_color` or `color_temp_kelvin` and may receive `brightness`. The script owns the light target, any scene cancellation, and the selector’s fixed-color state. Bayit 9 waits for the light to report the requested color and disables these controls while the bound script or selector is unavailable. In YAML, set `fixed_color_script: script.lamp_fixed_color` on the same mode source.
 
-Choose a **Shared category helper** in the effect editor to save category selection in a Home Assistant dropdown helper. Unique category names must match the helper’s option names. You can also choose a separate helper option for **All effects**, which includes every effect the light currently reports. After Home Assistant reports the new selection, the same category appears on other devices and on reopening. A category with no available matching helper option is temporary. Choose a helper dedicated to browsing effects. Use the separate **Apply** button to change the light. In YAML, map the light ID in `light_effect_category_sources` to `{ entity: input_select.lamp_categories, all_option: All }`. The `all_option` is optional.
+In the effect editor, set **Effect browser layout** to **Scene grid** to see categories as buttons and all matching scenes in a scrolling grid. Scene tiles display both the label and the device's own effect name when they differ. Use arrow keys to move among scenes, Enter or Space to choose a scene, and **Apply** to activate it. In YAML, list the light IDs in `light_effect_scene_grid`.
+
+Choose **Scene grid (activate on selection)** to activate a scene by tapping its tile or pressing Enter or Space on it. The current scene updates when Home Assistant reports the change. In YAML, list that light in both `light_effect_scene_grid` and `light_effect_scene_on_select`.
+
+Choose a **Shared category helper** in the effect editor to save category selection in a Home Assistant dropdown helper. Unique category names must match the helper’s option names. You can also choose a separate helper option for **All effects**, which includes every effect the light currently reports. After Home Assistant reports the new selection, the same category appears on other devices and on reopening. A category with no available matching helper option is temporary. Choose a helper dedicated to browsing effects. In YAML, map the light ID in `light_effect_category_sources` to `{ entity: input_select.lamp_categories, all_option: All }`. The `all_option` is optional.
 
 If the light has a paired Home Assistant selector that runs its effect workflow, enable **Apply effects through this light’s selector** in the effect editor. The light and the selector both need to offer the effect when Bayit 9 sends it. With an explicit shared category helper, **Apply** can switch to the effect’s unique configured category and wait for the paired selector to offer it. If the effect belongs to multiple categories, choose a category manually. The fixed-color option and color controls keep their own actions.
 
@@ -214,11 +230,15 @@ In an **Overview** status section, choose **Discover active climate devices**. E
 
 In a **Sensors** readings section, enable **Show readings as chart cards** to keep the configured cards in left-to-right order in either language while each card uses the interface language. In YAML, set `layout: reading-cards` on the readings section.
 
+For a graph in that section, enable **Compact history chart** to show the current reading with its reported precision and unit alongside a filled history line. Set the icon and line color individually. In YAML, use `compact_history_graph: true` and an optional `series_color: "#397BD6"` on the graph entry.
+
 A single-sensor history graph in **Sensors** opens the sensor's Home Assistant details when you tap its heading or reading. To open a room or a configured Vacuum panel, select a destination under **Open on graph tap**. In YAML, add `graph_room_id: studio` or `vacuum_panel_id: robot` to the graph entity entry. Choose the ID of a room shown on this dashboard or a configured Vacuum panel.
 
 In a Sensors section shown as a combined graph, enable **Compare trends in a single chart**. Set a shared time range and averaging interval, then choose an optional six-digit line color for each sensor configured as a graph. Choose sensors that report the same unit. The graph shows gaps where Home Assistant reports that a reading is unavailable. Tap a sensor in the legend to hide or show its line while keeping at least one sensor visible.
 
 In YAML, add `comparison: { enabled: true, hours: 24, bucket_minutes: 30 }` to a `kind: series` section on a `kind: sensors` screen. Add `series_color: "#397BD6"` to a graph entry to keep that sensor's line color fixed.
+
+Enable **Use a compact comparison chart** to fit the time selection inside the graph and use rounded y-axis ticks. Tap the plot or move along its lower edge to inspect earlier readings. The time slider appears when you focus it with the keyboard. In YAML, add `layout: compact` inside `comparison`.
 
 In **Rooms**, choose **Lights in the room count** to count only selected room lights. Clear the selection to count every light in that room. Devices remain available in the room and keep their existing controls.
 
@@ -242,7 +262,7 @@ In **Rooms → Device display**, enable **Show compact media controls in this ro
 
 For a Media or Vacuum panel, set **Show in** to **Linked only** to use it from room links and direct popup URLs. In YAML, set `placement: linked` on the Media or Vacuum toolbar entry.
 
-A Media screen can also include a remote. In the toolbar editor choose a playback, volume or power device under **Media remote**. Each role can use a different Home Assistant player. The power button uses the selected device’s reported state and appears when that device supports the corresponding on or off command. To keep supported playback and volume commands available while a configured player reports standby or off, turn on **Show remote controls in standby**. The mute button needs a known mute state.
+A Media screen can also include a remote. In the toolbar editor choose a playback, volume or power device under **Media remote**. Each role can use a different Home Assistant player. The power button uses the selected device’s reported state and appears when that device supports the corresponding on or off command. To keep supported playback and volume commands available while a configured player reports standby or off, turn on **Show remote controls in standby**. With this setting, a player that supports mute can be muted in standby even when it has no reported mute state. Unmute appears when the player reports that it is muted.
 
 In YAML add `media_remote: { transport_entity: media_player.streamer, volume_entity: media_player.television, power_entity: media_player.television, allow_standby: true }` to a Media toolbar entry. Each device assignment is optional.
 
@@ -262,6 +282,8 @@ In YAML use `layout: readouts` on the status section. A binary sensor can use `r
 
 In a **Weather** readings section, enable **Show readings as a compact read-only list** to show each sensor's name and current value on one row. Graphs in the section keep their history charts. In YAML, set `layout: readings-list` on the readings section. Choose **Show readings as chart cards** to keep the authored card order from left to right in either language. In YAML, set `layout: reading-cards`. Native charts keep their configured history duration. If a chart cannot load, its card shows the current reading and still opens Home Assistant details.
 
+For a `binary_sensor` in the compact Weather list, set **Meaning of the reading** to **Rain now** or **Weather warning** to show localized rain or alert status. In YAML, set `weather_status: rain` or `weather_status: warning` on that entity. **Automatic** uses the usual sensor status labels.
+
 In a **Weather** screen, edit the forecast entity and select **Use Clock Weather Card for the forecast** to show its current conditions, 24-hour strip, and five-day forecast. This uses Clock Weather Card when it is installed and registered as a Home Assistant resource. The built-in forecast appears when the optional card is absent or its configured data is unavailable. In YAML, set `clock_weather_card: true` on the weather entity in the forecast section.
 
 In a **Weather** screen, edit the Sun entity and select **Show the Sun and Moon with Horizon Card**. When Horizon Card is installed and registered as a Home Assistant dashboard resource, this adds the Sun’s path, the Moon’s current position and phase, and elevation and azimuth readings for both. Bayit 9 uses the location already configured in Home Assistant. The built-in Sun panel remains available when the optional card or location data is missing. In YAML, set `horizon_card: true` on the `sun.*` entity in the Weather screen's `sun` section.
@@ -270,7 +292,7 @@ In an **Energy** electricity or water section, enable **Show readings with large
 
 Use **Popup header icon** in the Overview or Energy screen settings to give the dialog its own icon. The launcher keeps its own icon. In YAML, set `panel_icon: mdi:menu` on an Overview toolbar entry or `panel_icon: mdi:lightning-bolt` on an Energy toolbar entry.
 
-To add the regional warnings map, edit a **Security** button in **Toolbar and extra screens** and enable **Show the Oref alert map**. This uses the frontend card supplied by the installed [Oref Alert integration](https://github.com/amitfin/oref_alert). In YAML, set `oref_map: {enabled: true}` on a `kind: security` toolbar entry. The optional settings are `auto_fit`, `hebrew_basemap`, `show_pre_alert`, and `show_end`. The map starts at a regional view and keeps the home and device location markers disabled.
+To add the regional warnings map, edit a **Security** button in **Toolbar and extra screens** and enable **Show the Oref alert map**. This uses the frontend card supplied by the installed [Oref Alert integration](https://github.com/amitfin/oref_alert). **Map shape** defaults to Wide (4:3). Choose Square (1:1) for a taller map at the same width. In YAML, set `oref_map: {enabled: true}` on a `kind: security` toolbar entry. The optional settings are `auto_fit`, `hebrew_basemap`, `show_pre_alert`, `show_end`, and `aspect_ratio` (`'4:3'` or `'1:1'`). The map starts at a regional view and keeps the home and device location markers disabled.
 
 For a calibrated Roborock map, edit a **Robot vacuum** button in **Toolbar and extra screens** and enable **Show calibrated floor maps**. Select the robot and its **Selected-map entity**, then pair each map option with the image or camera for that floor. This uses an installed [Xiaomi Vacuum Map Card](https://github.com/PiotrMachowski/lovelace-xiaomi-vacuum-map-card) and calibrated Home Assistant map entities. For YAML, configure `vacuum_map` on a `kind: vacuum` entry with `enabled: true`, `vacuum`, `selector`, and `floors` containing `option`, `image`, and optional `name`. Calibrations and room outlines are read from the active floor's entity while the panel is open. A floor change waits for the selector's reported state before enabling map commands. Turn on **Use compact robot and program controls** to fit the map closer to the top on phones. It applies to this map's robot and explicit vacuum program cards, preserving 44 px touch targets and access to additional robot controls. In YAML, use `compact_controls: true` inside `vacuum_map`.
 

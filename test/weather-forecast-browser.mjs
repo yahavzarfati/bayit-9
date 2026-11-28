@@ -16,6 +16,11 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
     const clock = { configurations:[], contexts:[], events:[], details:0 };
     const horizon = { configurations:[], contexts:[], connected:0, requests:[] };
     const entity = 'weather.fixture';
+    const weatherReadings = [
+      {entity:'binary_sensor.fixture_rain',name:'Rain fixture',role:'status',weather_status:'rain'},
+      {entity:'binary_sensor.fixture_warning',name:'Warning fixture',role:'status',weather_status:'warning'},
+      {entity:'binary_sensor.fixture_generic',name:'Generic fixture',role:'status',weather_status:'invalid'},
+    ];
     const connected = new Set();
     const forecastCalls = [];
     const created = [];
@@ -59,6 +64,20 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
         set hass(value) { this.scoped = value; clock.contexts.push(value); }
         connectedCallback() {
           this.textContent = 'Clock Weather fixture';
+          if (options.has('pager-geometry')) {
+            this.style.cssText = 'display:block;height:290px';
+            this.append(Object.assign(document.createElement('button'),{textContent:'Forecast fixture control'}));
+            const root = this.shadowRoot ?? this.attachShadow({mode:'open'});
+            root.innerHTML = '<style>' +
+              'div { display:flex; justify-content:space-between }' +
+              '#hours { justify-content:flex-start; overflow-x:auto }' +
+              '#hours span { flex:0 0 72px }' +
+              '#range:dir(rtl) .range-bar { transform:scaleX(-1) }' +
+              '</style><slot></slot>' +
+              '<div id="summary"><span>☁</span><span>19:00</span></div>' +
+              '<div id="hours">' + Array.from({length:24}, (_,index) => '<span>' + ((20 + index) % 24) + ':00</span>').join('') + '</div>' +
+              '<div id="range"><span>15°C</span><span class="range-bar">◂—▸</span><span>28°C</span></div>';
+          }
           this.stop = ['hourly','daily'].map(type => this.scoped.connection.subscribeMessage(event => {
             clock.events.push([type, event.forecast.length]);
           }, { type:'weather/subscribe_forecast', entity_id:this.config.entity, forecast_type:type }));
@@ -70,10 +89,23 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
       customElements.define('horizon-card', class extends HTMLElement {
         setConfig(config) {
           if (horizonMode === 'reject') throw new Error('Unavailable Horizon Card');
+          this.config = config;
           horizon.configurations.push(config);
         }
         set hass(value) { horizon.contexts.push(value); }
-        connectedCallback() { horizon.connected++; this.textContent = 'Sun and Moon fixture'; }
+        connectedCallback() {
+          horizon.connected++;
+          this.textContent = 'Sun and Moon fixture';
+          if (options.has('pager-geometry')) {
+            this.style.cssText = 'display:block;height:205px';
+            const axis = document.createElement('div');
+            axis.style.cssText = 'display:flex;justify-content:space-between';
+            const labels = this.config.language === 'he' ? ['זריחה', 'שקיעה'] : ['Sunrise', 'Sunset'];
+            axis.append(...labels.map(textContent => Object.assign(document.createElement('span'), {textContent})));
+            this.append(axis);
+            this.append(Object.assign(document.createElement('button'),{textContent:'Sun fixture control'}));
+          }
+        }
         disconnectedCallback() { horizon.connected--; }
       });
     }
@@ -83,6 +115,9 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
       }, locale: { language:locale }, areas: {}, devices: {}, themes: {},
       entities: { [entity]:{}, 'sun.sun':{} },
       states: {
+        ...(options.has('status-readings') && Object.fromEntries(weatherReadings.map(({entity}) =>
+          [entity,{state:'off',attributes:{}}]))),
+        ...(options.has('pager-geometry') && {'sensor.fixture_temperature':{ state:'24', attributes:{unit_of_measurement:'°C'} }}),
         [entity]: { state:'cloudy', attributes:{ friendly_name:'Fixture Outlook', supported_features:3,
           temperature:18.6, temperature_unit:'°C' } },
         'sun.sun': { state:solar === 'evening' ? 'below_horizon' : 'above_horizon', attributes:{ azimuth:140, elevation:35,
@@ -139,7 +174,10 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
         ...(clockMode && { clock_weather_card:true }),
       }] }, { id:'sun', kind:'sun', title:'Sun settings', entities:[{ entity:'sun.sun', role:'sun',
         ...(horizonMode && { horizon_card:true }),
-      }] }],
+      }] }, ...(options.has('pager-geometry') ? [{id:'readings',kind:'readings', layout:'readings-list', entities:[
+        {entity:'sensor.fixture_temperature',name:'Pager reading',role:'status'},
+      ]}] : []), ...(options.has('status-readings') ? [{id:'weather-status',kind:'readings',
+        title:'Weather status settings',layout:'readings-list',entities:weatherReadings}] : [])],
     }] };
     const Strategy = customElements.get('ll-strategy-dashboard-bayit-9');
     const dashboard = document.createElement('bayit-dashboard');
@@ -160,6 +198,10 @@ const fixture = '<!doctype html><meta charset="utf-8"><meta name="viewport" cont
       },
       setSun(state) {
         hass.states['sun.sun'] = { ...hass.states['sun.sun'], state };
+        dashboard.hass = { ...hass, states:{ ...hass.states } };
+      },
+      setWeatherStatus(state) {
+        for (const { entity } of weatherReadings) hass.states[entity] = {state,attributes:{}};
         dashboard.hass = { ...hass, states:{ ...hass.states } };
       },
       active: () => [...connected].map(card => card.dataset.mode + ':' + card.dataset.slots),
@@ -213,6 +255,7 @@ async function assertClockWeatherCard(browser) {
       for (const mode of ['missing','reject','installed&no-subscriptions','installed&daily-error']) {
         await open(mode);
         await original.waitFor();
+        assert.equal(await original.evaluate(node => getComputedStyle(node).direction),'ltr');
         if (mode.endsWith('daily-error')) {
           await panel.getByText(hebrew ? 'התחזית היומית אינה זמינה' : 'Daily forecast unavailable',{exact:true}).waitFor();
         }
@@ -366,6 +409,143 @@ async function assertHorizonPresentation(browser) {
   }
 }
 
+async function assertDetailedPagerStable(browser) {
+  for (const locale of ['en', 'he']) {
+    const he = locale === 'he';
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,isMobile:true,reducedMotion:'no-preference'});
+    try {
+      await page.goto(base + '?clock-card=installed&horizon=installed&pager-geometry&locale=' + locale + '#panel/weather-fixture');
+      const panel = page.getByRole('dialog',{name:'Fixture Weather',exact:true});
+      const stack = panel.locator('.weather-pager');
+      const forecast = stack.locator('[data-section=forecast]');
+      const sun = stack.locator('[data-section=sun]');
+      const forecastChoice = stack.getByRole('button',{name:he ? 'תחזית' : 'Forecast',exact:true});
+      const sunChoice = stack.getByRole('button',{name:he ? 'שמש' : 'Sun',exact:true});
+      const focus = button => button.evaluate(control => control.getRootNode().activeElement === control);
+      const reading = panel.getByText('Pager reading',{exact:true});
+      await reading.waitFor();
+      await forecast.locator('clock-weather-card').waitFor();
+      await sun.locator('horizon-card').waitFor({state:'attached'});
+      await page.waitForFunction(() => tracker.clock.events.length === 2);
+      await page.evaluate(() => document.fonts.ready);
+      assert.equal(await sun.getAttribute('aria-hidden'),'true');
+      assert.equal(await sun.getAttribute('inert'),'');
+      assert.equal(await sun.getByRole('button',{name:'Sun fixture control',exact:true}).count(),0);
+      const stability = () => panel.evaluate(element => {
+        const body = element.querySelector('.modal-body');
+        const carrier = element.querySelector('.weather-pager');
+        return {
+          cardHeight:carrier.getBoundingClientRect().height,
+          dotsY:element.querySelector('.weather-page-dots').getBoundingClientRect().top,
+          readingY:element.querySelector('.weather-reading').getBoundingClientRect().top,
+          fits:body.scrollWidth <= body.clientWidth,
+          scrollRange:body.scrollHeight - body.clientHeight,
+        };
+      });
+      for (const width of [320,391]) {
+        await page.setViewportSize({width,height:844});
+        await page.emulateMedia({reducedMotion:width === 320 ? 'reduce' : 'no-preference'});
+        const before = await stability();
+        assert.equal(before.fits,true);
+        const topology = await forecast.locator('clock-weather-card').evaluate(card => {
+          const [summary, hours, range] = ['summary','hours','range'].map(id => card.shadowRoot.getElementById(id));
+          const leftToRight = row => row.children[0].getBoundingClientRect().left < row.children[1].getBoundingClientRect().left;
+          hours.scrollLeft = 72;
+          const scrollLeft = hours.scrollLeft;
+          hours.scrollLeft = 0;
+          return {
+            sectionDirection:getComputedStyle(card.closest('[data-section]')).direction,
+            iconBeforeClock:leftToRight(summary),
+            chronological:leftToRight(hours),
+            lowBeforeHigh:range.firstElementChild.getBoundingClientRect().left < range.lastElementChild.getBoundingClientRect().left,
+            rangeTransform:getComputedStyle(range.querySelector('.range-bar')).transform,
+            scrollLeft,
+          };
+        });
+        assert.deepEqual(topology,{
+          sectionDirection:he ? 'rtl' : 'ltr',iconBeforeClock:true,chronological:true,lowBeforeHigh:true,
+          rangeTransform:'none',scrollLeft:72,
+        });
+        const nativeForecast = forecast.getByRole('button',{name:'Forecast fixture control',exact:true});
+        await nativeForecast.focus();
+        assert.ok(await focus(nativeForecast));
+        await forecast.evaluate((section,direction) => {
+          for (const [type,x] of [['pointerdown',150],['pointerup',150+direction*110]]) {
+            section.dispatchEvent(new PointerEvent(type,{bubbles:true,pointerType:'touch',isPrimary:true,pointerId:9,clientX:x}));
+          }
+        },he ? 1 : -1);
+        await sun.locator('horizon-card').waitFor();
+        const sunrise = await sun.getByText(he ? 'זריחה' : 'Sunrise',{exact:true}).boundingBox();
+        const sunset = await sun.getByText(he ? 'שקיעה' : 'Sunset',{exact:true}).boundingBox();
+        assert.ok(sunrise.x < sunset.x, 'Sunrise and sunset must follow Horizon’s left-to-right solar graph');
+        assert.equal(await sun.evaluate(node => getComputedStyle(node).direction),he ? 'rtl' : 'ltr');
+        assert.equal(await sunChoice.getAttribute('aria-pressed'),'true');
+        assert.equal(await forecast.getAttribute('aria-hidden'),'true');
+        assert.equal(await forecast.getAttribute('inert'),'');
+        assert.equal(await nativeForecast.count(),0);
+        assert.equal(await sun.getAttribute('aria-hidden'),null);
+        assert.equal(await sun.getAttribute('inert'),null);
+        assert.ok(await focus(sunChoice));
+        assert.equal(await sun.evaluate(node => getComputedStyle(node).animationName),
+          width === 320 ? 'none' : 'weather-page-reveal');
+        assert.deepEqual(await stability(),before);
+        await forecastChoice.press('Enter');
+        assert.ok(await focus(forecastChoice));
+        assert.equal(await forecastChoice.getAttribute('aria-pressed'),'true');
+        assert.deepEqual(await stability(),before);
+      }
+      assert.deepEqual(await page.evaluate(() => ({
+        clockConfig:tracker.clock.configurations.length, forecastEvents:tracker.clock.events.length,
+        horizonConfig:tracker.horizon.configurations.length, horizonCount:tracker.horizon.connected,
+        requests:tracker.horizon.requests, details:tracker.details,
+      })),{clockConfig:1,forecastEvents:2,horizonConfig:1,horizonCount:1,requests:[],details:[]});
+    } finally {
+      await page.close();
+    }
+  }
+}
+
+async function assertWeatherStatuses(browser) {
+  const states = {
+    en: { off:['Not raining','No warning','Off'], on:['Raining','Active warning','On'],
+      unknown:Array(3).fill('Unknown state'), unavailable:Array(3).fill('Unavailable') },
+    he: { off:['לא יורד','אין','כבוי'], on:['יורד גשם','יש התראה','פועל'],
+      unknown:Array(3).fill('מצב לא ידוע'), unavailable:Array(3).fill('לא זמין') },
+  };
+  for (const locale of ['en','he']) {
+    const page = await browser.newPage({viewport:{width:320,height:844},hasTouch:true,reducedMotion:'reduce'});
+    const he = locale === 'he';
+    try {
+      await page.goto(base + '?locale=' + locale + '&status-readings#panel/weather-fixture');
+      const readings = page.locator('[data-section=readings] .weather-reading');
+      await readings.first().waitFor();
+      for (const [state,labels] of Object.entries(states[locale])) {
+        await page.evaluate(state => tracker.setWeatherStatus(state),state);
+        await page.waitForFunction(labels => {
+          const values = document.querySelector('bayit-dashboard')?.shadowRoot
+            ?.querySelectorAll('[data-section=readings] .weather-reading .tile-state');
+          return values?.length === labels.length && [...values].every((value,index) => value.textContent === labels[index]);
+        },labels,{timeout:4000});
+      }
+
+      await page.goto(base + '?editor&status-readings&locale=' + locale);
+      await page.getByText(he ? 'סרגל ומסכים נוספים' : 'Toolbar and extra screens',{exact:true}).tap();
+      await page.getByRole('button',{name:'Fixture Weather',exact:true}).tap();
+      await page.getByRole('button',{name:'Weather status settings',exact:true}).tap();
+      await page.getByRole('button',{name:'Rain fixture',exact:true}).tap();
+      const meaning = page.getByLabel(he ? 'משמעות המדד' : 'Meaning of the reading',{exact:true});
+      assert.equal(await meaning.inputValue(),'rain');
+      const saved = () => page.evaluate(() => tracker.draft.toolbar[0].sections[2].entities[0].weather_status);
+      await meaning.selectOption('warning');
+      assert.equal(await saved(),'warning');
+      await meaning.selectOption('');
+      assert.equal(await saved(),undefined);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 async function assertSolarForecast(browser) {
   for (const locale of ['en', 'he']) {
     const page = await browser.newPage({ viewport: { width:391, height:844 }, hasTouch:true, isMobile:true });
@@ -447,7 +627,8 @@ try {
         const sun = container.querySelector('[data-section=sun]');
         const buttons = [...node.querySelectorAll('button')].map(button => button.getBoundingClientRect());
         return node.getBoundingClientRect().top >= forecast.getBoundingClientRect().bottom &&
-          sun.hidden && container.scrollWidth <= container.clientWidth && buttons.every(box => box.width >= 44 && box.height >= 28);
+          sun.inert && sun.getAttribute('aria-hidden') === 'true' && container.scrollWidth <= container.clientWidth &&
+          buttons.every(box => box.width >= 44 && box.height >= 28);
       }));
       assert.equal(await modal.locator('.weather-tabs').count(), 0);
       assert.equal(await daily.locator('.daily-weather-day').first().textContent(), rtl ? 'היום' : 'Today');
@@ -644,7 +825,10 @@ try {
       await assertClockWeatherCard(browser);
       console.log(engine.name() + ' at 391 px (EN/HE): optional Clock Weather forecast, narrow feed scope, and fallback');
       await assertHorizonPresentation(browser);
+      await assertDetailedPagerStable(browser);
       console.log(engine.name() + ' at 391 px (EN/HE): optional read-only Sun/Moon presentation and native fallback');
+      await assertWeatherStatuses(browser);
+      console.log(engine.name() + ' at 320 px (EN/HE): localized rain and warning states, generic status, and editor');
       await assertSolarForecast(browser);
       console.log(engine.name() + ' at 391 px (EN/HE): sunny icons follow the reported sun window');
     } finally {
